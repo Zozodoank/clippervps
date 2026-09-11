@@ -201,6 +201,11 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Terdeteksi indikasi teks subtitle bawaan pada judul/deskripsi/tags.' };
   }
 
+  // 2B. Filter Kata Kunci Terlarang (cara / tutorial / unboxing)
+  if (/\b(cara|tutorial|unboxing)\b/i.test(titleLower)) {
+    return { eligible: false, reason: 'Terdeteksi kata kunci terlarang (cara / tutorial / unboxing) pada judul video.' };
+  }
+
   // 3. Filter Iklan & Sponsor Komersial
   const adKeywords = [
     'sponsored', 'promoted', 'paid promotion', 'endorsement', 'iklan',

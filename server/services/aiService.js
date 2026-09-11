@@ -1987,9 +1987,8 @@ export function formatEnrichedCaption({
       tags.add('#rekomendasiproduk');
       tags.add('#racunbelanja');
       tags.add('#spillracun');
-      tags.add('#affiliateindonesia');
-      tags.add('#haul');
-      tags.add('#unboxing');
+      tags.add('#gadgetunik');
+      tags.add('#perabotdapur');
     } else {
       tags.add('#racunshopee');
       tags.add('#shopeehaul');

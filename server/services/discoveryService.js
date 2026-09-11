@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import fetch from 'node-fetch';
 import * as cheerio from 'cheerio';
 import https from 'https';
-import { searchYouTubeVideos, extractVideoId } from './downloader.js';
+import { searchYouTubeVideos, extractVideoId, buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from './downloader.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1016,7 +1016,7 @@ export async function discoverYouTubeCandidatesForProduct({
 
   // Fallback: If all results were previously used or cleanResults was empty, search exact core noun
   if (!candidates.length) {
-    const fallbackResults = await searchYouTubeVideos(`${coreNoun} review`, { limit, onProgress });
+    const fallbackResults = await searchYouTubeVideos(`${coreNoun} "b-roll"`, { limit, onProgress });
     const nonExcluded = (fallbackResults || []).filter((c) => {
       const vid = c.id || extractVideoId(c.url);
       return vid && !excludeSet.has(vid) && isLikelyCleanYouTubeCandidate(c, coreWords);
@@ -1044,12 +1044,13 @@ export async function discoverYouTubeCandidatesForProduct({
  * Bing Video Search returns rich metadata: video title, duration, uploader, and direct YouTube URLs.
  */
 export async function searchBingVideos(query, { limit = 20, onProgress = () => {} } = {}) {
+  const cleanQuery = buildCleanYouTubeQuery(query);
   const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
-  const url = `https://www.bing.com/videos/search?q=${encodeURIComponent(query)}`;
+  const url = `https://www.bing.com/videos/search?q=${encodeURIComponent(cleanQuery)}`;
 
   onProgress({
     step: 'auto_video_search',
-    message: `Mencari video via Bing Video: "${query}"...`,
+    message: `Mencari video via Bing Video: "${cleanQuery}"...`,
     progress: 8,
   });
 
@@ -1193,8 +1194,9 @@ export async function searchMultiEngineVideos(query, {
     console.warn(`[MultiEngineVideo] Bing Video search error: ${err.message}`);
   }
 
-  // 3. Extract core words from the query
-  const queryWords = normalizeText(query).split(' ').filter((w) => w.length >= 3);
+  // 3. Extract core words from the query (ignoring modifiers and negative terms)
+  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'unboxing', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw']);
+  const queryWords = normalizeText(query).split(' ').filter((w) => w.length >= 3 && !ignoredQueryWords.has(w));
 
   // 4. Filter through Stage 1 Metadata Pre-filter (clean content, faceless keywords, no bulky furniture)
   const cleanCandidates = allCandidates.filter((candidate) => isLikelyCleanYouTubeCandidate(candidate, queryWords));
@@ -1304,13 +1306,15 @@ export async function extractVisualKeywordsWithAI({ imageUrl, productTitle = '' 
       'gemini-flash-latest'
     ];
 
-    const prompt = `Analisa gambar produk fisik ini dengan sangat teliti untuk keperluan pencarian video demonstrasi di YouTube.
+    const prompt = `Analisa gambar produk fisik ini dengan sangat teliti untuk keperluan pencarian footage demonstrasi produk di YouTube.
 Judul referensi (jika ada): "${productTitle}"
 
 Tugas:
 1. Identifikasi nama benda/gadget fisik ini dalam bahasa Inggris universal (nama produk OEM/pabrik yang biasa dipakai reviewer global di YouTube/Amazon/AliExpress).
-2. Buat 3 frasa pencarian YouTube paling efektif (bahasa Inggris atau campuran) untuk menemukan video demonstrasi/review hands-on yang nyata dan bersih (contoh: "<nama gadget universal> review", "<nama gadget> demo", "<nama gadget> how to use").
-Hindari kata-kata promo belanja seperti: COD, murah, promo, terlaris, diskon.
+2. Buat 4 frasa pencarian YouTube paling efektif dalam bahasa Inggris untuk menemukan footage produk yang bersih, jernih, dan sinematik:
+   - WAJIB kombinasikan nama produk dengan kata kunci aset mentah: "raw footage", "b-roll", "textless", "clean version", "no graphics".
+   - DILARANG KERAS menggunakan kata kunci: cara, tutorial, unboxing, haul, vlog, review wajah.
+   - Hindari kata-kata promo belanja seperti: COD, murah, promo, terlaris, diskon.
 
 Keluarkan JSON dengan format persis:
 {
@@ -1318,7 +1322,8 @@ Keluarkan JSON dengan format persis:
   "searchQueries": [
     "<query 1>",
     "<query 2>",
-    "<query 3>"
+    "<query 3>",
+    "<query 4>"
   ]
 }`;
 
@@ -1401,7 +1406,7 @@ export async function searchVideosByProductImage({
         console.log(`[VisualSearch] Bing Visual Tags terdeteksi: ${visualTags.slice(0, 3).join(', ')}`);
         for (const tag of visualTags.slice(0, 2)) {
           if (candidates.length >= safeLimit) break;
-          const tagVideos = await searchMultiEngineVideos(`${tag} review demo`, {
+          const tagVideos = await searchMultiEngineVideos(`${tag} "b-roll"`, {
             limit: 8,
             excludeVideoIds: seenIds,
             onProgress
@@ -1760,6 +1765,9 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
 
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
+
+  // Disqualify any candidate with banned keywords: cara, tutorial, unboxing
+  if (/\b(cara|tutorial|unboxing)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
     'podcast', 'reaction', 'kompilasi', 'compilation', 'kumpulan', 'full album', 'playlist',
@@ -2214,10 +2222,14 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '')
         coreWords: allWords,
         multilingualWords: allWords,
         searchQueries: [
-          `${anchor.noun} review cara pakai`,
+          `${englishNoun} "b-roll"`,
+          `${anchor.noun} "raw footage"`,
+          `${englishNoun} "raw footage"`,
+          `${anchor.noun} "clean version"`,
+          `${englishNoun} "textless"`,
+          `${englishNoun} "no graphics"`,
           `${englishNoun} demo review`,
           `${anchor.noun} demo peragaan`,
-          `${englishNoun} unboxing test`,
           anchor.noun,
           englishNoun,
         ]
@@ -2243,10 +2255,13 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '')
     coreWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
     multilingualWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
     searchQueries: [
-      `${fallbackNoun} review cara pakai`,
+      `${fallbackNoun} "b-roll"`,
+      `${fallbackNoun} "raw footage"`,
+      `${fallbackNoun} "clean version"`,
+      `${fallbackNoun} "textless"`,
+      `${fallbackNoun} "no graphics"`,
       `${fallbackNoun} demo review`,
       `${fallbackNoun} test pemakaian`,
-      `${fallbackNoun} unboxing`,
       fallbackNoun,
     ]
   };
