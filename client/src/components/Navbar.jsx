@@ -62,7 +62,7 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
   const handleRestartServer = async () => {
     setIsRestarting(true);
     setRestartError(null);
-    setRestartStatusText(runUpdateScript ? 'Menjalankan ./update.sh (Git pull & dependencies)...' : 'Mengirim sinyal restart backend...');
+    setRestartStatusText(runUpdateScript ? 'Mengambil commit terbaru dari GitHub (Git Pull) & menyiapkan server...' : 'Mengirim sinyal restart backend...');
 
     try {
       const response = await fetch('/api/restart', {
@@ -220,13 +220,13 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
                 <RotateCw className="w-5 h-5" />
               </div>
               <div>
-                <h3 className="font-bold text-base text-white">Restart Backend Server</h3>
-                <p className="text-xs text-slate-400">Restart service Termux / Server</p>
+                <h3 className="font-bold text-base text-white">Restart & Update Server</h3>
+                <p className="text-xs text-slate-400">Tarik update repo GitHub & restart service</p>
               </div>
             </div>
 
             <p className="text-sm text-slate-300 mb-4 leading-relaxed">
-              Apakah Anda ingin me-restart server? Halaman web akan otomatis memuat ulang saat server aktif kembali.
+              Apakah Anda ingin me-restart server? Server akan mengambil commit terbaru dari GitHub sebelum kembali dijalankan.
             </p>
 
             <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3 mb-6">
@@ -238,8 +238,8 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
                   className="mt-1 rounded border-slate-700 text-orange-500 focus:ring-orange-500/30 w-4 h-4 bg-slate-900"
                 />
                 <div>
-                  <span className="text-sm font-medium text-slate-200 block">Jalankan bash update.sh terlebih dahulu</span>
-                  <span className="text-xs text-slate-400 block mt-0.5">Mengambil commit terbaru dari GitHub & memperbarui dependency sebelum restart.</span>
+                  <span className="text-sm font-medium text-slate-200 block">Tarik update repo terbaru dari GitHub (Git Pull)</span>
+                  <span className="text-xs text-slate-400 block mt-0.5">Otomatis sinkronisasi seluruh perubahan kode dari GitHub sebelum server dijalankan kembali.</span>
                 </div>
               </label>
             </div>
@@ -258,7 +258,7 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
                 className="px-4 py-2 rounded-xl text-sm font-semibold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/25 transition-all active:scale-95 flex items-center gap-2"
               >
                 <RotateCw className="w-4 h-4" />
-                <span>Ya, Restart Server</span>
+                <span>Tarik Update & Restart Server</span>
               </button>
             </div>
           </div>

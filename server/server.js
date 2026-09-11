@@ -2779,7 +2779,7 @@ app.get('/api/open-folder', (req, res) => {
   });
 });
 
-// 10. Restart Server & Execute ./update.sh (Designed for Termux, Codespace & Local Dev)
+// 10. Restart Server & Execute ./update.sh (Designed for VPS, Termux, Codespace & Local Dev)
 app.post('/api/restart', async (req, res) => {
   const { runUpdate = true } = req.body || {};
   const rootDir = path.resolve(__dirname, '..');
@@ -2790,12 +2790,12 @@ app.post('/api/restart', async (req, res) => {
   let updateExitCode = 0;
 
   if (runUpdate) {
-    console.log('[System] Menjalankan ./update.sh sebelum me-restart server...');
+    console.log('[System] Mengambil isi repo terbaru dari GitHub (git pull & update.sh)...');
     try {
       updateExitCode = await new Promise((resolve) => {
         const child = fs.existsSync(updateScriptPath)
           ? spawn('bash', [updateScriptPath], { cwd: rootDir })
-          : spawn('git', ['pull', '--ff-only'], { cwd: rootDir });
+          : spawn('git', ['pull', 'origin', 'main'], { cwd: rootDir });
 
         child.stdout.on('data', (chunk) => { updateLog += chunk.toString(); });
         child.stderr.on('data', (chunk) => { updateLog += chunk.toString(); });
@@ -2821,7 +2821,7 @@ app.post('/api/restart', async (req, res) => {
     if (updateExitCode !== 0) {
       return res.status(500).json({
         success: false,
-        message: 'Update dibatalkan atau gagal. Server tidak di-restart.',
+        message: 'Update repo GitHub gagal atau dibatalkan. Server tidak di-restart.',
         updateLog,
       });
     }
@@ -2829,14 +2829,19 @@ app.post('/api/restart', async (req, res) => {
 
   res.json({
     success: true,
-    message: 'Perintah update.sh selesai dijalankan. Server sedang me-restart...',
+    message: 'Repo berhasil ditarik & mutakhir! Server sedang me-restart...',
     updateLog,
   });
 
-  // Gracefully exit so dev-runner / node --watch / process manager restarts the process
+  // Gracefully restart: coba via PM2 terlebih dahulu agar client & server fresh, fallback ke process.exit(0)
   setTimeout(() => {
-    console.log('[System] Restarting backend server now (process.exit)...');
-    process.exit(0);
+    console.log('[System] Restarting clipper service now...');
+    exec('pm2 restart clipper', (pm2Err) => {
+      if (pm2Err) {
+        console.log('[System] PM2 restart fallback: exiting process for dev-runner watcher...');
+        process.exit(0);
+      }
+    });
   }, 1200);
 });
 

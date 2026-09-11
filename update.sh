@@ -1,29 +1,37 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
-echo "🔄 [Update] Mengecek perubahan lokal..."
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "❌ [Update] Dibatalkan: ada perubahan lokal yang belum di-commit."
-  echo "   Commit/stash perubahan dulu sebelum menjalankan update."
-  exit 1
-fi
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$DIR"
 
-echo "🔄 [Update] Mengambil update terbaru dari GitHub (fast-forward only)..."
+echo "======================================================"
+echo "🔄 [Update] Memeriksa update terbaru dari GitHub..."
+echo "======================================================"
+
+# Reset file tracking runtime yang mungkin berubah otomatis
+git checkout -- server/bandwidth_stats.json 2>/dev/null || true
+
+OLD_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "old")
+
+echo "⬇️ [Update] Mengambil commit terbaru dari origin main..."
 git fetch origin main
-git pull --ff-only origin main
+git pull origin main
 
-echo "📦 [Update] Menginstall dependency server..."
-if [ -f server/package-lock.json ]; then
-  (cd server && npm ci --ignore-scripts)
+NEW_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "new")
+
+echo "📦 [Update] Memeriksa perubahan dependency..."
+if [ "$OLD_COMMIT" != "$NEW_COMMIT" ] && git diff --name-only "$OLD_COMMIT" "$NEW_COMMIT" 2>/dev/null | grep -E "package.json|package-lock.json"; then
+  echo "📦 [Update] Perubahan package.json terdeteksi. Menginstall dependensi..."
+  if [ -d "server" ]; then
+    (cd server && npm install --ignore-scripts)
+  fi
+  if [ -d "client" ]; then
+    (cd client && npm install)
+  fi
 else
-  (cd server && npm install --ignore-scripts)
+  echo "✅ [Update] Dependensi package.json sudah up-to-date."
 fi
 
-echo "📦 [Update] Menginstall dependency client..."
-if [ -f client/package-lock.json ]; then
-  (cd client && npm ci)
-else
-  (cd client && npm install)
-fi
-
-echo "✅ [Update] Pembaruan selesai! Berada di commit: $(git log -1 --oneline)"
+echo "======================================================"
+echo "✅ [Update] Update selesai! Commit saat ini: $(git log -1 --oneline)"
+echo "======================================================"
