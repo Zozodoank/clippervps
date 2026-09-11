@@ -6,6 +6,7 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
   const [openingFolder, setOpeningFolder] = useState(false);
   const [showRestartModal, setShowRestartModal] = useState(false);
   const [runUpdateScript, setRunUpdateScript] = useState(true);
+  const [cleanReset, setCleanReset] = useState(true);
   const [isRestarting, setIsRestarting] = useState(false);
   const [restartStatusText, setRestartStatusText] = useState('');
   const [restartError, setRestartError] = useState(null);
@@ -62,16 +63,16 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
   const handleRestartServer = async () => {
     setIsRestarting(true);
     setRestartError(null);
-    setRestartStatusText(runUpdateScript ? 'Mengambil commit terbaru dari GitHub (Git Pull) & menyiapkan server...' : 'Mengirim sinyal restart backend...');
+    setRestartStatusText(runUpdateScript ? 'Mengambil commit terbaru dari GitHub & membersihkan konfigurasi lama...' : 'Mengirim sinyal restart backend...');
 
     try {
       const response = await fetch('/api/restart', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runUpdate: runUpdateScript }),
+        body: JSON.stringify({ runUpdate: runUpdateScript, cleanReset }),
       });
       const data = await response.json();
-      setRestartStatusText('Server sedang me-restart... Menunggu koneksi kembali online...');
+      setRestartStatusText('Server sedang me-restart bersih... Menunggu koneksi kembali online...');
     } catch (err) {
       console.log('Restart trigger dispatched:', err.message);
       setRestartStatusText('Server sedang me-restart... Menunggu koneksi kembali online...');
@@ -98,9 +99,9 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
         // Backend still down/restarting, keep waiting
       }
 
-      if (attempts > 45) {
+      if (attempts > 60) {
         clearInterval(pollInterval);
-        setRestartError('Waktu tunggu habis (45s). Jika server belum aktif, cek terminal Termux.');
+        setRestartError('Waktu tunggu habis (60s). Jika server belum aktif, periksa terminal VPS/Termux (`pm2 logs clipper`).');
       }
     }, 1500);
   };
@@ -229,19 +230,36 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
               Apakah Anda ingin me-restart server? Server akan mengambil commit terbaru dari GitHub sebelum kembali dijalankan.
             </p>
 
-            <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3 mb-6">
-              <label className="flex items-start gap-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={runUpdateScript}
-                  onChange={(e) => setRunUpdateScript(e.target.checked)}
-                  className="mt-1 rounded border-slate-700 text-orange-500 focus:ring-orange-500/30 w-4 h-4 bg-slate-900"
-                />
-                <div>
-                  <span className="text-sm font-medium text-slate-200 block">Tarik update repo terbaru dari GitHub (Git Pull)</span>
-                  <span className="text-xs text-slate-400 block mt-0.5">Otomatis sinkronisasi seluruh perubahan kode dari GitHub sebelum server dijalankan kembali.</span>
-                </div>
-              </label>
+            <div className="space-y-3 mb-6">
+              <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={runUpdateScript}
+                    onChange={(e) => setRunUpdateScript(e.target.checked)}
+                    className="mt-1 rounded border-slate-700 text-orange-500 focus:ring-orange-500/30 w-4 h-4 bg-slate-900"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-slate-200 block">Tarik update repo terbaru dari GitHub (Clean Sync)</span>
+                    <span className="text-xs text-slate-400 block mt-0.5">Otomatis sinkronisasi seluruh kode dari GitHub (hard reset) tanpa risiko konflik merge.</span>
+                  </div>
+                </label>
+              </div>
+
+              <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-3">
+                <label className="flex items-start gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={cleanReset}
+                    onChange={(e) => setCleanReset(e.target.checked)}
+                    className="mt-1 rounded border-slate-700 text-rose-500 focus:ring-rose-500/30 w-4 h-4 bg-slate-900"
+                  />
+                  <div>
+                    <span className="text-sm font-medium text-slate-200 block">Bersihkan Cache & Job Menggantung (Clean State)</span>
+                    <span className="text-xs text-slate-400 block mt-0.5">Hapus cache Vite, hentikan proses zombie ffmpeg/yt-dlp, bersihkan job stuck di database, dan reload konfigurasi baru (--update-env).</span>
+                  </div>
+                </label>
+              </div>
             </div>
 
             <div className="flex items-center justify-end gap-3">
@@ -258,7 +276,7 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
                 className="px-4 py-2 rounded-xl text-sm font-semibold bg-rose-600 hover:bg-rose-500 text-white shadow-lg shadow-rose-600/25 transition-all active:scale-95 flex items-center gap-2"
               >
                 <RotateCw className="w-4 h-4" />
-                <span>Tarik Update & Restart Server</span>
+                <span>Restart Bersih & Update</span>
               </button>
             </div>
           </div>

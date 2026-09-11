@@ -2903,21 +2903,55 @@ app.get('/api/open-folder', (req, res) => {
 
 // 10. Restart Server & Execute ./update.sh (Designed for VPS, Termux, Codespace & Local Dev)
 app.post('/api/restart', async (req, res) => {
-  const { runUpdate = true } = req.body || {};
+  const { runUpdate = true, cleanReset = true } = req.body || {};
   const rootDir = path.resolve(__dirname, '..');
   const updateScriptPath = path.join(rootDir, 'update.sh');
 
-  console.log(`[System] Received restart request (runUpdate=${runUpdate})...`);
+  console.log(`[System] Received restart request (runUpdate=${runUpdate}, cleanReset=${cleanReset})...`);
   let updateLog = '';
   let updateExitCode = 0;
 
+  // 1. Bersihkan proses in-memory & background workers aktif
+  try {
+    for (const [runId, autoRun] of activeAutoRuns.entries()) {
+      autoRun.status = 'stopped';
+      autoRun.message = 'Server di-restart bersih.';
+    }
+    for (const [procId, childProc] of activeYtDlpProcesses.entries()) {
+      try { childProc.kill('SIGKILL'); } catch {}
+    }
+    activeYtDlpProcesses.clear();
+  } catch (cleanErr) {
+    console.warn('[System] Warning stopping active processes:', cleanErr.message);
+  }
+
+  // 2. Jalankan pembersihan job gagal jika cleanReset diminta
+  if (cleanReset) {
+    try {
+      console.log('[System] Membersihkan job gagal / menggantung di database...');
+      const cleanScriptPath = path.join(__dirname, 'clean-failed-jobs.js');
+      if (fs.existsSync(cleanScriptPath)) {
+        await new Promise((resolve) => {
+          exec(`node "${cleanScriptPath}"`, { cwd: __dirname }, (err, stdout) => {
+            if (stdout) updateLog += stdout + '\n';
+            resolve();
+          });
+        });
+      }
+    } catch (cleanErr) {
+      console.warn('[System] Warning cleaning failed jobs:', cleanErr.message);
+    }
+  }
+
+  // 3. Jalankan update script / clean sync dari GitHub
   if (runUpdate) {
-    console.log('[System] Mengambil isi repo terbaru dari GitHub (git pull & update.sh)...');
+    console.log('[System] Mengambil isi repo terbaru dari GitHub (clean sync & update.sh)...');
     try {
       updateExitCode = await new Promise((resolve) => {
-        const child = fs.existsSync(updateScriptPath)
+        const isWin = process.platform === 'win32';
+        const child = !isWin && fs.existsSync(updateScriptPath)
           ? spawn('bash', [updateScriptPath], { cwd: rootDir })
-          : spawn('git', ['pull', 'origin', 'main'], { cwd: rootDir });
+          : spawn(isWin ? 'git.cmd' : 'git', ['pull', 'origin', 'main'], { cwd: rootDir, shell: isWin });
 
         child.stdout.on('data', (chunk) => { updateLog += chunk.toString(); });
         child.stderr.on('data', (chunk) => { updateLog += chunk.toString(); });
@@ -2930,7 +2964,7 @@ app.post('/api/restart', async (req, res) => {
           if (code !== 0) {
             console.warn(`[System] Warning: update process exited with code ${code}`);
           }
-          console.log('[System] Log update.sh:\n' + updateLog);
+          console.log('[System] Log update:\n' + updateLog);
           resolve(code || 0);
         });
       });
@@ -2951,20 +2985,24 @@ app.post('/api/restart', async (req, res) => {
 
   res.json({
     success: true,
-    message: 'Repo berhasil ditarik & mutakhir! Server sedang me-restart...',
+    message: 'Server sedang di-restart bersih tanpa sisa konfigurasi lama...',
     updateLog,
   });
 
-  // Gracefully restart: coba via PM2 terlebih dahulu agar client & server fresh, fallback ke process.exit(0)
+  // Gracefully restart via PM2 dengan flag --update-env agar env baru terbaca dan proses segar
   setTimeout(() => {
-    console.log('[System] Restarting clipper service now...');
-    exec('pm2 restart clipper', (pm2Err) => {
+    console.log('[System] Restarting clipper services via PM2 with --update-env...');
+    exec('pm2 restart all --update-env', (pm2Err) => {
       if (pm2Err) {
-        console.log('[System] PM2 restart fallback: exiting process for dev-runner watcher...');
-        process.exit(0);
+        exec('pm2 restart clipper --update-env', (singleErr) => {
+          if (singleErr) {
+            console.log('[System] PM2 restart fallback: exiting process for dev-runner watcher...');
+            process.exit(0);
+          }
+        });
       }
     });
-  }, 1200);
+  }, 1000);
 });
 
 // ── Cookie Management Routes (for Codespace / Linux servers with no browser) ──
