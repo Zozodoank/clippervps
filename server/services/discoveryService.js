@@ -1790,12 +1790,13 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   ];
   if (excludedTitleWords.some((keyword) => titleText.includes(keyword))) return false;
 
-  // Flexible check: Candidate title, description, or tags MUST match core product keywords with cross-category exclusion
+  // Flexible check: Cross-category exclusion for non-kitchen items
+  // Per instruksi pengguna: Verifikasi fisik produk diserahkan ke AI Vision, backend hanya memblokir kategori silang terlarang.
   if (Array.isArray(productWords) && productWords.length > 0) {
     if (!isTitleMatchingProduct(candidate.title, productWords, {
       description: candidate.description,
       tags: candidate.tags,
-      isVisualSearch: Boolean(candidate.isVisualSearch || candidate.source === 'bing_visual_search' || candidate.source === 'visual_ai_query')
+      isVisualSearch: true // Delegasikan kecocokan produk detail ke AI Vision
     })) {
       return false;
     }

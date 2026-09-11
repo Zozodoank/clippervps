@@ -256,26 +256,24 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Video terindikasi animasi, kartun, atau buatan AI.' };
   }
 
-  // 7. Kesesuaian Kata Kunci Produk Target (Policy 1 & Policy 2: Core Noun & Multilingual Anchor Matching)
+  // 7. Kesesuaian Kategori Produk Target (Cross-Category Exclusion)
+  // Per instruksi pengguna: Pencocokan fisik produk spesifik di-handle AI Vision agar lebih stabil.
+  // Backend HANYA memblokir kategori non-dapur terlarang (otomotif, motor, mobil, las, skincare, gameplay, anime, vlog).
   if (productTitle && productTitle.trim()) {
-    const isVisualMode = Boolean(
-      options?.isVisualSearch ||
-      options?.imageUrl ||
-      options?.productImage ||
-      options?.isVideoFirst
-    );
     const prodInfo = extractCoreProductInfo(productTitle, metadata.description || '');
     const coreWords = prodInfo.multilingualWords || prodInfo.coreWords || [];
 
-    // Local check on video title, description, and tags against multilingual product words and cross-category exclusions
-    if (!isTitleMatchingProduct(metadata.title, coreWords, {
+    // Cek pengecualian kategori silang non-dapur terlarang
+    const crossCategoryPass = isTitleMatchingProduct(metadata.title, coreWords, {
       description: metadata.description,
       tags: metadata.tags,
-      isVisualSearch: isVisualMode
-    })) {
+      isVisualSearch: true, // Delegasikan verifikasi fisik produk detail ke AI Vision
+    });
+
+    if (!crossCategoryPass) {
       return {
         eligible: false,
-        reason: `Judul / deskripsi video YouTube ("${metadata.title}") tidak cocok dengan produk target ("${prodInfo.coreProductNoun}"). Dibutuhkan kecocokan kata kunci produk.`
+        reason: `Judul / deskripsi video YouTube ("${metadata.title}") terindikasi kategori silang yang dilarang (otomotif/skincare/anime/vlog).`
       };
     }
   }
@@ -444,14 +442,10 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 }
 
 /**
- * ── TAHAP 2: ANALISA LOKAL AREA 9:16 (0 TOKEN AI) ───────────────────────────
- * Memeriksa frame visual HANYA pada area tengah rasio 9:16.
- * CATATAN PENTING:
- * Di KEDUA project (clipper maupun YTCLIPER), bagian kiri dan kanan video 16:9
- * akan DIBUANG (di-crop keluar pada clipper, dan tertutup pilar pada YTCLIPER).
- * Oleh karena itu, jika ada watermark/logo di sayap kiri atau kanan, video
- * TETAP DITERIMA di kedua project karena bagian tersebut tidak akan tampil!
- * Yang diperiksa dan wajib 100% bersih hanyalah area tengah 9:16.
+ * ── TAHAP 2B: ANALISA LOKAL 9:16 (0 TOKEN AI, HEMAT KUOTA GEMINI) ─────────────
+ * Per instruksi pengguna: Verifikasi grafis visual (logo channel, watermark, stiker grafis,
+ * subtitle ucapan, dan teks mengambang) serta pencocokan produk diserahkan ke AI Vision.
+ * Backend memeriksa stream corrupt, mendeteksi intro pembuka untuk dibuang, dan mencatat diagnostik.
  */
 export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress = () => {} } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
@@ -594,13 +588,13 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
 
   if (isCornerLogo) {
     staticLogoCount = Math.max(topLeftPersistent, topRightPersistent, bottomLeftPersistent, bottomRightPersistent);
-    staticLogoReason = `Analisa visual lokal mendeteksi logo channel statis di area sudut frame 9:16 (TL:${topLeftPersistent}, TR:${topRightPersistent}, BL:${bottomLeftPersistent}, BR:${bottomRightPersistent} piksel persisten). Wajib video bersih tanpa logo channel!`;
+    staticLogoReason = `Analisa visual lokal mendeteksi logo channel statis di area sudut frame 9:16 (TL:${topLeftPersistent}, TR:${topRightPersistent}, BL:${bottomLeftPersistent}, BR:${bottomRightPersistent} piksel persisten).`;
   } else if (isWatermarkOverlay) {
     staticLogoCount = totalPersistent;
-    staticLogoReason = `Analisa visual lokal mendeteksi watermark / identitas channel statis di frame 9:16 (${totalPersistent} piksel persisten). Wajib video bersih tanpa watermark!`;
+    staticLogoReason = `Analisa visual lokal mendeteksi watermark / identitas channel statis di frame 9:16 (${totalPersistent} piksel persisten).`;
   } else if (isBoldLogo) {
     staticLogoCount = boldStaticLogoPairCount;
-    staticLogoReason = `Analisa visual lokal mendeteksi logo sudut statis kontras tinggi di frame 9:16 (${boldStaticLogoPairCount} perbandingan frame). Wajib video bersih tanpa logo!`;
+    staticLogoReason = `Analisa visual lokal mendeteksi logo sudut statis kontras tinggi di frame 9:16 (${boldStaticLogoPairCount} perbandingan frame).`;
   }
 
   // ── 3. PEMERIKSAAN PER-FRAME KONTEN (SUBTITLE, FLOATING TEXT, GRAFIS ANIMASI & WAJAH) ──
@@ -649,7 +643,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
           }
         }
 
-        // C. Grafis Animasi Overlay / Stiker Digital (Hyper-saturated synthetic colors)
+        // C. Grafis Animasi Overlay / Stiker Digital
         const isHyperSaturatedGraphic = (sat > 0.72 && val > 130 && (
           (r > 210 && g > 170 && b < 60) || // Emoji/cartoon yellow
           (r > 200 && g < 70 && b < 70) ||   // Pure graphic red
@@ -659,7 +653,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
         ));
         if (isHyperSaturatedGraphic) animatedGraphicPixels++;
 
-        // D. Wajah Manusia Alami di Area Atas 45% (Bukan kartun, bukan kayu meja)
+        // D. Wajah Manusia di Area Atas 45%
         if (y < faceEndY) {
           const isSkin = (
             r > 75 && g > 45 && b > 25 &&
@@ -688,65 +682,35 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
     }
   }
 
-  // ── AMBANG BATAS NOL TOLERANSI KETAT DENGAN ALASAN SPESIFIK & AKURAT ──
-
-  // 1. Tolak jika ada foto bumper / kartu slide statis di badan video (bukan sekadar intro pembuka)
-  const totalBumperFrames = openingBumperCount + bodyBumperCount;
-  if (bodyBumperCount >= 1 || totalBumperFrames >= 3) {
-    return {
-      eligible: false,
-      reason: `Analisa visual lokal mendeteksi video berupa slideshow foto diam / bumper statis (${totalBumperFrames} frame beku). Wajib video bergerak nyata!`
-    };
-  }
-
-  // 2. Tolak jika ada logo / watermark / identitas channel statis di area 9:16
+  // ── DELEGASI KE AI VISION: PENCATATAN DIAGNOSTIK NON-BLOCKING ──
+  // Per instruksi pengguna: Verifikasi grafis visual dan pencocokan produk di-handle AI Vision agar lebih stabil.
+  // Backend mencatat temuan heuristik sebagai info diagnostik dan tidak menolak video secara sepihak.
   if (staticLogoReason) {
-    return {
-      eligible: false,
-      reason: staticLogoReason
-    };
+    console.log(`[VideoFilter] Info diagnostik: ${staticLogoReason} -> Verifikasi grafis/logo diserahkan ke AI Vision.`);
   }
-
-  // 3. Pengecekan grafis animasi overlay / stiker digital di area 9:16
-  // Catatan: Bahan masakan & alat dapur asli (tomat merah, lemon kuning, sayuran hijau, spatula silikon)
-  // memiliki warna saturasi tinggi alami dan BUKAN grafis animasi!
-  // Pemeriksaan semantik stiker kartun/animasi vs produk fisik nyata diserahkan ke AI Gemini (Tahap 3)
-  // dengan aturan ketat: hanya ditolak jika grafis animasi berada di dalam frame 9:16 tengah.
-  if (animatedGraphicCount >= 8) {
-    console.log(`[VideoFilter] Info: Terdeteksi piksel saturasi tinggi pada ${animatedGraphicCount} frame di area 9:16, verifikasi semantik dilanjutkan ke AI Gemini.`);
-  }
-
-  // 4. Tolak jika ada teks subtitle bawaan (>= 2 frame terdeteksi)
   if (subtitleBandCount >= 2) {
-    return {
-      eligible: false,
-      reason: `Analisa visual lokal mendeteksi teks subtitle ucapan bawaan pada area bawah 9:16 (${subtitleBandCount} frame). Wajib video bersih tanpa subtitle!`
-    };
+    console.log(`[VideoFilter] Info diagnostik: Terdeteksi piksel terang di area bawah pada ${subtitleBandCount} frame -> Verifikasi subtitle diserahkan ke AI Vision.`);
   }
-
-  // 5. Tolak jika ada teks mengambang / stiker teks editan (>= 2 frame terdeteksi)
   if (floatingTextCount >= 2) {
-    return {
-      eligible: false,
-      reason: `Analisa visual lokal mendeteksi teks mengambang / stiker teks promo editan pada area tengah 9:16 (${floatingTextCount} frame). Wajib video bersih tanpa teks mengambang!`
-    };
+    console.log(`[VideoFilter] Info diagnostik: Terdeteksi tekstur teks pada ${floatingTextCount} frame -> Verifikasi teks diserahkan ke AI Vision.`);
+  }
+  if (animatedGraphicCount >= 2) {
+    console.log(`[VideoFilter] Info diagnostik: Terdeteksi saturasi grafis pada ${animatedGraphicCount} frame -> Verifikasi grafis diserahkan ke AI Vision.`);
+  }
+  if (humanFaceSkinCount > 0) {
+    console.log(`[VideoFilter] Info diagnostik: Terdeteksi rona kulit pada ${humanFaceSkinCount} frame -> Verifikasi faceless diserahkan ke AI Vision.`);
+  }
+  const totalBumperFrames = openingBumperCount + bodyBumperCount;
+  if (bodyBumperCount >= 3) {
+    console.log(`[VideoFilter] Info diagnostik: Terdeteksi ${bodyBumperCount} frame diam -> Verifikasi keaslian video diserahkan ke AI Vision.`);
   }
 
-  // 6. Tolak jika wajah manusia muncul lebih dari 5 frame (> 5 frame terdeteksi, batas maksimal toleransi 1-5 frame)
-  // Kemunculan wajah sesekali (1-5 frame) ditoleransi lokal (scene wajah akan dibuang oleh AI & backend)
-  if (humanFaceSkinCount > 5) {
-    return {
-      eligible: false,
-      reason: `Analisa visual lokal mendeteksi keberadaan wajah manusia melebihi batas toleransi (${humanFaceSkinCount} frame, batas maks 5 frame). Wajib video peragaan produk tangan yang bersih!`
-    };
-  }
-
-  // 7. Tolak jika mayoritas frame blank / hitam
+  // Hanya tolak jika mayoritas frame blank / hitam pekat (> 75%) yang menandakan stream corrupt
   const blackRatio = blackFrameCount / frameBuffers.length;
-  if (blackRatio > 0.35) {
+  if (blackRatio > 0.75) {
     return {
       eligible: false,
-      reason: `Analisa visual lokal mendeteksi terlalu banyak frame hitam / kosong (${Math.round(blackRatio * 100)}% frame).`
+      reason: `Analisa visual lokal mendeteksi video kosong / rusak (${Math.round(blackRatio * 100)}% frame hitam pekat).`
     };
   }
 
@@ -756,6 +720,9 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
     introCutoffSec: openingBumperCount > 0 ? 5.0 : 0,
     hasOccasionalFace: humanFaceSkinCount > 0,
     faceFrameCount: humanFaceSkinCount,
+    hasStaticLogo: Boolean(staticLogoReason),
+    hasSubtitles: subtitleBandCount >= 2,
+    hasFloatingText: floatingTextCount >= 2,
+    hasAnimatedGraphic: animatedGraphicCount >= 2,
   };
 }
-

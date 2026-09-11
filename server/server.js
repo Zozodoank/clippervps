@@ -1158,7 +1158,7 @@ export async function runStage1Pipeline({
         candidateIntroCutoff = localCheck.introCutoffSec || 5.0;
         console.log(`[Job ${jobId}] ℹ️ Intro bumper pembuka terdeteksi (${candidateIntroCutoff}s). AI & backend akan membuang detik awal ini.`);
       }
-      console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Area 9:16 bersih dari bumper, logo statis, grafis, teks & wajah.`);
+      console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Frame visual valid. Verifikasi grafis visual, logo, subtitle, faceless & kecocokan produk diserahkan ke AI Vision.`);
 
       // ── JALUR 1: GOOGLE GEMINI NATIVE YOUTUBE STREAM (0 MB KUOTA LOKAL, 1.500 REQ/HARI) ──
       const reqEngine = (options.aiProvider || aiProvider || process.env.ACTIVE_AI_ENGINE || '').toLowerCase();
