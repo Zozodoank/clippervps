@@ -351,7 +351,14 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOL
 
 CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
 - The backend generates and burns its own clean, animated subtitles.
-- REJECT IMMEDIATELY if speech dialogue captions, translated subtitles, lyric bars, running dialogue text, FLOATING PROMOTIONAL TEXT (e.g. price tags, discount callouts, feature arrows, Chinese floating text, text stickers), or ANIMATED GRAPHIC OVERLAYS (e.g. cartoon stickers, emojis, animated transition graphics, subscribe banners) are visible anywhere inside the central 9:16 frame!
+- 9:16 CROP TOLERANCE MANDATE FOR ANIMATED GRAPHICS & OVERLAYS (CRITICAL):
+  * SAMA SEPERTI ATURAN LOGO/WATERMARK PADA CRITERION 2: Bagian video yang akan dipakai hanyalah area tengah vertikal rasio 9:16. Area sayap kiri (0-25%) dan sayap kanan (75-100%) AKAN TERPOTONG HABIS (CROPPED OUT) atau tertutup pilar background!
+  * JIKA ADA GRAFIS ANIMASI, STIKER KARTUN, EMOJI, BANNER SUBSCRIBE, ATAU OVERLAY DI SAYAP KIRI ATAU KANAN (DI LUAR FRAME 9:16 TENGAH): 100% DITERIMA (status: 'accept')! JANGAN PERNAH MENOLAK VIDEO KARENA GRAFIS DI LUAR FRAME 9:16!
+  * GRAFIS ANIMASI AKAN TERTOLAK HANYA JIKA ADA DI FRAME 9:16 TENGAH:
+    TOLAK HANYA JIKA grafis animasi overlay, stiker kartun, emoji, atau elemen grafis buatan MASUK ATAU MENETAP DI DALAM FRAME 9:16 TENGAH dan menutupi peragaan produk fisik secara terus-menerus.
+  * TRANSIENT ANIMATION / TRANSITION TOLERANCE (CRITICAL MANDATE):
+    - Jika grafis animasi, stiker, atau efek transisi pop-up HANYA MUNCUL SEKILAS 1-2 DETIK di dalam frame 9:16: JANGAN TOLAK VIDEONYA! Video TETAP DITERIMA (status: 'accept').
+    - AI WAJIB MEMBUANG DETIK TERSEBUT dengan cara HANYA memilih timestamps klip yang bersih dari animasi.
 - OPENING INTRO BUMPER / TITLE CARD TOLERANCE (CRITICAL MANDATE):
   * JIKA VIDEO MEMILIKI KARTU INTRO / BUMPER PEMBUKA / LOGO CHANNEL ANIMASI DI DETIK 0 SAMPAI DETIK 5: JANGAN DITOLAK!
   * Video TETAP DITERIMA (status: 'accept') asalkan bagian peragaan produk setelahnya bersih dan faceless.
@@ -359,7 +366,8 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAY
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
 - REJECT ONLY IF:
   * Kartu bumper foto / slide diam mendominasi isi tengah video (video berupa kumpulan foto/slideshow statis).
-  * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik.
+  * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
+  * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
 - ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable.
 
 CRITERION 4: FACE DISCARD RULE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISCARD ALL FACES)
@@ -430,7 +438,7 @@ If REJECTED:
   "hasFloatingTextIn916Frame": false,
   "hasOnlyPhysicalProductText": false,
   "isAiGeneratedOrSynthetic": false,
-  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker pada video' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
+  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker di dalam frame 9:16 tengah' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
 }
 
 CRITICAL RULES FOR REJECTION OUTPUT:
@@ -521,7 +529,10 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   const reasonText = String(parsed.reason || parsed.rejectionReason || '').trim();
   const reasonLower = reasonText.toLowerCase();
 
-  const mentionsGraphicInReason = reasonLower.includes('animasi') || reasonLower.includes('grafis') || reasonLower.includes('overlay') || reasonLower.includes('stiker') || reasonLower.includes('kartun');
+  const mentionsGraphicInReason = isRejectStatus &&
+    (reasonLower.includes('animasi') || reasonLower.includes('grafis') || reasonLower.includes('overlay') || reasonLower.includes('stiker') || reasonLower.includes('kartun')) &&
+    (reasonLower.includes('9:16') || reasonLower.includes('tengah') || reasonLower.includes('menutupi') || reasonLower.includes('center')) &&
+    !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16') && !reasonLower.includes('tidak ada animasi') && !reasonLower.includes('bebas animasi');
   const mentionsBumperInReason = reasonLower.includes('bumper') || reasonLower.includes('intro card') || reasonLower.includes('opening card') || reasonLower.includes('slide statis');
   const mentionsFaceInReason = reasonLower.includes('wajah') || reasonLower.includes('face') || reasonLower.includes('manusia') || reasonLower.includes('orang');
   const mentionsWatermarkInFrame = isRejectStatus && (reasonLower.includes('watermark') || reasonLower.includes('capcut')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
@@ -761,7 +772,14 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOL
 
 CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
 - The backend generates and burns its own clean, animated subtitles.
-- REJECT IMMEDIATELY if speech dialogue captions, translated subtitles, lyric bars, running dialogue text, FLOATING PROMOTIONAL TEXT (e.g. price tags, discount callouts, feature arrows, Chinese floating text, text stickers), or ANIMATED GRAPHIC OVERLAYS (e.g. cartoon stickers, emojis, animated transition graphics, subscribe banners) are visible anywhere inside the central 9:16 frame!
+- 9:16 CROP TOLERANCE MANDATE FOR ANIMATED GRAPHICS & OVERLAYS (CRITICAL):
+  * SAMA SEPERTI ATURAN LOGO/WATERMARK PADA CRITERION 2: Bagian video yang akan dipakai hanyalah area tengah vertikal rasio 9:16. Area sayap kiri (0-25%) dan sayap kanan (75-100%) AKAN TERPOTONG HABIS (CROPPED OUT) atau tertutup pilar background!
+  * JIKA ADA GRAFIS ANIMASI, STIKER KARTUN, EMOJI, BANNER SUBSCRIBE, ATAU OVERLAY DI SAYAP KIRI ATAU KANAN (DI LUAR FRAME 9:16 TENGAH): 100% DITERIMA (status: 'accept')! JANGAN PERNAH MENOLAK VIDEO KARENA GRAFIS DI LUAR FRAME 9:16!
+  * GRAFIS ANIMASI AKAN TERTOLAK HANYA JIKA ADA DI FRAME 9:16 TENGAH:
+    TOLAK HANYA JIKA grafis animasi overlay, stiker kartun, emoji, atau elemen grafis buatan MASUK ATAU MENETAP DI DALAM FRAME 9:16 TENGAH dan menutupi peragaan produk fisik secara terus-menerus.
+  * TRANSIENT ANIMATION / TRANSITION TOLERANCE (CRITICAL MANDATE):
+    - Jika grafis animasi, stiker, atau efek transisi pop-up HANYA MUNCUL SEKILAS 1-2 DETIK di dalam frame 9:16: JANGAN TOLAK VIDEONYA! Video TETAP DITERIMA (status: 'accept').
+    - AI WAJIB MEMBUANG DETIK TERSEBUT dengan cara HANYA memilih timestamps klip yang bersih dari animasi.
 - OPENING INTRO BUMPER / TITLE CARD TOLERANCE (CRITICAL MANDATE):
   * JIKA VIDEO MEMILIKI KARTU INTRO / BUMPER PEMBUKA / LOGO CHANNEL ANIMASI DI DETIK 0 SAMPAI DETIK 5: JANGAN DITOLAK!
   * Video TETAP DITERIMA (status: 'accept') asalkan bagian peragaan produk setelahnya bersih dan faceless.
@@ -769,7 +787,8 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAY
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
 - REJECT ONLY IF:
   * Kartu bumper foto / slide diam mendominasi isi tengah video (video berupa kumpulan foto/slideshow statis).
-  * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik.
+  * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
+  * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
 - Physical text/button markings printed/embossed directly on the physical product body ("Power", "ON/OFF", "500ml") are 100% ACCEPTABLE.
 
 CRITERION 4: FACE DISCARD RULE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISCARD ALL FACES)
@@ -840,7 +859,7 @@ If REJECTED:
   "hasFloatingTextIn916Frame": false,
   "hasOnlyPhysicalProductText": false,
   "isAiGeneratedOrSynthetic": false,
-  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker pada video' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
+  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker di dalam frame 9:16 tengah' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
 }
 
 CRITICAL RULES FOR REJECTION OUTPUT:
@@ -911,7 +930,10 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     const reasonLower = reasonText.toLowerCase();
 
     // Check if the reason explicitly cites violations inside the 9:16 frame
-    const mentionsGraphicInReason = reasonLower.includes('animasi') || reasonLower.includes('grafis') || reasonLower.includes('overlay') || reasonLower.includes('stiker') || reasonLower.includes('kartun');
+    const mentionsGraphicInReason = isRejectStatus &&
+      (reasonLower.includes('animasi') || reasonLower.includes('grafis') || reasonLower.includes('overlay') || reasonLower.includes('stiker') || reasonLower.includes('kartun')) &&
+      (reasonLower.includes('9:16') || reasonLower.includes('tengah') || reasonLower.includes('menutupi') || reasonLower.includes('center')) &&
+      !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16') && !reasonLower.includes('tidak ada animasi') && !reasonLower.includes('bebas animasi');
     const mentionsBumperInReason = reasonLower.includes('bumper') || reasonLower.includes('intro card') || reasonLower.includes('opening card') || reasonLower.includes('slide statis');
     const mentionsFaceInReason = reasonLower.includes('wajah') || reasonLower.includes('face') || reasonLower.includes('manusia') || reasonLower.includes('orang');
     const mentionsWatermarkInFrame = isRejectStatus && (reasonLower.includes('watermark') || reasonLower.includes('capcut')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
@@ -1208,6 +1230,12 @@ RULE 5: WATERMARKS, SOCIAL MEDIA LOGOS & CHANNEL IDENTITIES (9:16 CROP TOLERANCE
 - PHYSICAL PRODUCT BRANDING IS FULLY ACCEPTABLE:
   * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
+RULE 5B: ANIMATED GRAPHICS, STICKERS & OVERLAYS (9:16 CROP TOLERANCE RULE):
+- Area sayap kiri dan kanan di luar frame tengah 9:16 akan terpotong habis atau tertutup pilar.
+- Jika stiker kartun, animasi, emoji, banner subscribe, atau overlay grafis berada di sayap KIRI atau KANAN (di luar area 9:16 tengah): TETAP DITERIMA (100% ACCEPTABLE)! JANGAN DITOLAK!
+- Grafis animasi AKAN TERTOLAK HANYA JIKA ADA DI DALAM FRAME 9:16 TENGAH dan menutupi peragaan produk.
+- Jika pada frame tertentu terdapat grafis animasi/transisi sekilas di dalam 9:16, AI CUKUP MEMBUANG frame tersebut dan TIDAK memasukkannya ke dalam daftar "frames" terpilih.
+
 CRITERIA FOR ACCEPTANCE (ALL MUST BE TRUE):
 1. Functionally & physically matches target product: "${coreNoun}" (${effectiveTitle}).
 2. Clean Hands-On Demonstration in Selected Frames: Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.
@@ -1255,7 +1283,7 @@ If REJECTED:
   "hasFloatingTextIn916Frame": false,
   "hasOnlyPhysicalProductText": false,
   "isAiGeneratedOrSynthetic": false,
-  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker pada video' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
+  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker di dalam frame 9:16 tengah' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
 }
 
 CRITICAL RULES FOR REJECTION OUTPUT:
@@ -1380,7 +1408,10 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const reasonText = String(parsed.reason || parsed.rejectionReason || '').trim();
       const reasonLower = reasonText.toLowerCase();
 
-      const mentionsGraphicInReason = reasonLower.includes('animasi') || reasonLower.includes('grafis') || reasonLower.includes('overlay') || reasonLower.includes('stiker') || reasonLower.includes('kartun');
+      const mentionsGraphicInReason = isRejectStatus &&
+        (reasonLower.includes('animasi') || reasonLower.includes('grafis') || reasonLower.includes('overlay') || reasonLower.includes('stiker') || reasonLower.includes('kartun')) &&
+        (reasonLower.includes('9:16') || reasonLower.includes('tengah') || reasonLower.includes('menutupi') || reasonLower.includes('center')) &&
+        !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16') && !reasonLower.includes('tidak ada animasi') && !reasonLower.includes('bebas animasi');
       const mentionsBumperInReason = reasonLower.includes('bumper') || reasonLower.includes('intro card') || reasonLower.includes('opening card') || reasonLower.includes('slide statis');
       const mentionsFaceInReason = reasonLower.includes('wajah') || reasonLower.includes('face') || reasonLower.includes('manusia') || reasonLower.includes('orang');
       const mentionsSubtitlesInReason = reasonLower.includes('subtitle') || reasonLower.includes('caption') || reasonLower.includes('teks berjalan') || reasonLower.includes('terjemahan') || reasonLower.includes('teks mengambang') || reasonLower.includes('floating text') || reasonLower.includes('stiker teks') || reasonLower.includes('teks promo') || reasonLower.includes('tulisan');

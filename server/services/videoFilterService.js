@@ -435,7 +435,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
     const res = spawnSync(ffmpeg, [
       '-y',
       '-i', f.filePath,
-      '-vf', `crop=w=iw*0.5:h=ih:x=iw*0.25:y=0,scale=${W}:${H}`,
+      '-vf', `crop=w='min(iw,ih*9/16)':h='min(ih,iw*16/9)':x='(iw-ow)/2':y='(ih-oh)/2',scale=${W}:${H}`,
       '-f', 'rawvideo',
       '-pix_fmt', 'rgb24',
       '-'
@@ -663,12 +663,13 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
     };
   }
 
-  // 3. Tolak jika ada grafis animasi overlay / stiker kartun
-  if (animatedGraphicCount >= 2) {
-    return {
-      eligible: false,
-      reason: `Analisa visual lokal mendeteksi grafis animasi overlay / stiker digital di frame 9:16 (${animatedGraphicCount} frame). Wajib video produk fisik asli tanpa grafis animasi tempelan!`
-    };
+  // 3. Pengecekan grafis animasi overlay / stiker digital di area 9:16
+  // Catatan: Bahan masakan & alat dapur asli (tomat merah, lemon kuning, sayuran hijau, spatula silikon)
+  // memiliki warna saturasi tinggi alami dan BUKAN grafis animasi!
+  // Pemeriksaan semantik stiker kartun/animasi vs produk fisik nyata diserahkan ke AI Gemini (Tahap 3)
+  // dengan aturan ketat: hanya ditolak jika grafis animasi berada di dalam frame 9:16 tengah.
+  if (animatedGraphicCount >= 8) {
+    console.log(`[VideoFilter] Info: Terdeteksi piksel saturasi tinggi pada ${animatedGraphicCount} frame di area 9:16, verifikasi semantik dilanjutkan ke AI Gemini.`);
   }
 
   // 4. Tolak jika ada teks subtitle bawaan (>= 2 frame terdeteksi)
