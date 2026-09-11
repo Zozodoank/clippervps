@@ -70,7 +70,13 @@ goto MENU
 :RUN_INTERACTIVE
 cls
 echo =====================================================================
-echo 🚀 MENJALANKAN DEV-RUNNER LIVE DI VPS...
+echo 🔄 [1/2] MEMERIKSA UPDATE DARI REPOSITORY GITHUB TERBARU...
+echo =====================================================================
+echo.
+ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "cd ~/clipperVPS && git fetch origin main && git pull origin main"
+echo.
+echo =====================================================================
+echo 🚀 [2/2] MENJALANKAN DEV-RUNNER LIVE DI VPS...
 echo =====================================================================
 echo Tips:
 echo 1. Port 3000 dan 5000 di-forward otomatis ke PC Anda!
@@ -134,10 +140,10 @@ goto MENU
 :RESTART_SERVICE
 cls
 echo =====================================================================
-echo 🔄 MERESTART SERVICE CLIPPER DI VPS...
+echo 🔄 MEMERIKSA UPDATE REPO & MERESTART SERVICE DI VPS...
 echo =====================================================================
 echo.
-ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 restart all && pm2 list"
+ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "cd ~/clipperVPS && git fetch origin main && git pull origin main && pm2 restart all && pm2 list"
 echo.
 echo Selesai!
 pause
