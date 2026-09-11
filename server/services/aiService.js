@@ -266,6 +266,71 @@ export function isQuotaError(err) {
 }
 
 /**
+ * Resolves an image source (data URI, local file path, or remote URL)
+ * into a base64 string and MIME type for AI multimodal vision input.
+ */
+export async function resolveImageBufferAndBase64(imageSource) {
+  if (!imageSource || typeof imageSource !== 'string') return null;
+
+  try {
+    const trimmed = imageSource.trim();
+
+    // 1. Data URI (e.g. data:image/jpeg;base64,...)
+    if (trimmed.startsWith('data:image/')) {
+      const match = trimmed.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+      if (match) {
+        return {
+          mimeType: match[1],
+          base64: match[2],
+          dataUri: trimmed,
+        };
+      }
+    }
+
+    // 2. Local file path
+    if (fs.existsSync(trimmed)) {
+      const buf = fs.readFileSync(trimmed);
+      if (buf.length > 50) {
+        const ext = path.extname(trimmed).toLowerCase().replace('.', '');
+        const mimeType = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
+        const b64 = buf.toString('base64');
+        return {
+          mimeType,
+          base64: b64,
+          dataUri: `data:${mimeType};base64,${b64}`,
+        };
+      }
+    }
+
+    // 3. Web URL (http / https)
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
+      const res = await fetch(trimmed, {
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res && res.ok) {
+        const arrayBuf = await res.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        if (buf.length > 100) {
+          const contentType = res.headers.get('content-type') || 'image/jpeg';
+          const mimeType = contentType.split(';')[0].trim() || 'image/jpeg';
+          const b64 = buf.toString('base64');
+          return {
+            mimeType,
+            base64: b64,
+            dataUri: `data:${mimeType};base64,${b64}`,
+          };
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[resolveImageBufferAndBase64] Gagal memuat referensi foto produk: ${err.message}`);
+  }
+  return null;
+}
+
+/**
  * Stage 1 Jalur 1: Analyzes a public YouTube video directly via Google Gemini API using native video streaming (fileUri).
  * Zero download on local server, zero FFmpeg frame extraction, zero base64 payload.
  */
@@ -274,6 +339,7 @@ export async function analyzeYouTubeVideoWithGemini({
   apiKey,
   productTitle,
   productDescription,
+  productImage = '',
   shopeeLink,
   sceneDuration = 3.3,
   allowFallbackClips = false,
@@ -298,11 +364,31 @@ export async function analyzeYouTubeVideoWithGemini({
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
   const effectiveDesc = (productDescription || '').trim();
 
+  let refImageInlineData = null;
+  if (productImage) {
+    try {
+      const resolvedImg = await resolveImageBufferAndBase64(productImage);
+      if (resolvedImg?.base64) {
+        refImageInlineData = {
+          inlineData: {
+            data: resolvedImg.base64,
+            mimeType: resolvedImg.mimeType || 'image/jpeg',
+          },
+        };
+        console.log(`[Gemini YouTube Stream] Menambahkan foto referensi produk Shopee (${resolvedImg.mimeType}) untuk verifikasi visual AI.`);
+      }
+    } catch (imgErr) {
+      console.warn(`[Gemini YouTube Stream] Gagal memuat foto referensi produk: ${imgErr.message}`);
+    }
+  }
+
   onProgress({
     step: 'gemini_vision',
     message: isVideoFirstMode
       ? `Google Gemini 3.6 Flash menganalisa stream video YouTube (Mode: Video-First Discovery)...`
-      : 'Google Gemini 3.6 Flash menganalisa stream video langsung dari YouTube (0 MB kuota lokal)...',
+      : (refImageInlineData
+          ? 'Google Gemini 3.6 Flash menganalisa stream video YouTube & membandingkan dengan foto produk Shopee...'
+          : 'Google Gemini 3.6 Flash menganalisa stream video langsung dari YouTube (0 MB kuota lokal)...'),
     progress: 46,
   });
 
@@ -326,11 +412,21 @@ CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TO
 CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
+${refImageInlineData ? `
+- ATTACHED REFERENCE PRODUCT PHOTO (OFFICIAL SHOPEE TARGET):
+  * You are provided with the official reference image of the target product.
+  * Carefully compare the physical product demonstrated in the YouTube video directly against this Reference Photo.
+  * The physical tool demonstrated MUST match the same physical mechanism, appearance, and function as shown in the reference photo.
+  * Minor variations in brand logo on chassis, color accent, or button styling are 100% ACCEPTABLE for affiliate product promotions.
+  * If the video shows a completely different product or category, reject immediately:
+    {"status": "reject", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan foto produk target"}
+` : `
 - Does the item demonstrated in the video physically and functionally match this product category/tool?
 - ACCEPTANCE STANDARD:
   * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, etc.) that comfortably fit in the central 9:16 vertical crop.
   * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
   * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
+`}
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
@@ -473,15 +569,20 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       });
 
       trackBandwidth('aiRequests', 2500, `Gemini YouTube Stream (${modelName})`);
-      const result = await model.generateContent([
+      const contentParts = [
         {
           fileData: {
             fileUri: youtubeUrl,
             mimeType: 'video/mp4',
           },
         },
-        { text: videoPrompt },
-      ]);
+      ];
+      if (refImageInlineData) {
+        contentParts.push(refImageInlineData);
+      }
+      contentParts.push({ text: videoPrompt });
+
+      const result = await model.generateContent(contentParts);
 
       const rawText = result.response.text();
       console.log(`[Gemini YouTube Stream ${modelName}] Response:`, rawText);
@@ -658,6 +759,7 @@ export async function analyzeVideoWithGeminiFileApi({
   apiKey,
   productTitle,
   productDescription,
+  productImage = '',
   shopeeLink,
   sceneDuration = 3.3,
   allowFallbackClips = false,
@@ -680,6 +782,24 @@ export async function analyzeVideoWithGeminiFileApi({
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
   const effectiveDesc = (productDescription || '').trim();
+
+  let refImageInlineData = null;
+  if (productImage) {
+    try {
+      const resolvedImg = await resolveImageBufferAndBase64(productImage);
+      if (resolvedImg?.base64) {
+        refImageInlineData = {
+          inlineData: {
+            data: resolvedImg.base64,
+            mimeType: resolvedImg.mimeType || 'image/jpeg',
+          },
+        };
+        console.log(`[Gemini File API] Menambahkan foto referensi produk Shopee (${resolvedImg.mimeType}) untuk verifikasi visual AI.`);
+      }
+    } catch (imgErr) {
+      console.warn(`[Gemini File API] Gagal memuat foto referensi produk: ${imgErr.message}`);
+    }
+  }
 
   let totalDuration = 60;
   try {
@@ -883,15 +1003,20 @@ CRITICAL RULES FOR REJECTION OUTPUT:
           },
         });
 
-        const result = await model.generateContent([
+        const contentParts = [
           {
             fileData: {
               mimeType: uploadResponse.file.mimeType,
               fileUri: uploadResponse.file.uri,
             },
           },
-          { text: videoPrompt },
-        ]);
+        ];
+        if (refImageInlineData) {
+          contentParts.push(refImageInlineData);
+        }
+        contentParts.push({ text: videoPrompt });
+
+        const result = await model.generateContent(contentParts);
 
         const rawText = result.response.text();
         console.log(`[Gemini File API ${modelName}] Response:`, rawText);
@@ -1074,6 +1199,7 @@ export async function selectHighlightWithAI({
   videoMetadata,
   productTitle,
   productDescription,
+  productImage = '',
   shopeeLink,
   sceneDuration = 3.3,
   allowFallbackClips = false,
@@ -1096,6 +1222,7 @@ export async function selectHighlightWithAI({
         apiKey,
         productTitle,
         productDescription,
+        productImage,
         shopeeLink,
         sceneDuration,
         allowFallbackClips,
@@ -1113,6 +1240,7 @@ export async function selectHighlightWithAI({
         apiKey,
         productTitle,
         productDescription,
+        productImage,
         shopeeLink,
         sceneDuration,
         allowFallbackClips,
@@ -1144,6 +1272,18 @@ export async function selectHighlightWithAI({
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || videoMetadata?.title || '').trim() || coreNoun;
   const effectiveDesc = productDescription || videoMetadata?.description || '';
+
+  let resolvedRefImage = null;
+  if (productImage) {
+    try {
+      resolvedRefImage = await resolveImageBufferAndBase64(productImage);
+      if (resolvedRefImage) {
+        console.log(`[selectHighlightWithAI] Menambahkan foto referensi produk Shopee (${resolvedRefImage.mimeType}) sebagai Gambar #1.`);
+      }
+    } catch (imgErr) {
+      console.warn(`[selectHighlightWithAI] Gagal memuat foto referensi produk: ${imgErr.message}`);
+    }
+  }
 
   const systemPrompt = `You are an expert Short-Form Affiliate Video QC Director specializing in Shopee Video FYP Algorithms.
 Evaluate the ${frames.length} sampled frames of the source video for the target Shopee product: "${coreNoun}" (Listing: "${effectiveTitle}").
@@ -1306,6 +1446,15 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
   const userPrompt = `Target Shopee Product: "${effectiveTitle}"
 ${effectiveDesc ? `Product Description: "${effectiveDesc}"` : ''}
+${resolvedRefImage ? `[OFFICIAL REFERENCE PRODUCT PHOTO (SHOPEE LISTING) ATTACHED AS IMAGE #1]:
+Image #1 is the OFFICIAL REFERENCE PHOTO of the target product from the Shopee listing.
+The subsequent ${evalFrames.length} images are sampled frames from the candidate video.
+Carefully compare the candidate video frames directly against the reference product in Image #1:
+- The physical item demonstrated in the video frames MUST match or be the same product / OEM equivalent as shown in Image #1.
+- Minor variations in brand logo on chassis, color accent, or button placement are 100% ACCEPTABLE.
+- If the video shows a completely DIFFERENT product or category, output:
+  {"status": "reject", "detectedProduct": "<nama produk>", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan foto produk target"}
+` : ''}
 Total Duration: ${totalDuration}s
 Sampled Frames:
 ${evalFrames.map((f, i) => `#${i + 1} (${f.timeFormatted})`).join(', ')}
@@ -1329,14 +1478,27 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 
   const messageContent = [
     { type: 'text', text: userPrompt },
+  ];
+
+  if (resolvedRefImage) {
+    messageContent.push({
+      type: 'image_url',
+      image_url: {
+        url: resolvedRefImage.dataUri,
+        detail: 'low',
+      },
+    });
+  }
+
+  messageContent.push(
     ...evalFrames.map((f) => ({
       type: 'image_url',
       image_url: {
         url: f.base64,
         detail: 'low',
       },
-    })),
-  ];
+    }))
+  );
 
   const startTimeMs = Date.now();
   const heartbeat = setInterval(() => {

@@ -1034,7 +1034,7 @@ export async function runStage1Pipeline({
     // Tahap 1: Metadata Pre-Filter (0 kuota video, 0 token AI)
     // Tahap 2: Sampling 30 frame langsung dari stream URL via FFmpeg & Analisa Lokal 9:16 (~2MB kuota, 0 token AI)
     // Tahap 3: Verifikasi AI Vision (Quality Assurance Final, detail: 'low')
-    const evaluateCandidate = async (targetUrl, candidateLabel = '') => {
+    const evaluateCandidate = async (targetUrl, candidateLabel = '', candidateExtra = {}) => {
       // 1. Bersihkan frame lama agar tidak tertumpuk
       if (fs.existsSync(rawFramesDir)) {
         try {
@@ -1055,7 +1055,24 @@ export async function runStage1Pipeline({
         onProgress: updateProgress,
       });
 
-      const compliance = checkVideoMetadataCompliance(meta, productTitle, options);
+      const isVisualMode = Boolean(
+        options.isVisualSearch ||
+        options.imageUrl ||
+        options.productImage ||
+        effectiveProductImage ||
+        extraJobMeta?.isVisualSearch ||
+        options.isVideoFirst ||
+        candidateExtra?.isVisualSearch ||
+        candidateExtra?.source === 'bing_visual_search' ||
+        candidateExtra?.source === 'visual_ai_query'
+      );
+
+      const compliance = checkVideoMetadataCompliance(meta, productTitle, {
+        ...options,
+        isVisualSearch: isVisualMode,
+        productImage: effectiveProductImage,
+        imageUrl: effectiveProductImage,
+      });
       if (!compliance.eligible) {
         trackSavedBandwidth(35 * 1024 * 1024, `Hemat kuota (Filter 1 Metadata): ${compliance.reason}`);
         console.warn(`[Job ${jobId}] ⛔ [Filter 1/3 Ditolak] ${candidateLabel || targetUrl}: ${compliance.reason}`);
@@ -1159,6 +1176,7 @@ export async function runStage1Pipeline({
           apiKey,
           productTitle,
           productDescription,
+          productImage: effectiveProductImage,
           shopeeLink,
           sceneDuration,
           allowFallbackClips: !requireCleanGeminiPlan,
@@ -1228,6 +1246,7 @@ export async function runStage1Pipeline({
         videoMetadata: meta,
         productTitle,
         productDescription,
+        productImage: effectiveProductImage,
         shopeeLink,
         sceneDuration,
         allowFallbackClips: !requireCleanGeminiPlan,
@@ -1291,6 +1310,7 @@ export async function runStage1Pipeline({
           videoMetadata: videoMeta,
           productTitle,
           productDescription,
+          productImage: effectiveProductImage,
           shopeeLink,
           sceneDuration,
           allowFallbackClips: !requireCleanGeminiPlan,
@@ -1318,7 +1338,9 @@ export async function runStage1Pipeline({
     // Evaluasi video YouTube awal jika belum disetujui dari cache
     if (!approved && currentYoutubeUrl) {
       try {
-        const initialRes = await evaluateCandidate(currentYoutubeUrl);
+        const initialRes = await evaluateCandidate(currentYoutubeUrl, '', {
+          isVisualSearch: Boolean(effectiveProductImage),
+        });
         highlight = initialRes.highlight;
         videoMeta = initialRes.videoMeta;
         previewVideoPath = initialRes.previewVideoPath;
@@ -1420,7 +1442,7 @@ export async function runStage1Pipeline({
         });
 
         try {
-          const candRes = await evaluateCandidate(candidate.url, candLabel);
+          const candRes = await evaluateCandidate(candidate.url, candLabel, candidate);
           highlight = candRes.highlight;
           videoMeta = candRes.videoMeta;
           previewVideoPath = candRes.previewVideoPath;

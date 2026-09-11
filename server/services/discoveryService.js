@@ -1398,7 +1398,7 @@ export async function searchVideosByProductImage({
       for (const c of bingVisualCandidates) {
         if (!seenIds.has(c.id)) {
           seenIds.add(c.id);
-          candidates.push(c);
+          candidates.push({ ...c, isVisualSearch: true });
         }
       }
 
@@ -1414,7 +1414,7 @@ export async function searchVideosByProductImage({
           for (const tv of tagVideos) {
             if (!seenIds.has(tv.id)) {
               seenIds.add(tv.id);
-              candidates.push(tv);
+              candidates.push({ ...tv, isVisualSearch: true });
             }
           }
         }
@@ -1456,7 +1456,7 @@ export async function searchVideosByProductImage({
           for (const item of multiResults) {
             if (!seenIds.has(item.id)) {
               seenIds.add(item.id);
-              candidates.push({ ...item, source: 'visual_ai_query' });
+              candidates.push({ ...item, source: 'visual_ai_query', isVisualSearch: true });
             }
           }
         }
@@ -1792,7 +1792,11 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
 
   // Flexible check: Candidate title, description, or tags MUST match core product keywords with cross-category exclusion
   if (Array.isArray(productWords) && productWords.length > 0) {
-    if (!isTitleMatchingProduct(candidate.title, productWords, { description: candidate.description, tags: candidate.tags })) {
+    if (!isTitleMatchingProduct(candidate.title, productWords, {
+      description: candidate.description,
+      tags: candidate.tags,
+      isVisualSearch: Boolean(candidate.isVisualSearch || candidate.source === 'bing_visual_search' || candidate.source === 'visual_ai_query')
+    })) {
       return false;
     }
   }
@@ -2285,7 +2289,13 @@ export function isTitleMatchingProduct(candidateTitle, productWords = [], extraM
     return false;
   }
 
-  if (!Array.isArray(productWords) || productWords.length === 0) return true;
+  // Visual Search / Image verification bypass:
+  // When candidates are found via Reverse Image Search, Bing Visual Search, Gemini Vision queries,
+  // or when an official product image is being verified, the title may be OEM / global English.
+  // We pass them through Filter 1 so AI Vision can verify physical product correspondence directly.
+  if (extraMeta?.isVisualSearch || extraMeta?.skipKeywordMatch || !Array.isArray(productWords) || productWords.length === 0) {
+    return true;
+  }
 
   // Normalize common Indonesian/English affiliate product synonyms
   const synonymMap = {

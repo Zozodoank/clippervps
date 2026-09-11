@@ -258,11 +258,21 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 
   // 7. Kesesuaian Kata Kunci Produk Target (Policy 1 & Policy 2: Core Noun & Multilingual Anchor Matching)
   if (productTitle && productTitle.trim()) {
+    const isVisualMode = Boolean(
+      options?.isVisualSearch ||
+      options?.imageUrl ||
+      options?.productImage ||
+      options?.isVideoFirst
+    );
     const prodInfo = extractCoreProductInfo(productTitle, metadata.description || '');
     const coreWords = prodInfo.multilingualWords || prodInfo.coreWords || [];
 
     // Local check on video title, description, and tags against multilingual product words and cross-category exclusions
-    if (!isTitleMatchingProduct(metadata.title, coreWords, { description: metadata.description, tags: metadata.tags })) {
+    if (!isTitleMatchingProduct(metadata.title, coreWords, {
+      description: metadata.description,
+      tags: metadata.tags,
+      isVisualSearch: isVisualMode
+    })) {
       return {
         eligible: false,
         reason: `Judul / deskripsi video YouTube ("${metadata.title}") tidak cocok dengan produk target ("${prodInfo.coreProductNoun}"). Dibutuhkan kecocokan kata kunci produk.`
