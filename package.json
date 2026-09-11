@@ -1,8 +1,8 @@
 {
-  "name": "local-ai-affiliate-clipper",
+  "name": "clipper-vps",
   "version": "1.0.0",
   "type": "module",
-  "description": "Local AI Affiliate Clipper - React + Node.js + FFmpeg + Aivene AI",
+  "description": "AI Affiliate Clipper VPS - React + Node.js + FFmpeg + Gemini AI (VPS Hosted)",
   "scripts": {
     "install:all": "npm --prefix server install && npm --prefix client install",
     "server": "npm --prefix server start",

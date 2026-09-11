@@ -1,8 +1,28 @@
-# 🎬 Local AI Affiliate Clipper
+# 🎬 AI Affiliate Clipper VPS
 
-A local web application built with **React (Vite)** and **Node.js (Express)** that automates transforming YouTube videos into viral, high-converting **9:16 vertical reels** for **Shopee Affiliate Marketing**.
+> 🚀 **Project Status: Deployed on Ubuntu 22.04 LTS VPS**  
+> Repository GitHub: [https://github.com/Zozodoank/clippervps.git](https://github.com/Zozodoank/clippervps.git)  
+> Server Host: `208.76.40.194` | SSH Port: `14115` | Managed by **PM2** & **Cloudflare Tunnel**
 
-Powered by **Google Gemini 3.6 Flash** as the default engine for faceless product clipping, crop focus, and Ad Advisor scripting, with **Aivene AI** as fallback, **yt-dlp**, and **FFmpeg** rendering with voiceover upload and synchronized subtitle burning.
+Web application berbasis **React (Vite)** dan **Node.js (Express)** yang bertugas mengotomatisasi pengubahan video YouTube menjadi **video reels vertikal 9:16 viral & high-converting** untuk promosi **Shopee Affiliate Marketing**. Seluruh pemrosesan berat (download YouTube 1080p, ekstraksi frame, FFmpeg rendering, dan AI vision) dijalankan di server VPS cloud.
+
+---
+
+## ⚡ Cara Menjalankan & Mengontrol VPS
+
+### 1. Dari Komputer / Laptop Windows (Metode Praktis)
+Cukup klik dua kali file **[`JALANKAN_VPS.cmd`](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/JALANKAN_VPS.cmd)** di folder ini:
+* **Menu [1]**: Jalankan aplikasi interaktif & otomatis forward port ke browser `http://localhost:3000`. Script otomatis memeriksa dan menarik update terbaru dari GitHub (`git fetch & git pull`) sebelum aplikasi dijalankan.
+* **Menu [2]**: Memantau log real-time server VPS (PM2).
+* **Menu [3]**: Menampilkan link publik Cloudflare Tunnel aktif.
+* **Menu [4]**: Membuka terminal bash VPS.
+
+### 2. Dari HP Android (Termux)
+Panduan lengkap menjalankan dan menghubungkan dari HP Android dapat dilihat di:  
+👉 **[CARA_JALANKAN_TERMUX.md](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/CARA_JALANKAN_TERMUX.md)**
+
+### 3. Akses Publik (Cloudflare Tunnel)
+Aplikasi selalu aktif di background server VPS dan dapat diakses dari browser manapun melalui URL HTTPS publik yang tercatat di file `.env` (`CLOUDFLARE_TUNNEL_URL`).
 
 ---
 
