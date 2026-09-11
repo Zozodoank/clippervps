@@ -2,10 +2,29 @@
 chcp 65001 >nul
 title LIVE MONITOR - CLIPPER VPS LOGS
 color 0A
+
+set "VPS_HOST=208.76.40.194"
+set "VPS_PORT=14115"
+set "VPS_USER=ubuntu"
+
+if exist ".env" (
+  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if "%%A"=="VPS_HOST" set "VPS_HOST=%%B"
+    if "%%A"=="VPS_PORT" set "VPS_PORT=%%B"
+    if "%%A"=="VPS_USER" set "VPS_USER=%%B"
+  )
+) else if exist "server\.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("server\.env") do (
+    if "%%A"=="VPS_HOST" set "VPS_HOST=%%B"
+    if "%%A"=="VPS_PORT" set "VPS_PORT=%%B"
+    if "%%A"=="VPS_USER" set "VPS_USER=%%B"
+  )
+)
+
 echo =====================================================================
-echo 📋 MENAMPILKAN LOG REAL-TIME DARI SERVER VPS (208.76.40.194)
+echo 📋 MENAMPILKAN LOG REAL-TIME DARI SERVER VPS (%VPS_HOST%:%VPS_PORT%)
 echo Tekan Ctrl+C untuk berhenti melihat log.
 echo =====================================================================
 echo.
-ssh -t -p 14115 ubuntu@208.76.40.194 "pm2 logs clipper"
+ssh -t -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 logs clipper"
 pause

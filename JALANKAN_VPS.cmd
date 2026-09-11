@@ -3,15 +3,37 @@ chcp 65001 >nul
 title CLIPPER VPS CONTROL PANEL & MONITOR
 color 0B
 
+set "VPS_HOST=208.76.40.194"
+set "VPS_PORT=14115"
+set "VPS_USER=ubuntu"
+set "VPS_PASSWORD=@Zozo06070786"
+
+rem Membaca nilai dari .env atau server/.env jika ada
+if exist ".env" (
+  for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if "%%A"=="VPS_HOST" set "VPS_HOST=%%B"
+    if "%%A"=="VPS_PORT" set "VPS_PORT=%%B"
+    if "%%A"=="VPS_USER" set "VPS_USER=%%B"
+    if "%%A"=="VPS_PASSWORD" set "VPS_PASSWORD=%%B"
+  )
+) else if exist "server\.env" (
+  for /f "usebackq tokens=1,* delims==" %%A in ("server\.env") do (
+    if "%%A"=="VPS_HOST" set "VPS_HOST=%%B"
+    if "%%A"=="VPS_PORT" set "VPS_PORT=%%B"
+    if "%%A"=="VPS_USER" set "VPS_USER=%%B"
+    if "%%A"=="VPS_PASSWORD" set "VPS_PASSWORD=%%B"
+  )
+)
+
 :MENU
 cls
 echo =====================================================================
 echo           🎬 LOCAL AI AFFILIATE CLIPPER - VPS CONTROL PANEL
 echo =====================================================================
-echo   IP Server : 208.76.40.194
-echo   SSH Port  : 14115
-echo   User      : ubuntu
-echo   Password  : @Zozo06070786  (Sudah auto-login via SSH Key)
+echo   IP Server : %VPS_HOST%
+echo   SSH Port  : %VPS_PORT%
+echo   User      : %VPS_USER%
+echo   Password  : %VPS_PASSWORD%  (Sudah auto-login via SSH Key)
 echo =====================================================================
 echo.
 echo   [1] 🚀 JALANKAN PROJECT INTERAKTIF (Live Terminal / Dev-Runner)
@@ -57,7 +79,7 @@ echo 3. Tekan Ctrl+C untuk berhenti dan kembali ke menu.
 echo =====================================================================
 echo.
 start "" "http://localhost:3000"
-ssh -t -L 3000:localhost:3000 -L 5000:localhost:5000 -p 14115 ubuntu@208.76.40.194 "pm2 stop clipper >/dev/null 2>&1; cd ~/clipperVPS && node dev-runner.js; pm2 start clipper >/dev/null 2>&1"
+ssh -t -L 3000:localhost:3000 -L 5000:localhost:5000 -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 stop clipper >/dev/null 2>&1; cd ~/clipperVPS && node dev-runner.js; pm2 start clipper >/dev/null 2>&1"
 echo.
 echo Dev-runner dihentikan. Background service otomatis diaktifkan kembali.
 pause
@@ -70,7 +92,7 @@ echo 📋 MENAMPILKAN LOG REAL-TIME (PM2 LOGS)...
 echo Tekan Ctrl+C untuk keluar dari tampilan log.
 echo =====================================================================
 echo.
-ssh -t -p 14115 ubuntu@208.76.40.194 "pm2 logs"
+ssh -t -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 logs"
 pause
 goto MENU
 
@@ -80,11 +102,11 @@ echo =====================================================================
 echo 🌐 MENGAMBIL LINK AKSES CLOUDFLARE TUNNEL DARI VPS...
 echo =====================================================================
 echo.
-ssh -p 14115 ubuntu@208.76.40.194 "pm2 logs tunnel --lines 50 --nostream | grep -o 'https://.*\.trycloudflare\.com' | tail -n 1" > "%TEMP%\vps_tunnel_url.txt"
+ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 logs tunnel --lines 50 --nostream | grep -o 'https://.*\.trycloudflare\.com' | tail -n 1" > "%TEMP%\vps_tunnel_url.txt"
 set /p TUNNEL_URL=<"%TEMP%\vps_tunnel_url.txt"
 if "%TUNNEL_URL%"=="" (
   echo Belum menemukan URL aktif. Menjalankan refresh tunnel...
-  ssh -p 14115 ubuntu@208.76.40.194 "pm2 restart tunnel && sleep 4 && pm2 logs tunnel --lines 40 --nostream | grep -o 'https://.*\.trycloudflare\.com' | tail -n 1" > "%TEMP%\vps_tunnel_url.txt"
+  ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 restart tunnel && sleep 4 && pm2 logs tunnel --lines 40 --nostream | grep -o 'https://.*\.trycloudflare\.com' | tail -n 1" > "%TEMP%\vps_tunnel_url.txt"
   set /p TUNNEL_URL=<"%TEMP%\vps_tunnel_url.txt"
 )
 echo.
@@ -105,7 +127,7 @@ echo 💻 MASUK KE SHELL VPS UBUNTU...
 echo Ketik 'exit' untuk kembali ke menu.
 echo =====================================================================
 echo.
-ssh -p 14115 ubuntu@208.76.40.194
+ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST%
 pause
 goto MENU
 
@@ -115,7 +137,7 @@ echo =====================================================================
 echo 🔄 MERESTART SERVICE CLIPPER DI VPS...
 echo =====================================================================
 echo.
-ssh -p 14115 ubuntu@208.76.40.194 "pm2 restart all && pm2 list"
+ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 restart all && pm2 list"
 echo.
 echo Selesai!
 pause
@@ -127,7 +149,7 @@ echo =====================================================================
 echo 📊 STATUS RESOURCE VPS
 echo =====================================================================
 echo.
-ssh -p 14115 ubuntu@208.76.40.194 "echo '=== RAM USAGE ==='; free -h; echo ''; echo '=== DISK USAGE ==='; df -h /; echo ''; echo '=== PM2 PROCESSES ==='; pm2 list"
+ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "echo '=== RAM USAGE ==='; free -h; echo ''; echo '=== DISK USAGE ==='; df -h /; echo ''; echo '=== PM2 PROCESSES ==='; pm2 list"
 echo.
 pause
 goto MENU
