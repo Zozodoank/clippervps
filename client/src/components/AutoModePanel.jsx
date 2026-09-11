@@ -13,7 +13,8 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
   const successfulJobs = run.successfulJobs || 0;
   const failedJobs = run.failedJobs || 0;
   const skippedProducts = run.skippedProducts || 0;
-  const maxJobs = run.maxJobs || 10;
+  const maxJobs = run.maxJobs || 'unlimited';
+  const isUnlimited = maxJobs === 'unlimited' || maxJobs === Infinity;
 
   const fetchKeywordStats = () => {
     fetch('/api/auto/keywords/stats')
@@ -81,7 +82,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          maxJobs: 10,
+          maxJobs: 'unlimited',
           niche: 'kitchen_tools',
           candidateDepth: { shopee: 5, youtube: 10 },
           options: {
@@ -133,7 +134,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Cari produk alat dapur Shopee asli + video YouTube faceless (tanpa lemari/rak besar), lalu buat Stage 1 otomatis sampai history siap voiceover.
+            Auto-Run Berkelanjutan: Mencari produk alat dapur Shopee & video YouTube faceless secara otomatis tanpa batas, stop otomatis hanya jika seluruh kuota model AI habis.
           </p>
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
@@ -142,7 +143,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
             </span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Unlimited Pool (Alat Dapur)</span>
+              <span>Mode Unlimited (Alat Dapur)</span>
             </span>
           </div>
         </div>
@@ -171,7 +172,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
       </div>
 
       <div className="mt-4 grid grid-cols-3 gap-2 text-center">
-        <Metric label="Sukses" value={`${successfulJobs}/${maxJobs}`} tone="emerald" />
+        <Metric label="Sukses" value={isUnlimited ? `${successfulJobs} video (∞)` : `${successfulJobs}/${maxJobs}`} tone="emerald" />
         <Metric label="Gagal" value={failedJobs} tone="red" />
         <Metric label="Skip" value={skippedProducts} tone="amber" />
       </div>

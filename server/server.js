@@ -1948,22 +1948,49 @@ function getLatestAutoRun() {
 
 async function runAutoStage1Worker(run) {
   try {
-    updateAutoRun(run, { status: 'running', message: 'Memulai pencarian produk viral Shopee...', progress: 5 });
-
-    // Thoroughly shuffle 1000+ keywords so each auto run picks varied, fresh product categories
-    const candidateKeywords = getAutoKeywords(1000, { excludeUsed: true, shuffle: true });
+    const isUnlimited = run.maxJobs === 'unlimited' || run.maxJobs === Infinity || !run.maxJobs;
+    updateAutoRun(run, {
+      status: 'running',
+      message: isUnlimited ? 'Memulai pipeline Auto Mode (Unlimited)...' : 'Memulai pencarian produk viral Shopee...',
+      progress: 5,
+    });
 
     const seenShopeeUrls = new Set();
     const usedYouTubeVideoIds = getAllUsedYouTubeVideoIds();
+    let keywordQueue = getAutoKeywords(200, { excludeUsed: true, shuffle: true });
+    let emptyKeywordRetryCount = 0;
+    let quotaExhausted = false;
 
-    for (const keyword of candidateKeywords) {
-      if (run.status === 'stopping' || run.status === 'stopped') break;
-      if (run.successfulJobs >= run.maxJobs) break;
+    while (run.status !== 'stopping' && run.status !== 'stopped') {
+      if (!isUnlimited && run.successfulJobs >= run.maxJobs) {
+        break;
+      }
+
+      if (keywordQueue.length === 0) {
+        const freshKeywords = getAutoKeywords(200, { excludeUsed: true, shuffle: true });
+        if (freshKeywords && freshKeywords.length > 0) {
+          keywordQueue = freshKeywords;
+          emptyKeywordRetryCount = 0;
+        } else {
+          emptyKeywordRetryCount++;
+          if (emptyKeywordRetryCount > 3) {
+            console.log('[Auto] Tidak ada kata kunci baru yang tersedia setelah 3x percobaan.');
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
+        }
+      }
+
+      const keyword = keywordQueue.shift();
+      if (!keyword) continue;
 
       const currentTargetIndex = run.successfulJobs + 1;
+      const targetLabel = isUnlimited ? `${run.successfulJobs} video (∞)` : `${currentTargetIndex}/${run.maxJobs}`;
+
       updateAutoRun(run, {
-        message: `Mencari produk (${currentTargetIndex}/${run.maxJobs}): "${keyword}"...`,
-        progress: Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) || 5),
+        message: `Mencari produk [${targetLabel}]: "${keyword}"...`,
+        progress: isUnlimited ? 5 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) || 5),
       });
 
       const product = await discoverSingleShopeeProduct(keyword, seenShopeeUrls);
@@ -1974,14 +2001,14 @@ async function runAutoStage1Worker(run) {
       if (isProductTitleUsed(product.title)) {
         console.log(`[Auto] Skip produk yang pernah diproses sebelumnya: "${product.title}"`);
         run.skippedProducts++;
-        updateAutoRun(run, { message: `[${currentTargetIndex}/${run.maxJobs}] Skip "${product.title.slice(0, 25)}...": Sudah pernah diproses sebelumnya.` });
+        updateAutoRun(run, { message: `[${targetLabel}] Skip "${product.title.slice(0, 25)}...": Sudah pernah diproses sebelumnya.` });
         continue;
       }
 
       updateAutoRun(run, {
         currentProductTitle: product.title,
-        message: `[${currentTargetIndex}/${run.maxJobs}] Menemukan: "${product.title.slice(0, 35)}...". Mencari video YouTube...`,
-        progress: Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 3),
+        message: `[${targetLabel}] Menemukan: "${product.title.slice(0, 35)}...". Mencari video YouTube...`,
+        progress: isUnlimited ? 15 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 3),
       });
 
       const candidates = await discoverYouTubeCandidatesForProduct({
@@ -1989,12 +2016,12 @@ async function runAutoStage1Worker(run) {
         productDescription: product.description,
         limit: 8,
         excludeVideoIds: usedYouTubeVideoIds,
-        onProgress: (p) => updateAutoRun(run, { message: `[${currentTargetIndex}/${run.maxJobs}] ${p.message}` }),
+        onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
       });
 
       if (!candidates.length) {
         run.skippedProducts++;
-        updateAutoRun(run, { message: `[${currentTargetIndex}/${run.maxJobs}] Skip "${product.title.slice(0, 25)}...": Tidak ada video YouTube baru yang cocok.` });
+        updateAutoRun(run, { message: `[${targetLabel}] Skip "${product.title.slice(0, 25)}...": Tidak ada video YouTube baru yang cocok.` });
         continue;
       }
 
@@ -2011,8 +2038,8 @@ async function runAutoStage1Worker(run) {
 
         try {
           updateAutoRun(run, {
-            message: `[${currentTargetIndex}/${run.maxJobs}] Memproses video untuk "${product.title.slice(0, 30)}..."...`,
-            progress: Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 5),
+            message: `[${targetLabel}] Memproses video untuk "${product.title.slice(0, 30)}..."...`,
+            progress: isUnlimited ? 25 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 5),
           });
 
           await runStage1Pipeline({
@@ -2026,21 +2053,29 @@ async function runAutoStage1Worker(run) {
             extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true },
             requireCleanGeminiPlan: true,
             onProgress: (p) => {
-              const baseProgress = Math.round((run.successfulJobs / run.maxJobs) * 100);
-              const stepFraction = Math.round(((p.progress || 0) / 100) * (100 / run.maxJobs));
-              updateAutoRun(run, {
-                message: `[${currentTargetIndex}/${run.maxJobs}] ${p.message}`,
-                progress: Math.min(98, baseProgress + stepFraction),
-              });
+              if (isUnlimited) {
+                updateAutoRun(run, {
+                  message: `[${targetLabel}] ${p.message}`,
+                  progress: Math.min(98, Math.max(10, p.progress || 10)),
+                });
+              } else {
+                const baseProgress = Math.round((run.successfulJobs / run.maxJobs) * 100);
+                const stepFraction = Math.round(((p.progress || 0) / 100) * (100 / run.maxJobs));
+                updateAutoRun(run, {
+                  message: `[${targetLabel}] ${p.message}`,
+                  progress: Math.min(98, baseProgress + stepFraction),
+                });
+              }
             },
           });
 
           run.successfulJobs++;
           jobSuccess = true;
           markKeywordAsUsed(keyword, { productTitle: product.title, jobId: autoJobId, source: 'auto_worker' });
+          const finishedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
           updateAutoRun(run, {
-            message: `✅ [${run.successfulJobs}/${run.maxJobs}] Selesai: "${product.title.slice(0, 35)}..."`,
-            progress: Math.round((run.successfulJobs / run.maxJobs) * 100),
+            message: `✅ [${finishedDisplay}] Selesai: "${product.title.slice(0, 35)}..."`,
+            progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
           });
           break; // Success! Move to next product keyword immediately
         } catch (err) {
@@ -2056,45 +2091,71 @@ async function runAutoStage1Worker(run) {
             run.successfulJobs++;
             jobSuccess = true;
             markKeywordAsUsed(keyword, { productTitle: product.title, jobId: autoJobId, source: 'auto_worker' });
+            const savedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
             updateAutoRun(run, {
-              message: `✅ [${run.successfulJobs}/${run.maxJobs}] Video 1080p tersimpan (Menunggu Voiceover): "${product.title.slice(0, 30)}..."`,
-              progress: Math.round((run.successfulJobs / run.maxJobs) * 100),
+              message: `✅ [${savedDisplay}] Video 1080p tersimpan (Menunggu Voiceover): "${product.title.slice(0, 30)}..."`,
+              progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
             });
             break;
           }
 
           run.failures.push({ productTitle: product.title, error: err.message, time: new Date().toISOString() });
-          
+
+          // If all models in the fallback chain exhausted their quota, stop autorun!
+          if (err.isAllModelsQuotaExhausted) {
+            console.error('[Auto] Seluruh model AI dalam rantai fallback telah mencapai batas limit kuota token harian. Menghentikan Auto Mode.');
+            quotaExhausted = true;
+            break;
+          }
+
+          // Check for fatal authentication error (401 with invalid api key)
           const msg = (err.message || '').toLowerCase();
-          const isCriticalApiError = msg.includes('401') || msg.includes('403') || msg.includes('api key') || msg.includes('unauthorized') || msg.includes('saldo') || msg.includes('kuota') || msg.includes('billing') || msg.includes('quota') || msg.includes('authenticationerror');
-          if (isCriticalApiError) {
-            console.error('[Auto] Critical API error detected. Stopping Auto-Run entirely.');
+          const isFatalAuth = (err.status === 401 || err.statusCode === 401) && (msg.includes('api key') || msg.includes('unauthorized'));
+          if (isFatalAuth) {
+            console.error('[Auto] API Key tidak valid. Menghentikan Auto Mode.');
             throw err;
           }
-          
-          // Try next YouTube candidate for this product
+
+          // Any ordinary candidate rejection (watermark, face, no clip, download glitch) -> try next candidate
         }
+      }
+
+      if (quotaExhausted) {
+        break;
       }
 
       if (!jobSuccess) {
         run.failedJobs++;
         updateAutoRun(run, {
           failedJobs: run.failedJobs,
-          message: `❌ [${currentTargetIndex}/${run.maxJobs}] Gagal: "${product.title.slice(0, 30)}..."`,
+          message: `❌ [${targetLabel}] Gagal: "${product.title.slice(0, 30)}..."`,
         });
       }
 
       // Graceful jitter delay between product batches to prevent aggressive scraping blocks
-      if (currentTargetIndex < run.maxJobs && (run.status === 'running' || run.status === 'starting')) {
+      if ((isUnlimited || currentTargetIndex < run.maxJobs) && (run.status === 'running' || run.status === 'starting')) {
         const delayMs = 3000 + Math.floor(Math.random() * 2000);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
     }
 
+    if (quotaExhausted) {
+      updateAutoRun(run, {
+        status: 'completed',
+        message: `⚠️ Auto Mode berhenti otomatis: Seluruh model AI utama dan fallback telah mencapai batas limit kuota harian. Total video berhasil dibuat: ${run.successfulJobs}, Gagal: ${run.failedJobs}, Dilewati: ${run.skippedProducts}.`,
+        progress: 100,
+        finishedAt: new Date().toISOString(),
+        currentJobId: null,
+        currentProductTitle: null,
+      });
+      return;
+    }
+
     const finalStatus = run.status === 'stopping' ? 'stopped' : 'completed';
+    const totalDisplay = isUnlimited ? `${run.successfulJobs} video (Mode Unlimited)` : `${run.successfulJobs}/${run.maxJobs}`;
     updateAutoRun(run, {
       status: finalStatus,
-      message: `Auto Mode selesai. Berhasil: ${run.successfulJobs}/${run.maxJobs}, Gagal: ${run.failedJobs}, Dilewati: ${run.skippedProducts}.`,
+      message: `Auto Mode selesai. Berhasil: ${totalDisplay}, Gagal: ${run.failedJobs}, Dilewati: ${run.skippedProducts}.`,
       progress: 100,
       finishedAt: new Date().toISOString(),
       currentJobId: null,
@@ -2140,19 +2201,20 @@ app.post('/api/auto/start', (req, res) => {
     return res.json({ run: publicAutoRunState(latest) });
   }
 
-  const { maxJobs = 10, options = {}, niche = 'kitchen_tools' } = req.body || {};
+  const { maxJobs = 'unlimited', options = {}, niche = 'kitchen_tools' } = req.body || {};
+  const isUnlimited = maxJobs === 'unlimited' || maxJobs === Infinity || !maxJobs || Number(maxJobs) <= 0;
   const runId = `autorun_${crypto.randomBytes(4).toString('hex')}`;
   const run = {
     runId,
     status: 'starting',
-    maxJobs: Math.max(1, Math.min(50, Number(maxJobs) || 10)),
+    maxJobs: isUnlimited ? 'unlimited' : Math.max(1, Math.min(500, Number(maxJobs) || 10)),
     successfulJobs: 0,
     failedJobs: 0,
     skippedProducts: 0,
     niche,
     currentJobId: null,
     currentProductTitle: null,
-    message: 'Memulai pipeline Auto Mode...',
+    message: isUnlimited ? 'Memulai pipeline Auto Mode (Unlimited)...' : 'Memulai pipeline Auto Mode...',
     progress: 0,
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),

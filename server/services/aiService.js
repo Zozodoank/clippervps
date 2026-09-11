@@ -130,11 +130,14 @@ function getOpenRouterKeys(apiKeyOverride) {
 
 let currentOpenRouterKeyIndex = 0;
 
-const defaultGeminiDirectModels = [
+export const defaultGeminiDirectModels = [
   'gemini-3.6-flash',
-  'gemini-flash-latest',
   'gemini-3.7-flash',
+  'gemini-3.8-flash',
   'gemini-3.5-flash',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
+  'gemini-flash-latest'
 ];
 
 export function getDirectGeminiApiKey(apiKeyOverride) {
@@ -240,6 +243,26 @@ function formatApiError(err, modelName = 'AI', provider = 'AI') {
     return `Semua model fallback gagal. Model terakhir yang dicoba ('${modelName}') tidak tersedia di akun ${provider} Anda.`;
   }
   return `${provider} API Error (${modelName}): ${message}`;
+}
+
+export function isQuotaError(err) {
+  if (!err) return false;
+  const status = err.status || err.statusCode;
+  const message = String(err.message || '').toLowerCase();
+  return (
+    status === 429 ||
+    status === 402 ||
+    message.includes('429') ||
+    message.includes('resource_exhausted') ||
+    message.includes('quota') ||
+    message.includes('kuota') ||
+    message.includes('rate limit') ||
+    message.includes('rate_limit') ||
+    message.includes('saldo') ||
+    message.includes('insufficient') ||
+    message.includes('credits') ||
+    message.includes('tokens')
+  );
 }
 
 /**
@@ -386,14 +409,24 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 1. "isExactProductMatch": Set to true if the item demonstrated in the video matches "${coreNoun}", even if rejected for policy. Set to false ONLY if the product is physically different.
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
-  const candidateModels = ['gemini-3.6-flash', 'gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.5-flash'];
+  const candidateModels = [
+    'gemini-3.6-flash',
+    'gemini-3.7-flash',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-latest'
+  ];
   let parsed = null;
   let activeGeminiModel = candidateModels[0];
   let lastGeminiErr = null;
+  let allQuotaErrors = true;
 
-  for (const modelName of candidateModels) {
+  for (let i = 0; i < candidateModels.length; i++) {
+    const modelName = candidateModels[i];
     try {
-      console.log(`[Gemini YouTube Stream] Calling model: ${modelName} for ${youtubeUrl}...`);
+      console.log(`[Gemini YouTube Stream] Calling model [${i + 1}/${candidateModels.length}]: ${modelName} for ${youtubeUrl}...`);
       activeGeminiModel = modelName;
       const model = genAI.getGenerativeModel({
         model: modelName,
@@ -421,12 +454,22 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         break;
       }
     } catch (gemErr) {
-      console.warn(`[Gemini YouTube Stream] Model ${modelName} error:`, gemErr.message);
       lastGeminiErr = gemErr;
+      const isQuota = isQuotaError(gemErr);
+      if (!isQuota) {
+        allQuotaErrors = false;
+      }
+      console.warn(`[Gemini YouTube Stream] Model ${modelName} gagal: ${gemErr.message}. ${isQuota ? '⚠️ [Limit Kuota/Token Tercapai]' : ''} ${i < candidateModels.length - 1 ? `Mencoba model fallback berikutnya (${candidateModels[i + 1]})...` : 'Semua model Gemini dalam rantai fallback telah dicoba.'}`);
     }
   }
 
   if (!parsed) {
+    if (allQuotaErrors && candidateModels.length > 0) {
+      const quotaErr = new Error('Semua model Gemini (model utama hingga seluruh fallback) telah mencapai batas limit kuota token harian.');
+      quotaErr.isAllModelsQuotaExhausted = true;
+      quotaErr.isQuotaError = true;
+      throw quotaErr;
+    }
     throw lastGeminiErr || new Error('Gemini YouTube Stream gagal menganalisa video.');
   }
 
@@ -1662,13 +1705,23 @@ Return strict JSON in this format:
 
       clearInterval(heartbeat);
       console.error(`[AIService ${provider} ${activeModel}] Error:`, err);
-      throw new Error(formatApiError(err, activeModel, provider));
+      const scriptErr = new Error(formatApiError(err, activeModel, provider));
+      if (isQuotaError(err) || isOverloaded || isFatalAuthOrBilling) {
+        scriptErr.isAllModelsQuotaExhausted = true;
+        scriptErr.isQuotaError = true;
+      }
+      throw scriptErr;
     }
   }
 
   if (lastError && !parsed.sampleContext && !parsed.scenes) {
     clearInterval(heartbeat);
-    throw new Error(formatApiError(lastError, activeModel, provider));
+    const scriptErr = new Error(formatApiError(lastError, activeModel, provider));
+    if (isQuotaError(lastError)) {
+      scriptErr.isAllModelsQuotaExhausted = true;
+      scriptErr.isQuotaError = true;
+    }
+    throw scriptErr;
   }
 
   const scenes = normalizeShortScenes(parsed.scenes, effectiveTitle, segmentDuration, sceneDuration);
