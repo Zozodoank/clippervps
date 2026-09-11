@@ -871,34 +871,6 @@ export function getAutoKeywords(limit = 1000, { excludeUsed = true, shuffle = tr
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const insecureTlsAgent = new https.Agent({ rejectUnauthorized: false });
 
-let cachedDdgIp = '20.43.161.105'; // Known Azure IP for DuckDuckGo
-let lastDdgIpLookup = 0;
-
-async function resolveDdgIp() {
-  const now = Date.now();
-  if (cachedDdgIp && now - lastDdgIpLookup < 3600000) {
-    return cachedDdgIp;
-  }
-  try {
-    const res = await fetch('https://dns.google/resolve?name=html.duckduckgo.com&type=A', {
-      agent: insecureTlsAgent,
-      timeout: 3000,
-    });
-    if (res.ok) {
-      const json = await res.json();
-      const ip = json?.Answer?.find((a) => a.type === 1)?.data;
-      if (ip) {
-        cachedDdgIp = ip;
-        lastDdgIpLookup = now;
-        return ip;
-      }
-    }
-  } catch {
-    // Keep fallback IP
-  }
-  return cachedDdgIp;
-}
-
 function formatKeywordToProductTitle(keyword) {
   if (!keyword) return 'Alat Dapur Praktis Viral';
   return keyword
@@ -909,7 +881,7 @@ function formatKeywordToProductTitle(keyword) {
 
 export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
   try {
-    const results = (await searchDuckDuckGoShopee(keyword)).filter(r => !seen.has(r.url));
+    const results = (await searchShopeeProducts(keyword)).filter(r => !seen.has(r.url));
     results.forEach(r => seen.add(r.url));
 
     if (results.length > 0) {
@@ -1073,29 +1045,47 @@ export function delayWithJitter(minMs, maxMs) {
   return new Promise((resolve) => setTimeout(resolve, duration));
 }
 
-async function searchDuckDuckGoShopee(keyword) {
+export async function searchShopeeProducts(keyword) {
+  // 1. Prioritas Utama: Bing Search (sangat responsif ~200-350ms di VPS, tidak memblokir IP Datacenter)
+  try {
+    const bingResults = await searchBingShopee(keyword);
+    if (bingResults && bingResults.length > 0) return bingResults;
+  } catch (e) {
+    // continue to next engine
+  }
+
+  // 2. Prioritas Kedua: Brave Search (fallback cepat ~200ms)
+  try {
+    const braveResults = await searchBraveShopee(keyword);
+    if (braveResults && braveResults.length > 0) return braveResults;
+  } catch (e) {
+    // continue to next engine
+  }
+
+  // 3. Prioritas Ketiga: DuckDuckGo (timeout ketat 1.5 detik agar tidak pernah freeze)
+  try {
+    const ddgResults = await searchDuckDuckGoShopee(keyword);
+    if (ddgResults && ddgResults.length > 0) return ddgResults;
+  } catch (e) {
+    // continue to fallback
+  }
+
+  return [];
+}
+
+export async function searchDuckDuckGoShopee(keyword) {
   const cleanKeyword = String(keyword || '').replace(/\s+/g, ' ').trim();
-  // Target real kitchen tools Shopee products
   const searchQueries = [
     `"${cleanKeyword}" alat dapur site:shopee.co.id`,
     `${cleanKeyword} alat dapur site:shopee.co.id`,
-    `"${cleanKeyword}" site:shopee.co.id`,
   ];
-
-  const ddgIp = await resolveDdgIp();
-  const ddgAgent = new https.Agent({
-    rejectUnauthorized: false,
-    servername: 'html.duckduckgo.com',
-  });
 
   for (const searchQuery of searchQueries) {
     try {
-      const url = `https://${ddgIp}/html/?q=${encodeURIComponent(searchQuery)}`;
-      const response = await fetch(url, {
-        agent: ddgAgent,
-        timeout: 4500,
+      const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
+      const response = await fetchWithTlsFallback(url, {
+        timeoutMs: 1500,
         headers: {
-          'Host': 'html.duckduckgo.com',
           'user-agent': USER_AGENT,
           'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -1105,7 +1095,7 @@ async function searchDuckDuckGoShopee(keyword) {
       if (!response || !response.ok) continue;
 
       const html = await response.text();
-      if (html.includes('internetbaik.telkomsel.com') || html.includes('blocked')) continue;
+      if (html.includes('internetbaik.telkomsel.com') || html.includes('blocked') || html.includes('anomaly')) continue;
 
       const $ = cheerio.load(html);
       const results = [];
@@ -1127,14 +1117,14 @@ async function searchDuckDuckGoShopee(keyword) {
         return dedupeByUrl(results);
       }
     } catch {
-      // Continue to next query / search engine
+      // Continue to next query
     }
   }
 
-  return searchBraveShopee(keyword);
+  return [];
 }
 
-async function searchBraveShopee(keyword) {
+export async function searchBraveShopee(keyword) {
   for (const searchQuery of buildShopeeSearchQueries(keyword).slice(0, 1)) {
     const url = `https://search.brave.com/search?q=${encodeURIComponent(searchQuery)}`;
     try {
@@ -1173,15 +1163,15 @@ async function searchBraveShopee(keyword) {
     }
   }
 
-  return searchBingShopee(keyword);
+  return [];
 }
 
-async function searchBingShopee(keyword) {
+export async function searchBingShopee(keyword) {
   for (const searchQuery of buildShopeeSearchQueries(keyword)) {
     const url = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}`;
     try {
       const response = await fetchWithTlsFallback(url, {
-        timeoutMs: 3000,
+        timeoutMs: 2500,
         headers: {
           'user-agent': USER_AGENT,
           'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -1217,6 +1207,7 @@ async function searchBingShopee(keyword) {
 
   return [];
 }
+
 
 async function fetchShopeePageMeta(url) {
   try {
@@ -1911,20 +1902,8 @@ export async function findMatchingShopeeProductUrl(productTitle, detectedBrand =
   }
 
   console.log(`[Discovery] Mencari link Shopee yang cocok untuk produk video: "${searchPhrase}"...`);
-  try {
-    const results = await searchDuckDuckGoShopee(searchPhrase);
-    if (results && results.length > 0) {
-      const match = results.find(r => isShopeeProductUrl(r.url));
-      if (match) {
-        console.log(`[Discovery] ✅ Menemukan link Shopee cocok via DDG: "${match.title}" -> ${match.url}`);
-        return match.url;
-      }
-    }
-  } catch (err) {
-    console.warn(`[Discovery] Gagal mencari link Shopee via DuckDuckGo:`, err.message);
-  }
 
-  // 2. Bing fallback
+  // 2. Bing Search (Fast ~200-350ms, does not block VPS/datacenter IPs)
   try {
     const bingResults = await searchBingShopee(searchPhrase);
     if (bingResults && bingResults.length > 0) {
@@ -1938,7 +1917,35 @@ export async function findMatchingShopeeProductUrl(productTitle, detectedBrand =
     console.warn(`[Discovery] Gagal mencari link Shopee via Bing:`, bingErr.message);
   }
 
-  // 3. Fallback: direct search page URL with refined kitchen tools keyword
+  // 3. Brave Search Fallback (~200ms)
+  try {
+    const braveResults = await searchBraveShopee(searchPhrase);
+    if (braveResults && braveResults.length > 0) {
+      const match = braveResults.find(r => isShopeeProductUrl(r.url));
+      if (match) {
+        console.log(`[Discovery] ✅ Menemukan link Shopee cocok via Brave: "${match.title}" -> ${match.url}`);
+        return match.url;
+      }
+    }
+  } catch (braveErr) {
+    console.warn(`[Discovery] Gagal mencari link Shopee via Brave:`, braveErr.message);
+  }
+
+  // 4. DuckDuckGo Fallback (with 1.5s timeout)
+  try {
+    const ddgResults = await searchDuckDuckGoShopee(searchPhrase);
+    if (ddgResults && ddgResults.length > 0) {
+      const match = ddgResults.find(r => isShopeeProductUrl(r.url));
+      if (match) {
+        console.log(`[Discovery] ✅ Menemukan link Shopee cocok via DDG: "${match.title}" -> ${match.url}`);
+        return match.url;
+      }
+    }
+  } catch (err) {
+    console.warn(`[Discovery] Gagal mencari link Shopee via DuckDuckGo:`, err.message);
+  }
+
+  // 5. Fallback: direct search page URL with refined kitchen tools keyword
   const fallbackUrl = `https://shopee.co.id/search?keyword=${encodeURIComponent(`${searchPhrase} alat dapur`)}`;
   console.log(`[Discovery] Menggunakan fallback link Shopee: ${fallbackUrl}`);
   return fallbackUrl;
