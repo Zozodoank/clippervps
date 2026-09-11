@@ -426,6 +426,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
   let blackFrameCount = 0;
   let bumperSlideCount = 0;
   let staticLogoCount = 0;
+  let staticLogoReason = '';
 
   // Ekstrak area 9:16 tengah sekali saja per frame dalam RGB24 (80x144, 34 KB per frame)
   for (const f of frames) {
@@ -473,8 +474,11 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
     }
   }
 
-  // ── 2. PEMERIKSAAN LOGO / IDENTITAS CHANNEL STATIS DI AREA TENGAH 9:16 ──
-  // Abaikan frame pembuka jika video memiliki opening intro bumper (karena wajar jika kartu intro pembuka memiliki logo yang akan dibuang)
+  // ── 2. PEMERIKSAAN LOGO / WATERMARK / IDENTITAS CHANNEL STATIS DI AREA TENGAH 9:16 ──
+  // Menyelidiki seluruh area tengah 9:16 (termasuk 4 sudut dan area atas/bawah) dengan persistensi multi-frame
+  const pixelPersistence = new Uint8Array(W * H);
+  let boldStaticLogoPairCount = 0;
+
   for (let t = 0; t < frameBuffers.length - 1; t++) {
     const ts = frames[t]?.timestamp ?? (t * 3);
     if (openingBumperCount > 0 && (ts <= 5.0 || t <= 1)) {
@@ -483,30 +487,76 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
 
     const bt1 = frameBuffers[t];
     const bt2 = frameBuffers[t + 1];
-    let staticEdgePixels = 0;
+    let boldStaticCornerEdges = 0;
 
-    for (let y = 15; y < 120; y++) {
-      for (let x = 15; x < 65; x++) {
+    for (let y = 3; y < H - 3; y++) {
+      for (let x = 3; x < W - 3; x++) {
+        const isCorner = (x < 24 && y < 35) || (x > 56 && y < 35) || (x < 24 && y > 108) || (x > 56 && y > 108);
         const idx = (y * W + x) * 3;
-        const prevIdx = (y * W + (x - 1)) * 3;
+        const leftIdx = (y * W + (x - 1)) * 3;
+        const upIdx = ((y - 1) * W + x) * 3;
 
         const r1 = bt1[idx], g1 = bt1[idx + 1], b1 = bt1[idx + 2];
-        const pr1 = bt1[prevIdx], pg1 = bt1[prevIdx + 1], pb1 = bt1[prevIdx + 2];
-        const spatialEdge = (Math.abs(r1 - pr1) + Math.abs(g1 - pg1) + Math.abs(b1 - pb1)) / 3;
+        const rLeft = bt1[leftIdx], gLeft = bt1[leftIdx + 1], bLeft = bt1[leftIdx + 2];
+        const rUp = bt1[upIdx], gUp = bt1[upIdx + 1], bUp = bt1[upIdx + 2];
 
-        if (spatialEdge > 60) {
+        const dx = (Math.abs(r1 - rLeft) + Math.abs(g1 - gLeft) + Math.abs(b1 - bLeft)) / 3;
+        const dy = (Math.abs(r1 - rUp) + Math.abs(g1 - gUp) + Math.abs(b1 - bUp)) / 3;
+        const spatialEdge = Math.max(dx, dy);
+
+        // 1. Akumulasi persistensi temporal lintas frame (spatialEdge >= 22, temporalDiff <= 10)
+        // Menangkap logo channel semi-transparan, watermark teks, dan badge digital
+        if (spatialEdge >= 22) {
           const r2 = bt2[idx], g2 = bt2[idx + 1], b2 = bt2[idx + 2];
           const temporalDiff = (Math.abs(r1 - r2) + Math.abs(g1 - g2) + Math.abs(b1 - b2)) / 3;
-          if (temporalDiff < 5) {
-            staticEdgePixels++;
+          if (temporalDiff <= 10) {
+            pixelPersistence[y * W + x]++;
+            // 2. Cek logo sudut kontras sangat tinggi per pair (spatialEdge >= 55, temporalDiff <= 7)
+            if (isCorner && spatialEdge >= 55 && temporalDiff <= 7) {
+              boldStaticCornerEdges++;
+            }
           }
         }
       }
     }
 
-    if (staticEdgePixels >= 20) {
-      staticLogoCount++;
+    if (boldStaticCornerEdges >= 15) {
+      boldStaticLogoPairCount++;
     }
+  }
+
+  // Hitung piksel dengan persistensi tinggi lintas banyak frame (>= 4 pasangan frame sepanjang video)
+  let totalPersistent = 0;
+  let topLeftPersistent = 0;
+  let topRightPersistent = 0;
+  let bottomLeftPersistent = 0;
+  let bottomRightPersistent = 0;
+
+  for (let y = 3; y < H - 3; y++) {
+    for (let x = 3; x < W - 3; x++) {
+      if (pixelPersistence[y * W + x] >= 4) {
+        totalPersistent++;
+        if (x < 24 && y < 35) topLeftPersistent++;
+        if (x > 56 && y < 35) topRightPersistent++;
+        if (x < 24 && y > 108) bottomLeftPersistent++;
+        if (x > 56 && y > 108) bottomRightPersistent++;
+      }
+    }
+  }
+
+  const isCornerLogo = topLeftPersistent >= 10 || topRightPersistent >= 10 || bottomLeftPersistent >= 10 || bottomRightPersistent >= 10;
+  const isWatermarkOverlay = totalPersistent >= 28;
+  const isBoldLogo = boldStaticLogoPairCount >= 3;
+
+  if (isCornerLogo) {
+    staticLogoCount = Math.max(topLeftPersistent, topRightPersistent, bottomLeftPersistent, bottomRightPersistent);
+    staticLogoReason = `Analisa visual lokal mendeteksi logo channel statis di area sudut frame 9:16 (TL:${topLeftPersistent}, TR:${topRightPersistent}, BL:${bottomLeftPersistent}, BR:${bottomRightPersistent} piksel persisten). Wajib video bersih tanpa logo channel!`;
+  } else if (isWatermarkOverlay) {
+    staticLogoCount = totalPersistent;
+    staticLogoReason = `Analisa visual lokal mendeteksi watermark / identitas channel statis di frame 9:16 (${totalPersistent} piksel persisten). Wajib video bersih tanpa watermark!`;
+  } else if (isBoldLogo) {
+    staticLogoCount = boldStaticLogoPairCount;
+    staticLogoReason = `Analisa visual lokal mendeteksi logo sudut statis kontras tinggi di frame 9:16 (${boldStaticLogoPairCount} perbandingan frame). Wajib video bersih tanpa logo!`;
   }
 
   // ── 3. PEMERIKSAAN PER-FRAME KONTEN (SUBTITLE, FLOATING TEXT, GRAFIS ANIMASI & WAJAH) ──
@@ -605,11 +655,11 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
     };
   }
 
-  // 2. Tolak jika ada logo / identitas channel statis di frame tengah
-  if (staticLogoCount >= 2) {
+  // 2. Tolak jika ada logo / watermark / identitas channel statis di area 9:16
+  if (staticLogoReason) {
     return {
       eligible: false,
-      reason: `Analisa visual lokal mendeteksi logo atau identitas channel statis di area tengah 9:16 (${staticLogoCount} perbandingan frame). Wajib video bersih tanpa logo channel!`
+      reason: staticLogoReason
     };
   }
 
