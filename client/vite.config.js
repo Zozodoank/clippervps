@@ -11,6 +11,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0', // Listen on all network interfaces (LAN / Wi-Fi)
       port: 3000,
       cors: true,
+      allowedHosts: true,
       proxy: {
         '/api': {
           target: apiTarget,
