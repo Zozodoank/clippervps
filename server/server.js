@@ -2114,6 +2114,25 @@ async function runAutoStage1Worker(run) {
             throw err;
           }
 
+          // Check for YouTube cookies/authentication error - stop auto-run instead of infinite loop
+          const isYouTubeAuthError = msg.includes('from-browser') || msg.includes('--cookies') ||
+            msg.includes('cookies for the authentication') || msg.includes('sign in to confirm') ||
+            msg.includes('login required') || msg.includes('private video') ||
+            (msg.includes('yt-dlp') && msg.includes('authentication'));
+          if (isYouTubeAuthError) {
+            console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
+            console.error('[Auto] Upload file cookies.txt ke ~/clipper/server/cookies.txt dan restart PM2.');
+            updateAutoRun(run, {
+              status: 'error',
+              message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Upload cookies.txt ke server/cookies.txt dan restart server.',
+              progress: 100,
+              finishedAt: new Date().toISOString(),
+              currentJobId: null,
+              currentProductTitle: null,
+            });
+            return; // Stop the auto-run worker entirely
+          }
+
           // Any ordinary candidate rejection (watermark, face, no clip, download glitch) -> try next candidate
         }
       }
