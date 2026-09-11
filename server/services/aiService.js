@@ -1343,7 +1343,7 @@ RULE 3: FACE DISCARD MANDATE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISCAR
   * HANYA pilih indeks frame ("frames") yang 100% murni memperagakan produk oleh TANGAN/JARI saja!
   * Setiap indeks frame yang dimasukkan ke dalam daftar "frames" WAJIB 100% bebas dari wajah dan orang.
 - TOLAK (status: 'reject') HANYA JIKA:
-  * Video didominasi wajah / pure talking-head vlog sehingga TIDAK BISA ditemukan minimal 4-6 frame peragaan tangan bersih yang memenuhi syarat affiliate.
+  * Video didominasi 100% oleh wajah / pure talking-head vlog sehingga sama sekali tidak ada frame peragaan produk oleh tangan bersih yang memenuhi syarat affiliate.
 
 RULE 3B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES):
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
@@ -1584,7 +1584,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const mentionsLogoInFrame = (isRejectStatus || hasStaticLogo) && (reasonLower.includes('logo') || reasonLower.includes('tiktok') || reasonLower.includes('channel') || reasonLower.includes('identitas') || reasonLower.includes('sosmed')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
 
       const selectedIndices = Array.isArray(parsed.frames) ? parsed.frames : [];
-      const hasValidFrames = selectedIndices.length >= 4;
+      const hasValidFrames = selectedIndices.length >= 1;
 
       const shouldReject = isRejectStatus || isMatchFalse || hasFace || hasWatermarkInFrame || hasSocialOrChannelInFrame || hasSubtitles || hasFloatingText || hasGraphic || hasBumper || hasStaticLogo || isSynthetic ||
         mentionsFaceInReason || mentionsGraphicInReason || mentionsBumperInReason || mentionsWatermarkInFrame || mentionsLogoInFrame || mentionsSubtitlesInReason || !hasValidFrames;
@@ -2523,14 +2523,101 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
 
   console.log(`[normalizeClipPlan] Accepted ${normalized.length} valid clips from AI vision`);
 
-  if (normalized.length >= 5) {
+  // Continuous Stride Expansion: Jika AI menyetujui 1 sampai 4 anchor clip bersih,
+  // lakukan ekspansi stride berurutan (consecutive stride intervals) dari anchor frame tersebut
+  // agar video akhir mencapai durasi optimal 18-25 detik (5-8 klip) tanpa memerlukan ekstra token AI!
+  if (normalized.length > 0 && normalized.length < 5) {
+    console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Continuous Stride Expansion menuju minimal 5-7 klip...`);
+    const targetClips = Math.min(8, Math.max(6, Math.floor(24 / clipLength)));
+    const originalAnchors = [...normalized];
+
+    // Scoped tracking of intervals per candidate to avoid overlaps
+    const intervalsByCand = new Map();
+    for (const clip of normalized) {
+      const cKey = clip.candidateIndex !== null && clip.candidateIndex !== undefined ? clip.candidateIndex : 'default';
+      if (!intervalsByCand.has(cKey)) intervalsByCand.set(cKey, []);
+      intervalsByCand.get(cKey).push({ start: clip.startSeconds, end: clip.endSeconds });
+    }
+
+    const isIntervalFree = (cKey, start, end, candDuration) => {
+      if (start < 0 || end > candDuration) return false;
+      // Hindari dirty timestamps (watermark, subtitle, unboxing, face)
+      const hitsDirty = dirtyTimestamps.some(ts => ts >= start && ts <= end);
+      if (hitsDirty) return false;
+      // Hindari tabrakan dengan klip lain pada kandidat yang sama
+      const intervals = intervalsByCand.get(cKey) || [];
+      const overlaps = intervals.some(iv => Math.max(start, iv.start) < Math.min(end, iv.end));
+      return !overlaps;
+    };
+
+    let expanded = true;
+    let strideRound = 1;
+    while (normalized.length < targetClips && expanded && strideRound <= 5) {
+      expanded = false;
+      for (const baseClip of originalAnchors) {
+        if (normalized.length >= targetClips) break;
+
+        const cKey = baseClip.candidateIndex !== null && baseClip.candidateIndex !== undefined ? baseClip.candidateIndex : 'default';
+        const candDuration = baseClip.candidate?.duration || totalDuration;
+
+        // 1. Forward Stride: lanjutan demonstrasi produk fisik ke depan
+        const fwdStart = Math.round((baseClip.endSeconds + (strideRound - 1) * clipLength) * 10) / 10;
+        const fwdEnd = Math.round((fwdStart + clipLength) * 10) / 10;
+
+        if (isIntervalFree(cKey, fwdStart, fwdEnd, candDuration)) {
+          normalized.push({
+            ...baseClip,
+            startSeconds: fwdStart,
+            endSeconds: fwdEnd,
+            duration: clipLength,
+            startTime: formatSeconds(fwdStart),
+            endTime: formatSeconds(fwdEnd),
+            reason: `${baseClip.reason} (Continuous Stride #${strideRound})`,
+          });
+          intervalsByCand.get(cKey).push({ start: fwdStart, end: fwdEnd });
+          expanded = true;
+          if (normalized.length >= targetClips) break;
+        } else {
+          // 2. Backward Stride: potongan sebelum anchor jika aman
+          const bwdStart = Math.round((baseClip.startSeconds - strideRound * clipLength) * 10) / 10;
+          const bwdEnd = Math.round((bwdStart + clipLength) * 10) / 10;
+          if (bwdStart >= 0 && isIntervalFree(cKey, bwdStart, bwdEnd, candDuration)) {
+            normalized.push({
+              ...baseClip,
+              startSeconds: bwdStart,
+              endSeconds: bwdEnd,
+              duration: clipLength,
+              startTime: formatSeconds(bwdStart),
+              endTime: formatSeconds(bwdEnd),
+              reason: `${baseClip.reason} (Pre-Anchor Stride #${strideRound})`,
+            });
+            intervalsByCand.get(cKey).push({ start: bwdStart, end: bwdEnd });
+            expanded = true;
+            if (normalized.length >= targetClips) break;
+          }
+        }
+      }
+      strideRound++;
+    }
+
+    normalized.sort((a, b) => {
+      const candA = a.candidateIndex ?? 0;
+      const candB = b.candidateIndex ?? 0;
+      if (candA !== candB) return candA - candB;
+      return a.startSeconds - b.startSeconds;
+    });
+
+    console.log(`[normalizeClipPlan] ✅ Continuous Stride Expansion sukses: menghasilkan total ${normalized.length} klip (${(normalized.length * clipLength).toFixed(1)}s total).`);
+  }
+
+  if (normalized.length > 0) {
     return normalized;
   }
 
   if (!allowFallback) {
-    const cleanErr = new Error('AI menolak video ini: tidak ditemukan minimal 5 potongan video bersih dari watermark, subtitle terjemahan, nama channel mengambang, wajah, atau proses unboxing.');
+    const cleanErr = new Error('AI menolak video ini: tidak ditemukan potongan video bersih dari watermark, subtitle terjemahan, nama channel mengambang, wajah, atau proses unboxing.');
     cleanErr.isAiRejection = true;
-    cleanErr.rejectionReason = 'Tidak ditemukan minimal 5 potongan video bersih dari watermark, subtitle terjemahan, nama channel, wajah, atau proses unboxing.';
+    cleanErr.rejectionReason = 'Tidak ditemukan potongan video bersih dari watermark, subtitle terjemahan, nama channel, wajah, atau proses unboxing.';
     throw cleanErr;
   }
 
