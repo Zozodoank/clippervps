@@ -925,9 +925,10 @@ export async function runStage1Pipeline({
     coreProductNoun,
   });
 
+  let rawVideoPath = null;
+  let videoMeta = { title: productTitle || 'Product Video', duration: 60 };
+
   try {
-    let rawVideoPath;
-    let videoMeta = { title: productTitle || 'Product Video', duration: 60 };
 
     const existingVideoInTemp = (() => {
       try {
