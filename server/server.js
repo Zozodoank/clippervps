@@ -207,31 +207,27 @@ const jobProgress = new Map();
 const autoRuns = new Map();
 const autoRetryRuns = new Map();
 
-/** Load jobs from disk into memory */
+/** Load jobs from disk into memory without losing history */
 function loadJobsFromDisk() {
   try {
     if (fs.existsSync(jobsFilePath)) {
       const raw = fs.readFileSync(jobsFilePath, 'utf-8');
       const obj = JSON.parse(raw);
-      let cleaned = false;
+      let modified = false;
       for (const [jobId, jobData] of Object.entries(obj)) {
-        const hasFinal = jobData.finalLocalPath && fs.existsSync(jobData.finalLocalPath);
-        const hasSilent = jobData.silentLocalPath && fs.existsSync(jobData.silentLocalPath);
-        // If video media exists on disk, ALWAYS preserve it so user history is never lost!
-        if (!hasFinal && !hasSilent) {
-          if (jobData.stage === 'error' || (jobData.stage === 'running' && !jobData.silentLocalPath)) {
-            delete obj[jobId];
-            deleteJobFiles(jobId, outputDir, tempDir);
-            cleaned = true;
-            continue;
-          }
+        // Jangan hapus job apapun agar riwayat history pengguna tidak hilang!
+        // Jika status masih 'running' saat server start, ubah menjadi 'stopped'
+        if (jobData.stage === 'running') {
+          jobData.stage = 'stopped';
+          jobData.message = 'Proses dihentikan karena server di-restart.';
+          modified = true;
         }
         activeJobs.set(jobId, jobData);
       }
-      if (cleaned) {
+      if (modified) {
         fs.writeFileSync(jobsFilePath, JSON.stringify(obj, null, 2), 'utf-8');
       }
-      console.log(`[Jobs] Loaded ${activeJobs.size} valid persisted job(s) from disk.`);
+      console.log(`[Jobs] Loaded ${activeJobs.size} persisted job(s) from disk.`);
     }
   } catch (err) {
     console.warn('[Jobs] Could not load jobs.json:', err.message);
@@ -2911,12 +2907,12 @@ app.post('/api/restart', async (req, res) => {
   let updateLog = '';
   let updateExitCode = 0;
 
-  // 1. Bersihkan proses in-memory & background workers aktif
+  // 1. Bersihkan proses in-memory & background workers aktif, simpan status stopped ke jobs.json
   try {
     if (typeof autoRuns !== 'undefined') {
       for (const [runId, autoRun] of autoRuns.entries()) {
         autoRun.status = 'stopped';
-        autoRun.message = 'Server di-restart bersih.';
+        autoRun.message = 'Server di-restart.';
       }
     }
     if (typeof autoRetryRuns !== 'undefined') {
@@ -2928,28 +2924,37 @@ app.post('/api/restart', async (req, res) => {
       for (const [jobId, job] of activeJobs.entries()) {
         if (job.stage === 'running') {
           job.stage = 'stopped';
+          job.message = 'Dihentikan karena server di-restart.';
         }
+      }
+      // Simpan perubahan status ke jobs.json agar riwayat tersimpan permanen
+      if (fs.existsSync(jobsFilePath)) {
+        try {
+          const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
+          for (const [jobId, job] of activeJobs.entries()) {
+            existing[jobId] = job;
+          }
+          fs.writeFileSync(jobsFilePath, JSON.stringify(existing, null, 2), 'utf-8');
+        } catch {}
       }
     }
   } catch (cleanErr) {
     console.warn('[System] Warning stopping active processes:', cleanErr.message);
   }
 
-  // 2. Jalankan pembersihan job gagal jika cleanReset diminta
+  // 2. Pembersihan file cache transient (TIDAK menyentuh jobs.json atau video jadi)
   if (cleanReset) {
     try {
-      console.log('[System] Membersihkan job gagal / menggantung di database...');
-      const cleanScriptPath = path.join(__dirname, 'clean-failed-jobs.js');
-      if (fs.existsSync(cleanScriptPath)) {
-        await new Promise((resolve) => {
-          exec(`node "${cleanScriptPath}"`, { cwd: __dirname }, (err, stdout) => {
-            if (stdout) updateLog += stdout + '\n';
-            resolve();
-          });
-        });
+      console.log('[System] Membersihkan file cache sementara (riwayat jobs & video tetap aman)...');
+      const tempUploads = path.join(__dirname, 'temp', 'uploads');
+      if (fs.existsSync(tempUploads)) {
+        const files = fs.readdirSync(tempUploads);
+        for (const file of files) {
+          try { fs.unlinkSync(path.join(tempUploads, file)); } catch {}
+        }
       }
     } catch (cleanErr) {
-      console.warn('[System] Warning cleaning failed jobs:', cleanErr.message);
+      console.warn('[System] Warning cleaning temp files:', cleanErr.message);
     }
   }
 

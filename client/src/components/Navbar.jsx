@@ -255,8 +255,8 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
                     className="mt-1 rounded border-slate-700 text-rose-500 focus:ring-rose-500/30 w-4 h-4 bg-slate-900"
                   />
                   <div>
-                    <span className="text-sm font-medium text-slate-200 block">Bersihkan Cache & Job Menggantung (Clean State)</span>
-                    <span className="text-xs text-slate-400 block mt-0.5">Hapus cache Vite, hentikan proses zombie ffmpeg/yt-dlp, bersihkan job stuck di database, dan reload konfigurasi baru (--update-env).</span>
+                    <span className="text-sm font-medium text-slate-200 block">Bersihkan Cache & Reload Environment (Clean State)</span>
+                    <span className="text-xs text-slate-400 block mt-0.5">Hapus cache Vite, hentikan proses zombie ffmpeg/yt-dlp, reload variabel .env baru (--update-env). <b>Riwayat job & video tetap aman tersimpan.</b></span>
                   </div>
                 </label>
               </div>

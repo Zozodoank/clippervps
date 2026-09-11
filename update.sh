@@ -13,17 +13,12 @@ echo "🧹 [Clean] Menghentikan proses ffmpeg/yt-dlp yang tersisa..."
 pkill -9 -f ffmpeg 2>/dev/null || true
 pkill -9 -f yt-dlp 2>/dev/null || true
 
-# 2. Bersihkan file cache & temp yang bisa membuat stuck
-echo "🧹 [Clean] Membersihkan cache Vite & direktori temp..."
+# 2. Bersihkan file cache Vite & file transient
+echo "🧹 [Clean] Membersihkan cache Vite..."
 rm -rf client/node_modules/.vite 2>/dev/null || true
-rm -rf server/temp/* 2>/dev/null || true
-rm -rf temp/* 2>/dev/null || true
 
-# 3. Bersihkan job gagal dari database jobs.json
-if [ -f "server/clean-failed-jobs.js" ]; then
-  echo "🧹 [Clean] Membersihkan job gagal / pending yang menggantung..."
-  (cd server && node clean-failed-jobs.js 2>/dev/null || true)
-fi
+# CATATAN: jobs.json dan folder server/output/ TETAP AMAN & TIDAK DIHAPUS agar history job tidak hilang!
+
 
 # 4. Ambil commit terbaru dari origin main dengan hard reset agar 100% sinkron tanpa konflik
 echo "⬇️ [Update] Mengambil commit terbaru dari origin main..."
