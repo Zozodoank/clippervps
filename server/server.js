@@ -56,6 +56,9 @@ import {
   discoverYouTubeCandidatesForProduct,
   searchMultiEngineVideos,
   searchBingVideos,
+  searchVideosByProductImage,
+  fetchShopeePageMeta,
+  isShopeeProductUrl,
   findMatchingShopeeProductUrl,
   extractShopeeLinkFromText,
   DEFAULT_AUTO_KEYWORDS,
@@ -919,6 +922,16 @@ export async function runStage1Pipeline({
     throw new Error(rejectReason);
   }
 
+  let effectiveProductImage = options.productImage || extraJobMeta?.productImage || '';
+  if (!effectiveProductImage && shopeeLink && isShopeeProductUrl(shopeeLink)) {
+    try {
+      const shopeeMeta = await fetchShopeePageMeta(shopeeLink);
+      if (shopeeMeta && shopeeMeta.imageUrl) {
+        effectiveProductImage = shopeeMeta.imageUrl;
+      }
+    } catch {}
+  }
+
   const jobMeta = {
     jobId,
     stage: 'running',
@@ -927,6 +940,7 @@ export async function runStage1Pipeline({
     coreProductNoun,
     productCategory: productInfo.category || 'general_gadget',
     productDescription: productDescription || '',
+    productImage: effectiveProductImage || '',
     youtubeUrl: youtubeUrl || '',
     shopeeLink: shopeeLink || '',
     createdAt: new Date().toISOString(),
@@ -1310,6 +1324,35 @@ export async function runStage1Pipeline({
       let searchIteration = 0;
       let targetCandidates = [];
 
+      // 1. Prioritas Visual Search: Jika URL foto produk tersedia, cari video berbasis gambar!
+      if (effectiveProductImage) {
+        try {
+          updateProgress({
+            step: 'auto_search_fallback',
+            message: `Mencari video pengganti via pencarian visual gambar produk...`,
+            progress: 18,
+            status: 'running',
+            coreProductNoun,
+          });
+          console.log(`[Job ${jobId}] Mencari kandidat video via Visual Image Search: ${effectiveProductImage}`);
+          const visualCandidates = await searchVideosByProductImage({
+            imageUrl: effectiveProductImage,
+            productTitle,
+            productDescription,
+            limit: 10,
+            excludeVideoIds: usedVids,
+            onProgress: (p) => updateProgress({ ...p, status: 'running' }),
+          });
+          if (visualCandidates && visualCandidates.length > 0) {
+            targetCandidates = visualCandidates;
+            console.log(`[Job ${jobId}] ✅ Ditemukan ${visualCandidates.length} kandidat video dari pencarian visual gambar!`);
+          }
+        } catch (vErr) {
+          console.warn(`[Job ${jobId}] Pencarian visual gambar dilewati: ${vErr.message}`);
+        }
+      }
+
+      // 2. Fallback Multi-Engine Keyword Search jika visual search belum menemukan kandidat
       while (searchIteration < 2 && targetCandidates.length === 0) {
         const fresh = await discoverYouTubeCandidatesForProduct({
           productTitle,
@@ -1996,11 +2039,34 @@ async function runAutoStage1Worker(run) {
       });
 
       // ── STRATEGI VIDEO-FIRST: Cari video demonstrasi produk langsung di multi-engine ──
-      const candidates = await searchMultiEngineVideos(keyword, {
+      let candidates = await searchMultiEngineVideos(keyword, {
         limit: 16,
         excludeVideoIds: usedYouTubeVideoIds,
         onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
       });
+
+      // Jika pencarian teks multi-engine kosong, coba temukan produk Shopee dan cari video via gambar produknya!
+      if (!candidates || candidates.length === 0) {
+        try {
+          const shopeeCandidate = await discoverSingleShopeeProduct(keyword, seenShopeeUrls);
+          if (shopeeCandidate && shopeeCandidate.imageUrl) {
+            updateAutoRun(run, { message: `[${targetLabel}] Mencoba pencarian video via gambar produk Shopee: "${shopeeCandidate.title.slice(0, 30)}..."` });
+            const visualCandidates = await searchVideosByProductImage({
+              imageUrl: shopeeCandidate.imageUrl,
+              productTitle: shopeeCandidate.title,
+              productDescription: shopeeCandidate.description,
+              limit: 16,
+              excludeVideoIds: usedYouTubeVideoIds,
+              onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
+            });
+            if (visualCandidates && visualCandidates.length > 0) {
+              candidates = visualCandidates;
+            }
+          }
+        } catch (visAutoErr) {
+          console.warn(`[Auto] Fallback visual search error for ${keyword}:`, visAutoErr.message);
+        }
+      }
 
       if (!candidates || candidates.length === 0) {
         run.skippedProducts++;

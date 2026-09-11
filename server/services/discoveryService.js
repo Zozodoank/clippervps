@@ -908,6 +908,7 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
           title: titleCandidate,
           description: descCandidate,
           url: result.url,
+          imageUrl: pageMeta.imageUrl || result.thumbnail || '',
         };
       }
     }
@@ -1202,6 +1203,268 @@ export async function searchMultiEngineVideos(query, {
   return cleanCandidates.slice(0, safeLimit);
 }
 
+/**
+ * ── PENCARIAN VISUAL (REVERSE IMAGE SEARCH) VIA BING ──────────────────────────
+ * Menggunakan URL gambar produk untuk mencari halaman & link video yang memuat gambar yang sama.
+ */
+export async function searchBingVisualSearch(imageUrl, { limit = 10, onProgress = () => {} } = {}) {
+  if (!imageUrl || typeof imageUrl !== 'string') return { candidates: [], visualTags: [] };
+
+  onProgress({
+    step: 'visual_search_bing',
+    message: 'Mencari video via Bing Visual Search (Reverse Image Search)...',
+    progress: 8,
+  });
+
+  const targetUrl = `https://www.bing.com/images/search?view=detailv2&iss=sbi&q=imgurl:${encodeURIComponent(imageUrl)}`;
+  try {
+    const res = await fetchWithTlsFallback(targetUrl, {
+      timeoutMs: 8000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+      }
+    });
+
+    if (!res || !res.ok) return { candidates: [], visualTags: [] };
+
+    const html = await res.text();
+    const $ = cheerio.load(html);
+
+    const candidates = [];
+    const seenVids = new Set();
+
+    // 1. Cari link video YouTube langsung dari hasil halaman visual search
+    $('a[href]').each((i, el) => {
+      const href = $(el).attr('href') || '';
+      const text = $(el).text().trim();
+      const vid = extractVideoId(href);
+      if (vid && !seenVids.has(vid)) {
+        seenVids.add(vid);
+        candidates.push({
+          id: vid,
+          url: `https://www.youtube.com/watch?v=${vid}`,
+          title: text || 'Video dari Pencarian Visual Produk',
+          duration: 180,
+          source: 'bing_visual_search',
+        });
+      }
+    });
+
+    // 2. Kumpulkan visual tags yang dikenali oleh Bing
+    const visualTags = [];
+    $('.tag, a.tag, .b_visualSearchTitle, .b_focusText').each((i, el) => {
+      const tagText = $(el).text().trim();
+      if (tagText && tagText.length >= 3 && !visualTags.includes(tagText)) {
+        visualTags.push(tagText);
+      }
+    });
+
+    return { candidates: candidates.slice(0, limit), visualTags };
+  } catch (err) {
+    console.warn(`[BingVisualSearch] Gagal melakukan pencarian gambar: ${err.message}`);
+    return { candidates: [], visualTags: [] };
+  }
+}
+
+/**
+ * ── ANALISIS GAMBAR PRODUK VIA GEMINI VISION (IMAGE-TO-QUERY) ─────────────────
+ * Membaca foto produk fisik untuk mengekstrak nama produk universal (bahasa Inggris/global)
+ * dan 3 query pencarian YouTube yang presisi untuk menemukan video demonstrasi hands-on.
+ */
+export async function extractVisualKeywordsWithAI({ imageUrl, productTitle = '' } = {}) {
+  if (!imageUrl || typeof imageUrl !== 'string') return [];
+
+  try {
+    const rawApiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
+    if (!rawApiKey) return [];
+
+    const imgRes = await fetchWithTlsFallback(imageUrl, {
+      timeoutMs: 5000,
+      headers: { 'User-Agent': USER_AGENT }
+    });
+    if (!imgRes || !imgRes.ok) return [];
+
+    const arrayBuffer = await imgRes.arrayBuffer();
+    const imgBuffer = Buffer.from(arrayBuffer);
+    if (imgBuffer.length < 500) return [];
+
+    const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
+    const mimeType = contentType.split(';')[0].trim() || 'image/jpeg';
+    const base64Data = imgBuffer.toString('base64');
+
+    const { GoogleGenerativeAI } = await import('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(rawApiKey);
+    const candidateModels = [
+      'gemini-3.6-flash',
+      'gemini-3.7-flash',
+      'gemini-3.8-flash',
+      'gemini-3.5-flash',
+      'gemini-flash-latest'
+    ];
+
+    const prompt = `Analisa gambar produk fisik ini dengan sangat teliti untuk keperluan pencarian video demonstrasi di YouTube.
+Judul referensi (jika ada): "${productTitle}"
+
+Tugas:
+1. Identifikasi nama benda/gadget fisik ini dalam bahasa Inggris universal (nama produk OEM/pabrik yang biasa dipakai reviewer global di YouTube/Amazon/AliExpress).
+2. Buat 3 frasa pencarian YouTube paling efektif (bahasa Inggris atau campuran) untuk menemukan video demonstrasi/review hands-on yang nyata dan bersih (contoh: "<nama gadget universal> review", "<nama gadget> demo", "<nama gadget> how to use").
+Hindari kata-kata promo belanja seperti: COD, murah, promo, terlaris, diskon.
+
+Keluarkan JSON dengan format persis:
+{
+  "detectedProductEnglish": "<nama produk universal bahasa Inggris>",
+  "searchQueries": [
+    "<query 1>",
+    "<query 2>",
+    "<query 3>"
+  ]
+}`;
+
+    for (const modelName of candidateModels) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: { temperature: 0.1, responseMimeType: 'application/json' }
+        });
+
+        const result = await model.generateContent([
+          prompt,
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType
+            }
+          }
+        ]);
+
+        const text = result?.response?.text();
+        if (text) {
+          const parsed = JSON.parse(text);
+          if (Array.isArray(parsed.searchQueries) && parsed.searchQueries.length > 0) {
+            return parsed.searchQueries;
+          }
+        }
+      } catch (mErr) {
+        // try next candidate model
+      }
+    }
+    return [];
+  } catch (err) {
+    console.warn(`[VisualSearchAI] Gagal menganalisa gambar dengan AI: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * ── ORKESTRATOR UTAMA PENCARIAN VIDEO BERBASIS GAMBAR (VISUAL SEARCH) ─────────
+ * Menggabungkan Bing Visual Search (Reverse Image Lookup) dan Gemini Vision (Image-to-Query)
+ * dengan Multi-Engine Video Search untuk menemukan kandidat video YouTube terbaik.
+ */
+export async function searchVideosByProductImage({
+  imageUrl,
+  productTitle = '',
+  productDescription = '',
+  limit = 20,
+  excludeVideoIds = new Set(),
+  onProgress = () => {},
+} = {}) {
+  const excludeSet = excludeVideoIds instanceof Set ? excludeVideoIds : new Set(excludeVideoIds || []);
+  const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
+
+  onProgress({
+    step: 'visual_video_search',
+    message: `Memulai pencarian video berbasis gambar produk (${productTitle ? productTitle.slice(0, 30) : 'foto produk'})...`,
+    progress: 10,
+  });
+
+  const candidates = [];
+  const seenIds = new Set(excludeSet);
+
+  // 1. Jalankan Bing Visual Search (Reverse Image Lookup)
+  if (imageUrl) {
+    try {
+      const { candidates: bingVisualCandidates, visualTags } = await searchBingVisualSearch(imageUrl, {
+        limit: safeLimit,
+        onProgress
+      });
+
+      for (const c of bingVisualCandidates) {
+        if (!seenIds.has(c.id)) {
+          seenIds.add(c.id);
+          candidates.push(c);
+        }
+      }
+
+      if (Array.isArray(visualTags) && visualTags.length > 0 && candidates.length < safeLimit) {
+        console.log(`[VisualSearch] Bing Visual Tags terdeteksi: ${visualTags.slice(0, 3).join(', ')}`);
+        for (const tag of visualTags.slice(0, 2)) {
+          if (candidates.length >= safeLimit) break;
+          const tagVideos = await searchMultiEngineVideos(`${tag} review demo`, {
+            limit: 8,
+            excludeVideoIds: seenIds,
+            onProgress
+          });
+          for (const tv of tagVideos) {
+            if (!seenIds.has(tv.id)) {
+              seenIds.add(tv.id);
+              candidates.push(tv);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[VisualSearch] Bing Visual Search error: ${err.message}`);
+    }
+  }
+
+  // 2. Jalankan Gemini Vision (Image-to-Query) jika kandidat masih kurang
+  if (imageUrl && candidates.length < safeLimit) {
+    onProgress({
+      step: 'visual_ai_keywords',
+      message: 'AI Vision menganalisis bentuk fisik produk untuk menemukan video YouTube global...',
+      progress: 20,
+    });
+
+    try {
+      const visualQueries = await extractVisualKeywordsWithAI({
+        imageUrl,
+        productTitle
+      });
+
+      if (Array.isArray(visualQueries) && visualQueries.length > 0) {
+        console.log(`[VisualSearch] Gemini Vision menghasilkan query pencarian:`, visualQueries);
+
+        for (const query of visualQueries) {
+          if (candidates.length >= safeLimit) break;
+          const multiResults = await searchMultiEngineVideos(query, {
+            limit: 10,
+            excludeVideoIds: seenIds,
+            onProgress: (p) => onProgress({
+              step: 'visual_multi_search',
+              message: `Pencarian visual: "${query}" (${p.message})`,
+              progress: 25,
+            }),
+          });
+
+          for (const item of multiResults) {
+            if (!seenIds.has(item.id)) {
+              seenIds.add(item.id);
+              candidates.push({ ...item, source: 'visual_ai_query' });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`[VisualSearch] Gemini Visual Keywords error: ${err.message}`);
+    }
+  }
+
+  console.log(`[VisualSearch] Selesai: Ditemukan ${candidates.length} video kandidat melalui pencarian visual gambar.`);
+  return candidates.slice(0, safeLimit);
+}
+
 export function delayWithJitter(minMs, maxMs) {
   const min = Number(minMs) || 0;
   const max = Math.max(min, Number(maxMs) || min);
@@ -1373,10 +1636,10 @@ export async function searchBingShopee(keyword) {
 }
 
 
-async function fetchShopeePageMeta(url) {
+export async function fetchShopeePageMeta(url) {
   try {
     const response = await fetchWithTlsFallback(url, {
-      timeoutMs: 3000,
+      timeoutMs: 4000,
       headers: {
         'user-agent': USER_AGENT,
         'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -1386,9 +1649,16 @@ async function fetchShopeePageMeta(url) {
 
     const html = await response.text();
     const $ = cheerio.load(html);
+    const rawImg = $('meta[property="og:image"]').attr('content') ||
+      $('meta[name="twitter:image"]').attr('content') ||
+      $('meta[property="og:image:url"]').attr('content') ||
+      $('link[rel="image_src"]').attr('href') || '';
+    const imageUrl = rawImg.startsWith('//') ? `https:${rawImg}` : rawImg;
+
     return {
       title: $('meta[property="og:title"]').attr('content') || $('title').text(),
       description: $('meta[property="og:description"]').attr('content') || $('meta[name="description"]').attr('content'),
+      imageUrl: imageUrl || '',
     };
   } catch {
     return {};
