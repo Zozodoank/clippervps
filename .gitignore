@@ -34,3 +34,7 @@ yarn-error.log*
 
 # Local backup folder
 copy/
+
+# Authentication and session cookies
+*cookies*.txt
+server/cookies.txt

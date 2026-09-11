@@ -56,6 +56,7 @@ function getYtDlpBaseArgs() {
   const args = [
     '--no-check-certificates',
     '--geo-bypass',
+    '--remote-components', 'ejs:github',
   ];
 
   if (cookiesArgs.length) args.push(...cookiesArgs);
