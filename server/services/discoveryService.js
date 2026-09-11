@@ -1177,11 +1177,11 @@ async function searchBraveShopee(keyword) {
 }
 
 async function searchBingShopee(keyword) {
-  for (const searchQuery of buildShopeeSearchQueries(keyword).slice(0, 1)) {
+  for (const searchQuery of buildShopeeSearchQueries(keyword)) {
     const url = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}`;
     try {
       const response = await fetchWithTlsFallback(url, {
-        timeoutMs: 2500,
+        timeoutMs: 3000,
         headers: {
           'user-agent': USER_AGENT,
           'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -1290,27 +1290,39 @@ function decodeBingRedirect(value) {
 
 function buildShopeeSearchQueries(keyword) {
   const cleanKeyword = keyword.replace(/\s+/g, ' ').trim();
-  const slugKeyword = cleanKeyword.replace(/[^\p{L}\p{M}\p{N}]+/gu, '-').replace(/^-|-$/g, '');
   return [
-    `shopee.co.id "${slugKeyword}" "-i."`,
     `site:shopee.co.id ${cleanKeyword} "i."`,
-    `site:shopee.co.id ${cleanKeyword} shopee product`,
+    `site:shopee.co.id/ ${cleanKeyword}`,
+    `site:shopee.co.id ${cleanKeyword}`,
+    `"shopee.co.id" ${cleanKeyword}`,
   ];
 }
 
-function isShopeeProductUrl(url) {
+export function isShopeeProductUrl(url) {
   if (!url) return false;
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.replace(/^www\./, '');
-    const path = decodeURIComponent(parsed.pathname).toLowerCase();
+    if (host === 'shope.ee' || host === 's.shopee.co.id') return true;
     if (host !== 'shopee.co.id') return false;
-    if (['/search', '/mall', '/buyer', '/cart'].some((prefix) => path.startsWith(prefix))) return false;
+    const path = decodeURIComponent(parsed.pathname).toLowerCase();
+    if (['/search', '/mall', '/buyer', '/cart', '/list', '/flash_sale'].some((prefix) => path.startsWith(prefix))) return false;
     if (/\/shop\/?\d*/.test(path)) return false;
     return path.includes('/product/') || /-i\.\d+\.\d+/.test(path) || /\.\d+\.\d+/.test(path);
   } catch {
     return false;
   }
+}
+
+export function extractShopeeLinkFromText(text = '') {
+  if (!text || typeof text !== 'string') return '';
+  const match = text.match(/https?:\/\/(?:[a-zA-Z0-9_-]+\.)?(?:shopee\.co\.id|shope\.ee|s\.shopee\.co\.id)\/[^\s"'>\)]+/i);
+  if (match) {
+    let url = match[0].trim();
+    url = url.replace(/[.,;!?]+$/, '');
+    return url;
+  }
+  return '';
 }
 
 export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
@@ -1885,15 +1897,18 @@ function normalizeText(value = '') {
   return value.toString().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
-/**
- * Searches and returns the best exact Shopee product URL matching the video's detected product.
- * Uses DoH-powered DuckDuckGo and household product keywords.
- */
-export async function findMatchingShopeeProductUrl(productTitle, detectedBrand = '') {
+export async function findMatchingShopeeProductUrl(productTitle, detectedBrand = '', videoDesc = '') {
   if (!productTitle || typeof productTitle !== 'string') return '';
   const cleanTitleStr = cleanTitle(productTitle) || productTitle.trim();
   const brand = (detectedBrand && detectedBrand !== 'none' && !detectedBrand.includes('Terdeteksi')) ? detectedBrand.trim() : '';
   const searchPhrase = `${brand ? `${brand} ` : ''}${cleanTitleStr}`.trim();
+
+  // 1. Direct match from YouTube video description if available
+  const fromDesc = extractShopeeLinkFromText(videoDesc);
+  if (fromDesc) {
+    console.log(`[Discovery] ✅ Menemukan link Shopee langsung dari deskripsi video YouTube: ${fromDesc}`);
+    return fromDesc;
+  }
 
   console.log(`[Discovery] Mencari link Shopee yang cocok untuk produk video: "${searchPhrase}"...`);
   try {
@@ -1901,7 +1916,7 @@ export async function findMatchingShopeeProductUrl(productTitle, detectedBrand =
     if (results && results.length > 0) {
       const match = results.find(r => isShopeeProductUrl(r.url));
       if (match) {
-        console.log(`[Discovery] ✅ Menemukan link Shopee cocok: "${match.title}" -> ${match.url}`);
+        console.log(`[Discovery] ✅ Menemukan link Shopee cocok via DDG: "${match.title}" -> ${match.url}`);
         return match.url;
       }
     }
@@ -1909,7 +1924,21 @@ export async function findMatchingShopeeProductUrl(productTitle, detectedBrand =
     console.warn(`[Discovery] Gagal mencari link Shopee via DuckDuckGo:`, err.message);
   }
 
-  // Fallback: direct search page URL with refined kitchen tools keyword
+  // 2. Bing fallback
+  try {
+    const bingResults = await searchBingShopee(searchPhrase);
+    if (bingResults && bingResults.length > 0) {
+      const match = bingResults.find(r => isShopeeProductUrl(r.url));
+      if (match) {
+        console.log(`[Discovery] ✅ Menemukan link Shopee cocok via Bing: "${match.title}" -> ${match.url}`);
+        return match.url;
+      }
+    }
+  } catch (bingErr) {
+    console.warn(`[Discovery] Gagal mencari link Shopee via Bing:`, bingErr.message);
+  }
+
+  // 3. Fallback: direct search page URL with refined kitchen tools keyword
   const fallbackUrl = `https://shopee.co.id/search?keyword=${encodeURIComponent(`${searchPhrase} alat dapur`)}`;
   console.log(`[Discovery] Menggunakan fallback link Shopee: ${fallbackUrl}`);
   return fallbackUrl;

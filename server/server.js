@@ -55,6 +55,7 @@ import {
   discoverSingleShopeeProduct,
   discoverYouTubeCandidatesForProduct,
   findMatchingShopeeProductUrl,
+  extractShopeeLinkFromText,
   DEFAULT_AUTO_KEYWORDS,
   getAutoKeywords,
   extractCoreProductInfo,
@@ -1540,7 +1541,7 @@ export async function runStage1Pipeline({
     if (!effectiveShopeeLink || effectiveShopeeLink.includes('/search') || effectiveShopeeLink.includes('localhost')) {
       try {
         updateProgress({ step: 'shopee_match', message: `Mencari link Shopee yang cocok untuk "${detectedItemName.slice(0, 30)}..."...`, progress: 82, status: 'running' });
-        const matchedShopeeUrl = await findMatchingShopeeProductUrl(detectedItemName, highlight.detectedBrand);
+        const matchedShopeeUrl = await findMatchingShopeeProductUrl(detectedItemName, highlight.detectedBrand, videoMeta?.description || '');
         if (matchedShopeeUrl) {
           effectiveShopeeLink = matchedShopeeUrl;
           console.log(`[Job ${jobId}] ✅ Link Shopee otomatis dicocokkan dengan video: ${effectiveShopeeLink}`);
@@ -2042,10 +2043,11 @@ async function runAutoStage1Worker(run) {
             progress: isUnlimited ? 25 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 5),
           });
 
+          const candidateShopeeLink = extractShopeeLinkFromText(candidate.description);
           await runStage1Pipeline({
             jobId: autoJobId,
             youtubeUrl: candidate.url,
-            shopeeLink: product.url,
+            shopeeLink: candidateShopeeLink || product.url,
             productTitle: product.title,
             productDescription: product.description,
             apiKey: undefined,
