@@ -250,16 +250,16 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Video terindikasi animasi, kartun, atau buatan AI.' };
   }
 
-  // 7. Kesesuaian Kata Kunci Produk Target (Policy 1 & Policy 2: Core Noun & Multi-word Intersection)
+  // 7. Kesesuaian Kata Kunci Produk Target (Policy 1 & Policy 2: Core Noun & Multilingual Anchor Matching)
   if (productTitle && productTitle.trim()) {
     const prodInfo = extractCoreProductInfo(productTitle, metadata.description || '');
-    const coreWords = prodInfo.coreWords || [];
+    const coreWords = prodInfo.multilingualWords || prodInfo.coreWords || [];
 
-    // Local check on video title against core product words and cross-category exclusions
-    if (!isTitleMatchingProduct(metadata.title, coreWords)) {
+    // Local check on video title, description, and tags against multilingual product words and cross-category exclusions
+    if (!isTitleMatchingProduct(metadata.title, coreWords, { description: metadata.description, tags: metadata.tags })) {
       return {
         eligible: false,
-        reason: `Judul video YouTube ("${metadata.title}") tidak cocok dengan produk target ("${prodInfo.coreProductNoun}"). Dibutuhkan kecocokan multi-kata kunci produk.`
+        reason: `Judul / deskripsi video YouTube ("${metadata.title}") tidak cocok dengan produk target ("${prodInfo.coreProductNoun}"). Dibutuhkan kecocokan kata kunci produk.`
       };
     }
   }

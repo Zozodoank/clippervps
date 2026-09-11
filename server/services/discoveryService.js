@@ -307,7 +307,7 @@ export function isBulkyOrUnsuitableProduct(text = '') {
 export function normalizeKeyword(value = '') {
   return String(value || '')
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -1290,7 +1290,7 @@ function decodeBingRedirect(value) {
 
 function buildShopeeSearchQueries(keyword) {
   const cleanKeyword = keyword.replace(/\s+/g, ' ').trim();
-  const slugKeyword = cleanKeyword.replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '');
+  const slugKeyword = cleanKeyword.replace(/[^\p{L}\p{M}\p{N}]+/gu, '-').replace(/^-|-$/g, '');
   return [
     `shopee.co.id "${slugKeyword}" "-i."`,
     `site:shopee.co.id ${cleanKeyword} "i."`,
@@ -1342,9 +1342,9 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   ];
   if (excludedTitleWords.some((keyword) => titleText.includes(keyword))) return false;
 
-  // Strict check: Candidate title MUST match core product keywords with multi-word intersection & cross-category exclusion
+  // Flexible check: Candidate title, description, or tags MUST match core product keywords with cross-category exclusion
   if (Array.isArray(productWords) && productWords.length > 0) {
-    if (!isTitleMatchingProduct(candidate.title, productWords)) {
+    if (!isTitleMatchingProduct(candidate.title, productWords, { description: candidate.description, tags: candidate.tags })) {
       return false;
     }
   }
@@ -1420,51 +1420,338 @@ export function cleanTitle(value = '', productUrl = '') {
 
 export const PRODUCT_ANCHORS = [
   // 1. Kitchen Prep, Choppers & Cutters
-  { pattern: /\b(?:chopper\s+(?:mini|elektrik|portable|tarik|wireless)|food\s+chopper|blender\s+mini|blender\s+kapsul|mini\s+cutter)\b/i, noun: 'Chopper Mini Elektrik', category: 'kitchen_prep', core: ['chopper', 'mini'] },
-  { pattern: /\b(?:gunting\s+dapur|gunting\s+sk5|gunting\s+tulang|kitchen\s+shears)\b/i, noun: 'Gunting Dapur SK5', category: 'kitchen_prep', core: ['gunting', 'dapur'] },
-  { pattern: /\b(?:mandoline\s+slicer|pemotong\s+sayur|parutan\s+multifungsi|parutan\s+serbaguna|parutan\s+6\s*in\s*1)\b/i, noun: 'Pemotong Sayur Multifungsi', category: 'kitchen_prep', core: ['pemotong', 'sayur'] },
-  { pattern: /\b(?:pengupas\s+buah|peeler\s+buah|pengupas\s+kulit|pisau\s+peeler)\b/i, noun: 'Alat Pengupas Buah Praktis', category: 'kitchen_prep', core: ['pengupas', 'buah'] },
-  { pattern: /\b(?:pemeras\s+jeruk|pemeras\s+lemon|citrus\s+squeezer|perasan\s+jeruk)\b/i, noun: 'Alat Pemeras Jeruk Manual', category: 'kitchen_prep', core: ['pemeras', 'jeruk'] },
-  { pattern: /\b(?:pemotong\s+semangka|pemotong\s+melon|watermelon\s+slicer)\b/i, noun: 'Pemotong Semangka Praktis', category: 'kitchen_prep', core: ['pemotong', 'semangka'] },
-  { pattern: /\b(?:pelumat\s+bawang|press\s+garlic|penghancur\s+bawang|garlic\s+press)\b/i, noun: 'Alat Pelumat Bawang Putih', category: 'kitchen_prep', core: ['bawang', 'garlic'] },
-  { pattern: /\b(?:cetakan\s+bakso|pembuat\s+bakso|meatball\s+maker)\b/i, noun: 'Cetakan Bakso Manual Praktis', category: 'kitchen_prep', core: ['cetakan', 'bakso'] },
-  { pattern: /\b(?:pemotong\s+daging\s+beku|meat\s+slicer\s+manual|pengiris\s+daging)\b/i, noun: 'Alat Pengiris Daging Manual', category: 'kitchen_prep', core: ['pengiris', 'daging'] },
-  { pattern: /\b(?:pembuat\s+dumpling|cetakan\s+pastel|dumpling\s+maker)\b/i, noun: 'Alat Pembuat Dumpling Pastel', category: 'kitchen_prep', core: ['dumpling', 'pastel'] },
-  { pattern: /\b(?:sealer\s+plastik|perekat\s+plastik|heat\s+sealer|mini\s+sealer)\b/i, noun: 'Sealer Plastik Mini Portable', category: 'kitchen_prep', core: ['sealer', 'plastik'] },
-  { pattern: /\b(?:pengasah\s+pisau|knife\s+sharpener|asah\s+pisau)\b/i, noun: 'Alat Pengasah Pisau Praktis', category: 'kitchen_prep', core: ['pengasah', 'pisau'] },
-  { pattern: /\b(?:timbangan\s+digital|kitchen\s+scale|timbangan\s+dapur)\b/i, noun: 'Timbangan Dapur Digital', category: 'kitchen_prep', core: ['timbangan', 'digital'] },
-  { pattern: /\b(?:timer\s+dapur|kitchen\s+timer)\b/i, noun: 'Timer Dapur Digital Magnetik', category: 'kitchen_prep', core: ['timer', 'dapur'] },
-  { pattern: /\b(?:frother|pengocok\s+susu|pengocok\s+telur\s+mini|milk\s+frother)\b/i, noun: 'Frother Pengocok Susu Mini', category: 'kitchen_prep', core: ['frother', 'pengocok'] },
-  { pattern: /\b(?:hand\s+mixer|mixer\s+tangan\s+mini|mixer\s+portable)\b/i, noun: 'Mixer Tangan Mini Portable', category: 'kitchen_prep', core: ['mixer', 'mini'] },
-  { pattern: /\b(?:pemotong\s+kentang|potato\s+cutter|french\s+fries\s+cutter|kentang\s+spiral)\b/i, noun: 'Alat Pemotong Kentang Praktis', category: 'kitchen_prep', core: ['pemotong', 'kentang'] },
-  { pattern: /\b(?:serut\s+jagung|pemipil\s+jagung|corn\s+stripper)\b/i, noun: 'Alat Pemipil Jagung Serbaguna', category: 'kitchen_prep', core: ['serut', 'jagung'] },
-  { pattern: /\b(?:parutan\s+keju|cheese\s+grater|parutan\s+kelapa)\b/i, noun: 'Parutan Keju Kelapa Stainless', category: 'kitchen_prep', core: ['parutan', 'keju'] },
-  { pattern: /\b(?:pisau\s+dapur|chef\s+knife|pisau\s+stainless)\b/i, noun: 'Pisau Dapur Stainless Praktis', category: 'kitchen_prep', core: ['pisau', 'dapur'] },
+  {
+    pattern: /\b(?:chopper\s+(?:mini|elektrik|portable|tarik|wireless)|food\s+chopper|blender\s+mini|blender\s+kapsul|mini\s+cutter)\b/i,
+    noun: 'Chopper Mini Elektrik',
+    englishNoun: 'Mini Electric Food Chopper',
+    category: 'kitchen_prep',
+    core: ['chopper', 'mini'],
+    multilingual: ['chopper', 'mini', 'blender', 'food chopper', 'garlic chopper', 'meat grinder', 'mincer', 'pelumat', 'gilingan', '绞肉机', '蒜泥器', 'máy xay', 'cối xay', 'เครื่องบด', 'เครื่องสับ']
+  },
+  {
+    pattern: /\b(?:gunting\s+dapur|gunting\s+sk5|gunting\s+tulang|kitchen\s+shears)\b/i,
+    noun: 'Gunting Dapur SK5',
+    englishNoun: 'SK5 Kitchen Shears',
+    category: 'kitchen_prep',
+    core: ['gunting', 'dapur'],
+    multilingual: ['gunting', 'shears', 'scissors', 'kitchen shears', 'poultry shears', 'sk5', 'kitchen scissors', 'gunting dapur', '厨房剪', '剪刀', 'kéo nhà bếp', 'kéo cắt gà', 'กรรไกรครัว', 'กรรไกรตัดอาหาร']
+  },
+  {
+    pattern: /\b(?:mandoline\s+slicer|pemotong\s+sayur|parutan\s+multifungsi|parutan\s+serbaguna|parutan\s+6\s*in\s*1)\b/i,
+    noun: 'Pemotong Sayur Multifungsi',
+    englishNoun: 'Multifunctional Mandoline Slicer',
+    category: 'kitchen_prep',
+    core: ['pemotong', 'sayur'],
+    multilingual: ['mandoline', 'slicer', 'grater', 'shredder', 'cutter', 'pemotong', 'parutan', 'pengiris', 'serutan', '切菜器', '擦丝器', '刨丝器', 'máy cắt rau', 'bào rau', 'nạo rau', 'ที่สไลด์ผัก', 'เครื่องหั่นผัก', 'ที่ขูดผัก']
+  },
+  {
+    pattern: /\b(?:pengupas\s+buah|peeler\s+buah|pengupas\s+kulit|pisau\s+peeler)\b/i,
+    noun: 'Alat Pengupas Buah Praktis',
+    englishNoun: 'Fruit Peeler',
+    category: 'kitchen_prep',
+    core: ['pengupas', 'buah'],
+    multilingual: ['peeler', 'pengupas', 'kupas', 'parer', 'skin remover', 'fruit peeler', 'apple peeler', 'rotary peeler', '削皮器', '削皮刀', '刨皮刀', 'dao gọt', 'nạo vỏ', 'ที่ปอกผลไม้', 'มีดปอกเปลือก', 'pambalat']
+  },
+  {
+    pattern: /\b(?:pemeras\s+jeruk|pemeras\s+lemon|citrus\s+squeezer|perasan\s+jeruk)\b/i,
+    noun: 'Alat Pemeras Jeruk Manual',
+    englishNoun: 'Manual Citrus Juicer Squeezer',
+    category: 'kitchen_prep',
+    core: ['pemeras', 'jeruk'],
+    multilingual: ['squeezer', 'juicer', 'pemeras', 'perasan', 'lemon squeezer', 'citrus squeezer', 'orange juicer', 'hand juicer', '压汁机', '榨汁器', 'vắt cam', 'ép cam', 'ép chanh', 'ที่คั้นน้ำส้ม', 'ที่บีบมะนาว', 'pigaan']
+  },
+  {
+    pattern: /\b(?:pemotong\s+semangka|pemotong\s+melon|watermelon\s+slicer)\b/i,
+    noun: 'Pemotong Semangka Praktis',
+    englishNoun: 'Watermelon Slicer Cutter',
+    category: 'kitchen_prep',
+    core: ['pemotong', 'semangka'],
+    multilingual: ['watermelon slicer', 'melon slicer', 'pemotong semangka', 'semangka', 'watermelon cutter', '切西瓜器', 'cắt dưa hấu', 'ที่ตัดแตงโม', 'ที่หั่นแตงโม']
+  },
+  {
+    pattern: /\b(?:pelumat\s+bawang|press\s+garlic|penghancur\s+bawang|garlic\s+press)\b/i,
+    noun: 'Alat Pelumat Bawang Putih',
+    englishNoun: 'Garlic Press Crusher',
+    category: 'kitchen_prep',
+    core: ['bawang', 'garlic'],
+    multilingual: ['garlic press', 'garlic crusher', 'garlic mincer', 'bawang', 'garlic', 'pelumat bawang', 'penghancur bawang', '压蒜器', '蒜泥器', 'kẹp tỏi', 'nghiền tỏi', 'ép tỏi', 'ที่บดกระเทียม', 'ที่กดกระเทียม', 'pandurog ng bawang']
+  },
+  {
+    pattern: /\b(?:cetakan\s+bakso|pembuat\s+bakso|meatball\s+maker)\b/i,
+    noun: 'Cetakan Bakso Manual Praktis',
+    englishNoun: 'Meatball Maker Spoon Mold',
+    category: 'kitchen_prep',
+    core: ['cetakan', 'bakso'],
+    multilingual: ['meatball maker', 'meatball mold', 'cetakan bakso', 'pembuat bakso', 'bakso', 'meatball spoon', '肉丸器', '丸子模具', 'khuôn làm thịt viên', 'แม่พิมพ์ทำลูกชิ้น', 'ที่ทำลูกชิ้น']
+  },
+  {
+    pattern: /\b(?:pemotong\s+daging\s+beku|meat\s+slicer\s+manual|pengiris\s+daging)\b/i,
+    noun: 'Alat Pengiris Daging Manual',
+    englishNoun: 'Manual Frozen Meat Slicer',
+    category: 'kitchen_prep',
+    core: ['pengiris', 'daging'],
+    multilingual: ['meat slicer', 'frozen meat', 'pengiris daging', 'pemotong daging', 'meat cutter', 'slicer manual', '切肉机', '切片机', 'máy cắt thịt', 'thái thịt', 'เครื่องสไลด์เนื้อ', 'ที่สไลด์เนื้อ']
+  },
+  {
+    pattern: /\b(?:pembuat\s+dumpling|cetakan\s+pastel|dumpling\s+maker)\b/i,
+    noun: 'Alat Pembuat Dumpling Pastel',
+    englishNoun: 'Dumpling Maker Mold Press',
+    category: 'kitchen_prep',
+    core: ['dumpling', 'pastel'],
+    multilingual: ['dumpling maker', 'dumpling press', 'empanada maker', 'cetakan dumpling', 'pembuat pastel', 'cetakan pastel', 'dumpling', 'pastel', '包饺子神器', '饺子模具', 'khuôn làm sủi cảo', 'khuôn bánh bao', 'ที่ทำเกี๊ยว', 'แม่พิมพ์เกี๊ยว']
+  },
+  {
+    pattern: /\b(?:sealer\s+plastik|perekat\s+plastik|heat\s+sealer|mini\s+sealer)\b/i,
+    noun: 'Sealer Plastik Mini Portable',
+    englishNoun: 'Mini Bag Heat Sealer',
+    category: 'kitchen_prep',
+    core: ['sealer', 'plastik'],
+    multilingual: ['sealer', 'heat sealer', 'bag sealer', 'plastic sealer', 'mini sealer', 'perekat plastik', 'sealer plastik', 'press plastik', '封口机', 'máy hàn miệng túi', 'เครื่องซีลถุง', 'ที่ซีลถุง']
+  },
+  {
+    pattern: /\b(?:pengasah\s+pisau|knife\s+sharpener|asah\s+pisau)\b/i,
+    noun: 'Alat Pengasah Pisau Praktis',
+    englishNoun: 'Kitchen Knife Sharpener',
+    category: 'kitchen_prep',
+    core: ['pengasah', 'pisau'],
+    multilingual: ['knife sharpener', 'blade sharpener', 'sharpening', 'whetstone', 'pengasah pisau', 'asah pisau', 'asahan pisau', '磨刀器', '磨刀石', 'dụng cụ mài dao', 'mài dao', 'ที่ลับมีด', 'เครื่องลับมีด']
+  },
+  {
+    pattern: /\b(?:timbangan\s+digital|kitchen\s+scale|timbangan\s+dapur)\b/i,
+    noun: 'Timbangan Dapur Digital',
+    englishNoun: 'Digital Kitchen Food Scale',
+    category: 'kitchen_prep',
+    core: ['timbangan', 'digital'],
+    multilingual: ['kitchen scale', 'digital scale', 'food scale', 'baking scale', 'timbangan dapur', 'timbangan digital', 'timbangan', '厨房秤', '电子秤', 'cân điện tử', 'cân tiểu ly', 'ตาชั่งดิจิตอล', 'เครื่องชั่งดิจิตอล']
+  },
+  {
+    pattern: /\b(?:timer\s+dapur|kitchen\s+timer)\b/i,
+    noun: 'Timer Dapur Digital Magnetik',
+    englishNoun: 'Digital Kitchen Timer',
+    category: 'kitchen_prep',
+    core: ['timer', 'dapur'],
+    multilingual: ['kitchen timer', 'cooking timer', 'digital timer', 'timer dapur', 'timer digital', '厨房定时器', 'đồng hồ hẹn giờ', 'นาฬิกาจับเวลาในครัว']
+  },
+  {
+    pattern: /\b(?:frother|pengocok\s+susu|pengocok\s+telur\s+mini|milk\s+frother)\b/i,
+    noun: 'Frother Pengocok Susu Mini',
+    englishNoun: 'Handheld Milk Frother Whisk',
+    category: 'kitchen_prep',
+    core: ['frother', 'pengocok'],
+    multilingual: ['milk frother', 'frother', 'hand frother', 'whisk', 'egg beater', 'pengocok susu', 'pengocok telur', 'mixer mini', '奶泡机', '打蛋器', 'máy tạo bọt sữa', 'đánh trứng', 'ที่ตีฟองนม', 'ที่ตีไข่']
+  },
+  {
+    pattern: /\b(?:hand\s+mixer|mixer\s+tangan\s+mini|mixer\s+portable)\b/i,
+    noun: 'Mixer Tangan Mini Portable',
+    englishNoun: 'Portable Hand Mixer',
+    category: 'kitchen_prep',
+    core: ['mixer', 'mini'],
+    multilingual: ['hand mixer', 'portable mixer', 'cordless mixer', 'mixer tangan', 'mixer mini', 'mixer', '无线打蛋器', 'máy đánh trứng mini', 'เครื่องผสมอาหารมือถือ']
+  },
+  {
+    pattern: /\b(?:pemotong\s+kentang|potato\s+cutter|french\s+fries\s+cutter|kentang\s+spiral)\b/i,
+    noun: 'Alat Pemotong Kentang Praktis',
+    englishNoun: 'French Fry Potato Cutter',
+    category: 'kitchen_prep',
+    core: ['pemotong', 'kentang'],
+    multilingual: ['potato cutter', 'french fry cutter', 'potato slicer', 'pemotong kentang', 'kentang spiral', 'french fries', '切薯条器', '切土豆条', 'máy cắt khoai tây', 'ที่หั่นมันฝรั่ง', 'ที่ตัดเฟรนช์ฟรายส์']
+  },
+  {
+    pattern: /\b(?:serut\s+jagung|pemipil\s+jagung|corn\s+stripper)\b/i,
+    noun: 'Alat Pemipil Jagung Serbaguna',
+    englishNoun: 'Corn Stripper Peeler Thresher',
+    category: 'kitchen_prep',
+    core: ['serut', 'jagung'],
+    multilingual: ['corn stripper', 'corn peeler', 'corn thresher', 'corn kernel remover', 'pemipil jagung', 'serut jagung', 'kupas jagung', '玉米剥粒器', 'tách hạt bắp', 'nạo ngô', 'ที่ฝานข้าวโพด', 'ที่แกะเมล็ดข้าวโพด']
+  },
+  {
+    pattern: /\b(?:parutan\s+keju|cheese\s+grater|parutan\s+kelapa)\b/i,
+    noun: 'Parutan Keju Kelapa Stainless',
+    englishNoun: 'Stainless Steel Cheese Grater',
+    category: 'kitchen_prep',
+    core: ['parutan', 'keju'],
+    multilingual: ['cheese grater', 'grater', 'zester', 'parutan keju', 'parutan kelapa', 'parutan stainless', '芝士擦丝器', '奶酪刨', 'bào phô mai', 'nạo phô mai', 'ที่ขูดชีส', 'ที่ขูดเนย']
+  },
+  {
+    pattern: /\b(?:pisau\s+dapur|chef\s+knife|pisau\s+stainless)\b/i,
+    noun: 'Pisau Dapur Stainless Praktis',
+    englishNoun: 'Kitchen Chef Knife Stainless',
+    category: 'kitchen_prep',
+    core: ['pisau', 'dapur'],
+    multilingual: ['chef knife', 'kitchen knife', 'cleaver', 'santoku', 'pisau dapur', 'pisau stainless', 'pisau', '菜刀', '主厨刀', 'dao nhà bếp', 'dao bếp', 'มีดทำครัว', 'มีดเชฟ']
+  },
 
   // 2. Cookware, Mini Cooking & Baking
-  { pattern: /\b(?:panci\s+listrik|panci\s+elektrik|electric\s+(?:pot|cooker|pan|skillet)|multi\s+cooker\s+mini)\b/i, noun: 'Panci Listrik Mini Serbaguna', category: 'cooking_pot', core: ['panci', 'listrik'] },
-  { pattern: /\b(?:wajan\s+telur\s+4|wajan\s+mini|frypan\s+mini|pan\s+4\s+lubang)\b/i, noun: 'Wajan Mini Telur 4 Lubang', category: 'cooking_pot', core: ['wajan', 'telur'] },
-  { pattern: /\b(?:tamagoyaki|telur\s+gulung|egg\s+roll\s+pan)\b/i, noun: 'Wajan Tamagoyaki Mini Anti Lengket', category: 'cooking_pot', core: ['wajan', 'tamagoyaki'] },
-  { pattern: /\b(?:pembuat\s+waffle|waffle\s+maker|cetakan\s+waffle)\b/i, noun: 'Alat Pembuat Waffle Mini', category: 'cooking_pot', core: ['waffle', 'maker'] },
-  { pattern: /\b(?:sutil\s+silikon|spatula\s+silikon|spatula\s+set|silicone\s+spatula)\b/i, noun: 'Sutil Silikon Set Tahan Panas', category: 'cooking_pot', core: ['sutil', 'silikon'] },
-  { pattern: /\b(?:cetakan\s+es\s+batu|ice\s+cube\s+tray|cetakan\s+es\s+silikon)\b/i, noun: 'Cetakan Es Batu Silikon', category: 'cooking_pot', core: ['cetakan', 'batu'] },
-  { pattern: /\b(?:pemanggang\s+sandwich|sandwich\s+maker|toaster\s+mini)\b/i, noun: 'Pemanggang Sandwich Mini Elektrik', category: 'cooking_pot', core: ['sandwich', 'pemanggang'] },
-  { pattern: /\b(?:cetakan\s+takoyaki|takoyaki\s+pan)\b/i, noun: 'Cetakan Takoyaki Mini', category: 'cooking_pot', core: ['cetakan', 'takoyaki'] },
-  { pattern: /\b(?:pot\s+air\s+fryer|silikon\s+air\s+fryer|wadah\s+air\s+fryer)\b/i, noun: 'Wadah Silikon Air Fryer', category: 'cooking_pot', core: ['silikon', 'fryer'] },
-  { pattern: /\b(?:termometer\s+makanan|cooking\s+thermometer)\b/i, noun: 'Termometer Makanan Digital', category: 'cooking_pot', core: ['termometer', 'makanan'] },
-  { pattern: /\b(?:cetakan\s+sushi|sushi\s+bazooka|cetakan\s+onigiri)\b/i, noun: 'Cetakan Sushi Onigiri Praktis', category: 'cooking_pot', core: ['cetakan', 'sushi'] },
-  { pattern: /\b(?:capitan\s+makanan|food\s+tongs|capitan\s+silikon)\b/i, noun: 'Capitan Makanan Silikon Stainless', category: 'cooking_pot', core: ['capitan', 'makanan'] },
+  {
+    pattern: /\b(?:panci\s+listrik|panci\s+elektrik|electric\s+(?:pot|cooker|pan|skillet)|multi\s+cooker\s+mini)\b/i,
+    noun: 'Panci Listrik Mini Serbaguna',
+    englishNoun: 'Mini Electric Hot Pot Cooker',
+    category: 'cooking_pot',
+    core: ['panci', 'listrik'],
+    multilingual: ['electric pot', 'electric cooker', 'hot pot', 'electric skillet', 'multi cooker', 'panci listrik', 'panci elektrik', 'panci mini', '电热锅', '电煮锅', '小电锅', 'nồi lẩu điện mini', 'nồi điện đa năng', 'หม้อไฟฟ้ามินิ', 'หม้อต้มไฟฟ้า']
+  },
+  {
+    pattern: /\b(?:wajan\s+telur\s+4|wajan\s+mini|frypan\s+mini|pan\s+4\s+lubang)\b/i,
+    noun: 'Wajan Mini Telur 4 Lubang',
+    englishNoun: '4 Hole Egg Frying Pan',
+    category: 'cooking_pot',
+    core: ['wajan', 'telur'],
+    multilingual: ['egg frying pan', '4 hole pan', 'egg pan', 'pancake pan', 'wajan telur 4', 'wajan mini', 'pan 4 lubang', '四孔煎锅', '早餐锅', 'chảo 4 lỗ', 'chảo chiên trứng', 'กระทะ 4 หลุม', 'กระทะทอดไข่']
+  },
+  {
+    pattern: /\b(?:tamagoyaki|telur\s+gulung|egg\s+roll\s+pan)\b/i,
+    noun: 'Wajan Tamagoyaki Mini Anti Lengket',
+    englishNoun: 'Japanese Tamagoyaki Omelette Pan',
+    category: 'cooking_pot',
+    core: ['wajan', 'tamagoyaki'],
+    multilingual: ['tamagoyaki pan', 'egg roll pan', 'omelette pan', 'tamagoyaki', 'wajan tamagoyaki', 'telur gulung', '玉子烧锅', '蛋卷锅', 'chảo tamagoyaki', 'chảo cuộn trứng', 'กระทะไข่ม้วน']
+  },
+  {
+    pattern: /\b(?:pembuat\s+waffle|waffle\s+maker|cetakan\s+waffle)\b/i,
+    noun: 'Alat Pembuat Waffle Mini',
+    englishNoun: 'Mini Waffle Maker Machine',
+    category: 'cooking_pot',
+    core: ['waffle', 'maker'],
+    multilingual: ['waffle maker', 'waffle iron', 'mini waffle', 'pancake maker', 'pembuat waffle', 'cetakan waffle', 'waffle', '华夫饼机', 'máy làm bánh waffle', 'máy nướng waffle', 'เครื่องทำวาฟเฟิล']
+  },
+  {
+    pattern: /\b(?:sutil\s+silikon|spatula\s+silikon|spatula\s+set|silicone\s+spatula)\b/i,
+    noun: 'Sutil Silikon Set Tahan Panas',
+    englishNoun: 'Silicone Cooking Utensils Spatula Set',
+    category: 'cooking_pot',
+    core: ['sutil', 'silikon'],
+    multilingual: ['silicone spatula', 'spatula set', 'kitchen utensils', 'turner', 'sutil silikon', 'spatula silikon', 'sutil', 'spatula', '硅胶铲', '硅胶锅铲', 'xẻng silicon', 'bộ muỗng silicon', 'ตะหลิวซิลิโคน', 'พายซิลิโคน']
+  },
+  {
+    pattern: /\b(?:cetakan\s+es\s+batu|ice\s+cube\s+tray|cetakan\s+es\s+silikon)\b/i,
+    noun: 'Cetakan Es Batu Silikon',
+    englishNoun: 'Silicone Ice Cube Tray Mold',
+    category: 'cooking_pot',
+    core: ['cetakan', 'batu'],
+    multilingual: ['ice cube tray', 'ice mold', 'ice maker', 'ice tray', 'cetakan es batu', 'cetakan es silikon', 'es batu', '制冰盒', '硅胶冰格', 'khay làm đá', 'khuôn đá silicon', 'ถาดทำน้ำแข็ง', 'แม่พิมพ์น้ำแข็ง']
+  },
+  {
+    pattern: /\b(?:pemanggang\s+sandwich|sandwich\s+maker|toaster\s+mini)\b/i,
+    noun: 'Pemanggang Sandwich Mini Elektrik',
+    englishNoun: 'Electric Sandwich Toaster Maker',
+    category: 'cooking_pot',
+    core: ['sandwich', 'pemanggang'],
+    multilingual: ['sandwich maker', 'toaster', 'sandwich toaster', 'pemanggang sandwich', 'sandwich', 'pemanggang roti', '三明治机', '轻食机', 'máy nướng sandwich', 'kẹp bánh mì', 'เครื่องทำแซนด์วิช']
+  },
+  {
+    pattern: /\b(?:cetakan\s+takoyaki|takoyaki\s+pan)\b/i,
+    noun: 'Cetakan Takoyaki Mini',
+    englishNoun: 'Takoyaki Pan Grill Maker',
+    category: 'cooking_pot',
+    core: ['cetakan', 'takoyaki'],
+    multilingual: ['takoyaki pan', 'takoyaki maker', 'takoyaki grill', 'cetakan takoyaki', 'takoyaki', '章鱼烧机', '章鱼烧盘', 'chảo làm takoyaki', 'เตาทาโกะยากิ']
+  },
+  {
+    pattern: /\b(?:pot\s+air\s+fryer|silikon\s+air\s+fryer|wadah\s+air\s+fryer)\b/i,
+    noun: 'Wadah Silikon Air Fryer',
+    englishNoun: 'Air Fryer Silicone Pot Liner Basket',
+    category: 'cooking_pot',
+    core: ['silikon', 'fryer'],
+    multilingual: ['air fryer silicone', 'silicone pot', 'air fryer liner', 'air fryer basket', 'silikon air fryer', 'wadah air fryer', 'air fryer', '空气炸锅硅胶垫', 'khay silicon nồi chiên không dầu', 'แผ่นซิลิโคนหม้อทอดไร้น้ำมัน']
+  },
+  {
+    pattern: /\b(?:termometer\s+makanan|cooking\s+thermometer)\b/i,
+    noun: 'Termometer Makanan Digital',
+    englishNoun: 'Digital Food Meat Cooking Thermometer',
+    category: 'cooking_pot',
+    core: ['termometer', 'makanan'],
+    multilingual: ['food thermometer', 'meat thermometer', 'cooking thermometer', 'termometer makanan', 'termometer digital', '食品温度计', 'nhiệt kế nấu ăn', 'nhiệt kế thực phẩm', 'ที่วัดอุณหภูมิอาหาร']
+  },
+  {
+    pattern: /\b(?:cetakan\s+sushi|sushi\s+bazooka|cetakan\s+onigiri)\b/i,
+    noun: 'Cetakan Sushi Onigiri Praktis',
+    englishNoun: 'Sushi Onigiri Maker Mold Roller',
+    category: 'cooking_pot',
+    core: ['cetakan', 'sushi'],
+    multilingual: ['sushi maker', 'sushi mold', 'onigiri mold', 'sushi bazooka', 'cetakan sushi', 'cetakan onigiri', 'sushi', 'onigiri', '寿司模具', '饭团模具', 'khuôn làm sushi', 'khuôn cơm nắm', 'แม่พิมพ์ซูชิ', 'ที่ทำซูชิ']
+  },
+  {
+    pattern: /\b(?:capitan\s+makanan|food\s+tongs|capitan\s+silikon)\b/i,
+    noun: 'Capitan Makanan Silikon Stainless',
+    englishNoun: 'Silicone Kitchen Food Tongs',
+    category: 'cooking_pot',
+    core: ['capitan', 'makanan'],
+    multilingual: ['food tongs', 'kitchen tongs', 'cooking tongs', 'capitan makanan', 'capitan silikon', 'penjepit makanan', '食品夹', '硅胶食物夹', 'kẹp gắp thức ăn', 'ที่คีบอาหาร', 'ที่คีบซิลิโคน']
+  },
 
   // 3. Compact Kitchen Containers, Dispensers & Tabletop Accessories
-  { pattern: /\b(?:botol\s+minyak\s+kuas|botol\s+minyak|oil\s+dispenser|spray\s+minyak)\b/i, noun: 'Botol Minyak Kuas Silikon', category: 'storage_organizer', core: ['botol', 'minyak'] },
-  { pattern: /\b(?:tempat\s+bumbu\s+putar|kotak\s+bumbu\s+putar|wadah\s+bumbu\s+4\s*sekat)\b/i, noun: 'Tempat Bumbu Putar Dapur', category: 'storage_organizer', core: ['bumbu', 'putar'] },
-  { pattern: /\b(?:dispenser\s+beras|tempat\s+beras|rice\s+dispenser|kotak\s+beras)\b/i, noun: 'Dispenser Beras Otomatis Mini', category: 'storage_organizer', core: ['dispenser', 'beras'] },
-  { pattern: /\b(?:wadah\s+telur|kotak\s+telur|rolling\s+egg)\b/i, noun: 'Wadah Telur Kulkas Otomatis', category: 'storage_organizer', core: ['wadah', 'telur'] },
-  { pattern: /\b(?:tutup\s+makanan\s+silikon|silicone\s+stretch\s+lid)\b/i, noun: 'Tutup Makanan Silikon Stretch', category: 'storage_organizer', core: ['tutup', 'silikon'] },
-  { pattern: /\b(?:tirisan\s+beras|wadah\s+cuci|cuci\s+beras|drain\s+basket)\b/i, noun: 'Wadah Tirisan Cuci Beras Sayur', category: 'storage_organizer', core: ['tirisan', 'beras'] },
-  { pattern: /\b(?:wadah\s+minyak\s+jelantah|oil\s+pot\s+strainer|saringan\s+minyak)\b/i, noun: 'Wadah Saringan Minyak Jelantah', category: 'storage_organizer', core: ['minyak', 'jelantah'] },
-  { pattern: /\b(?:dispenser\s+sabun\s+cuci\s+piring|soap\s+pump\s+sponge)\b/i, noun: 'Dispenser Sabun Cuci Piring Sponge', category: 'storage_organizer', core: ['dispenser', 'sabun'] },
-  { pattern: /\b(?:nano\s+magic\s+sponge|spons\s+nano|spons\s+cuci\s+piring)\b/i, noun: 'Spons Nano Cuci Piring Magic', category: 'storage_organizer', core: ['spons', 'nano'] },
+  {
+    pattern: /\b(?:botol\s+minyak\s+kuas|botol\s+minyak|oil\s+dispenser|spray\s+minyak)\b/i,
+    noun: 'Botol Minyak Kuas Silikon',
+    englishNoun: 'Oil Bottle with Silicone Brush Sprayer',
+    category: 'storage_organizer',
+    core: ['botol', 'minyak'],
+    multilingual: ['oil bottle', 'oil dispenser', 'oil sprayer', 'oil brush', 'botol minyak', 'spray minyak', 'kuas minyak', '喷油壶', '油刷瓶', 'chai đựng dầu', 'bình xịt dầu', 'ขวดน้ำมัน', 'ขวดสเปรย์น้ำมัน']
+  },
+  {
+    pattern: /\b(?:tempat\s+bumbu\s+putar|kotak\s+bumbu\s+putar|wadah\s+bumbu\s+4\s*sekat)\b/i,
+    noun: 'Tempat Bumbu Putar Dapur',
+    englishNoun: 'Rotating Spice Rack Seasoning Organizer',
+    category: 'storage_organizer',
+    core: ['bumbu', 'putar'],
+    multilingual: ['spice rack', 'rotating spice', 'seasoning organizer', 'tempat bumbu', 'wadah bumbu', 'bumbu putar', '旋转调料架', 'kệ gia vị xoay', 'hộp đựng gia vị', 'ชั้นวางเครื่องปรุงหมุนได้']
+  },
+  {
+    pattern: /\b(?:dispenser\s+beras|tempat\s+beras|rice\s+dispenser|kotak\s+beras)\b/i,
+    noun: 'Dispenser Beras Otomatis Mini',
+    englishNoun: 'Automatic Rice Dispenser Storage Box',
+    category: 'storage_organizer',
+    core: ['dispenser', 'beras'],
+    multilingual: ['rice dispenser', 'rice container', 'grain dispenser', 'dispenser beras', 'tempat beras', 'kotak beras', '米桶', '米箱', 'thùng đựng gạo', 'hộp đựng gạo thông minh', 'ถังเก็บข้าวสาร']
+  },
+  {
+    pattern: /\b(?:wadah\s+telur|kotak\s+telur|rolling\s+egg)\b/i,
+    noun: 'Wadah Telur Kulkas Otomatis',
+    englishNoun: 'Automatic Rolling Egg Storage Holder',
+    category: 'storage_organizer',
+    core: ['wadah', 'telur'],
+    multilingual: ['egg holder', 'rolling egg', 'egg dispenser', 'egg storage', 'wadah telur', 'kotak telur', 'rak telur', '滚蛋器', '鸡蛋收纳盒', 'khay đựng trứng', 'hộp đựng trứng lăn', 'ที่เก็บไข่', 'กล่องใส่ไข่']
+  },
+  {
+    pattern: /\b(?:tutup\s+makanan\s+silikon|silicone\s+stretch\s+lid)\b/i,
+    noun: 'Tutup Makanan Silikon Stretch',
+    englishNoun: 'Silicone Stretch Lids Reusable Bowl Covers',
+    category: 'storage_organizer',
+    core: ['tutup', 'silikon'],
+    multilingual: ['silicone stretch lids', 'bowl covers', 'food covers', 'silicone lids', 'tutup silikon', 'penutup makanan', 'silikon stretch', '硅胶保鲜盖', 'nắp đậy silicon', 'màng bọc thực phẩm silicon', 'ฝาซิลิโคนถนอมอาหาร']
+  },
+  {
+    pattern: /\b(?:tirisan\s+beras|wadah\s+cuci|cuci\s+beras|drain\s+basket)\b/i,
+    noun: 'Wadah Tirisan Cuci Beras Sayur',
+    englishNoun: 'Kitchen Washing Drain Basket Colander',
+    category: 'storage_organizer',
+    core: ['tirisan', 'beras'],
+    multilingual: ['drain basket', 'washing bowl', 'colander', 'strainer bowl', 'tirisan beras', 'cuci beras', 'baskom tirisan', '沥水篮', '淘米器', 'rổ rửa rau', 'thau rửa gạo', 'กะละมังล้างผัก', 'ตะกร้าล้างผัก']
+  },
+  {
+    pattern: /\b(?:wadah\s+minyak\s+jelantah|oil\s+pot\s+strainer|saringan\s+minyak)\b/i,
+    noun: 'Wadah Saringan Minyak Jelantah',
+    englishNoun: 'Stainless Steel Oil Strainer Pot',
+    category: 'storage_organizer',
+    core: ['minyak', 'jelantah'],
+    multilingual: ['oil strainer', 'oil pot', 'oil filter pot', 'wadah minyak', 'saringan minyak', 'minyak jelantah', '滤油壶', 'ca lọc dầu', 'bình lọc dầu ăn', 'หม้อกรองน้ำมัน']
+  },
+  {
+    pattern: /\b(?:dispenser\s+sabun\s+cuci\s+piring|soap\s+pump\s+sponge)\b/i,
+    noun: 'Dispenser Sabun Cuci Piring Sponge',
+    englishNoun: 'Kitchen Dish Soap Pump Dispenser with Sponge',
+    category: 'storage_organizer',
+    core: ['dispenser', 'sabun'],
+    multilingual: ['soap pump', 'soap dispenser', 'sponge holder', 'dish soap', 'dispenser sabun', 'tempat sabun', 'sabun cuci piring', '皂液盒', '洗碗按压器', 'hộp đựng nước rửa chén', 'กล่องกดน้ำยาล้างจาน']
+  },
+  {
+    pattern: /\b(?:nano\s+magic\s+sponge|spons\s+nano|spons\s+cuci\s+piring)\b/i,
+    noun: 'Spons Nano Cuci Piring Magic',
+    englishNoun: 'Magic Melamine Nano Cleaning Sponge',
+    category: 'storage_organizer',
+    core: ['spons', 'nano'],
+    multilingual: ['magic sponge', 'nano sponge', 'cleaning sponge', 'melamine sponge', 'spons nano', 'spons cuci piring', 'spons magic', '魔术海绵', '纳米海绵', 'miếng bọt biển nano', 'ฟองน้ำนาโน']
+  },
 ];
 
 export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '') {
@@ -1473,18 +1760,26 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '')
 
   for (const anchor of PRODUCT_ANCHORS) {
     if (anchor.pattern.test(normalized)) {
+      const allWords = Array.from(new Set([
+        ...(anchor.core || []),
+        ...(anchor.multilingual || []),
+      ]));
+      const englishNoun = anchor.englishNoun || anchor.noun;
+
       return {
         cleanTitle: cleaned,
         coreProductNoun: anchor.noun,
+        englishNoun,
         category: anchor.category,
-        coreWords: anchor.core,
+        coreWords: allWords,
+        multilingualWords: allWords,
         searchQueries: [
           `${anchor.noun} review cara pakai`,
+          `${englishNoun} demo review`,
           `${anchor.noun} demo peragaan`,
-          `${anchor.noun} review pemakaian`,
-          `${anchor.noun} unboxing review`,
-          `${anchor.noun} tes fungsi`,
+          `${englishNoun} unboxing test`,
           anchor.noun,
+          englishNoun,
         ]
       };
     }
@@ -1499,40 +1794,43 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '')
   ];
   const words = normalized.split(/\s+/).filter(w => w.length >= 3 && !stopWords.includes(w));
   const fallbackNoun = words.slice(0, 3).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || cleaned.slice(0, 30) || 'Produk Praktis';
-  const fallbackWords = words.slice(0, 2);
+  const fallbackWords = words.slice(0, 3);
 
   return {
     cleanTitle: cleaned,
     coreProductNoun: fallbackNoun,
     category: 'general_gadget',
     coreWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
+    multilingualWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
     searchQueries: [
       `${fallbackNoun} review cara pakai`,
-      `${fallbackNoun} demo peragaan`,
-      `${fallbackNoun} review pemakaian`,
+      `${fallbackNoun} demo review`,
+      `${fallbackNoun} test pemakaian`,
       `${fallbackNoun} unboxing`,
       fallbackNoun,
     ]
   };
 }
 
-export function isTitleMatchingProduct(candidateTitle, productWords = []) {
-  let normTitle = normalizeText(candidateTitle || '');
-  
-  // Cross-category exclusion for household / gadget products
+export function isTitleMatchingProduct(candidateTitle, productWords = [], extraMeta = {}) {
+  const normTitle = normalizeText(candidateTitle || '');
+  const normDesc = normalizeText(extraMeta?.description || '').slice(0, 800);
+  const normTags = Array.isArray(extraMeta?.tags)
+    ? extraMeta.tags.map((t) => normalizeText(String(t))).join(' ')
+    : '';
+  const combinedText = `${normTitle} ${normDesc} ${normTags}`;
+
+  // Cross-category exclusion for non-kitchen / automotive / phone / clothing / personal vlog
   const crossCategoryExclusions = [
     'las', 'pagar', 'bengkel', 'servis hp', 'servis motor', 'knalpot', 'mobil', 'motor', 'sepeda',
     'gameplay', 'game', 'manga', 'anime', 'vlog', 'skincare', 'makeup', 'gamis', 'hijab', 'outfit'
   ];
 
-  if (crossCategoryExclusions.some(badWord => normTitle.includes(badWord))) {
+  if (crossCategoryExclusions.some((badWord) => normTitle.includes(badWord))) {
     return false;
   }
 
   if (!Array.isArray(productWords) || productWords.length === 0) return true;
-
-  const significant = productWords.filter(w => w.length >= 3);
-  if (significant.length === 0) return true;
 
   // Normalize common Indonesian/English affiliate product synonyms
   const synonymMap = {
@@ -1543,17 +1841,27 @@ export function isTitleMatchingProduct(candidateTitle, productWords = []) {
     'mop': 'pel',
     'blender': 'chopper',
     'penggiling': 'chopper',
+    'shears': 'gunting',
+    'scale': 'timbangan',
+    'juicer': 'pemeras',
   };
 
+  let enrichedCombined = combinedText;
   for (const [syn, base] of Object.entries(synonymMap)) {
-    if (normTitle.includes(syn)) {
-      normTitle += ` ${base}`;
+    if (enrichedCombined.includes(syn)) {
+      enrichedCombined += ` ${base}`;
     }
   }
 
-  const matched = significant.filter(w => normTitle.includes(w.toLowerCase()));
-  const minRequired = Math.min(2, significant.length);
-  return matched.length >= minRequired;
+  // Check if at least ONE significant product keyword matches in combinedText
+  for (const word of productWords) {
+    const w = normalizeText(word);
+    if (w.length >= 2 && enrichedCombined.includes(w)) {
+      return true; // Match found!
+    }
+  }
+
+  return false;
 }
 
 function titleFromShopeeUrl(productUrl = '') {
@@ -1574,7 +1882,7 @@ function cleanDescription(value = '') {
 }
 
 function normalizeText(value = '') {
-  return value.toString().toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  return value.toString().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**
