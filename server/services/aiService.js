@@ -283,15 +283,17 @@ export async function analyzeYouTubeVideoWithGemini({
   const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
 Evaluate this YouTube video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
 
-CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH
+CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
 - Does the item demonstrated in the video physically and functionally match this product category/tool?
 - ACCEPTANCE STANDARD:
-  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function (e.g. electric mini pot/cooker, garlic chopper, spray mop, mandoline slicer, storage box, etc.).
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
   * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
 - REJECTION STANDARD:
-  * REJECT IMMEDIATELY if it is a completely DIFFERENT product category or tool (e.g. video shows a manual knife/scissors while target is an electric pot, or video shows makeup/skincare while target is a kitchen tool).
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
+  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
@@ -640,15 +642,17 @@ export async function analyzeVideoWithGeminiFileApi({
     const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
 Evaluate this full video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
 
-CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH
+CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
 - Does the item demonstrated in the video physically and functionally match this product category/tool?
 - ACCEPTANCE STANDARD:
-  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function (e.g. electric mini pot/cooker, garlic chopper, spray mop, mandoline slicer, storage box, etc.).
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
   * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
 - REJECTION STANDARD:
-  * REJECT IMMEDIATELY if it is a completely DIFFERENT product category or tool (e.g. video shows a manual knife/scissors while target is an electric pot, or video shows makeup/skincare while target is a kitchen tool).
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
+  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
@@ -1025,17 +1029,19 @@ RULE 1: ABSOLUTE ZERO HARDCODED SPEECH SUBTITLES & ZERO BURNED-IN CAPTION BARS:
   * Real physical text, brand marks, buttons, or labels printed/embossed directly ON THE PHYSICAL PRODUCT BODY OR ITS PACKAGING (e.g. brand logo "Philips", "Joybos", "Midea", "Xiaomi", button markings "ON/OFF", "Power", "Speed 1 2", volume "500ml", "100°C", "Stainless Steel 304", or physical ingredient/specification labels) is 100% NATURAL AND FULLY ACCEPTABLE!
   * NEVER reject a video because of text or brand logos printed physically on the product itself!
 
-RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION:
+RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN TOOLS NICHE):
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 - Compare the physical product demonstrated in the frames directly with the target product: "${coreNoun}".
 - ACCEPTANCE STANDARD:
-  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function (e.g. electric mini pot/cooker, garlic chopper, spray mop, mandoline slicer, storage box, etc.).
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
   * Minor variations in brand logo on chassis, color accent, or button placement are 100% ACCEPTABLE.
 - REJECTION STANDARD:
-  * REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category or tool (e.g. target is electric mini chopper, but video shows manual grater, knives, oil dispenser, or random gadgets).
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
+  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
-- If rejected for wrong product:
-  {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok dengan produk target (${coreNoun})"}
+- If rejected for wrong product or bulky furniture:
+  {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok atau tergolong perabot/rak besar yang dilarang"}
 
 RULE 3: FACE DISCARD MANDATE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISCARD ALL FACES):
 - OCCASIONAL PRESENTER / VLOGGER TOLERANCE:

@@ -57,7 +57,14 @@ import {
   findMatchingShopeeProductUrl,
   DEFAULT_AUTO_KEYWORDS,
   getAutoKeywords,
-  extractCoreProductInfo
+  extractCoreProductInfo,
+  isBulkyOrUnsuitableProduct,
+  markKeywordAsUsed,
+  loadUsedKeywords,
+  isKeywordUsed,
+  isProductTitleUsed,
+  getUsedKeywordsStats,
+  clearUsedKeywords
 } from './services/discoveryService.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -900,6 +907,19 @@ export async function runStage1Pipeline({
   const coreProductNoun = productInfo.coreProductNoun || productTitle || 'Produk Praktis';
   const cleanProductTitle = productInfo.cleanTitle || productTitle || '';
 
+  if (isBulkyOrUnsuitableProduct(productTitle) || isBulkyOrUnsuitableProduct(coreProductNoun) || isBulkyOrUnsuitableProduct(cleanProductTitle)) {
+    const rejectReason = `Niche dibatasi hanya untuk alat dapur praktis. Produk "${coreProductNoun || productTitle}" tergolong perabot besar / rak besar yang dilarang.`;
+    console.warn(`[Pipeline] ⛔ ${rejectReason}`);
+    updateProgress({
+      step: 'rejected_bulky',
+      message: rejectReason,
+      progress: 0,
+      status: 'error',
+      error: rejectReason,
+    });
+    throw new Error(rejectReason);
+  }
+
   const jobMeta = {
     jobId,
     stage: 'running',
@@ -916,6 +936,12 @@ export async function runStage1Pipeline({
   };
   activeJobs.set(jobId, jobMeta);
   persistJob(jobId, jobMeta);
+  if (productTitle) {
+    markKeywordAsUsed(productTitle, { productTitle, jobId, source: 'stage1_pipeline' });
+  }
+  if (coreProductNoun && coreProductNoun !== productTitle) {
+    markKeywordAsUsed(coreProductNoun, { productTitle, jobId, source: 'stage1_pipeline' });
+  }
 
   updateProgress({
     step: 'start',
@@ -1847,6 +1873,9 @@ app.post('/api/generate', async (req, res) => {
   if (shopeeLink && !isValidHttpUrl(shopeeLink)) {
     return res.status(400).json({ error: 'Link produk harus berupa URL http/https yang valid.' });
   }
+  if (productTitle && isBulkyOrUnsuitableProduct(productTitle)) {
+    return res.status(400).json({ error: 'Produk ditolak karena tergolong perabot besar / rak besar yang memenuhi frame. Niche disetel hanya untuk alat dapur praktis.' });
+  }
 
   const jobId = clientJobId || crypto.randomBytes(6).toString('hex');
   if (clientJobId && req.body.forceFreshVideo) {
@@ -1922,7 +1951,7 @@ async function runAutoStage1Worker(run) {
     updateAutoRun(run, { status: 'running', message: 'Memulai pencarian produk viral Shopee...', progress: 5 });
 
     // Thoroughly shuffle 1000+ keywords so each auto run picks varied, fresh product categories
-    const candidateKeywords = getAutoKeywords(1000);
+    const candidateKeywords = getAutoKeywords(1000, { excludeUsed: true, shuffle: true });
 
     const seenShopeeUrls = new Set();
     const usedYouTubeVideoIds = getAllUsedYouTubeVideoIds();
@@ -1939,6 +1968,13 @@ async function runAutoStage1Worker(run) {
 
       const product = await discoverSingleShopeeProduct(keyword, seenShopeeUrls);
       if (!product) {
+        continue;
+      }
+
+      if (isProductTitleUsed(product.title)) {
+        console.log(`[Auto] Skip produk yang pernah diproses sebelumnya: "${product.title}"`);
+        run.skippedProducts++;
+        updateAutoRun(run, { message: `[${currentTargetIndex}/${run.maxJobs}] Skip "${product.title.slice(0, 25)}...": Sudah pernah diproses sebelumnya.` });
         continue;
       }
 
@@ -2001,6 +2037,7 @@ async function runAutoStage1Worker(run) {
 
           run.successfulJobs++;
           jobSuccess = true;
+          markKeywordAsUsed(keyword, { productTitle: product.title, jobId: autoJobId, source: 'auto_worker' });
           updateAutoRun(run, {
             message: `✅ [${run.successfulJobs}/${run.maxJobs}] Selesai: "${product.title.slice(0, 35)}..."`,
             progress: Math.round((run.successfulJobs / run.maxJobs) * 100),
@@ -2018,6 +2055,7 @@ async function runAutoStage1Worker(run) {
           } else {
             run.successfulJobs++;
             jobSuccess = true;
+            markKeywordAsUsed(keyword, { productTitle: product.title, jobId: autoJobId, source: 'auto_worker' });
             updateAutoRun(run, {
               message: `✅ [${run.successfulJobs}/${run.maxJobs}] Video 1080p tersimpan (Menunggu Voiceover): "${product.title.slice(0, 30)}..."`,
               progress: Math.round((run.successfulJobs / run.maxJobs) * 100),
@@ -2077,6 +2115,24 @@ app.get('/api/auto/status', (req, res) => {
   res.json({ run: publicAutoRunState(getLatestAutoRun()) });
 });
 
+app.get('/api/auto/keywords/stats', (req, res) => {
+  try {
+    const stats = getUsedKeywordsStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auto/keywords/reset', (req, res) => {
+  try {
+    const result = clearUsedKeywords();
+    res.json({ success: true, message: 'Riwayat kata kunci berhasil di-reset.', result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/auto/start', (req, res) => {
   reloadEnvironment();
   const latest = getLatestAutoRun();
@@ -2084,7 +2140,7 @@ app.post('/api/auto/start', (req, res) => {
     return res.json({ run: publicAutoRunState(latest) });
   }
 
-  const { maxJobs = 10, options = {} } = req.body || {};
+  const { maxJobs = 10, options = {}, niche = 'kitchen_tools' } = req.body || {};
   const runId = `autorun_${crypto.randomBytes(4).toString('hex')}`;
   const run = {
     runId,
@@ -2093,6 +2149,7 @@ app.post('/api/auto/start', (req, res) => {
     successfulJobs: 0,
     failedJobs: 0,
     skippedProducts: 0,
+    niche,
     currentJobId: null,
     currentProductTitle: null,
     message: 'Memulai pipeline Auto Mode...',

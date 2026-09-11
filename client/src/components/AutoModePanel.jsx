@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, Play, Square, Zap } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Play, Square, Zap, ShieldCheck, Sparkles } from 'lucide-react';
 
 export default function AutoModePanel({ settings, onHistoryRefresh }) {
   const [run, setRun] = useState({ status: 'idle' });
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
+  const [keywordStats, setKeywordStats] = useState({ totalUsedKeywords: 0, totalUsedTitles: 0 });
   const eventSourceRef = useRef(null);
   const lastSuccessCountRef = useRef(0);
 
@@ -14,7 +15,17 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
   const skippedProducts = run.skippedProducts || 0;
   const maxJobs = run.maxJobs || 10;
 
+  const fetchKeywordStats = () => {
+    fetch('/api/auto/keywords/stats')
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data) setKeywordStats(data);
+      })
+      .catch((err) => console.warn('Could not fetch keyword stats:', err.message));
+  };
+
   useEffect(() => {
+    fetchKeywordStats();
     fetch('/api/auto/status')
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
@@ -47,10 +58,12 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
         const nextSuccessCount = data.run.successfulJobs || 0;
         if (nextSuccessCount !== lastSuccessCountRef.current) {
           lastSuccessCountRef.current = nextSuccessCount;
+          fetchKeywordStats();
           onHistoryRefresh?.();
         }
 
         if (['completed', 'stopped', 'error'].includes(data.run.status)) {
+          fetchKeywordStats();
           onHistoryRefresh?.();
           sse.close();
         }
@@ -69,7 +82,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           maxJobs: 10,
-          niche: 'kitchen_home',
+          niche: 'kitchen_tools',
           candidateDepth: { shopee: 5, youtube: 10 },
           options: {
             hflip: settings.hflip !== undefined ? settings.hflip : false,
@@ -120,8 +133,18 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Cari produk Shopee asli + video YouTube faceless, lalu buat Stage 1 otomatis sampai history siap voiceover.
+            Cari produk alat dapur Shopee asli + video YouTube faceless (tanpa lemari/rak besar), lalu buat Stage 1 otomatis sampai history siap voiceover.
           </p>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Anti-Duplikasi: <strong>{keywordStats.totalUsedKeywords || 0}</strong> kata kunci terdata</span>
+            </span>
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
+              <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Unlimited Pool (Alat Dapur)</span>
+            </span>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 w-full sm:w-auto">
