@@ -454,15 +454,17 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * subtitle ucapan, dan teks mengambang) serta pencocokan produk diserahkan ke AI Vision.
  * Backend memeriksa stream corrupt, mendeteksi intro pembuka untuk dibuang, dan mencatat diagnostik.
  */
-export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress = () => {} } = {}) {
+export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {} } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
-    return { eligible: false, reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
+    return { eligible: false, cleanFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
   }
 
   const ffmpeg = getFFmpegPath();
   const W = 80;
   const H = 144;
   const frameBuffers = [];
+  const cleanFrames = [];
+  const discardedFrames = [];
 
   let subtitleBandCount = 0;
   let floatingTextCount = 0;
@@ -492,7 +494,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
   }
 
   if (frameBuffers.length < 4) {
-    return { eligible: false, reason: 'Gagal mengekstrak frame visual untuk analisa lokal.' };
+    return { eligible: false, cleanFrames: [], discardedFrames: [], reason: 'Gagal mengekstrak frame visual untuk analisa lokal.' };
   }
 
   // ── 1. PEMERIKSAAN FOTO BUMPER & FRAME BEKU STATIS (TEMPORAL GLOBAL DIFFERENCE) ──
@@ -727,14 +729,14 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
     console.log(`[VideoFilter] Info diagnostik: Terdeteksi saturasi grafis pada ${animatedGraphicCount} frame -> Verifikasi grafis diserahkan ke AI Vision.`);
   }
 
-  // Mode Single-Candidate (legacy): Tolak jika video didominasi wajah/vlogger manusia (>= 7 frame)
-  // Mode Multi-Candidate (allowPartialClean=true): Buang hanya frame wajah, simpan frame bersih!
-  if (humanFaceSkinCount >= 7 && !allowPartialClean) {
+  // Sesuai mandat pengguna: Seleksi diarahkan ke masing-masing frame, bukan membuang seluruh video.
+  // Hanya tolak jika video tidak memiliki cukup frame peragaan produk bersih (< 4 frame) pada mode tunggal.
+  if (cleanFrames.length < 4 && !allowPartialClean) {
     return {
       eligible: false,
       cleanFrames: [],
       discardedFrames,
-      reason: `Analisa visual lokal mendeteksi video didominasi wajah / vlogger manusia (${humanFaceSkinCount} dari ${frameBuffers.length} frame). Wajib video 100% faceless peragaan tangan!`
+      reason: `Analisa visual lokal mendeteksi video didominasi wajah / intro (${discardedFrames.length} dari ${frameBuffers.length} frame) tanpa cukup frame peragaan produk bersih.`
     };
   }
 
@@ -759,6 +761,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
 
   return {
     eligible: cleanFrames.length > 0,
+    reason: cleanFrames.length === 0 ? 'Tidak ditemukan frame bersih peragaan tangan yang memenuhi syarat.' : undefined,
     cleanFrames,
     discardedFrames,
     cleanFrameCount: cleanFrames.length,
@@ -790,6 +793,7 @@ export function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, cand
     candidateTitle: candidate?.title || '',
     candidateUrl: candidate?.url || '',
     videoId: candidate?.id || '',
+    candidate,
   }));
 
   return {
