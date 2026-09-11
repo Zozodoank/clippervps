@@ -1,94 +1,104 @@
-# 📱 Panduan Menjalankan Project VPS dari Termux (Android)
+# 📱 Panduan Menjalankan Project VPS & Memantau Log dari Termux (Android)
 
-Karena project clipper sudah aktif dan berjalan 24/7 di VPS, Anda **tidak perlu menginstal Node.js / FFmpeg yang berat di HP**. HP Android Anda cukup bertindak sebagai remote kontrol dan penampil tampilan web.
+Karena project clipper sudah aktif dan berjalan 24/7 di VPS menggunakan **PM2**, log aplikasi tidak otomatis mengalir di terminal saat baru login, melainkan tersimpan di sistem logger background.
 
 ---
 
-## 🚀 Opsi 1: Menggunakan SSH Tunnel (Buka `localhost:3000` di HP) — *Paling Direkomendasikan*
+## 📋 Cara Melihat Log Real-Time di Termux
 
-Metode ini meneruskan port server VPS langsung ke HP Anda. Anda bisa membuka browser Chrome di HP dengan alamat `http://localhost:3000` secara privat dan stabil.
+### Cara 1: Perintah Cepat Setelah Login SSH
+Jika Anda sudah terhubung ke VPS (`ubuntu@ubuntu:~$`), cukup ketik salah satu perintah berikut:
+```bash
+logs
+```
+*(atau ketik `pm2 logs clipper`)*.
+Layar Termux Anda akan langsung memunculkan log real-time aktivitas download video, ekstraksi frame, FFmpeg, dan analisa AI Gemini.
+> **Untuk berhenti melihat log:** Tekan `Ctrl + C`.
+
+---
+
+### Cara 2: Membuka Menu Interaktif VPS di Termux
+Kami telah menyediakan panel menu khusus Termux di VPS. Cukup ketik:
+```bash
+menu
+```
+*(atau `~/clipperVPS/menu-vps.sh`)*.
+Menu ini menyediakan pilihan:
+* **[1]** Lihat Log Real-Time (PM2)
+* **[2]** Jalankan Dev-Runner Live Langsung di Layar (Foreground)
+* **[3]** Cek URL Cloudflare Tunnel
+* **[4]** Restart Service Clipper
+* **[5]** Cek RAM & CPU Server
+
+---
+
+## 🚀 Cara Akses Web Clipper (`localhost:3000`) dari Termux
 
 ### Langkah 1: Install OpenSSH di Termux
-Buka aplikasi Termux di HP, lalu ketik perintah berikut (cukup sekali):
+Ketik perintah ini di Termux (cukup sekali di awal):
 ```bash
 pkg update && pkg install openssh termux-tools -y
 ```
 
-### Langkah 2: Hubungkan ke VPS
-Jalankan perintah ini di Termux:
+### Langkah 2: Hubungkan SSH Tunnel & Langsung Tampilkan Log
+Jalankan perintah ini di Termux (catatan: wajib ada flag `-t` agar log real-time bisa tampil di HP):
 ```bash
-ssh -L 3000:localhost:3000 -p 14115 ubuntu@208.76.40.194
+ssh -t -L 3000:localhost:3000 -p 14115 ubuntu@208.76.40.194 "pm2 logs clipper"
 ```
-* Saat diminta password, masukkan:
+* Masukkan password VPS:
   ```text
   @Zozo06070786
   ```
-  *(Catatan: Saat mengetik password di Linux/Termux, karakter memang tidak muncul di layar demi keamanan, langsung ketik dan tekan Enter).*
+* Layar Termux Anda akan langsung menampilkan **live streaming log** server!
 
 ### Langkah 3: Buka Browser di HP
-Setelah berhasil login ke VPS:
-1. Buka browser di HP Anda (Chrome, Brave, atau browser bawaan).
-2. Ketik alamat:
+Sambil Termux tetap terbuka di background:
+1. Buka browser di HP Anda (Chrome / Brave).
+2. Kunjungi alamat:
    ```text
    http://localhost:3000
    ```
-3. Web clipper siap digunakan! Semua proses download video, AI Gemini, dan rendering FFmpeg dilakukan oleh VPS, sehingga HP tetap dingin dan hemat kuota.
+3. Web clipper siap digunakan. Semua beban download YouTube 1080p, render FFmpeg, dan AI diproses di VPS.
 
 ---
 
-## ⚡ Opsi 2: Script Otomatis 1 Perintah di Termux (`clipper.sh`)
+## ⚡ Shortcut Otomatis 1 Perintah di Termux (`clipper.sh`)
 
-Agar tidak perlu mengetik perintah panjang setiap kali ingin membuka clipper di Termux, Anda bisa membuat shortcut script otomatis:
+Agar tidak perlu mengetik perintah panjang setiap kali ingin membuka clipper di Termux:
 
-### Cara Pasang Shortcut di Termux:
-Ketik perintah ini sekali saja di Termux:
+### Cara Pasang Shortcut:
+Salin dan jalankan perintah ini di Termux (hanya perlu sekali saja):
 ```bash
 cat << 'EOF' > ~/clipper.sh
 #!/data/data/com.termux/files/usr/bin/bash
 echo "=================================================="
-echo "🎬 Menghubungkan ke Clipper VPS..."
+echo "🎬 Menghubungkan ke Clipper VPS & Menampilkan Log..."
 echo "=================================================="
 echo "Buka browser HP Anda di: http://localhost:3000"
 echo "Tekan Ctrl+C untuk keluar."
 echo "=================================================="
 termux-open-url http://localhost:3000 2>/dev/null || true
-ssh -L 3000:localhost:3000 -p 14115 ubuntu@208.76.40.194 "pm2 logs clipper"
+ssh -t -L 3000:localhost:3000 -p 14115 ubuntu@208.76.40.194 "pm2 logs clipper"
 EOF
 chmod +x ~/clipper.sh
 ```
 
-### Cara Menjalankan Selanjutnya:
-Kapanpun Anda ingin memakai clipper dari Termux, cukup ketik:
+### Cara Pakai Selanjutnya:
+Setiap kali ingin menggunakan clipper di Termux, cukup ketik:
 ```bash
 ./clipper.sh
 ```
-Script akan otomatis:
+Otomatis:
 1. Membuka browser HP ke `http://localhost:3000`.
-2. Menampilkan log aktivitas VPS secara real-time di layar Termux.
+2. Menampilkan log aktivitas real-time di layar Termux.
 
 ---
 
-## 🌐 Opsi 3: Tanpa Termux Sama Sekali (Cloudflare Tunnel HTTPS)
+## 🌐 Opsi Tanpa Termux (Cloudflare Tunnel HTTPS)
 
-Jika Anda sedang di luar dan tidak ingin membuka Termux, Anda bisa langsung membuka link HTTPS publik yang aktif:
-
+Jika Anda sedang di luar dan tidak ingin membuka Termux:
 👉 **URL Aktif Saat Ini:**
 ```text
 https://dimensional-retirement-resolutions-festivals.trycloudflare.com
 ```
-
-> **Tips:** Simpan / bookmark link di atas di browser HP Anda. Karena berjalan di background PM2 VPS, aplikasi tetap aktif meskipun aplikasi Termux atau PC Anda sedang mati.
-
----
-
-## 🛠️ Perintah Berguna di VPS (Lewat Termux)
-
-Setelah login SSH ke VPS, Anda bisa menjalankan perintah-perintah berikut:
-
-| Perintah | Fungsi |
-| :--- | :--- |
-| `pm2 status` | Melihat status service clipper & tunnel |
-| `pm2 logs clipper` | Melihat live log proses download, AI, dan render video |
-| `pm2 restart all` | Me-restart service clipper dan tunnel |
-| `grep CLOUDFLARE_TUNNEL_URL ~/clipperVPS/.env` | Melihat URL publik Cloudflare Tunnel terbaru |
-| `exit` | Keluar dari sesi VPS |
+Simpan / bookmark URL di atas di browser HP Anda.
