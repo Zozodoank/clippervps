@@ -186,14 +186,23 @@ export const DIRTY_NEGATIVE_OPERATORS = [
   '-overlay',
   '-cara',
   '-tutorial',
-  '-unboxing'
+  '-unboxing',
+  '-perbaikan',
+  '-penggantian',
+  '-rusak',
+  '-service',
+  '-servis',
+  '-ganti',
+  '-repair',
+  '-reparasi',
+  '-bongkar'
 ];
 
 export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
-  // 1. Strip banned keywords: cara, tutorial, unboxing
+  // 1. Strip banned keywords: cara, tutorial, unboxing, perbaikan, penggantian, rusak, service, ganti, repair, etc.
   let cleaned = String(baseQuery)
-    .replace(/\b(?:cara|tutorial|unboxing)\b/gi, '')
+    .replace(/\b(?:cara|tutorial|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 

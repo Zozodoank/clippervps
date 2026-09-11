@@ -431,6 +431,7 @@ ${refImageInlineData ? `
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
+  * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo, tutorial solder/baut). Affiliate product promotion requires showcasing a brand-new working product in action, NOT a repair tutorial!
 `}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
@@ -876,6 +877,7 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
+  * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo). Affiliate product promotion requires showcasing a clean working product in action!
 `}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
@@ -1357,6 +1359,7 @@ RULE 4: REAL AUTHENTIC PHYSICAL FOOTAGE (NO AI/CGI SLOP, NO TALKING HEADS):
 - REJECT if AI-generated / synthetic / CGI / 3D animated / cartoon video.
 - REJECT if pure talking-head / vlog without direct hands-on product demonstration.
 - REJECT if pure parcel unboxing / bubble wrap without active product demonstration.
+- REJECT if video is about repairing, fixing, servicing, replacing parts, or disassembling broken items (perbaikan, servis, barang rusak, ganti sparepart, bongkar mesin).
 
 RULE 5: WATERMARKS, SOCIAL MEDIA LOGOS & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE):
 - 9:16 CROP GEOMETRY:

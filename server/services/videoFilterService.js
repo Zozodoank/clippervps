@@ -201,9 +201,16 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Terdeteksi indikasi teks subtitle bawaan pada judul/deskripsi/tags.' };
   }
 
-  // 2B. Filter Kata Kunci Terlarang (cara / tutorial / unboxing)
-  if (/\b(cara|tutorial|unboxing)\b/i.test(titleLower)) {
-    return { eligible: false, reason: 'Terdeteksi kata kunci terlarang (cara / tutorial / unboxing) pada judul video.' };
+  // 2B. Filter Kata Kunci Terlarang (cara / tutorial / unboxing / perbaikan / penggantian / rusak / service / ganti)
+  const bannedKeywordRegex = /\b(cara|tutorial|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
+  if (bannedKeywordRegex.test(titleLower)) {
+    return { eligible: false, reason: 'Terdeteksi kata kunci terlarang (tutorial / unboxing / perbaikan / penggantian / rusak / service / ganti) pada judul video.' };
+  }
+
+  // 2C. Filter Konten Perbaikan / Servis / Barang Rusak pada Deskripsi
+  const repairDescRegex = /\b(perbaikan|penggantian|pergantian|mengganti|rusak|kerusakan|service|servis|reparasi|bongkar mesin|mati total)\b/i;
+  if (repairDescRegex.test(descLower.slice(0, 500))) {
+    return { eligible: false, reason: 'Terdeteksi indikasi konten perbaikan / servis / penggantian alat rusak pada deskripsi video.' };
   }
 
   // 3. Filter Iklan & Sponsor Komersial

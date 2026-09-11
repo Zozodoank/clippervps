@@ -1106,6 +1106,9 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
       // Filter out videos with known duration < 5 min (300s) or > 15 min (900s)
       if (durationSec > 0 && (durationSec < 300 || durationSec > 900)) return;
 
+      // Filter out videos with banned / repair keywords (perbaikan, penggantian, rusak, service, ganti, etc.)
+      if (/\b(cara|tutorial|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
+
       candidates.push({
         id,
         title: title || query,
@@ -1198,7 +1201,7 @@ export async function searchMultiEngineVideos(query, {
   }
 
   // 3. Extract core words from the query (ignoring modifiers and negative terms)
-  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'unboxing', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw']);
+  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'unboxing', 'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw']);
   const queryWords = normalizeText(query).split(' ').filter((w) => w.length >= 3 && !ignoredQueryWords.has(w));
 
   // 4. Filter through Stage 1 Metadata Pre-filter (clean content, faceless keywords, no bulky furniture)
@@ -1316,7 +1319,7 @@ Tugas:
 1. Identifikasi nama benda/gadget fisik ini dalam bahasa Inggris universal (nama produk OEM/pabrik yang biasa dipakai reviewer global di YouTube/Amazon/AliExpress).
 2. Buat 4 frasa pencarian YouTube paling efektif dalam bahasa Inggris untuk menemukan footage produk yang bersih, jernih, dan sinematik:
    - WAJIB kombinasikan nama produk dengan kata kunci aset mentah: "raw footage", "b-roll", "textless", "clean version", "no graphics".
-   - DILARANG KERAS menggunakan kata kunci: cara, tutorial, unboxing, haul, vlog, review wajah.
+   - DILARANG KERAS menggunakan kata kunci: cara, tutorial, unboxing, perbaikan, penggantian, rusak, service, servis, ganti, repair, haul, vlog, review wajah.
    - Hindari kata-kata promo belanja seperti: COD, murah, promo, terlaris, diskon.
 
 Keluarkan JSON dengan format persis:
@@ -1769,8 +1772,8 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
-  // Disqualify any candidate with banned keywords: cara, tutorial, unboxing
-  if (/\b(cara|tutorial|unboxing)\b/i.test(titleText)) return false;
+  // Disqualify any candidate with banned keywords: cara, tutorial, unboxing, perbaikan, penggantian, rusak, service, ganti
+  if (/\b(cara|tutorial|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
     'podcast', 'reaction', 'kompilasi', 'compilation', 'kumpulan', 'full album', 'playlist',
@@ -1789,7 +1792,9 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     'racun shopee haul', 'haul shopee', 'haul tiktok', 'unboxing haul', 'berbagai alat', 'kumpulan gadget',
     // Filter AI-generated, synthetic, and cartoon/3D animation
     'ai generated', 'ai video', 'generative ai', 'sora', 'runway', 'kling', 'hailuo', 'pika',
-    'animation', 'animasi', '3d animation', 'cgi', 'cartoon', 'kartun', 'anime'
+    'animation', 'animasi', '3d animation', 'cgi', 'cartoon', 'kartun', 'anime',
+    // Filter Perbaikan / Service / Kerusakan / Penggantian (Bukan video demo produk baru)
+    'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'membongkar', 'mati total'
   ];
   if (excludedTitleWords.some((keyword) => titleText.includes(keyword))) return false;
 
