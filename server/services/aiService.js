@@ -1433,12 +1433,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 1. "isExactProductMatch": Set to true if the item demonstrated in the video matches "${effectiveTitle}", even if rejected for policy. Set to false ONLY if the product is physically different.
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
-  // Bound frames to at most 20 keyframes for OpenRouter / Vision APIs to prevent token exhaustion and rate limits
+  // Bound frames to at most 30 keyframes for Gemini Vision / AI APIs
   let evalFrames = frames || [];
-  if (evalFrames.length > 20) {
-    const step = (evalFrames.length - 1) / 19;
+  if (evalFrames.length > 30) {
+    const step = (evalFrames.length - 1) / 29;
     const sampled = [];
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 30; i++) {
       const idx = Math.round(i * step);
       if (evalFrames[idx] && !sampled.includes(evalFrames[idx])) {
         sampled.push(evalFrames[idx]);
@@ -1451,7 +1451,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 ${effectiveDesc ? `Product Description: "${effectiveDesc}"` : ''}
 ${resolvedRefImage ? `[OFFICIAL REFERENCE PRODUCT PHOTO (SHOPEE LISTING) ATTACHED AS IMAGE #1]:
 Image #1 is the OFFICIAL REFERENCE PHOTO of the target product from the Shopee listing.
-The subsequent ${evalFrames.length} images are sampled frames from the candidate video.
+The subsequent ${evalFrames.length} images are sampled frames from the candidate video(s).
 Carefully compare the candidate video frames directly against the reference product in Image #1:
 - The physical item demonstrated in the video frames MUST match or be the same product / OEM equivalent as shown in Image #1.
 - Minor variations in brand logo on chassis, color accent, or button placement are 100% ACCEPTABLE.
@@ -1460,7 +1460,7 @@ Carefully compare the candidate video frames directly against the reference prod
 ` : ''}
 Total Duration: ${totalDuration}s
 Sampled Frames:
-${evalFrames.map((f, i) => `#${i + 1} (${f.timeFormatted})`).join(', ')}
+${evalFrames.map((f, i) => `#${i + 1} (${f.displayLabel || f.timeFormatted || formatSeconds(f.timestamp)})`).join(', ')}
 
 Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 1. Exact Product Match: Does the physical item in the video match "${effectiveTitle}" exactly?
@@ -1649,7 +1649,12 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
             duration: clipSec,
             startTime: formatSeconds(startSec),
             endTime: formatSeconds(endSec),
-            reason: `Frame #${idx} peragaan memuaskan di detik ${formatSeconds(startSec)}`,
+            candidateIndex: frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : null,
+            candidateTitle: frameObj?.candidateTitle || '',
+            candidateUrl: frameObj?.candidateUrl || '',
+            videoId: frameObj?.videoId || '',
+            candidate: frameObj?.candidate || null,
+            reason: `Frame #${idx} (${frameObj?.displayLabel || formatSeconds(startSec)}) peragaan produk memuaskan`,
             isCleanAffiliateShot: true,
             hasProductBrand: Boolean(parsed.hasProductBrand),
             reframe: {
@@ -2411,7 +2416,7 @@ function normalizeReframe(reframe = {}) {
   };
 }
 
-function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.3 } = {}) {
+export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.3 } = {}) {
   const clipLength = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
   const sourceClips = Array.isArray(rawClips) ? rawClips : [];
   const normalized = [];
@@ -2447,10 +2452,14 @@ function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, fram
     }
   }
 
+  const previousEndsByCand = new Map();
+
   for (const rawClip of sourceClips) {
     let startSeconds = Math.max(0, Math.round(parseTimeToSeconds(rawClip?.startSeconds ?? rawClip?.startTime)));
-    if (startSeconds < previousEnd) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s: overlaps previous end ${previousEnd}s`);
+    const candKey = rawClip?.candidateIndex !== null && rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : 'default';
+    const prevEnd = previousEndsByCand.get(candKey) || 0;
+    if (startSeconds < prevEnd) {
+      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s (Candidate ${candKey}): overlaps previous end ${prevEnd}s in same video`);
       continue;
     }
     if (startSeconds + clipLength > totalDuration) {
@@ -2492,6 +2501,12 @@ function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, fram
       duration: clipLength,
       startTime: formatSeconds(startSeconds),
       endTime: formatSeconds(endSeconds),
+      candidateIndex: rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : null,
+      candidateTitle: rawClip?.candidateTitle || '',
+      candidateUrl: rawClip?.candidateUrl || '',
+      videoId: rawClip?.videoId || '',
+      videoPath: rawClip?.videoPath || null,
+      candidate: rawClip?.candidate || null,
       reason: (rawClip?.reason || 'Clean full-product affiliate shot.').toString().slice(0, 180),
       hasProductBrand: clipHasBrand,
       allowHflip: clipAllowHflip,
@@ -2501,6 +2516,7 @@ function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, fram
         allowHflip: clipAllowHflip,
       }),
     });
+    previousEndsByCand.set(candKey, endSeconds);
     previousEnd = endSeconds;
     if (normalized.length === 8) break; // Target max 8 clips (~24-26s)
   }

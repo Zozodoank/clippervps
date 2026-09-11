@@ -60,39 +60,53 @@ export async function renderSilentAntiDetectionVideo({
     progress: 60
   });
 
-  return new Promise((resolve, reject) => {
-    const selectedClips = normalizeRenderClips(clips, startTime, endTime, reframe);
-    const safeSpeedMultiplier = clampNumber(speedMultiplier, 0.5, 2, 1);
-    const ptsFactor = (1 / safeSpeedMultiplier).toFixed(4);
-    const args = ['-y'];
+  return new Promise(async (resolve, reject) => {
+    try {
+      const selectedClips = normalizeRenderClips(clips, startTime, endTime, reframe);
+      const safeSpeedMultiplier = clampNumber(speedMultiplier, 0.5, 2, 1);
+      const ptsFactor = (1 / safeSpeedMultiplier).toFixed(4);
+      const args = ['-y'];
 
-    for (const clip of selectedClips) {
-      const sourceDuration = (clip.duration * safeSpeedMultiplier).toFixed(3);
-      args.push('-ss', clip.startSeconds.toFixed(3), '-t', sourceDuration, '-i', targetVideo);
-    }
+      // Cache orientasi video untuk setiap file video sumber yang berbeda
+      const videoDimsMap = new Map();
+      for (const clip of selectedClips) {
+        const clipVideo = clip.videoPath || targetVideo;
+        if (!videoDimsMap.has(clipVideo)) {
+          const d = await getVideoDimensions(clipVideo, ffmpegPath);
+          videoDimsMap.set(clipVideo, Boolean(d && d.height > d.width));
+        }
+      }
 
-    const filterChains = selectedClips.flatMap((clip, index) =>
-      buildClipFilter({
-        inputIndex: index,
-        outputLabel: `v${index}`,
-        reframe: clip.reframe,
-        hflip,
-        ptsFactor,
-        isSourceVertical,
-      })
-    );
+      for (const clip of selectedClips) {
+        const sourceDuration = (clip.duration * safeSpeedMultiplier).toFixed(3);
+        const clipVideo = clip.videoPath || targetVideo;
+        args.push('-ss', clip.startSeconds.toFixed(3), '-t', sourceDuration, '-i', clipVideo);
+      }
 
-    if (selectedClips.length === 1) {
-      filterChains.push('[v0]null[outv]');
-    } else {
-      filterChains.push(`${selectedClips.map((_, index) => `[v${index}]`).join('')}concat=n=${selectedClips.length}:v=1:a=0[outv]`);
-    }
+      const filterChains = selectedClips.flatMap((clip, index) => {
+        const clipVideo = clip.videoPath || targetVideo;
+        const isClipVertical = videoDimsMap.get(clipVideo) || false;
+        return buildClipFilter({
+          inputIndex: index,
+          outputLabel: `v${index}`,
+          reframe: clip.reframe,
+          hflip,
+          ptsFactor,
+          isSourceVertical: isClipVertical,
+        });
+      });
 
-    args.push(
-      '-filter_complex', filterChains.join(';'),
-      '-map', '[outv]',
-      '-an', // Strictly NO AUDIO
-      '-c:v', 'libx264',
+      if (selectedClips.length === 1) {
+        filterChains.push('[v0]null[outv]');
+      } else {
+        filterChains.push(`${selectedClips.map((_, index) => `[v${index}]`).join('')}concat=n=${selectedClips.length}:v=1:a=0[outv]`);
+      }
+
+      args.push(
+        '-filter_complex', filterChains.join(';'),
+        '-map', '[outv]',
+        '-an', // Strictly NO AUDIO
+        '-c:v', 'libx264',
       '-preset', 'fast',
       '-crf', '18',
       '-b:v', '8000k',
@@ -126,6 +140,9 @@ export async function renderSilentAntiDetectionVideo({
     proc.on('error', (err) => {
       reject(new Error(`Failed to spawn FFmpeg for silent render: ${err.message}`));
     });
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
@@ -311,6 +328,8 @@ function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, fallbac
       normalized.push({
         startSeconds,
         duration: clipDuration,
+        videoPath: clip?.videoPath || clip?.sourceVideo || null,
+        candidateIndex: clip?.candidateIndex !== undefined ? clip.candidateIndex : null,
         reframe: {
           renderMode: effectiveRenderMode,
           ...(clip?.reframe || {}),

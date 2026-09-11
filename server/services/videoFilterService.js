@@ -687,6 +687,28 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
       if ((animatedGraphicPixels / (W * H)) > 0.03) animatedGraphicCount++;
       if ((upperGenuineSkinPixels / upperTotal) > 0.20) humanFaceSkinCount++;
     }
+
+    // ── Klasifikasi granular per-frame (face, black, intro bumper vs clean) ──
+    const isFrameFace = (upperGenuineSkinPixels / upperTotal) > 0.18;
+    const isFrameBlack = avgBrightness < 8;
+    const isFrameIntro = Boolean(isOpeningFrame);
+
+    if (isFrameFace || isFrameBlack || isFrameIntro) {
+      discardedFrames.push({
+        ...frames[i],
+        index: i,
+        timestamp: ts,
+        filePath: frames[i]?.filePath,
+        reason: isFrameFace ? 'face' : (isFrameBlack ? 'black' : 'intro_bumper'),
+      });
+    } else {
+      cleanFrames.push({
+        ...frames[i],
+        index: i,
+        timestamp: ts,
+        filePath: frames[i]?.filePath,
+      });
+    }
   }
 
   // ── DELEGASI KE AI VISION: PENCATATAN DIAGNOSTIK NON-BLOCKING ──
@@ -704,17 +726,20 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
   if (animatedGraphicCount >= 2) {
     console.log(`[VideoFilter] Info diagnostik: Terdeteksi saturasi grafis pada ${animatedGraphicCount} frame -> Verifikasi grafis diserahkan ke AI Vision.`);
   }
-  // Tolak jika video didominasi wajah/vlogger manusia (>= 7 frame terdeteksi di area atas 45%)
-  // Mencegah video talking-head / vlogger lolos ke AI dan membuang kuota token
-  if (humanFaceSkinCount >= 7) {
+
+  // Mode Single-Candidate (legacy): Tolak jika video didominasi wajah/vlogger manusia (>= 7 frame)
+  // Mode Multi-Candidate (allowPartialClean=true): Buang hanya frame wajah, simpan frame bersih!
+  if (humanFaceSkinCount >= 7 && !allowPartialClean) {
     return {
       eligible: false,
+      cleanFrames: [],
+      discardedFrames,
       reason: `Analisa visual lokal mendeteksi video didominasi wajah / vlogger manusia (${humanFaceSkinCount} dari ${frameBuffers.length} frame). Wajib video 100% faceless peragaan tangan!`
     };
   }
 
   if (humanFaceSkinCount > 0) {
-    console.log(`[VideoFilter] Info diagnostik: Terdeteksi rona kulit pada ${humanFaceSkinCount} frame -> Kemunculan sesekali ditoleransi, AI akan membuang scene wajah.`);
+    console.log(`[VideoFilter] Info diagnostik: Terdeteksi ${humanFaceSkinCount} frame wajah -> ${allowPartialClean ? 'Frame wajah disingkirkan dari pool AI' : 'AI akan membuang scene wajah'}.`);
   }
   const totalBumperFrames = openingBumperCount + bodyBumperCount;
   if (bodyBumperCount >= 3) {
@@ -726,12 +751,18 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
   if (blackRatio > 0.75) {
     return {
       eligible: false,
+      cleanFrames: [],
+      discardedFrames,
       reason: `Analisa visual lokal mendeteksi video kosong / rusak (${Math.round(blackRatio * 100)}% frame hitam pekat).`
     };
   }
 
   return {
-    eligible: true,
+    eligible: cleanFrames.length > 0,
+    cleanFrames,
+    discardedFrames,
+    cleanFrameCount: cleanFrames.length,
+    discardedFrameCount: discardedFrames.length,
     hasOpeningIntro: openingBumperCount > 0,
     introCutoffSec: openingBumperCount > 0 ? 5.0 : 0,
     hasOccasionalFace: humanFaceSkinCount > 0,
@@ -741,4 +772,107 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
     hasFloatingText: floatingTextCount >= 2,
     hasAnimatedGraphic: animatedGraphicCount >= 2,
   };
+}
+
+/**
+ * Memfilter frame visual dari 1 kandidat secara granular per frame:
+ * Membuang hanya frame berwajah / intro / corrupt, mempertahankan frame bersih peragaan produk.
+ */
+export function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null } = {}) {
+  const result = inspectFramesLocally(frames, { allowPartialClean: true });
+  if (!result.eligible && result.reason && result.reason.includes('kosong / rusak')) {
+    return { candidateIndex, candidate, cleanFrames: [], eligible: false, reason: result.reason };
+  }
+
+  const clean = (result.cleanFrames || []).map(f => ({
+    ...f,
+    candidateIndex,
+    candidateTitle: candidate?.title || '',
+    candidateUrl: candidate?.url || '',
+    videoId: candidate?.id || '',
+  }));
+
+  return {
+    candidateIndex,
+    candidate,
+    eligible: clean.length > 0,
+    cleanFrames: clean,
+    discardedCount: frames.length - clean.length,
+    totalFrames: frames.length,
+  };
+}
+
+/**
+ * Menggabungkan (pooling) frame-frame bersih dari hingga 5 kandidat video menjadi satu kumpulan ~30 frame pilihan.
+ * Menjamin distribusi berimbang antar kandidat dan menyematkan metadata sumber agar AI dapat menandai klipnya.
+ *
+ * @param {Array<{ candidateIndex: number, candidate: object, cleanFrames: Array }>} candidateResults
+ * @param {{ maxTotalFrames?: number }} options
+ * @returns {Array<{ candidateIndex: number, candidate: object, timestamp: number, filePath: string, displayLabel: string }>}
+ */
+export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30 } = {}) {
+  const valid = (candidateResults || []).filter(c => Array.isArray(c.cleanFrames) && c.cleanFrames.length > 0);
+  if (valid.length === 0) return [];
+
+  const perCand = Math.max(4, Math.floor(maxTotalFrames / valid.length));
+  const pooled = [];
+
+  // 1. Ambil porsi berimbang dari masing-masing kandidat
+  for (const item of valid) {
+    const cand = item.candidate;
+    const idx = item.candidateIndex;
+    const frames = item.cleanFrames;
+
+    if (frames.length <= perCand) {
+      for (const f of frames) {
+        pooled.push({
+          ...f,
+          candidateIndex: idx,
+          candidate: cand,
+          displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
+        });
+      }
+    } else {
+      const step = frames.length / perCand;
+      for (let s = 0; s < perCand; s++) {
+        const frameIdx = Math.min(frames.length - 1, Math.floor(s * step));
+        const f = frames[frameIdx];
+        pooled.push({
+          ...f,
+          candidateIndex: idx,
+          candidate: cand,
+          displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
+        });
+      }
+    }
+  }
+
+  // 2. Jika total belum mencapai maxTotalFrames, isi sisa kuota dari kandidat yang memiliki banyak frame bersih
+  if (pooled.length < maxTotalFrames) {
+    for (const item of valid) {
+      const cand = item.candidate;
+      const idx = item.candidateIndex;
+      for (const f of item.cleanFrames) {
+        if (!pooled.some(p => p.filePath === f.filePath)) {
+          pooled.push({
+            ...f,
+            candidateIndex: idx,
+            candidate: cand,
+            displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
+          });
+          if (pooled.length >= maxTotalFrames) break;
+        }
+      }
+      if (pooled.length >= maxTotalFrames) break;
+    }
+  }
+
+  return pooled.slice(0, maxTotalFrames);
+}
+
+function formatSecondsLocal(secs) {
+  const s = Math.max(0, Math.floor(secs || 0));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
 }

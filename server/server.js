@@ -38,7 +38,9 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally
+  inspectFramesLocally,
+  filterCandidateFramesPerFrame,
+  poolMultiCandidateFrames
 } from './services/videoFilterService.js';
 import {
   getBandwidthStats,
@@ -1426,54 +1428,168 @@ export async function runStage1Pipeline({
         throw new Error(`Video awal ditolak AI (${lastRejectionError?.rejectionReason || 'tidak cocok'}), dan tidak ditemukan video YouTube pengganti baru untuk "${productTitle}".`);
       }
 
-      console.log(`[Job ${jobId}] Menemukan ${targetCandidates.length} kandidat video YouTube baru. Menguji satu per satu...`);
+      console.log(`[Job ${jobId}] Menemukan ${targetCandidates.length} kandidat video YouTube. Memulai Multi-Video Frame Pooling & Clip Harvesting (maksimal 5 video)...`);
 
-      for (let i = 0; i < targetCandidates.length; i++) {
-        const candidate = targetCandidates[i];
+      // Ambil hingga 5 kandidat video teratas
+      const candidatesToProcess = targetCandidates.slice(0, 5);
+      const candidateResults = [];
+      const downloadedCandidatesMap = new Map();
+
+      for (let i = 0; i < candidatesToProcess.length; i++) {
+        const candidate = candidatesToProcess[i];
         const candVid = extractVideoId(candidate.url) || candidate.id;
         if (candVid) usedVids.add(candVid);
 
-        const candLabel = `Kandidat ${i + 1}/${targetCandidates.length}`;
+        const candLabel = `Kandidat ${i + 1}/${candidatesToProcess.length}`;
         updateProgress({
-          step: 'download',
-          message: `[${candLabel}] Menguji video pengganti: "${(candidate.title || productTitle).slice(0, 35)}..."`,
-          progress: 16 + Math.round((i / targetCandidates.length) * 20),
+          step: 'stream_sampling',
+          message: `[${candLabel}] Streaming & sampling frame: "${(candidate.title || productTitle).slice(0, 32)}..."`,
+          progress: 18 + Math.round((i / candidatesToProcess.length) * 18),
           status: 'running',
         });
 
         try {
-          const candRes = await evaluateCandidate(candidate.url, candLabel, candidate);
-          highlight = candRes.highlight;
-          videoMeta = candRes.videoMeta;
-          previewVideoPath = candRes.previewVideoPath;
-          currentYoutubeUrl = candidate.url;
-          approved = true;
+          const candFramesDir = path.join(rawFramesDir, `cand_${i}`);
+          if (!fs.existsSync(candFramesDir)) fs.mkdirSync(candFramesDir, { recursive: true });
 
-          console.log(`[Job ${jobId}] ✅ ${candLabel} (${candidate.url}) DISETUJUI OLEH AI! Melanjutkan ke download 1080p...`);
-
-          // Update metadata job dengan link YouTube baru yang berhasil disetujui AI
-          jobMeta.youtubeUrl = currentYoutubeUrl;
-          jobMeta.videoTitle = candidate.title || videoMeta.title;
-          activeJobs.set(jobId, jobMeta);
-          persistJob(jobId, jobMeta);
-          break;
-        } catch (candErr) {
-          console.warn(`[Job ${jobId}] ❌ ${candLabel} (${candidate.url}) ditolak AI: ${candErr.message}`);
-          lastRejectionError = candErr;
-          try { if (previewVideoPath && fs.existsSync(previewVideoPath)) fs.unlinkSync(previewVideoPath); } catch {}
-          previewVideoPath = null;
-          updateProgress({
-            step: 'auto_search_next',
-            message: `⛔ ${candLabel} ditolak AI (${(candErr.rejectionReason || candErr.message).slice(0, 60)}...). Mencoba kandidat berikutnya...`,
-            progress: 18 + Math.round((i / targetCandidates.length) * 20),
-            status: 'running',
+          const { metadata: candMeta, streamUrl: candStreamUrl } = await fetchVideoMetadataAndStream(candidate.url, {
+            onProgress: updateProgress,
           });
+
+          // Cek kepatuhan metadata dasar
+          const comp = checkVideoMetadataCompliance(candMeta, productTitle, {
+            ...options,
+            isVisualSearch: Boolean(effectiveProductImage),
+          });
+          if (!comp.eligible) {
+            console.log(`[Job ${jobId}] ⚠️ ${candLabel} metadata tidak lolos: ${comp.reason}. Melewati kandidat ini...`);
+            continue;
+          }
+
+          const sampleRes = await sampleFramesFromStream(candStreamUrl, candFramesDir, {
+            duration: candMeta.duration,
+            maxSampleFrames: 25,
+            onProgress: updateProgress,
+          });
+
+          if (!sampleRes.frames || sampleRes.frames.length < 4) {
+            console.warn(`[Job ${jobId}] ${candLabel} gagal mengekstrak frame dari stream URL. Melewati...`);
+            continue;
+          }
+
+          // Filter granular per-frame: buang frame wajah/intro/rusak, simpan frame peragaan produk!
+          const frameFilterRes = filterCandidateFramesPerFrame(sampleRes.frames, {
+            candidateIndex: i,
+            candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
+          });
+
+          console.log(`[Job ${jobId}] [${candLabel}] Hasil filter frame: ${frameFilterRes.cleanFrames.length} frame peragaan tangan disimpan (${frameFilterRes.discardedCount} frame wajah/intro disingkirkan).`);
+
+          if (frameFilterRes.cleanFrames.length > 0) {
+            candidateResults.push({
+              candidateIndex: i,
+              candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
+              videoMeta: candMeta,
+              cleanFrames: frameFilterRes.cleanFrames,
+            });
+          }
+        } catch (candErr) {
+          console.warn(`[Job ${jobId}] Gagal memproses stream ${candLabel}: ${candErr.message}`);
+          lastRejectionError = candErr;
         }
       }
 
-      if (!approved) {
-        throw new Error(`Semua kandidat video YouTube (${targetCandidates.length} video) ditolak oleh AI untuk "${productTitle}": ${lastRejectionError?.rejectionReason || 'tidak memenuhi syarat faceless / produk tidak cocok'}.`);
+      // Kumpulkan frame bersih gabungan dari seluruh kandidat (maksimal 30 frame pilihan)
+      const pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 });
+      console.log(`[Job ${jobId}] 🎯 Pool Multi-Kandidat Terbentuk: ${pooledFrames.length} frame bersih gabungan dari ${candidateResults.length} video kandidat.`);
+
+      if (pooledFrames.length < 4) {
+        throw new Error(`Semua kandidat video YouTube (${candidatesToProcess.length} video) tidak memiliki cukup frame bersih peragaan produk untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'terlalu banyak wajah / video rusak'}.`);
       }
+
+      // Kirim 30 frame gabungan + foto referensi produk Shopee ke AI Vision
+      updateProgress({
+        step: 'gemini_vision',
+        message: `AI Vision menganalisa ${pooledFrames.length} frame peragaan dari ${candidateResults.length} video kandidat & menentukan cuplikan viral...`,
+        progress: 38,
+        status: 'running',
+      });
+
+      const hl = await selectHighlightWithAI({
+        apiKey,
+        aiProvider,
+        frames: pooledFrames,
+        videoPath: null,
+        youtubeUrl: null, // Pakai frame pooling AI Vision
+        videoMetadata: { duration: 600, title: productTitle },
+        productTitle,
+        productDescription,
+        productImage: effectiveProductImage,
+        shopeeLink,
+        sceneDuration,
+        allowFallbackClips: !requireCleanGeminiPlan,
+        introCutoffSec: 0,
+        isVideoFirst: Boolean(options.isVideoFirst),
+        onProgress: updateProgress,
+      });
+
+      if (!hl || !Array.isArray(hl.clips) || hl.clips.length === 0) {
+        throw new Error(`AI Vision tidak menemukan cuplikan produk yang memenuhi syarat dari pool multi-kandidat untuk "${productTitle}".`);
+      }
+
+      // Targeted Download: Unduh 1080p HANYA untuk kandidat yang klipnya terpilih oleh AI!
+      const neededIndices = [...new Set(hl.clips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0))];
+      console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh 1080p Full HD hanya untuk video-video ini...`);
+
+      for (const candIdx of neededIndices) {
+        const candObj = candidateResults.find(c => c.candidateIndex === candIdx)?.candidate || candidatesToProcess[candIdx];
+        if (!candObj?.url) continue;
+
+        updateProgress({
+          step: 'download_hd',
+          message: `Mengunduh video sumber #${candIdx + 1} (${(candObj.title || '').slice(0, 30)}...) kualitas 1080p Full HD...`,
+          progress: 46 + Math.round((downloadedCandidatesMap.size / neededIndices.length) * 12),
+          status: 'running',
+        });
+
+        const hdDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
+          quality: '1080p',
+          prefix: `raw_cand_${candIdx}`,
+        });
+
+        if (hdDl?.filePath && fs.existsSync(hdDl.filePath)) {
+          downloadedCandidatesMap.set(candIdx, hdDl.filePath);
+          console.log(`[Job ${jobId}] ✅ Video 1080p Full HD untuk Kandidat #${candIdx + 1} berhasil diunduh (${hdDl.filePath}).`);
+        } else {
+          console.warn(`[Job ${jobId}] Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}.`);
+        }
+      }
+
+      if (downloadedCandidatesMap.size === 0) {
+        throw new Error('Gagal mengunduh video 1080p Full HD dari kandidat terpilih.');
+      }
+
+      // Petakan videoPath 1080p ke masing-masing klip yang terpilih
+      hl.clips = hl.clips.map(c => {
+        const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
+        const vPath = downloadedCandidatesMap.get(candIdx) || [...downloadedCandidatesMap.values()][0];
+        return {
+          ...c,
+          videoPath: vPath,
+        };
+      });
+
+      rawVideoPath = [...downloadedCandidatesMap.values()][0];
+      highlight = hl;
+      approved = true;
+
+      // Update metadata job
+      const primeCand = candidateResults[0]?.candidate || candidatesToProcess[0];
+      currentYoutubeUrl = primeCand?.url || currentYoutubeUrl;
+      jobMeta.youtubeUrl = currentYoutubeUrl;
+      jobMeta.videoTitle = primeCand?.title || productTitle;
+      activeJobs.set(jobId, jobMeta);
+      persistJob(jobId, jobMeta);
     }
 
     // TAHAP 2: AI telah menyetujui video! Backend langsung mengunduh video 1080p Full HD asli dari YouTube untuk rendering
