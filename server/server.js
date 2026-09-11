@@ -2913,14 +2913,24 @@ app.post('/api/restart', async (req, res) => {
 
   // 1. Bersihkan proses in-memory & background workers aktif
   try {
-    for (const [runId, autoRun] of activeAutoRuns.entries()) {
-      autoRun.status = 'stopped';
-      autoRun.message = 'Server di-restart bersih.';
+    if (typeof autoRuns !== 'undefined') {
+      for (const [runId, autoRun] of autoRuns.entries()) {
+        autoRun.status = 'stopped';
+        autoRun.message = 'Server di-restart bersih.';
+      }
     }
-    for (const [procId, childProc] of activeYtDlpProcesses.entries()) {
-      try { childProc.kill('SIGKILL'); } catch {}
+    if (typeof autoRetryRuns !== 'undefined') {
+      for (const [runId, retryRun] of autoRetryRuns.entries()) {
+        retryRun.status = 'stopped';
+      }
     }
-    activeYtDlpProcesses.clear();
+    if (typeof activeJobs !== 'undefined') {
+      for (const [jobId, job] of activeJobs.entries()) {
+        if (job.stage === 'running') {
+          job.stage = 'stopped';
+        }
+      }
+    }
   } catch (cleanErr) {
     console.warn('[System] Warning stopping active processes:', cleanErr.message);
   }
