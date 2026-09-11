@@ -735,6 +735,16 @@ CRITERION 4: FACE DISCARD RULE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISC
   * Video berupa talking-head / vlog murni tanpa demonstrasi fisik produk.
   * Wajah manusia muncul mendominasi hampir seluruh video sehingga TIDAK BISA ditemukan minimal 4 cuplikan tangan bersih (${clipSec}s per cuplikan).
 
+CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
+- JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
+  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, mengeluarkan barang dari kotak, atau memperlihatkan kelengkapan aksesoris/buku manual di awal video): JANGAN TOLAK VIDEONYA! Video TETAP DITERIMA (status: 'accept').
+- MANDAT PEMBUANGAN PROSES UNBOXING:
+  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN, ATAU BUSA PACKAGING!
+  * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing atau menyorot kotak kardus/kemasan!
+  * HANYA pilih timestamps ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, membersihkan, hasil nyata penggunaan produk).
+- TOLAK (status: 'reject') HANYA JIKA:
+  * 100% seluruh isi video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
+
 CRITERION 5: CLEAN TIMESTAMP SELECTION
 - Select 4 to 8 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions.
 - Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, and free of watermarks/logos.
@@ -1096,6 +1106,16 @@ RULE 3: FACE DISCARD MANDATE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISCAR
   * Setiap indeks frame yang dimasukkan ke dalam daftar "frames" WAJIB 100% bebas dari wajah dan orang.
 - TOLAK (status: 'reject') HANYA JIKA:
   * Video didominasi wajah / pure talking-head vlog sehingga TIDAK BISA ditemukan minimal 4-6 frame peragaan tangan bersih yang memenuhi syarat affiliate.
+
+RULE 3B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES):
+- JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
+  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, unboxing paket, mengeluarkan barang dari kotak, atau memeriksa buku panduan/aksesori di dalam kotak): JANGAN DITOLAK! Video TETAP DITERIMA (status: 'accept').
+- MANDAT PEMBUANGAN FRAME UNBOXING:
+  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA FRAME YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN, ATAU BUSA PACKAGING!
+  * Frame proses unboxing/kemasan DILARANG KERAS dimasukkan ke dalam daftar "frames" terpilih atau dijadikan klip!
+  * HANYA pilih indeks frame ("frames") ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, membersihkan, hasil nyata produk).
+- TOLAK (status: 'reject') HANYA JIKA:
+  * 100% seluruh video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
 
 RULE 4: REAL AUTHENTIC PHYSICAL FOOTAGE (NO AI/CGI SLOP, NO TALKING HEADS):
 - REJECT if AI-generated / synthetic / CGI / 3D animated / cartoon video.

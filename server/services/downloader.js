@@ -455,7 +455,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
     }
   };
 
-  const safeLimit = Math.max(1, Math.min(20, Number(limit) || 10));
+  const safeLimit = Math.max(1, Math.min(25, Number(limit) || 16));
 
   // 1. Prioritize RapidAPI search if key is configured
   const rapidResults = await searchWithRapidApi(query, safeLimit);

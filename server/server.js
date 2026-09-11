@@ -2011,7 +2011,7 @@ async function runAutoStage1Worker(run) {
       const candidates = await discoverYouTubeCandidatesForProduct({
         productTitle: product.title,
         productDescription: product.description,
-        limit: 8,
+        limit: 16,
         excludeVideoIds: usedYouTubeVideoIds,
         onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
       });

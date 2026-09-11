@@ -972,7 +972,7 @@ export async function discoverShopeeProducts({
 export async function discoverYouTubeCandidatesForProduct({
   productTitle,
   productDescription = '',
-  limit = 10,
+  limit = 16,
   excludeVideoIds = new Set(),
   searchIteration = 0,
   onProgress = () => {},
