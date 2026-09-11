@@ -1071,45 +1071,77 @@ export async function runStage1Pipeline({
       // Verifikasi bumper statis, logo channel statis, grafis animasi overlay, teks mengambang, subtitle & wajah lokal
       let preSampledFrames = null;
       let candidateIntroCutoff = 0;
-      if (streamUrl) {
+      let activeStreamUrl = streamUrl;
+      let sampled = null;
+      let sampleAttempts = 0;
+      const maxSampleAttempts = 2; // Coba lagi jika ekstraksi frame pertama gagal
+
+      while (sampleAttempts < maxSampleAttempts && (!sampled || sampled.length < 5)) {
+        sampleAttempts++;
         try {
-          const sampleMsg = candidateLabel
-            ? `[${candidateLabel}] [Filter 2/3] Verifikasi visual lokal (bumper, logo, grafis, teks & wajah)...`
-            : '[Filter 2/3] Verifikasi visual lokal (bumper, logo, grafis, teks & wajah)...';
+          const sampleMsg = sampleAttempts > 1
+            ? `[${candidateLabel || 'Filter 2/3'}] Percobaan ulang (${sampleAttempts}/${maxSampleAttempts}) ekstraksi frame visual dari stream URL...`
+            : (candidateLabel
+                ? `[${candidateLabel}] [Filter 2/3] Verifikasi visual lokal (bumper, logo, grafis, teks & wajah)...`
+                : '[Filter 2/3] Verifikasi visual lokal (bumper, logo, grafis, teks & wajah)...');
           updateProgress({ step: 'stream_sampling', message: sampleMsg, progress: 28, status: 'running' });
 
-          const { frames: sampled } = await sampleFramesFromStream(streamUrl, rawFramesDir, {
-            duration: meta.duration,
-            maxSampleFrames: 30,
-            onProgress: updateProgress,
-          });
+          // Pada percobaan ulang (attempt > 1), coba refresh streamUrl
+          if (sampleAttempts > 1) {
+            console.log(`[Job ${jobId}] Ekstraksi frame pertama gagal/kurang frame. Mencoba lagi (percobaan ${sampleAttempts}/${maxSampleAttempts})...`);
+            await new Promise((r) => setTimeout(r, 1000));
+            try {
+              const refreshed = await fetchVideoMetadataAndStream(targetUrl, { onProgress: () => {} });
+              if (refreshed?.streamUrl) activeStreamUrl = refreshed.streamUrl;
+            } catch (refErr) {
+              console.warn(`[Job ${jobId}] Refresh stream URL gagal: ${refErr.message}`);
+            }
+          }
 
-          if (sampled && sampled.length >= 5) {
-            preSampledFrames = sampled;
-            const localCheck = inspectFramesLocally(sampled, {
-              aspectRatio: options.aspectRatio || '9:16',
+          if (activeStreamUrl) {
+            const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
+              duration: meta.duration,
+              maxSampleFrames: 30,
               onProgress: updateProgress,
             });
-
-            if (!localCheck.eligible) {
-              trackSavedBandwidth(35 * 1024 * 1024, `Hemat kuota (Filter 2 Lokal): ${localCheck.reason}`);
-              console.warn(`[Job ${jobId}] ⛔ [Filter 2/3 Ditolak Lokal] ${candidateLabel || targetUrl}: ${localCheck.reason}`);
-              const localErr = new Error(`Analisa lokal ditolak: ${localCheck.reason}`);
-              localErr.isAiRejection = true;
-              localErr.rejectionReason = localCheck.reason;
-              throw localErr;
+            if (res?.frames && res.frames.length >= 5) {
+              sampled = res.frames;
             }
-            if (localCheck.hasOpeningIntro) {
-              candidateIntroCutoff = localCheck.introCutoffSec || 5.0;
-              console.log(`[Job ${jobId}] ℹ️ Intro bumper pembuka terdeteksi (${candidateIntroCutoff}s). AI & backend akan membuang detik awal ini.`);
-            }
-            console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Area 9:16 bersih dari bumper, logo statis, grafis, teks & wajah.`);
           }
-        } catch (localErr) {
-          if (localErr.isAiRejection) throw localErr;
-          console.warn(`[Job ${jobId}] Sampling stream lokal dilewati, melanjutkan ke AI... (${localErr.message})`);
+        } catch (sampleErr) {
+          console.warn(`[Job ${jobId}] Ekstraksi frame (percobaan ${sampleAttempts}/${maxSampleAttempts}) gagal: ${sampleErr.message}`);
         }
       }
+
+      // Sesuai instruksi: Jika frame gagal diekstrak setelah dicoba ulang,
+      // JANGAN LANGSUNG DIALIHKAN KE AI ANALISNYA! Tolak kandidat ini agar sistem mencari video lainnya.
+      if (!sampled || sampled.length < 5) {
+        console.warn(`[Job ${jobId}] ⛔ Gagal mengekstrak frame visual (${sampled?.length || 0} frame) setelah ${sampleAttempts}x percobaan. Menolak video dan mencari video lainnya...`);
+        const frameFailErr = new Error(`Ekstraksi frame visual gagal (${sampled?.length || 0} frame) setelah ${sampleAttempts}x percobaan. Mencari video lainnya...`);
+        frameFailErr.isAiRejection = true;
+        frameFailErr.rejectionReason = 'Ekstraksi frame visual gagal (stream video tidak dapat dibaca).';
+        throw frameFailErr;
+      }
+
+      preSampledFrames = sampled;
+      const localCheck = inspectFramesLocally(sampled, {
+        aspectRatio: options.aspectRatio || '9:16',
+        onProgress: updateProgress,
+      });
+
+      if (!localCheck.eligible) {
+        trackSavedBandwidth(35 * 1024 * 1024, `Hemat kuota (Filter 2 Lokal): ${localCheck.reason}`);
+        console.warn(`[Job ${jobId}] ⛔ [Filter 2/3 Ditolak Lokal] ${candidateLabel || targetUrl}: ${localCheck.reason}`);
+        const localErr = new Error(`Analisa lokal ditolak: ${localCheck.reason}`);
+        localErr.isAiRejection = true;
+        localErr.rejectionReason = localCheck.reason;
+        throw localErr;
+      }
+      if (localCheck.hasOpeningIntro) {
+        candidateIntroCutoff = localCheck.introCutoffSec || 5.0;
+        console.log(`[Job ${jobId}] ℹ️ Intro bumper pembuka terdeteksi (${candidateIntroCutoff}s). AI & backend akan membuang detik awal ini.`);
+      }
+      console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Area 9:16 bersih dari bumper, logo statis, grafis, teks & wajah.`);
 
       // ── JALUR 1: GOOGLE GEMINI NATIVE YOUTUBE STREAM (0 MB KUOTA LOKAL, 1.500 REQ/HARI) ──
       const reqEngine = (options.aiProvider || aiProvider || process.env.ACTIVE_AI_ENGINE || '').toLowerCase();

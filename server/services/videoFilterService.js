@@ -345,9 +345,38 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   }
   await Promise.all(executing);
 
-  const frameFiles = fs.readdirSync(outputDir)
+  let frameFiles = fs.readdirSync(outputDir)
     .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
     .sort();
+
+  // Percobaan kedua internal: Jika fast input seek menghasilkan 0 frame, coba mode output seek
+  if (frameFiles.length === 0) {
+    console.warn('[VideoFilterService] Fast input seek menghasilkan 0 frame, mencoba mode output seek...');
+    const fallbackPoints = samplePoints.slice(0, 10);
+    for (const point of fallbackPoints) {
+      const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
+      const outputPath = path.join(outputDir, frameFile);
+      await new Promise((resolve) => {
+        const proc = spawn(ffmpegPath, [
+          '-y',
+          '-reconnect', '1',
+          '-reconnect_streamed', '1',
+          '-reconnect_delay_max', '4',
+          '-i', streamUrl,
+          '-ss', String(point.timestamp),
+          '-frames:v', '1',
+          '-vf', 'scale=-2:360',
+          '-q:v', '3',
+          outputPath
+        ]);
+        proc.on('close', () => resolve());
+        proc.on('error', () => resolve());
+      });
+    }
+    frameFiles = fs.readdirSync(outputDir)
+      .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
+      .sort();
+  }
 
   if (frameFiles.length === 0) {
     throw new Error('Tidak ada frame yang berhasil diekstrak dari stream URL.');
