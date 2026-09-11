@@ -8,7 +8,7 @@ import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { getMediaDurationSec } from './videoRenderer.js';
 import { saveToEnglishDictionary } from './dictionaryService.js';
 import { trackBandwidth } from './bandwidthTracker.js';
-import { extractCoreProductInfo } from './discoveryService.js';
+import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from './discoveryService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -279,6 +279,7 @@ export async function analyzeYouTubeVideoWithGemini({
   allowFallbackClips = false,
   totalDuration = 600,
   introCutoffSec = 0,
+  isVideoFirst = false,
   onProgress = () => { },
 }) {
   const geminiKey = getDirectGeminiApiKey(apiKey);
@@ -291,6 +292,7 @@ export async function analyzeYouTubeVideoWithGemini({
   }
 
   const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
@@ -298,7 +300,9 @@ export async function analyzeYouTubeVideoWithGemini({
 
   onProgress({
     step: 'gemini_vision',
-    message: 'Google Gemini 3.6 Flash menganalisa stream video langsung dari YouTube (0 MB kuota lokal)...',
+    message: isVideoFirstMode
+      ? `Google Gemini 3.6 Flash menganalisa stream video YouTube (Mode: Video-First Discovery)...`
+      : 'Google Gemini 3.6 Flash menganalisa stream video langsung dari YouTube (0 MB kuota lokal)...',
     progress: 46,
   });
 
@@ -306,6 +310,19 @@ export async function analyzeYouTubeVideoWithGemini({
   const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
 Evaluate this YouTube video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
 
+${isVideoFirstMode ? `
+CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE)
+- Discovery Topic / Keyword: "${coreNoun}"
+- PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
+- ACCEPTANCE STANDARD:
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg dispenser, oil pot, sharpening stone/roll, vegetable washer basket, etc.) that fit in the central 9:16 vertical crop.
+  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
+  * In "detectedBrand", output any brand name visible on the physical body (or "none").
+- REJECTION STANDARD:
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
+  * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
+  * REJECT if non-kitchen unrelated items.
+` : `
 CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
@@ -318,6 +335,7 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
+`}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
 - 9:16 CROP GEOMETRY:
@@ -355,6 +373,16 @@ CRITERION 4: FACE DISCARD RULE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISC
 - TOLAK (status: 'reject') HANYA JIKA:
   * Video berupa talking-head / vlog murni tanpa demonstrasi fisik produk.
   * Wajah manusia muncul mendominasi hampir seluruh video sehingga TIDAK BISA ditemukan minimal 5 cuplikan tangan bersih (${clipSec}s per cuplikan).
+
+CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
+- JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
+  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, mengeluarkan barang dari kotak, atau memperlihatkan kelengkapan aksesoris/buku manual di awal video): JANGAN TOLAK VIDEONYA! Video TETAP DITERIMA (status: 'accept').
+- MANDAT PEMBUANGAN PROSES UNBOXING:
+  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN, ATAU BUSA PACKAGING!
+  * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing atau menyorot kotak kardus/kemasan!
+  * HANYA pilih timestamps ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, membersihkan, hasil nyata penggunaan produk).
+- TOLAK (status: 'reject') HANYA JIKA:
+  * 100% seluruh isi video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
 
 CRITERION 5: CLEAN TIMESTAMP SELECTION
 - Select 5 to 8 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions.
@@ -475,7 +503,10 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
   const rawStatus = String(parsed.status || '').toLowerCase().trim();
   const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
-  const isMatchFalse = parsed.isProductMatch === false || parsed.isExactProductMatch === false;
+  const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct);
+  const isMatchFalse = isVideoFirstMode
+    ? (isBulky || parsed.isUsableSourceVideo === false)
+    : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky);
   const hasFace = parsed.hasFaceIn916Frame === true ||
     parsed.hasFaceOrHumanInSelectedFrames === true ||
     parsed.hasFaceInSelectedClips === true;
@@ -523,6 +554,8 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         rejectionMsg = 'Video ditolak oleh AI: Video didominasi wajah/vlogger manusia tanpa cukup cuplikan peragaan tangan (wajib cuplikan tangan/hands-only bersih).';
       } else if (isSynthetic) {
         rejectionMsg = 'Video ditolak oleh AI: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
+      } else if (isBulky) {
+        rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar'}) tergolong perabot/rak besar yang dilarang.`;
       } else if (isMatchFalse) {
         rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
       } else {
@@ -618,6 +651,7 @@ export async function analyzeVideoWithGeminiFileApi({
   sceneDuration = 3.3,
   allowFallbackClips = false,
   introCutoffSec = 0,
+  isVideoFirst = false,
   onProgress = () => { },
 }) {
   const geminiKey = getDirectGeminiApiKey(apiKey);
@@ -630,6 +664,7 @@ export async function analyzeVideoWithGeminiFileApi({
   }
 
   const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
@@ -685,6 +720,19 @@ export async function analyzeVideoWithGeminiFileApi({
     const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
 Evaluate this full video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
 
+${isVideoFirstMode ? `
+CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE)
+- Discovery Topic / Keyword: "${coreNoun}"
+- PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
+- ACCEPTANCE STANDARD:
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg dispenser, oil pot, sharpening stone/roll, vegetable washer basket, etc.) that fit in the central 9:16 vertical crop.
+  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
+  * In "detectedBrand", output any brand name visible on the physical body (or "none").
+- REJECTION STANDARD:
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
+  * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
+  * REJECT if non-kitchen unrelated items.
+` : `
 CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
@@ -697,6 +745,7 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
+`}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
 - 9:16 CROP GEOMETRY:
@@ -843,7 +892,10 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
     const rawStatus = String(parsed.status || '').toLowerCase().trim();
     const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
-    const isMatchFalse = parsed.isProductMatch === false || parsed.isExactProductMatch === false;
+    const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct);
+    const isMatchFalse = isVideoFirstMode
+      ? (isBulky || parsed.isUsableSourceVideo === false)
+      : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky);
     const hasFace = parsed.hasFaceIn916Frame === true ||
       parsed.hasFaceOrHumanInSelectedFrames === true ||
       parsed.hasFaceInSelectedClips === true;
@@ -892,6 +944,8 @@ CRITICAL RULES FOR REJECTION OUTPUT:
           rejectionMsg = 'Video ditolak oleh AI: Video didominasi wajah/vlogger manusia tanpa cukup cuplikan peragaan tangan (wajib cuplikan tangan/hands-only bersih).';
         } else if (isSynthetic) {
           rejectionMsg = 'Video ditolak oleh AI: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
+        } else if (isBulky) {
+          rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar'}) tergolong perabot/rak besar yang dilarang.`;
         } else if (isMatchFalse) {
           rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
         } else {
@@ -1002,6 +1056,7 @@ export async function selectHighlightWithAI({
   sceneDuration = 3.3,
   allowFallbackClips = false,
   introCutoffSec = 0,
+  isVideoFirst = false,
   onProgress = () => { }
 }) {
   const reqProvider = (aiProvider || '').trim().toLowerCase();
@@ -1024,6 +1079,7 @@ export async function selectHighlightWithAI({
         allowFallbackClips,
         totalDuration: videoMetadata?.duration || 600,
         introCutoffSec,
+        isVideoFirst,
         onProgress,
       });
     }
@@ -1039,6 +1095,7 @@ export async function selectHighlightWithAI({
         sceneDuration,
         allowFallbackClips,
         introCutoffSec,
+        isVideoFirst,
         onProgress,
       });
     }
@@ -1050,10 +1107,13 @@ export async function selectHighlightWithAI({
   let activeModel = modelFallbackList[0];
 
   const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
 
   onProgress({
     step: 'gemini_vision',
-    message: `Analyzing full video frames with ${provider} (${activeModel}) to plan fast ${clipSec}s product shots...`,
+    message: isVideoFirstMode
+      ? `Analyzing frames with ${provider} (${activeModel}) [Mode: Video-First Discovery]...`
+      : `Analyzing full video frames with ${provider} (${activeModel}) to plan fast ${clipSec}s product shots...`,
     progress: 45
   });
 
@@ -1082,6 +1142,19 @@ RULE 1: ABSOLUTE ZERO HARDCODED SPEECH SUBTITLES & ZERO BURNED-IN CAPTION BARS:
   * Real physical text, brand marks, buttons, or labels printed/embossed directly ON THE PHYSICAL PRODUCT BODY OR ITS PACKAGING (e.g. brand logo "Philips", "Joybos", "Midea", "Xiaomi", button markings "ON/OFF", "Power", "Speed 1 2", volume "500ml", "100°C", "Stainless Steel 304", or physical ingredient/specification labels) is 100% NATURAL AND FULLY ACCEPTABLE!
   * NEVER reject a video because of text or brand logos printed physically on the product itself!
 
+${isVideoFirstMode ? `
+RULE 2: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE):
+- Discovery Query Keyword / Topic: "${coreNoun}"
+- PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
+- ACCEPTANCE STANDARD:
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg dispenser, oil pot, sharpening stone/roll, vegetable washer basket, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
+  * In "detectedBrand", output any brand name visible on the physical body (or "none").
+- REJECTION STANDARD:
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
+  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
+  * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
+` : `
 RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN TOOLS NICHE):
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 - Compare the physical product demonstrated in the frames directly with the target product: "${coreNoun}".
@@ -1093,6 +1166,7 @@ RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
+`}
 - If rejected for wrong product or bulky furniture:
   {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok atau tergolong perabot/rak besar yang dilarang"}
 
@@ -1287,7 +1361,10 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 
       const rawStatus = String(parsed.status || '').toLowerCase().trim();
       const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
-      const isMatchFalse = parsed.isProductMatch === false || parsed.isExactProductMatch === false || parsed.isUsableSourceVideo === false;
+      const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct);
+      const isMatchFalse = isVideoFirstMode
+        ? (isBulky || parsed.isUsableSourceVideo === false)
+        : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky || parsed.isUsableSourceVideo === false);
       const hasFace = parsed.hasFaceIn916Frame === true ||
         parsed.hasFaceOrHumanInSelectedFrames === true ||
         parsed.hasFaceInSelectedClips === true;
@@ -1339,6 +1416,8 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
             rejectionMsg = 'Video ditolak: Video didominasi wajah atau vlogger manusia tanpa cukup cuplikan peragaan tangan (wajib cuplikan peragaan tangan bersih).';
           } else if (isSynthetic) {
             rejectionMsg = 'Video ditolak: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
+          } else if (isBulky) {
+            rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar'}) tergolong perabot/rak besar yang dilarang.`;
           } else if (isMatchFalse) {
             rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
           } else if (!hasValidFrames) {

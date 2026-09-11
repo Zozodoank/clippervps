@@ -54,6 +54,8 @@ import {
   discoverShopeeProducts,
   discoverSingleShopeeProduct,
   discoverYouTubeCandidatesForProduct,
+  searchMultiEngineVideos,
+  searchBingVideos,
   findMatchingShopeeProductUrl,
   extractShopeeLinkFromText,
   DEFAULT_AUTO_KEYWORDS,
@@ -1116,6 +1118,7 @@ export async function runStage1Pipeline({
           allowFallbackClips: !requireCleanGeminiPlan,
           totalDuration: meta.duration,
           introCutoffSec: candidateIntroCutoff,
+          isVideoFirst: Boolean(options.isVideoFirst),
           onProgress: updateProgress,
         });
 
@@ -1183,6 +1186,7 @@ export async function runStage1Pipeline({
         sceneDuration,
         allowFallbackClips: !requireCleanGeminiPlan,
         introCutoffSec: candidateIntroCutoff,
+        isVideoFirst: Boolean(options.isVideoFirst),
         onProgress: updateProgress,
       });
 
@@ -1244,6 +1248,7 @@ export async function runStage1Pipeline({
           shopeeLink,
           sceneDuration,
           allowFallbackClips: !requireCleanGeminiPlan,
+          isVideoFirst: Boolean(options.isVideoFirst),
           onProgress: updateProgress,
         });
         if (!highlight || !Array.isArray(highlight.clips) || highlight.clips.length === 0) {
@@ -1671,7 +1676,7 @@ export async function runStage1Pipeline({
           hasDownloadedVideo: false,
           hasFinalVideo: true,
           hasSilentVideo: true,
-          productTitle: productTitle || videoMeta.title,
+          productTitle: highlight.detectedProduct || productTitle || videoMeta.title,
           productDescription: productDescription || '',
           youtubeUrl,
           shopeeLink: effectiveShopeeLink || shopeeLink || '',
@@ -1727,10 +1732,10 @@ export async function runStage1Pipeline({
       downloadedVideoPath: rawVideoPath,
       hasSilentVideo: true,
       hasFinalVideo: false,
-      productTitle: productTitle || videoMeta.title,
+      productTitle: highlight.detectedProduct || productTitle || videoMeta.title,
       productDescription: productDescription || '',
       youtubeUrl,
-      shopeeLink: shopeeLink || '',
+      shopeeLink: effectiveShopeeLink || shopeeLink || '',
       highlight: {
         startTime: highlight.startTime,
         endTime: highlight.endTime,
@@ -1986,39 +1991,20 @@ async function runAutoStage1Worker(run) {
       const targetLabel = isUnlimited ? `${run.successfulJobs} video (∞)` : `${currentTargetIndex}/${run.maxJobs}`;
 
       updateAutoRun(run, {
-        message: `Mencari produk [${targetLabel}]: "${keyword}"...`,
-        progress: isUnlimited ? 5 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) || 5),
+        message: `[${targetLabel}] Mencari video di mesin telusur (YouTube & Bing) untuk: "${keyword}"...`,
+        progress: isUnlimited ? 10 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 2),
       });
 
-      const product = await discoverSingleShopeeProduct(keyword, seenShopeeUrls);
-      if (!product) {
-        continue;
-      }
-
-      if (isProductTitleUsed(product.title)) {
-        console.log(`[Auto] Skip produk yang pernah diproses sebelumnya: "${product.title}"`);
-        run.skippedProducts++;
-        updateAutoRun(run, { message: `[${targetLabel}] Skip "${product.title.slice(0, 25)}...": Sudah pernah diproses sebelumnya.` });
-        continue;
-      }
-
-      updateAutoRun(run, {
-        currentProductTitle: product.title,
-        message: `[${targetLabel}] Menemukan: "${product.title.slice(0, 35)}...". Mencari video YouTube...`,
-        progress: isUnlimited ? 15 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 3),
-      });
-
-      const candidates = await discoverYouTubeCandidatesForProduct({
-        productTitle: product.title,
-        productDescription: product.description,
+      // ── STRATEGI VIDEO-FIRST: Cari video demonstrasi produk langsung di multi-engine ──
+      const candidates = await searchMultiEngineVideos(keyword, {
         limit: 16,
         excludeVideoIds: usedYouTubeVideoIds,
         onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
       });
 
-      if (!candidates.length) {
+      if (!candidates || candidates.length === 0) {
         run.skippedProducts++;
-        updateAutoRun(run, { message: `[${targetLabel}] Skip "${product.title.slice(0, 25)}...": Tidak ada video YouTube baru yang cocok.` });
+        updateAutoRun(run, { message: `[${targetLabel}] Skip "${keyword}": Tidak ada video kandidat baru yang cocok.` });
         continue;
       }
 
@@ -2032,23 +2018,30 @@ async function runAutoStage1Worker(run) {
 
         const autoJobId = `auto_${crypto.randomBytes(5).toString('hex')}`;
         run.currentJobId = autoJobId;
+        const currentCandidateTitle = candidate.title || keyword;
 
         try {
           updateAutoRun(run, {
-            message: `[${targetLabel}] Memproses video untuk "${product.title.slice(0, 30)}..."...`,
+            currentProductTitle: currentCandidateTitle,
+            message: `[${targetLabel}] Menguji video: "${currentCandidateTitle.slice(0, 30)}..."...`,
             progress: isUnlimited ? 25 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 5),
           });
 
           const candidateShopeeLink = extractShopeeLinkFromText(candidate.description);
-          await runStage1Pipeline({
+          const completedResult = await runStage1Pipeline({
             jobId: autoJobId,
             youtubeUrl: candidate.url,
-            shopeeLink: candidateShopeeLink || product.url,
-            productTitle: product.title,
-            productDescription: product.description,
+            shopeeLink: candidateShopeeLink || '',
+            productTitle: currentCandidateTitle,
+            productDescription: candidate.description || '',
             apiKey: undefined,
-            options: { ...run.options, aiProvider: run.options?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter'), autoSearchFallback: false },
-            extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true },
+            options: {
+              ...run.options,
+              aiProvider: run.options?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter'),
+              autoSearchFallback: false,
+              isVideoFirst: true,
+            },
+            extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true, isVideoFirst: true, searchKeyword: keyword },
             requireCleanGeminiPlan: true,
             onProgress: (p) => {
               if (isUnlimited) {
@@ -2067,17 +2060,18 @@ async function runAutoStage1Worker(run) {
             },
           });
 
+          const finalItemTitle = completedResult?.productTitle || currentCandidateTitle;
           run.successfulJobs++;
           jobSuccess = true;
-          markKeywordAsUsed(keyword, { productTitle: product.title, jobId: autoJobId, source: 'auto_worker' });
+          markKeywordAsUsed(keyword, { productTitle: finalItemTitle, jobId: autoJobId, source: 'auto_worker' });
           const finishedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
           updateAutoRun(run, {
-            message: `✅ [${finishedDisplay}] Selesai: "${product.title.slice(0, 35)}..."`,
+            message: `✅ [${finishedDisplay}] Selesai: "${finalItemTitle.slice(0, 35)}..."`,
             progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
           });
-          break; // Success! Move to next product keyword immediately
+          break; // Video lolos dan selesai! Lanjut ke kata kunci berikutnya
         } catch (err) {
-          console.warn(`[Auto] Candidate rejected for ${product.title}:`, err.message);
+          console.warn(`[Auto] Candidate rejected for ${keyword}:`, err.message);
           // Delete temporary files ONLY IF the job did NOT already save a media asset
           const existingJob = activeJobs.get(autoJobId);
           const hasSavedMedia = existingJob && (existingJob.finalLocalPath || existingJob.silentLocalPath || existingJob.downloadedVideoPath);
@@ -2086,18 +2080,19 @@ async function runAutoStage1Worker(run) {
             activeJobs.delete(autoJobId);
             deletePersistedJob(autoJobId);
           } else {
+            const savedItemTitle = existingJob.productTitle || currentCandidateTitle;
             run.successfulJobs++;
             jobSuccess = true;
-            markKeywordAsUsed(keyword, { productTitle: product.title, jobId: autoJobId, source: 'auto_worker' });
+            markKeywordAsUsed(keyword, { productTitle: savedItemTitle, jobId: autoJobId, source: 'auto_worker' });
             const savedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
             updateAutoRun(run, {
-              message: `✅ [${savedDisplay}] Video 1080p tersimpan (Menunggu Voiceover): "${product.title.slice(0, 30)}..."`,
+              message: `✅ [${savedDisplay}] Video 1080p tersimpan (Menunggu Voiceover): "${savedItemTitle.slice(0, 30)}..."`,
               progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
             });
             break;
           }
 
-          run.failures.push({ productTitle: product.title, error: err.message, time: new Date().toISOString() });
+          run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
 
           // If all models in the fallback chain exhausted their quota, stop autorun!
           if (err.isAllModelsQuotaExhausted) {
@@ -2145,7 +2140,7 @@ async function runAutoStage1Worker(run) {
         run.failedJobs++;
         updateAutoRun(run, {
           failedJobs: run.failedJobs,
-          message: `❌ [${targetLabel}] Gagal: "${product.title.slice(0, 30)}..."`,
+          message: `❌ [${targetLabel}] Gagal menemukan video bersih untuk: "${keyword.slice(0, 30)}..."`,
         });
       }
 

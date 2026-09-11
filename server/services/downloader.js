@@ -413,8 +413,8 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
           else if (parts.length === 2) duration = (parts[0] * 60) + parts[1];
           else if (parts.length === 1 && parts[0] > 0) duration = parts[0];
 
-          // Filter out videos with known duration < 5 min (300s) or > 15 min (900s)
-          if (duration > 0 && (duration < 300 || duration > 900)) {
+          // Filter out videos with known duration < 1 min (60s) or > 15 min (900s)
+          if (duration > 0 && (duration < 60 || duration > 900)) {
             continue;
           }
 
@@ -487,7 +487,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
       '--dump-json',
       '--no-playlist',
       '--skip-download',
-      '--match-filter', 'duration >= 300 & duration <= 900',
+      '--match-filter', 'duration >= 60 & duration <= 900',
       searchTarget
     ];
 

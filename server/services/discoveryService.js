@@ -1038,6 +1038,170 @@ export async function discoverYouTubeCandidatesForProduct({
   return cleanCandidates;
 }
 
+/**
+ * Scrapes Bing Videos for high-quality demonstration candidates matching the query.
+ * Bing Video Search returns rich metadata: video title, duration, uploader, and direct YouTube URLs.
+ */
+export async function searchBingVideos(query, { limit = 20, onProgress = () => {} } = {}) {
+  const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
+  const url = `https://www.bing.com/videos/search?q=${encodeURIComponent(query)}`;
+
+  onProgress({
+    step: 'auto_video_search',
+    message: `Mencari video via Bing Video: "${query}"...`,
+    progress: 8,
+  });
+
+  try {
+    const res = await fetchWithTlsFallback(url, {
+      timeoutMs: 4000,
+      headers: {
+        'User-Agent': USER_AGENT,
+        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+    });
+
+    if (!res || !res.ok) return [];
+    const html = await res.text();
+    const $ = cheerio.load(html);
+    const candidates = [];
+    const seenIds = new Set();
+
+    $('div.mc_vtvc, div.vrwrap, [data-vid], li.b_algo').each((_, el) => {
+      const $el = $(el);
+      const htmlSnippet = $el.html() || '';
+      const m = htmlSnippet.match(/(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+      if (!m) return;
+      const id = m[1];
+      if (seenIds.has(id)) return;
+      seenIds.add(id);
+
+      const ariaLabel = $el.find('a[aria-label]').attr('aria-label') || '';
+      const rawTitle = $el.find('.b_tit, .vtru_title, .title').first().text().trim() || $el.find('a').first().text().trim();
+
+      let title = rawTitle;
+      let durationSec = 0;
+      let channel = '';
+
+      if (ariaLabel) {
+        const titleMatch = ariaLabel.match(/^(.*?)(?:\s+dari\s+YouTube|\s+from\s+YouTube|\s+·)/i);
+        if (titleMatch && titleMatch[1].trim()) {
+          title = titleMatch[1].trim();
+        }
+
+        const durMinSec = ariaLabel.match(/(?:Durasi|Duration):\s*(\d+)\s*(?:menit|min|m)(?:\s*(\d+)\s*(?:detik|sec|s))?/i);
+        const durSecOnly = ariaLabel.match(/(?:Durasi|Duration):\s*(\d+)\s*(?:detik|sec|s)/i);
+        if (durMinSec) {
+          durationSec = Number(durMinSec[1]) * 60 + (Number(durMinSec[2]) || 0);
+        } else if (durSecOnly) {
+          durationSec = Number(durSecOnly[1]);
+        }
+
+        const uploaderMatch = ariaLabel.match(/(?:uploaded by|diunggah oleh)\s+([^·\.]+)/i);
+        if (uploaderMatch) channel = uploaderMatch[1].trim();
+      }
+
+      candidates.push({
+        id,
+        title: title || query,
+        url: `https://www.youtube.com/watch?v=${id}`,
+        duration: durationSec,
+        channel,
+        source: 'bing_video',
+      });
+
+      if (candidates.length >= safeLimit) return false;
+    });
+
+    if (candidates.length < safeLimit) {
+      const ytRegex = /https?:\/\/(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/g;
+      let rm;
+      while ((rm = ytRegex.exec(html)) !== null && candidates.length < safeLimit) {
+        const id = rm[1];
+        if (!seenIds.has(id)) {
+          seenIds.add(id);
+          candidates.push({
+            id,
+            title: query,
+            url: `https://www.youtube.com/watch?v=${id}`,
+            duration: 0,
+            channel: '',
+            source: 'bing_video',
+          });
+        }
+      }
+    }
+
+    return candidates;
+  } catch (err) {
+    console.warn(`[Discovery] Bing Video search notice: ${err.message}`);
+    return [];
+  }
+}
+
+/**
+ * Searches video demonstration candidates across search engines (YouTube & Bing Videos).
+ * Deduplicates by video ID, filters out previously used videos, and applies Stage 1 metadata filters.
+ */
+export async function searchMultiEngineVideos(query, {
+  limit = 20,
+  excludeVideoIds = new Set(),
+  onProgress = () => {},
+} = {}) {
+  const excludeSet = excludeVideoIds instanceof Set ? excludeVideoIds : new Set(excludeVideoIds || []);
+  const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
+
+  onProgress({
+    step: 'auto_video_search',
+    message: `Mencari video di mesin telusur (YouTube & Bing) untuk: "${query}"...`,
+    progress: 5,
+  });
+
+  const allCandidates = [];
+  const seenIds = new Set(excludeSet);
+
+  // 1. Query YouTube (Native Web Search + yt-dlp)
+  try {
+    const ytResults = await searchYouTubeVideos(query, { limit: safeLimit, onProgress });
+    if (Array.isArray(ytResults)) {
+      for (const item of ytResults) {
+        const vid = item.id || extractVideoId(item.url);
+        if (vid && !seenIds.has(vid)) {
+          seenIds.add(vid);
+          allCandidates.push({ ...item, id: vid, source: 'youtube' });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[MultiEngineVideo] YouTube search error: ${err.message}`);
+  }
+
+  // 2. Query Bing Videos (Fast, independent video index)
+  try {
+    const bingResults = await searchBingVideos(query, { limit: safeLimit, onProgress });
+    if (Array.isArray(bingResults)) {
+      for (const item of bingResults) {
+        const vid = item.id || extractVideoId(item.url);
+        if (vid && !seenIds.has(vid)) {
+          seenIds.add(vid);
+          allCandidates.push({ ...item, id: vid, source: 'bing_video' });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[MultiEngineVideo] Bing Video search error: ${err.message}`);
+  }
+
+  // 3. Extract core words from the query
+  const queryWords = normalizeText(query).split(' ').filter((w) => w.length >= 3);
+
+  // 4. Filter through Stage 1 Metadata Pre-filter (clean content, faceless keywords, no bulky furniture)
+  const cleanCandidates = allCandidates.filter((candidate) => isLikelyCleanYouTubeCandidate(candidate, queryWords));
+
+  console.log(`[MultiEngineVideo] Ditemukan ${allCandidates.length} total video (${cleanCandidates.length} lolos filter metadata Stage 1) untuk: "${query}"`);
+  return cleanCandidates.slice(0, safeLimit);
+}
+
 export function delayWithJitter(minMs, maxMs) {
   const min = Number(minMs) || 0;
   const max = Math.max(min, Number(maxMs) || min);
@@ -1318,8 +1482,11 @@ export function extractShopeeLinkFromText(text = '') {
 
 export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (!candidate.url || !candidate.id) return false;
-  // If duration is known, reject if too short (< 5 min / 300s) or too long (> 15 min / 900s)
-  if (candidate.duration > 0 && (candidate.duration < 300 || candidate.duration > 900)) return false;
+  // If duration is known, reject if too short (< 1 min / 60s) or too long (> 15 min / 900s)
+  if (candidate.duration > 0 && (candidate.duration < 60 || candidate.duration > 900)) return false;
+
+  // Reject vertical Shorts (which already have hardburned music/captions)
+  if (candidate.url.includes('/shorts/') || /#shorts\b/i.test(candidate.title || '')) return false;
 
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
@@ -1892,7 +2059,9 @@ export async function findMatchingShopeeProductUrl(productTitle, detectedBrand =
   if (!productTitle || typeof productTitle !== 'string') return '';
   const cleanTitleStr = cleanTitle(productTitle) || productTitle.trim();
   const brand = (detectedBrand && detectedBrand !== 'none' && !detectedBrand.includes('Terdeteksi')) ? detectedBrand.trim() : '';
-  const searchPhrase = `${brand ? `${brand} ` : ''}${cleanTitleStr}`.trim();
+  const searchPhrase = (brand && !cleanTitleStr.toLowerCase().includes(brand.toLowerCase()))
+    ? `${brand} ${cleanTitleStr}`.trim()
+    : cleanTitleStr.trim();
 
   // 1. Direct match from YouTube video description if available
   const fromDesc = extractShopeeLinkFromText(videoDesc);
@@ -1945,8 +2114,8 @@ export async function findMatchingShopeeProductUrl(productTitle, detectedBrand =
     console.warn(`[Discovery] Gagal mencari link Shopee via DuckDuckGo:`, err.message);
   }
 
-  // 5. Fallback: direct search page URL with refined kitchen tools keyword
-  const fallbackUrl = `https://shopee.co.id/search?keyword=${encodeURIComponent(`${searchPhrase} alat dapur`)}`;
+  // 5. Fallback: direct search page URL with refined keyword
+  const fallbackUrl = `https://shopee.co.id/search?keyword=${encodeURIComponent(searchPhrase)}`;
   console.log(`[Discovery] Menggunakan fallback link Shopee: ${fallbackUrl}`);
   return fallbackUrl;
 }
