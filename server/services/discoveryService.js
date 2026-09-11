@@ -1046,7 +1046,7 @@ export async function discoverYouTubeCandidatesForProduct({
 export async function searchBingVideos(query, { limit = 20, onProgress = () => {} } = {}) {
   const cleanQuery = buildCleanYouTubeQuery(query);
   const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
-  const url = `https://www.bing.com/videos/search?q=${encodeURIComponent(cleanQuery)}`;
+  const url = `https://www.bing.com/videos/search?q=${encodeURIComponent(cleanQuery)}&qft=+filterui:duration-medium+filterui:video-definition-high`;
 
   onProgress({
     step: 'auto_video_search',
@@ -1102,6 +1102,9 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
         const uploaderMatch = ariaLabel.match(/(?:uploaded by|diunggah oleh)\s+([^·\.]+)/i);
         if (uploaderMatch) channel = uploaderMatch[1].trim();
       }
+
+      // Filter out videos with known duration < 5 min (300s) or > 15 min (900s)
+      if (durationSec > 0 && (durationSec < 300 || durationSec > 900)) return;
 
       candidates.push({
         id,
@@ -1757,8 +1760,8 @@ export function extractShopeeLinkFromText(text = '') {
 
 export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (!candidate.url || !candidate.id) return false;
-  // If duration is known, reject if too short (< 1 min / 60s) or too long (> 15 min / 900s)
-  if (candidate.duration > 0 && (candidate.duration < 60 || candidate.duration > 900)) return false;
+  // If duration is known, reject if too short (< 5 min / 300s) or too long (> 15 min / 900s)
+  if (candidate.duration > 0 && (candidate.duration < 300 || candidate.duration > 900)) return false;
 
   // Reject vertical Shorts (which already have hardburned music/captions)
   if (candidate.url.includes('/shorts/') || /#shorts\b/i.test(candidate.title || '')) return false;

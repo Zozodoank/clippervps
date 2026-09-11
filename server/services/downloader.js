@@ -214,8 +214,8 @@ async function searchWithYouTubeDataApi(query, limit = 10) {
 
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
-    console.log(`[Downloader] Searching YouTube Data API v3: "${cleanQuery}" (type=video&videoDefinition=high)`);
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoDefinition=high&maxResults=${limit}&q=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
+    console.log(`[Downloader] Searching YouTube Data API v3: "${cleanQuery}" (type=video&videoDefinition=high&videoDuration=medium)`);
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoDefinition=high&videoDuration=medium&maxResults=${limit}&q=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const data = await res.json();
@@ -245,8 +245,8 @@ async function searchWithRapidApi(query, limit = 10) {
 
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
-    console.log(`[Downloader] Searching YouTube via RapidAPI: "${cleanQuery}" (type=video&videoDefinition=high)`);
-    const res = await fetch(`https://${host}/search?query=${encodeURIComponent(cleanQuery)}&type=video&videoDefinition=high`, {
+    console.log(`[Downloader] Searching YouTube via RapidAPI: "${cleanQuery}" (type=video&videoDefinition=high&videoDuration=medium)`);
+    const res = await fetch(`https://${host}/search?query=${encodeURIComponent(cleanQuery)}&type=video&videoDefinition=high&videoDuration=medium`, {
       headers: {
         'x-rapidapi-key': apiKey,
         'x-rapidapi-host': host
@@ -449,8 +449,8 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
 
-    // sp=CAMSAhAB enforces YouTube Video + High Definition (HD) filter
-    let res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}&sp=CAMSAhAB`, {
+    // sp=CAMSAggD enforces YouTube Video + High Definition (HD) + Medium Duration (4-20m)
+    let res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}&sp=CAMSAggD`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
         'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
@@ -498,8 +498,8 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
           else if (parts.length === 2) duration = (parts[0] * 60) + parts[1];
           else if (parts.length === 1 && parts[0] > 0) duration = parts[0];
 
-          // Filter out videos with known duration < 1 min (60s) or > 15 min (900s)
-          if (duration > 0 && (duration < 60 || duration > 900)) {
+          // Filter out videos with known duration < 5 min (300s) or > 15 min (900s)
+          if (duration > 0 && (duration < 300 || duration > 900)) {
             continue;
           }
 

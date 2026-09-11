@@ -697,8 +697,17 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', onProgress 
   if (animatedGraphicCount >= 2) {
     console.log(`[VideoFilter] Info diagnostik: Terdeteksi saturasi grafis pada ${animatedGraphicCount} frame -> Verifikasi grafis diserahkan ke AI Vision.`);
   }
+  // Tolak jika video didominasi wajah/vlogger manusia (>= 7 frame terdeteksi di area atas 45%)
+  // Mencegah video talking-head / vlogger lolos ke AI dan membuang kuota token
+  if (humanFaceSkinCount >= 7) {
+    return {
+      eligible: false,
+      reason: `Analisa visual lokal mendeteksi video didominasi wajah / vlogger manusia (${humanFaceSkinCount} dari ${frameBuffers.length} frame). Wajib video 100% faceless peragaan tangan!`
+    };
+  }
+
   if (humanFaceSkinCount > 0) {
-    console.log(`[VideoFilter] Info diagnostik: Terdeteksi rona kulit pada ${humanFaceSkinCount} frame -> Verifikasi faceless diserahkan ke AI Vision.`);
+    console.log(`[VideoFilter] Info diagnostik: Terdeteksi rona kulit pada ${humanFaceSkinCount} frame -> Kemunculan sesekali ditoleransi, AI akan membuang scene wajah.`);
   }
   const totalBumperFrames = openingBumperCount + bodyBumperCount;
   if (bodyBumperCount >= 3) {
