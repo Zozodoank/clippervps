@@ -72,6 +72,15 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'pengupas kulit jeruk lemon zester stainless',
   'alat perajang rempah daun stainless herb cutter',
   'alat pengocok telur semi otomatis putar tekan',
+  'alat pelindung jari iris sayur stainless cutter guard',
+  'pisau dapur chef knife stainless tajam anti karat',
+  'pisau kupas buah sayur mini cover pelindung',
+  'pisau roti kue gerigi stainless steel',
+  'pisau daging mini cleaver stainless dapur',
+  'alat pengasah pisau dapur praktis 3 tahap roda',
+  'batu asahan pisau dapur grit halus presisi',
+  'alat pemotong pisang sosis praktis stainless',
+  'pemotong mentimun spiral wortel slicer',
 
   // =========================================================================
   // 2. PERALATAN MASAK MINI, BAKING & GADGET KOMPOR (Mini Cooking & Baking)
@@ -125,10 +134,19 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'pembuat churros cetakan kue semprit manual',
   'capitan gorengan stainless dengan saringan tirisan',
   'tatakan sutil tutup panci silikon anti panas',
+  'cetakan kue pukis mini anti lengket teflon',
+  'centong nasi silikon anti lengket berdiri',
+  'sendok kuah sup sayur silikon gagang kayu',
+  'irus sayur kuah stainless gagang tahan panas',
+  'panci sauce pan mini anti lengket susu mie',
+  'wajan teflon mini penggorengan telur 12cm',
+  'pemanggang roti bakar lipat kompor gas',
+  'alat pembuat sempol sate telur gulung mini',
+  'capitan silikon gorengan barbecue anti panas',
 
   // =========================================================================
-  // 3. WADAH BUMBU, BOTOL & AKSESORIS MEJA DAPUR KOMPAK (Compact Kitchen Storage)
-  // (CATATAN: HANYA wadah mini/tabletop, BUKAN lemari atau rak besar!)
+  // 3. WADAH BUMBU, BOTOL & PERABOTAN DAPUR KOMPAK (Tabletop Furniture & Storage)
+  // (CATATAN: HANYA perabot meja/tabletop kompak, BUKAN lemari atau rak besar!)
   // =========================================================================
   'botol minyak kuas silikon 2 in 1 anti tumpah',
   'botol semprot minyak spray olive oil praktis',
@@ -158,9 +176,49 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'wadah pencuci beras sayur drain bowl putar',
   'botol saus mayones kecap squeeze bottle putar',
   'saringan teh kopi stainless reusable infuser',
+  'tempat pisau blok dapur minimalis tirisan',
+  'wadah bumbu sekat toples bumbu kaca sendok',
+  'kotak telur organizer kulkas roll gravitasi',
+  'dispenser sabun cuci piring sponge pump otomatis',
+  'tempat spons cuci piring gantung kran wastafel',
+  'wadah saringan tirisan minyak gorengan stainless',
+  'botol kecap minyak kaca otomatis buka tutup',
+  'gantungan alat masak dinding putar 360 serbaguna',
+  'rak bumbu meja 2 tingkat mini portable compact',
+  'klip penjepit bungkus snack kedap udara rapat',
+  'tikar pengering piring silikon dish drying mat',
 
   // =========================================================================
-  // 4. ALAT KEBERSIHAN KHUSUS WASTAFEL & DAPUR MINI (Kitchen Cleaning Tools)
+  // 4. PERLENGKAPAN DAPUR & PERLENGKAPAN MEMASAK LAINNYA (Kitchen Supplies & Tools)
+  // =========================================================================
+  'penjepit kantong plastik makanan sealer clip praktis',
+  'tutup panci silikon anti tumpah boil over safeguard',
+  'wadah tirisan sayur buah kulkas drainer serbaguna',
+  'kantong silikon penyimpan makanan ziplock reusable',
+  'corong tuang minyak bumbu stainless saringan mini',
+  'penutup mangkok silikon elastis tahan panas microwave',
+  'jepitan piring mangkok panas stainless silikon gripper',
+  'tatakan panci silikon sarang lebah anti panas meja',
+  'splash guard kompor pelindung cipratan minyak lipat',
+  'pematik api elektrik usb kompor gas tanpa gas',
+  'termometer minyak daging digital probe lcd dapur',
+  'timer dapur digital magnetik pengingat waktu masak',
+  'sendok takar digital timbangan bumbu lcd presisi',
+  'sendok takar bumbu stainless magnetik set komplit',
+  'silikon pot air fryer tahan panas anti lengket loyang',
+  'kertas minyak alas air fryer baking paper bulat',
+  'cetakan es batu silikon pencet lepas mudah',
+  'pembuat dumpling pastel pastelan manual praktis cetakan',
+  'sutil spatula silikon set spatula kuas kocokan',
+  'capitan makanan capitan kue silikon jepit makanan',
+  'gunting serbaguna dapur potong tulang ayam daging sk5',
+  'alat pemotong kentang sayur spiral tornado fries',
+  'parutan keju coklat putar rotary stainless steel',
+  'alat pemeras santan kelapa perasan manual praktis',
+  'sendok scoop es krim trigger release stainless',
+
+  // =========================================================================
+  // 5. ALAT KEBERSIHAN KHUSUS WASTAFEL & DAPUR MINI (Kitchen Cleaning Tools)
   // =========================================================================
   'dispenser sabun cuci piring otomatis sponge pump',
   'spons cuci piring nano magic sponge pembersih kerak',
@@ -169,8 +227,96 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'kain lap nano berserat pembersih minyak dapur',
   'alat pembersih kerak wajan panci serbaguna',
   'sikat pembersih botol tumbler sedotan set',
-  'sikat pembersih blender mata pisau dapur'
+  'sikat pembersih blender mata pisau dapur',
+  'alat pembersih sisik ikan stainless dengan wadah',
+  'sikat pembersih celah kompor wastafel serbaguna',
+  'spons cuci piring jaring busa tebal higienis anti bau'
 ];
+
+export const TOOL_INDICATORS = [
+  'alat', 'cetakan', 'wadah', 'saringan', 'pembuat', 'parutan',
+  'pisau', 'gunting', 'wajan', 'panci', 'spatula', 'sutil', 'capitan',
+  'timbangan', 'termometer', 'dispenser', 'sealer', 'pengupas', 'peeler',
+  'slicer', 'chopper', 'blender', 'grater', 'organizer', 'tempat bumbu', 'rak bumbu meja',
+  'penjepit', 'tatakan', 'kuas silikon', 'frother', 'whisk', 'rolling pin', 'loyang',
+  'serutan', 'pemeras', 'pelumat', 'perajang', 'sikat', 'spons', 'kain lap',
+  'tudung saji', 'sarung tangan oven', 'pematik', 'splash guard', 'masher',
+  'ricer', 'timer dapur', 'sendok takar', 'sendok ukur', 'centong', 'irus', 'corong',
+  'tirisan', 'pencacah', 'pengocok', 'pengiris', 'pemipil', 'pengasah', 'batu asah',
+  'pan', 'pot', 'steamer', 'toaster', 'waffle maker', 'botol minyak', 'botol bumbu',
+  'botol semprot', 'botol spray', 'botol saus', 'botol kecap', 'squeeze bottle',
+  'grinder', 'french press', 'coffee maker', 'teko', 'drain bowl', 'drying mat'
+];
+
+export const FOOD_DRINK_EXCLUDE_WORDS = [
+  // Resep, tutorial masak, kuliner & mukbang (bukan demonstrasi alat dapur)
+  'resep', 'recipe', 'cara membuat', 'cara memasak', 'menu masakan', 'masakan rumahan',
+  'kuliner', 'culinary', 'mukbang', 'asmr makan', 'asmr eating', 'food review',
+  'drink review', 'jajanan', 'street food', 'warung makan', 'restoran', 'cafe',
+  'makan siang', 'makan malam', 'sarapan enak', 'kuliner viral', 'cemilan viral',
+
+  // Minuman & Minuman Olahan (Beverages)
+  'minuman', 'beverage', 'drink', 'minuman kemasan', 'minuman sachet', 'minuman botol',
+  'boba', 'bubble tea', 'milk tea', 'thai tea', 'matcha latte', 'matcha tea',
+  'kopi bubuk', 'kopi sachet', 'kopi luwak', 'kopi hitam', 'kopi susu', 'kopi gula aren', 'espresso',
+  'biji kopi', 'coffee bean', 'cold brew', 'cappuccino sachet',
+  'susu sapi', 'susu uht', 'susu formula', 'susu kental manis', 'susu evaporasi', 'susu kedelai',
+  'sirup', 'syrup', 'teh celup', 'teh tubruk', 'teh kotak', 'teh botol', 'jus buah',
+  'minuman bersoda', 'soft drink', 'minuman isotonik', 'minuman energi', 'minuman collagen',
+  'minuman herbal', 'jamu', 'jamu tradisional', 'bir', 'beer', 'alkohol', 'wine',
+
+  // Makanan Ringan, Snack & Camilan
+  'makanan ringan', 'snack', 'camilan', 'cemilan', 'keripik', 'kerupuk', 'kripik',
+  'basreng', 'seblak', 'makaroni pedas', 'biskuit', 'wafer', 'cokelat', 'chocolate',
+  'permen', 'candy', 'kue kering toples', 'nastar toples', 'kastengel', 'kue basah',
+  'roti tawar', 'roti sobek', 'donat manis', 'martabak manis', 'brownies', 'bolu panggang',
+  'puding cup', 'dessert box', 'popcorn',
+
+  // Makanan Instan, Olahan & Frozen Food
+  'makanan instan', 'mie instan', 'indomie', 'sedap goreng', 'ramen instan', 'samyang',
+  'frozen food', 'nugget ayam', 'sosis sapi', 'sosis bakar', 'bakso sapi kemasan',
+  'siomay beku', 'dimsum frozen', 'pempek palembang', 'cireng bumbu rujak', 'cilok',
+  'rendang siap saji', 'sambal kemasan', 'sambal sachet', 'bumbu instan', 'bumbu racik',
+
+  // Bahan Pangan Mentah Tanpa Konteks Alat
+  'daging sapi 1kg', 'daging ayam segar', 'daging fillet', 'daging slice beef',
+  'ikan segar', 'udang vaname', 'cumi asin', 'kepiting laut', 'telur ayam 1kg',
+  'beras ramos', 'beras pandan wangi', 'beras merah 5kg', 'tepung terigu segitiga',
+  'tepung tapioka 1kg', 'tepung beras rose brand', 'gula pasir gulaku', 'garam dapur beryodium',
+  'minyak goreng 2l', 'minyak goreng sania', 'minyak goreng filma', 'minyak goreng bimoli'
+];
+
+export function isFoodOrBeverageProduct(text = '') {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+
+  // 1. Direct match on food/drink exclude list
+  if (FOOD_DRINK_EXCLUDE_WORDS.some((word) => normalized.includes(word))) {
+    // If it contains a pure recipe/mukbang/beverage/snack term, always exclude
+    if (/\b(?:resep|recipe|mukbang|asmr makan|asmr eating|kuliner|street food|food review|drink review|camilan|cemilan|minuman kemasan|boba milk tea|frozen food|mie instan|kopi susu|kopi gula aren)\b/i.test(normalized)) {
+      // Unless it explicitly mentions a recognized appliance/prep tool (frother, blender, grinder, mixer, teko, saringan teh)
+      if (!/\b(?:frother|pengocok\s+susu|milk\s+frother|grinder|penggiling|french\s+press|teko|infuser|blender|saringan\s+teh)\b/i.test(normalized)) {
+        return true;
+      }
+    }
+
+    // If it has a clear physical tool/utensil indicator, allowed (e.g. cetakan bakso, parutan keju, botol minyak kuas)
+    const hasTool = TOOL_INDICATORS.some((tool) => normalized.includes(tool));
+    if (!hasTool) {
+      return true;
+    }
+  }
+
+  // 2. Pure food/drink keywords without physical tool indicator
+  if (/\b(?:makanan|minuman|snack|camilan|cemilan|boba|kopi|teh|susu|sirup|jus|keripik|biskuit|cokelat|nugget|sosis|bakso|siomay|dimsum|seblak|basreng)\b/i.test(normalized)) {
+    const hasTool = TOOL_INDICATORS.some((tool) => normalized.includes(tool));
+    if (!hasTool) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 export const BULKY_EXCLUDE_WORDS = [
   // Lemari, kabinet, kitchen set & furniture besar
@@ -284,17 +430,22 @@ export function isBulkyOrUnsuitableProduct(text = '') {
   const normalized = normalizeText(text);
   if (!normalized) return false;
 
-  // 1. Direct match on exclude list
+  // 1. Food or drink exclusion check
+  if (isFoodOrBeverageProduct(normalized)) {
+    return true;
+  }
+
+  // 2. Direct match on exclude list
   if (BULKY_EXCLUDE_WORDS.some((word) => normalized.includes(word))) {
     return true;
   }
 
-  // 2. Any combination of "rak" with frame-filling descriptors
+  // 3. Any combination of "rak" with frame-filling descriptors
   if (/\brak\b/.test(normalized) && /(?:besar|jumbo|susun|tingkat|piring|wastafel|dapur|besi|standing|troli|roda|tinggi|dinding|gantung)/.test(normalized)) {
     return true;
   }
 
-  // 3. Furniture or cabinet indicators
+  // 4. Furniture or cabinet indicators
   if (/\b(?:lemari|kabinet|cabinet|furniture|wardrobe|kitchen\s+set|meja\s+makan|kursi)\b/.test(normalized)) {
     return true;
   }
@@ -510,12 +661,12 @@ export function clearUsedKeywords() {
 // Curated exclusively for compact, tabletop kitchen gadgets & tools (100% kitchen tools, 0% bulky furniture/racks)
 
 export const KITCHEN_CORE_TOOLS = [
-  // Choppers, Slicers, Cutters & Graters
+  // ── 1. ALAT DAPUR, PEMOTONG & FOOD PREP (Kitchen Tools & Cutters) ──
   'chopper mini manual tarik',
   'chopper mini elektrik portable',
   'food chopper blender mini',
   'blender kapsul mini portable',
-  'mandoline slicer parutan',
+  'mandoline slicer parutan multifungsi',
   'parutan multifungsi baskom wadah',
   'parutan keju kelapa stainless',
   'parutan sayur wortel kentang',
@@ -526,111 +677,154 @@ export const KITCHEN_CORE_TOOLS = [
   'alat pengiris mentega keju butter',
   'alat pemotong kentang spiral tornado',
   'alat pemotong kentang french fries',
-  'alat pemotong semangka melon',
+  'alat pemotong semangka melon praktis',
   'alat pemotong alpukat 3 in 1',
   'alat pemotong nanas spiral corer',
   'alat pemotong pizza roda stainless',
   'alat serut jagung pipil stainless',
-  'alat pemipil jagung serbaguna',
+  'alat pemipil jagung serbaguna praktis',
   'alat pengiris telur rebus stainless',
   'alat pemecah cangkang kepiting walnut',
-  'sendok pembuat bakso bakwan',
+  'sendok pembuat bakso bakwan anti lengket',
   'cetakan bakso manual serbaguna',
-  'alat pencetak burger patty press',
-
-  // Peelers, Mashers, Presses & Extractors
-  'alat pengupas buah sayur peeler',
+  'alat pencetak burger patty press manual',
+  'alat pengupas buah sayur peeler praktis',
   'alat pengupas kulit udang praktis',
-  'alat pembuang biji apel pir',
+  'alat pembuang biji apel pir praktis',
   'alat pelumat kentang potato masher',
-  'alat peremas kentang potato ricer',
+  'alat peremas kentang stainless potato ricer',
   'alat pelumat bawang putih garlic press',
-  'alat pemeras jeruk lemon stainless',
+  'pemeras bawang putih rocker stainless',
+  'alat pemeras jeruk lemon manual stainless',
   'alat pemeras jeruk nipis manual',
-  'alat pemeras santan kelapa manual',
+  'alat pemeras santan kelapa manual mini',
   'alat pemisah kuning telur praktis',
   'alat penusuk daging tenderizer empuk',
   'sendok porsi es krim scoop trigger',
   'alat pelubang kelapa muda stainless',
-
-  // Knives, Shears, Openers & Sharpeners
-  'pisau dapur stainless tajam',
-  'pisau kupas buah sayur mini',
+  'pisau dapur stainless tajam chef knife',
+  'pisau kupas buah sayur mini cover',
   'pisau roti kue gerigi stainless',
   'pisau daging mini cleaver dapur',
-  'gunting dapur serbaguna stainless',
-  'gunting tulang ayam unggas heavy duty',
+  'gunting dapur serbaguna stainless sk5',
+  'gunting daging tulang unggas heavy duty',
   'gunting sayur daun bawang 5 lapis',
   'alat pengasah pisau praktis 3 tahap',
   'batu asah pisau dapur grit halus',
-  'alat pembuka kaleng putar praktis',
-  'alat pembuka tutup botol toples',
+  'alat pembuka kaleng putar praktis aman',
+  'alat pembuka tutup botol toples serbaguna',
+  'alat pencabut bulu ayam ikan stainless',
+  'alat pemotong keju kawat stainless',
+  'parutan keju putar rotary cheese grater',
+  'pengupas kulit jeruk lemon zester stainless',
+  'alat perajang rempah daun stainless herb cutter',
+  'alat pengocok telur semi otomatis putar tekan',
+  'alat pelindung jari iris sayur stainless',
 
-  // Spatulas, Tongs, Strainers & Mats
-  'spatula silikon tahan panas food grade',
-  'sutil silikon anti leleh anti gores',
-  'capitan makanan gorengan silikon',
-  'capitan gorengan stainless penjepit',
-  'centong nasi anti lengket silikon',
-  'sendok kuah sup sayur silikon',
-  'irus kuah sayur stainless gagang kayu',
-  'wadah tirisan cuci beras sayur',
-  'wadah saringan minyak jelantah stainless',
-  'saringan teh kopi stainless halus',
-  'saringan tepung ayakan stainless',
-  'tutup panci silikon anti tumpah boil over',
-  'tatakan sutil tutup panci silikon',
+  // ── 2. PERABOTAN DAPUR (TABLETOP, RAK BUMBU & ORGANIZER MEJA KOMPAK) ──
+  'tempat bumbu putar 360 derajat meja',
+  'wadah bumbu dapur 4 sekat praktis sendok',
+  'kotak bumbu dapur putar serbaguna',
+  'tempat sendok garpu tirisan mini tertutup',
+  'tempat sendok tirisan meja anti debu',
+  'tempat pisau dapur magnetic strip dinding',
+  'tempat pisau blok dapur minimalis tirisan',
+  'toples kaca kedap udara tutup bambu estetik',
+  'wadah bumbu kaca sendok label terintegrasi',
+  'dispenser beras mini otomatis anti kutu',
+  'kotak telur organizer kulkas roll otomatis',
+  'kotak telur bertingkat otomatis slide kulkas',
+  'tatakan tutup panci sutil meja silikon',
+  'rak bumbu meja 2 tingkat mini portable',
+  'rak bumbu putar putaran halus meja',
+  'gantungan alat masak dinding putar 360',
+  'tempat spons tirisan kran wastafel praktis',
+  'wadah kotak penyimpanan bawang cabai kulkas',
+  'organizer bumbu sachet mini gantung kulkas',
+  'kotak penyimpanan kulkas sekat drain basket',
+  'dispenser sabun cuci piring sponge pump',
 
-  // Mini Tabletop Organizers, Dispensers & Sealers (Compact tabletop only - NO bulky racks)
-  'botol minyak goreng kuas silikon 2 in 1',
-  'botol spray semprot minyak goreng',
-  'wadah bumbu dapur 4 sekat sendok',
-  'dispenser bumbu dapur putar',
-  'dispenser minyak kecap saus kaca',
-  'kotak telur roll otomatis slide',
-  'dispenser sabun cuci piring tekan spons',
-  'tutup silikon stretch penutup makanan',
-  'penjepit kantong plastik snack kedap udara',
-  'alat sealer plastik mini portable heat',
+  // ── 3. PERLENGKAPAN DAPUR & FOOD PREPARATION (Kitchen Supplies & Storage) ──
+  'botol minyak kuas silikon 2 in 1 anti tumpah',
+  'botol semprot spray minyak goreng olive oil',
+  'botol minyak goreng kaca otomatis buka tuang',
+  'botol saus kecap squeeze bottle plastik lentur',
+  'alat sealer plastik mini portable heat sealer',
+  'klip penjepit bungkus makanan snack kedap udara',
+  'penutup makanan silikon stretch elastis reusable',
+  'penutup makanan payung tudung saji lipat',
+  'wadah tirisan cuci beras sayur drain bowl',
+  'baskom pencuci beras buah tirisan putar 2 in 1',
+  'wadah saringan tirisan minyak jelantah stainless',
+  'corong lipat silikon minyak air serbaguna',
+  'corong tuang minyak bumbu stainless saringan',
+  'kantong silikon penyimpan makanan ziplock reusable',
+  'penutup mangkok silikon elastis anti tumpah',
+  'jepitan kantong plastik makanan sealer clip',
+  'tutup panci silikon anti tumpah boil over safeguard',
+  'wadah tirisan sayur buah kulkas drainer',
+  'saringan teh kopi stainless reusable infuser',
+  'tikar pengering piring silikon dish drying mat',
 
-  // Baking, Dough & Specialty Snacks Makers
-  'alat pembuat dumpling pastel manual',
-  'cetakan pastel dumpling pangsit gyoza',
-  'cetakan donat manual praktis',
-  'cetakan sushi roll bazooka praktis',
-  'cetakan onigiri bento segitiga',
-  'cetakan martabak mini teflon',
-  'cetakan pukis mini teflon anti lengket',
-  'cetakan kue kering cookies biskuit',
-  'alas silikon gilasan adonan kue baking mat',
-  'rolling pin silikon adonan kue pastry',
-  'whisk pengocok telur adonan manual stainless',
-  'frother pengocok susu kopi mini elektrik',
-  'timer dapur digital magnet masak',
-  'timbangan digital dapur presisi gram',
-  'termometer makanan digital masak daging',
-
-  // Compact Cookware & Mini Gadgets
-  'wajan mini 4 lubang teflon telur burger',
+  // ── 4. PERLENGKAPAN MEMASAK, WAJAN & BAKING (Cookware, Baking & Cooking Tools) ──
+  'wajan penggorengan mini telur 4 lubang anti lengket',
   'wajan tamagoyaki teflon kotak telur gulung',
-  'panci listrik mini portable serbaguna',
+  'wajan grill pan mini anti lengket pemanggang',
+  'panci listrik mini serbaguna portable anak kost',
   'panci kukus mini stainless serbaguna',
-  'pemanggang sandwich toaster mini lipat',
-  'alat pembuat waffle mini elektrik',
+  'panci rebus mie telur mini stainless gagang',
+  'pemanggang sandwich toaster mini lipat kompor',
+  'alat pembuat waffle mini elektrik praktis',
   'alat pembuat crepes mini pan elektrik',
-  'silikon pot wadah air fryer anti lengket',
-  'kertas baking air fryer alas loyang anti lengket',
-  'pematik api kompor elektrik usb rechargeable',
+  'cetakan martabak mini 7 lubang anti lengket',
+  'cetakan takoyaki mini anti lengket teflon',
+  'cetakan pukis mini teflon anti lengket',
+  'cetakan donat manual praktis adonan kue',
+  'cetakan pastel dumpling pangsit gyoza manual',
+  'cetakan sushi roll manual bazooka praktis',
+  'cetakan onigiri nasi bento segitiga praktis',
+  'cetakan kue kering biskuit cookies press set',
+  'pembuat churros cetakan kue semprit manual',
+  'sutil silikon set tahan panas food grade',
+  'spatula silikon tahan panas gagang kayu estetik',
+  'capitan makanan gorengan silikon stainless',
+  'capitan gorengan stainless dengan saringan tirisan',
+  'centong nasi silikon anti lengket berdiri',
+  'sendok kuah sup sayur silikon tahan panas',
+  'irus kuah sayur stainless gagang kayu anti panas',
+  'alas silikon adonan kue baking mat anti lengket',
+  'rolling pin silikon penggiling adonan kue pastry',
+  'kuas minyak silikon baking tahan panas',
+  'silikon pot air fryer reusable anti lengket',
+  'kertas baking parchment paper air fryer bulat',
+  'timer dapur digital magnetik masak baking',
+  'termometer makanan digital masak probe presisi',
+  'timbangan digital dapur mini presisi gram',
+  'sendok takar bumbu dapur set magnetic stainless',
+  'sendok takar digital timbangan bumbu lcd',
+  'saringan tepung ayakan stainless putar manual',
+  'whisk pengocok adonan telur manual stainless',
+  'frother pengocok susu kopi mini elektrik usb',
+  'splash guard pelindung cipratan minyak kompor',
+  'tatakan kompor gas pelindung api hemat gas',
+  'pematik api kompor gas elektrik usb recharge',
+  'sarung tangan oven silikon anti panas tebal',
+  'jepitan mangkok piring panas silikon stainless',
+  'alas tatakan panci wajan panas silikon meja',
+  'alat tusuk sate praktis pembuat sate cepat',
+  'penutup silikon microwave anti cipratan makanan',
 
-  // Compact Kitchen Cleaning Tools
-  'spons cuci piring nano antibakteri',
-  'spons sabut kawat stainless anti gores',
+  // ── 5. PERLENGKAPAN KEBERSIHAN WASTAFEL & GADGET DAPUR TERKAIT ──
+  'spons cuci piring nano magic sponge pembersih kerak',
+  'spons sabut kawat stainless anti gores cuci piring',
   'sikat cuci piring dispenser sabun otomatis',
   'sikat pembersih botol tumbler sedotan set',
   'sikat pembersih blender mata pisau dapur',
-  'kain lap microfiber dapur nano serat pembersih minyak',
+  'kain lap microfiber nano berserat pembersih minyak',
   'alat pembersih kerak wajan panci gosong',
-  'alat pengupas sisik ikan stainless wadah'
+  'alat pembersih sisik ikan stainless dengan wadah',
+  'spons cuci piring jaring busa tebal higienis',
+  'sikat pembersih celah kompor wastafel serbaguna'
 ];
 
 export const KITCHEN_VARIANTS = [
@@ -647,7 +841,7 @@ export const KITCHEN_VARIANTS = [
   'tebal kokoh awet tahan lama',
   'anti tumpah kedap udara rapat',
   'praktis mudah dicuci higienis',
-  'estetik minimalis dapur modern',
+  'estetik minimalis modern',
   'model terbaru viral aesthetic',
   '3 in 1 multifungsi praktis',
   '4 in 1 serbaguna hemat ruang',
@@ -673,40 +867,70 @@ export const KITCHEN_VARIANTS = [
   'tekan otomatis sekali tekan praktis',
   'anti gores aman untuk wajan teflon',
   'tahan lama awet tidak mudah patah',
-  'anti bocor anti tumpah presisi'
+  'anti bocor anti tumpah presisi',
+  'magnetik kuat nempel di kulkas dinding',
+  'dilengkapi sensor otomatis presisi',
+  'gagang ergonomis anti selip licin',
+  'lapisan marmer granit anti lengket',
+  'food grade aman untuk bayi mpasi',
+  'desain lipat hemat tempat serbaguna',
+  'tahan banting bahan tebal berkualitas',
+  'putaran 360 derajat putar halus',
+  'tekanan vakum kedap udara rapat',
+  'gagang panjang anti cipratan panas',
+  'tutup bambu alami kedap udara',
+  'kapasitas presisi dengan garis takar',
+  'multifungsi untuk segala jenis masakan',
+  'ringan kokoh mudah dipakai sehari hari',
+  'anti lumut anti karat higienis',
+  'tampilan lcd digital presisi tinggi',
+  'sistem pegas semi otomatis cepat',
+  'anti panas ganda pelindung tangan',
+  'alas anti slip tidak mudah bergeser',
+  'wadah transparan mudah pantau isi'
 ];
 
 export const KITCHEN_TARGETS = [
-  'untuk bumbu dapur bawang cabai',
-  'untuk buah sayur segar harian',
-  'untuk daging ayam sapi beku cincang',
-  'untuk adonan kue roti donat nastar',
-  'untuk kentang wortel mentimun labu',
-  'untuk telur dadar telur gulung sarapan',
-  'untuk sambal ulek praktis cepat',
-  'untuk mpasi bayi anak balita sehat',
-  'untuk bekal anak sekolah bento lucu',
-  'untuk gorengan minyak panas renyah',
-  'untuk kuah sop soto bakso hangat',
-  'untuk kopi susu latte foam lembut',
-  'untuk air fryer oven microwave',
-  'untuk cuci beras buah sayuran tiris',
-  'untuk botol tumbler sedotan blender',
-  'untuk wajan panci teflon anti gores',
-  'untuk jus buah smoothie segar sehat',
-  'untuk dumpling pastel pangsit gyoza',
-  'untuk sushi roll kimbap jepang',
-  'untuk kentang goreng french fries renyah',
-  'untuk keju parut kelapa coklat baking',
-  'untuk minyak goreng kecap saus kecap',
-  'untuk es batu higienis mudah lepas',
-  'untuk snack makanan ringan sisa renyah',
-  'untuk barbeque sate panggangan daging',
-  'untuk baking kue kering pastry bolu',
-  'untuk salad sayur buah diet sehat',
-  'untuk dapur sempit anak kost praktis',
-  'untuk masak cepat praktis harian rumah tangga',
-  'untuk persiapan masak food prep mingguan'
+  'untuk perlengkapan dapur minimalis',
+  'untuk perabotan dapur estetik modern',
+  'untuk peralatan masak praktis harian',
+  'untuk persiapan masak food prep mingguan',
+  'untuk dapur sempit anak kost hemat ruang',
+  'untuk memotong merajang bumbu bawang cabai',
+  'untuk menghaluskan bumbu masak praktis',
+  'untuk mengupas buah sayur harian',
+  'untuk memotong mengiris daging beku cincang',
+  'untuk mengaduk mencetak adonan kue roti',
+  'untuk menggoreng telur sarapan 4 lubang',
+  'untuk memanggang sarapan roti sandwich praktis',
+  'untuk membuat waffle kue mini cemilan anak',
+  'untuk meniriskan gorengan minyak panas',
+  'untuk menyaring minyak jelantah sisa goreng',
+  'untuk mencuci beras buah sayur tiris cepat',
+  'untuk wadah penyimpanan bumbu garam gula',
+  'untuk wadah minyak kecap saus anti tumpah',
+  'untuk menata telur rapi di kulkas',
+  'untuk merekatkan bungkus plastik makanan sisa',
+  'untuk menutup wadah mangkok elastis kedap udara',
+  'untuk mengasah pisau gunting dapur tumpul',
+  'untuk membuka kaleng toples tutup botol keras',
+  'untuk mengukur menimbang takaran bumbu resep',
+  'untuk mengukur suhu minyak daging panggang',
+  'untuk pelindung cipratan minyak kompor gas',
+  'untuk tatakan wajan panci panas di meja',
+  'untuk mencetak pastel dumpling gyoza praktis',
+  'untuk mencetak sushi roll bento anak',
+  'untuk mencetak bakso bakwan bentuk bulat rapi',
+  'untuk membuat foam busa susu kopi lembut',
+  'untuk membersihkan kerak wajan panci gosong',
+  'untuk mencuci piring wastafel higienis',
+  'untuk membersihkan botol tumbler sedotan sempit',
+  'untuk memasak mpasi bayi higienis sehat',
+  'untuk perlengkapan memasak anti ribet',
+  'untuk ibu rumah tangga cerdas hemat waktu',
+  'untuk memasak cepat praktis tanpa ribet',
+  'untuk alat dapur wajib ada di rumah',
+  'untuk aksesoris dapur serbaguna kekinian'
 ];
 
 export const KITCHEN_INTENT_MODIFIERS = [
@@ -739,7 +963,27 @@ export const KITCHEN_INTENT_MODIFIERS = [
   'kitchen gadget praktis masa kini',
   'alat masak praktis rekomendasi chef',
   'barang unik dapur viral bermanfaat',
-  'perlengkapan masak praktis serbaguna'
+  'perlengkapan masak praktis serbaguna',
+  'perlengkapan dapur estetik kekinian',
+  'rekomendasi perabot dapur minimalis',
+  'alat dapur serbaguna harga terjangkau',
+  'perlengkapan dapur wajib punya 2026',
+  'perabotan dapur modern hemat tempat',
+  'peralatan memasak kekinian viral',
+  'perabot dapur aesthetic shopee haul',
+  'alat dapur pintar mempermudah masak',
+  'peralatan dapur terlengkap paling dicari',
+  'solusi dapur rapi bersih hemat ruang',
+  'peralatan masak anti ribet serbaguna',
+  'alat dapur viral racun shopee',
+  'perlengkapan masak ibu rumah tangga',
+  'alat masak serbaguna kualitas premium',
+  'gadget dapur praktis rekomendasi ibu muda',
+  'perabot dapur multifungsi modern',
+  'perlengkapan dapur serbaguna termurah',
+  'alat masak canggih praktis harian',
+  'kitchen hacks alat masak praktis',
+  'spill perlengkapan dapur murah viral'
 ];
 
 /**
@@ -758,6 +1002,13 @@ export function generateCombinatorialKitchenKeywords(limit = 1000, excludedSet =
     (tool, variant, target, mod) => `${tool} ${target} ${mod}`,
     (tool, variant, target, mod) => `${mod} ${tool} ${variant}`,
     (tool, variant, target, mod) => `${mod} ${tool}`,
+    (tool, variant, target, mod) => `${tool} ${variant} ${target}`,
+    (tool, variant, target, mod) => `${mod} ${tool} ${target}`,
+    (tool, variant, target, mod) => `rekomendasi ${tool} ${variant}`,
+    (tool, variant, target, mod) => `spill ${tool} ${mod}`,
+    (tool, variant, target, mod) => `${tool} multifungsi ${variant}`,
+    (tool, variant, target, mod) => `alat dapur ${tool} ${variant}`,
+    (tool, variant, target, mod) => `perlengkapan masak ${tool} ${target}`
   ];
 
   // Fisher-Yates shuffle clones of our arrays so each invocation produces unique orders
@@ -2291,8 +2542,8 @@ export function isTitleMatchingProduct(candidateTitle, productWords = [], extraM
     : '';
   const combinedText = `${normTitle} ${normDesc} ${normTags}`;
 
-  // Cross-category exclusion for non-kitchen / automotive / phone / clothing / personal vlog / recipes
-  const crossCategoryRegex = /\b(?:las|pagar|bengkel|servis hp|servis motor|knalpot|mobil|motor|sepeda|gameplay|game|manga|anime|vlog|skincare|makeup|gamis|hijab|outfit|resep|mukbang)\b/i;
+  // Cross-category exclusion for non-kitchen / automotive / phone / clothing / personal vlog / recipes / food / drinks
+  const crossCategoryRegex = /\b(?:las|pagar|bengkel|servis hp|servis motor|knalpot|mobil|motor|sepeda|gameplay|game|manga|anime|vlog|skincare|makeup|gamis|hijab|outfit|resep|recipe|mukbang|kuliner|jajanan|street food|makanan viral|minuman viral|boba milk tea|camilan)\b/i;
   if (crossCategoryRegex.test(normTitle)) {
     return false;
   }

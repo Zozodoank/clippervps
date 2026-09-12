@@ -213,6 +213,12 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Terdeteksi indikasi konten perbaikan / servis / penggantian alat rusak pada deskripsi video.' };
   }
 
+  // 2D. Filter Resep Makanan, Kuliner, Mukbang & Minuman Tanpa Review Alat
+  const foodRecipeRegex = /\b(resep|recipe|mukbang|kuliner|jajanan|street food|food review|drink review|asmr makan|asmr eat|resep masakan|menu buka puasa|menu sahur|boba milk tea|minuman kekinian|olahan makanan)\b/i;
+  if (foodRecipeRegex.test(titleLower)) {
+    return { eligible: false, reason: 'Judul video mengindikasikan konten resep makanan, kuliner, mukbang, atau review minuman (bukan demonstrasi produk alat dapur).' };
+  }
+
   // 3. Filter Iklan & Sponsor Komersial
   const adKeywords = [
     'sponsored', 'promoted', 'paid promotion', 'endorsement', 'iklan',

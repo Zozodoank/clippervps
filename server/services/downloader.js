@@ -179,16 +179,22 @@ export function extractVideoId(url) {
 
 export const DIRTY_NEGATIVE_OPERATORS = [
   '-resep',
+  '-recipe',
   '-mukbang',
+  '-makanan',
+  '-minuman',
+  '-kuliner',
+  '-jajanan',
+  '-streetfood',
   '-vlog',
   '-repair'
 ];
 
 export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
-  // 1. Strip repair / broken item / disassembly keywords that derail product discovery
+  // 1. Strip repair / broken item / disassembly / recipe / mukbang keywords that derail product discovery
   let cleaned = String(baseQuery)
-    .replace(/\b(?:perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar)\b/gi, '')
+    .replace(/\b(?:perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 

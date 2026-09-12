@@ -414,6 +414,7 @@ CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TO
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
   * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
   * REJECT if non-kitchen unrelated items.
+  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
 ` : `
 CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
@@ -438,6 +439,7 @@ ${refImageInlineData ? `
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
   * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo, tutorial solder/baut). Affiliate product promotion requires showcasing a brand-new working product in action, NOT a repair tutorial!
+  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
 `}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
@@ -874,6 +876,7 @@ CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TO
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
   * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
   * REJECT if non-kitchen unrelated items.
+  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
 ` : `
 CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
@@ -888,6 +891,7 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
   * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo). Affiliate product promotion requires showcasing a clean working product in action!
+  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
 `}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
@@ -1328,6 +1332,7 @@ RULE 2: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS N
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
+  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
 ` : `
 RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN TOOLS NICHE):
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
@@ -1340,6 +1345,7 @@ RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
+  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
 `}
 - If rejected for wrong product or bulky furniture:
   {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok atau tergolong perabot/rak besar yang dilarang"}
