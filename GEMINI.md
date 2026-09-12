@@ -27,6 +27,9 @@ Aplikasi di server VPS dikelola menggunakan **PM2**:
 2. **`tunnel`**:
    * Menjalankan Cloudflare Tunnel (`cloudflared`) yang meneruskan `http://localhost:3000` ke URL publik HTTPS gratis.
    * Nilai URL aktif otomatis diperbarui di file `.env` (`CLOUDFLARE_TUNNEL_URL`).
+3. **`gatekeeper`**:
+   * Menjalankan `server/gatekeeper/service.py` (AI Local Frame Gatekeeper port 5050).
+   * Real-time CPU vision pipeline: MediaPipe BlazeFace (faceless), DBNet PP-OCRv4 ONNX (deteksi subtitle terbakar & promo overlay), dan MobileNetV3 (klasifikasi adegan natural vs kartun/bumper).
 
 ---
 

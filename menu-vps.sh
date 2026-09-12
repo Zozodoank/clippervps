@@ -10,7 +10,7 @@ while true; do
   echo "       🎬 CLIPPER VPS - CONTROL PANEL & MONITOR (TERMUX)"
   echo "====================================================================="
   echo "  Status Service Background:"
-  pm2 list | grep -E "clipper|tunnel" || pm2 list
+  pm2 list | grep -E "clipper|tunnel|gatekeeper" || pm2 list
   echo "====================================================================="
   echo ""
   echo "  [1] 📋 LIHAT LOG REAL-TIME BACKGROUND (PM2 LOGS)"
@@ -76,7 +76,7 @@ while true; do
       ;;
     4)
       clear
-      echo "🔄 Merestart service clipper & tunnel..."
+      echo "🔄 Merestart service clipper, tunnel & gatekeeper..."
       git fetch origin main && git pull origin main
       pm2 restart all
       echo "✅ Selesai!"

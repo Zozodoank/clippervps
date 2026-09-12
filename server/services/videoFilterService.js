@@ -457,14 +457,84 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 /**
  * ── TAHAP 2B: ANALISA LOKAL 9:16 (0 TOKEN AI, HEMAT KUOTA GEMINI) ─────────────
  * Per instruksi pengguna: Verifikasi grafis visual (logo channel, watermark, stiker grafis,
- * subtitle ucapan, dan teks mengambang) serta pencocokan produk diserahkan ke AI Vision.
- * Backend memeriksa stream corrupt, mendeteksi intro pembuka untuk dibuang, dan mencatat diagnostik.
+/**
+ * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
+ * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
+ */
+export function callAIGatekeeperMicroservice(frames, { timeoutSec = 5, onProgress = () => {} } = {}) {
+  try {
+    const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
+    if (validFrames.length === 0) return null;
+
+    const payload = JSON.stringify({
+      frames: validFrames.map(f => ({
+        filePath: f.filePath,
+        timestamp: f.timestamp || 0
+      }))
+    });
+
+    const res = spawnSync('curl', [
+      '-s',
+      '-m', String(timeoutSec),
+      '-X', 'POST',
+      'http://127.0.0.1:5050/filter-frames',
+      '-H', 'Content-Type: application/json',
+      '-d', payload
+    ], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+
+    if (res.status === 0 && res.stdout) {
+      const parsed = JSON.parse(res.stdout.trim());
+      if (parsed && parsed.status === 'success') {
+        return parsed;
+      }
+    }
+  } catch (err) {
+    // Graceful fallback to heuristic checks
+  }
+  return null;
+}
+
+/**
+ * ── TAHAP 2: INSPEKSI & FILTER FRAME LOKAL (AI GATEKEEPER + HEURISTIK FALLBACK) ──
+ * Memeriksa frame visual yang telah disampel di server lokal sebelum mengirim ke AI utama.
+ * Tahap 1: MediaPipe Face Detection (100% faceless).
+ * Tahap 2: DBNet Text Detection (membuang subtitle terbakar & promo overlay).
+ * Tahap 3: MobileNetV3 (membuang bumper foto statis & kartun/animasi).
  */
 export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {} } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
     return { eligible: false, cleanFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
   }
 
+  // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
+  const aiResult = callAIGatekeeperMicroservice(frames, { timeoutSec: 4, onProgress });
+  if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
+    const cleanFrames = aiResult.allFrames.filter(f => f.status === 'clean');
+    const discardedFrames = aiResult.allFrames.filter(f => f.status !== 'clean');
+
+    const cleanRatio = cleanFrames.length / frames.length;
+    const isEligible = allowPartialClean
+      ? cleanFrames.length >= 3
+      : (cleanFrames.length >= 4 && cleanRatio >= 0.35);
+
+    if (isEligible) {
+      console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame bersih lolos (${aiResult.benchmarks?.totalMs || 0}ms).`);
+    } else {
+      console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper menolak video: ${aiResult.reason} (${cleanFrames.length}/${frames.length} frame bersih).`);
+    }
+
+    return {
+      eligible: isEligible,
+      cleanFrames,
+      discardedFrames,
+      reason: aiResult.reason,
+      hasOpeningIntro: Boolean(aiResult.hasOpeningIntro),
+      introCutoffSec: aiResult.introCutoffSec || 0.0,
+      gatekeeperBackend: 'ai_gatekeeper_v1'
+    };
+  }
+
+  // ── FALLBACK KE HEURISTIK PIKSEL FFmpeg (Jika Gatekeeper Python offline) ──
   const ffmpeg = getFFmpegPath();
   const W = 80;
   const H = 144;

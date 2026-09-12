@@ -38,3 +38,8 @@ copy/
 # Authentication and session cookies
 *cookies*.txt
 server/cookies.txt
+
+# AI Gatekeeper Model weights & test cache
+server/gatekeeper/models/*.onnx
+server/gatekeeper/models/*.tflite
+server/gatekeeper/test_temp/
