@@ -43,3 +43,4 @@ server/cookies.txt
 server/gatekeeper/models/*.onnx
 server/gatekeeper/models/*.tflite
 server/gatekeeper/test_temp/
+scratch/
