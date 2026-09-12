@@ -178,6 +178,9 @@ export function extractVideoId(url) {
 // ── Clean YouTube Query Helper & Banned/Negative Operators ──────────────────
 
 export const DIRTY_NEGATIVE_OPERATORS = [
+  '-cara',
+  '-tutorial',
+  '-diy',
   '-resep',
   '-recipe',
   '-mukbang',
@@ -192,9 +195,9 @@ export const DIRTY_NEGATIVE_OPERATORS = [
 
 export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
-  // 1. Strip repair / broken item / disassembly / recipe / mukbang keywords that derail product discovery
+  // 1. Strip repair / broken item / disassembly / recipe / mukbang / cara / tutorial / DIY keywords that derail product discovery
   let cleaned = String(baseQuery)
-    .replace(/\b(?:perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner)\b/gi, '')
+    .replace(/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 

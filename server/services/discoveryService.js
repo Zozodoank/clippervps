@@ -435,6 +435,11 @@ export function isBulkyOrUnsuitableProduct(text = '') {
     return true;
   }
 
+  // 1B. Disqualify 'cara', 'tutorial', 'DIY', 'how to', 'do it yourself'
+  if (/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(normalized)) {
+    return true;
+  }
+
   // 2. Direct match on exclude list
   if (BULKY_EXCLUDE_WORDS.some((word) => normalized.includes(word))) {
     return true;
@@ -1357,8 +1362,8 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
       // Filter out videos with known duration < 5 min (300s) or > 15 min (900s)
       if (durationSec > 0 && (durationSec < 300 || durationSec > 900)) return;
 
-      // Filter out videos with banned / repair keywords (perbaikan, penggantian, rusak, service, ganti, etc.)
-      if (/\b(cara|tutorial|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
+      // Filter out videos with banned / tutorial / DIY / repair keywords
+      if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
 
       candidates.push({
         id,
@@ -1452,7 +1457,7 @@ export async function searchMultiEngineVideos(query, {
   }
 
   // 3. Extract core words from the query (ignoring modifiers and negative terms)
-  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'unboxing', 'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw']);
+  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'diy', 'how', 'unboxing', 'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw']);
   const queryWords = normalizeText(query).split(' ').filter((w) => w.length >= 3 && !ignoredQueryWords.has(w));
 
   // 4. Filter through Stage 1 Metadata Pre-filter (clean content, faceless keywords, no bulky furniture)
@@ -1570,7 +1575,7 @@ Tugas:
 1. Identifikasi nama benda/gadget fisik ini dalam bahasa Inggris universal (nama produk OEM/pabrik yang biasa dipakai reviewer global di YouTube/Amazon/AliExpress).
 2. Buat 4 frasa pencarian YouTube paling efektif dalam bahasa Inggris untuk menemukan footage produk yang bersih, jernih, dan sinematik:
    - WAJIB kombinasikan nama produk dengan kata kunci aset mentah: "raw footage", "b-roll", "textless", "clean version", "no graphics".
-   - DILARANG KERAS menggunakan kata kunci: cara, tutorial, unboxing, perbaikan, penggantian, rusak, service, servis, ganti, repair, haul, vlog, review wajah.
+   - DILARANG KERAS menggunakan kata kunci: cara, tutorial, diy, how to, unboxing, perbaikan, penggantian, rusak, service, servis, ganti, repair, haul, vlog, review wajah.
    - Hindari kata-kata promo belanja seperti: COD, murah, promo, terlaris, diskon.
 
 Keluarkan JSON dengan format persis:
@@ -2023,10 +2028,11 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
-  // Disqualify broken / repair / disassembly / maintenance tutorials (NOT actual product demos)
-  if (/\b(perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total)\b/i.test(titleText)) return false;
+  // Disqualify broken / repair / disassembly / maintenance tutorials / DIY (NOT actual product demos)
+  if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
+    'cara', 'tutorial', 'diy', 'how to', 'do it yourself',
     'podcast', 'reaction', 'kompilasi', 'compilation', 'kumpulan', 'full album', 'playlist',
     'vlog', 'daily vlog', 'a day in my life', 'cerita', 'bincang', 'talkshow', 'ngobrol',
     'cara belanja', 'cara checkout', 'daftar akun', 'tutorial aplikasi', 'cara jualan', 'cara live',

@@ -201,10 +201,10 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Terdeteksi indikasi teks subtitle bawaan pada judul/deskripsi/tags.' };
   }
 
-  // 2B. Filter Kata Kunci Terlarang (cara / tutorial / unboxing / perbaikan / penggantian / rusak / service / ganti)
-  const bannedKeywordRegex = /\b(cara|tutorial|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
+  // 2B. Filter Kata Kunci Terlarang (cara / tutorial / DIY / unboxing / perbaikan / penggantian / rusak / service / ganti)
+  const bannedKeywordRegex = /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
   if (bannedKeywordRegex.test(titleLower)) {
-    return { eligible: false, reason: 'Terdeteksi kata kunci terlarang (tutorial / unboxing / perbaikan / penggantian / rusak / service / ganti) pada judul video.' };
+    return { eligible: false, reason: 'Terdeteksi kata kunci terlarang (cara / tutorial / DIY / unboxing / perbaikan / penggantian / rusak / service / ganti) pada judul video.' };
   }
 
   // 2C. Filter Konten Perbaikan / Servis / Barang Rusak pada Deskripsi
