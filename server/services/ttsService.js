@@ -41,6 +41,7 @@ export function applyIndonesianPhoneticFixes(text, { useTaling = false } = {}) {
     .replace(/\b(?:banget|bangett|bangnget|bangget)\b/gi, useTaling ? 'bangét' : 'banget')
     .replace(/\bpengen\b/gi, useTaling ? 'péngin' : 'pengin')
     .replace(/\b(?:kece|kécé)\b/gi, 'keren')
+    .replace(/\b(?:fix|fiks)\b/gi, 'pasti')
     .replace(/\byuk\b/gi, 'yu')
     .replace(/\b(?:enggak|engga|nggak|ngga)\b/gi, 'tidak')
 

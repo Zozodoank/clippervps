@@ -331,6 +331,26 @@ export async function resolveImageBufferAndBase64(imageSource) {
 }
 
 /**
+ * Generates a dynamic, high-converting Indonesian affiliate video hook for the first 3 seconds.
+ * Provides 8 distinct natural angles and completely avoids repetitive robotic phrasing or the slang "fix".
+ */
+export function getDynamicProductHookFallback(productName = '') {
+  const cleanName = (productName || '').trim() || 'produk ini';
+  const hooks = [
+    `Masih repot pakai cara lama yang bikin capek? Untung ada ${cleanName}!`,
+    `Sering kesel pas beres-beres tapi hasilnya kurang maksimal? Coba deh pakai ${cleanName}!`,
+    `Capek buang-buang waktu pakai alat biasa? Waktunya beralih ke ${cleanName}!`,
+    `Ternyata ada cara sepraktis ini, nyesel banget baru tahu ada ${cleanName}!`,
+    `Siapa di sini yang masih sering ribet? Sekarang ada ${cleanName} yang bikin praktis!`,
+    `Stop buang tenaga pakai cara jadul! ${cleanName} ini solusinya!`,
+    `Kirain bakal ribet, ternyata urusan ini langsung kelar pakai ${cleanName}!`,
+    `Pernah ngerasa ribet pas beres-beres? Cek ${cleanName} yang satu ini deh!`
+  ];
+  const randIdx = Math.floor(Math.random() * hooks.length);
+  return hooks[randIdx];
+}
+
+/**
  * Stage 1 Jalur 1: Analyzes a public YouTube video directly via Google Gemini API using native video streaming (fileUri).
  * Zero download on local server, zero FFmpeg frame extraction, zero base64 payload.
  */
@@ -522,7 +542,7 @@ If ACCEPTED:
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
   "timestamps": [15, 25, 40, 60, 85, 110],
-  "productHook": "Kalau [kebiasaan lama], fix [masalah fatal / kurang maksimal]!",
+  "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
 }
@@ -755,7 +775,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     startSeconds: clips[0].startSeconds,
     endSeconds: clips[clips.length - 1].endSeconds,
     duration,
-    productHook: parsed.productHook || 'Kalau masih pakai cara lama, fix kurang maksimal!',
+    productHook: parsed.productHook || getDynamicProductHookFallback(productTitle),
     hasProductBrand,
     detectedBrand,
     allowHflip,
@@ -977,7 +997,7 @@ If ACCEPTED:
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
   "timestamps": [3, 7, 12, 16, 21, 26],
-  "productHook": "Kalau [kebiasaan lama], fix [masalah fatal / kurang maksimal]!",
+  "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
 }
@@ -1187,7 +1207,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       startSeconds: clips[0].startSeconds,
       endSeconds: clips[clips.length - 1].endSeconds,
       duration,
-      productHook: parsed.productHook || 'Kalau masih pakai cara lama, fix kurang maksimal!',
+      productHook: parsed.productHook || getDynamicProductHookFallback(productTitle),
       hasProductBrand,
       detectedBrand,
       allowHflip,
@@ -1426,7 +1446,7 @@ If ACCEPTED:
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
   "frames": [4, 8, 12, 16, 20, 24],
-  "productHook": "Kalau [kebiasaan lama], fix [masalah fatal / kurang maksimal]!",
+  "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
 }
@@ -1499,7 +1519,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - Hanya tolak jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE AREA 9:16 TENGAH: output {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Watermark masuk ke dalam frame 9:16."}
 5. If there are at least 5 clean frames demonstrating the product (100% entirely faceless across all frames, zero watermark inside 9:16, zero subtitles, zero floating text, matching product):
    - Select 5 to 8 frame indices in "frames" array.
-   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "frames": [indices], "productHook": "Kalau ..., fix ...!", "hasProductBrand": false}`;
+   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "frames": [indices], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
 
   const messageContent = [
     { type: 'text', text: userPrompt },
@@ -1711,7 +1731,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         startSeconds: clips[0].startSeconds,
         endSeconds: clips[clips.length - 1].endSeconds,
         duration,
-        productHook: parsed.productHook || 'Kalau masih pakai cara lama, fix kurang maksimal!',
+        productHook: parsed.productHook || getDynamicProductHookFallback(productTitle),
         hasProductBrand,
         detectedBrand,
         allowHflip,
@@ -1803,11 +1823,21 @@ You will receive the explicit Product Title, Product Description, and the sample
 Use the proven SHOPEE FYP 4-BEAT FORMULA engineered to break past the initial 200-views testing pool through high watch-time completion rate and maximum Keranjang Kuning conversions:
 
 CRITICAL 4-BEAT SHOPEE FYP FORMULA:
-1. [00:00] BEAT 1: THE 3-SECOND PROBLEM HOOK (00:00 - 00:03)
-   - MUST immediately state a specific everyday problem / frustration caused by the old way or conventional tool!
-   - MANDATORY FORMULA: "Kalau [kebiasaan/cara lama pakai alat biasa], fix [masalah fatal / kurang maksimal / bikin capek]!"
+1. [00:00] BEAT 1: THE 3-SECOND DYNAMIC HOOK (00:00 - 00:03)
+   - MUST immediately grab viewer attention within the first 3 seconds (~5-7 punchy words).
+   - DILARANG KERAS menggunakan kata "fix" atau "fiks" di hook maupun seluruh naskah! Gunakan bahasa Indonesia natural, bervariasi, dan luwes.
    - DILARANG KERAS menggunakan sapaan basi seperti: "Stop scroll!", "Halo guys!", "Siapa disini yang...", "Racun Shopee wajib punya!", atau pembukaan yang bertele-tele!
-   - Contoh tepat: "Kalau nyuci motor masih pakai kain biasa, fix kurang maksimal!" atau "Masih sering capek ngulek bumbu pakai cobek lama, tangan pegal dan lama beres?"
+   - PILIH SECARA FLEKSIBEL SALAH SATU DARI 5 SUDUT HOOK DINAMIS BERIKUT (Sesuaikan dengan karakter produk):
+     a) Pain Point / Frustrasi Cara Lama:
+        Contoh: "Capek banget kalau tiap kali [kegiatan] selalu [masalah/pegal/berantakan]!" atau "Masih jaman repot [kebiasaan lama] yang bikin waktu kebuang?"
+     b) Pertanyaan Relatable Masalah Sehari-hari:
+        Contoh: "Sering kesel gak sih tiap kali masak minyaknya nyiprat ke mana-mana?" atau "Pernah ngerasa ribet banget pas mau bersihin sudut sempit?"
+     c) Momen Penemuan / Revelation:
+        Contoh: "Ternyata ada cara sepraktis ini buat [kegiatan], nyesel baru tahu!" atau "Kirain ribet, ternyata urusan ini bisa kelar dalam hitungan detik!"
+     d) Visual Action / Hasil Memuaskan:
+        Contoh: "Lihat deh, sekali usap kotoran tebal langsung rontok bersih kinclong!" atau "Cuma modal alat seringkas ini, ruangan langsung rapi seketika!"
+     e) Anti-Rugi / Peringatan:
+        Contoh: "Stop buang-buang tenaga pakai cara jadul yang hasilnya gak maksimal!" atau "Jangan biarkan alat biasa bikin kerjaan rumah makin numpuk!"
 
 2. BEAT 2: HERO SOLUTION & VALUE INTRODUCTION (00:03 - 00:07)
    - Introduce the product as the hero solution that immediately eliminates the pain point.
@@ -2053,11 +2083,12 @@ Return strict JSON in this format:
     voiceoverScript = scenes.map(s => `[${s.timeRange ? s.timeRange.split(' - ')[0] : '00:00'}] ${s.voiceover}`).join('\n');
   }
   if (!voiceoverScript) {
-    voiceoverScript = `[00:00] [excited] Nyuci motor pakai kain biasa? Fix kurang maksimal!
-[00:03] [emphasis] Untung ada ${effectiveTitle} yang praktis ini.
+    const dynamicHook = productHook || getDynamicProductHookFallback(effectiveTitle);
+    voiceoverScript = `[00:00] [excited] ${dynamicHook}
+[00:03] [emphasis] Untung sekarang ada ${effectiveTitle} ini yang bikin praktis.
 [00:07] [soft] Busa melimpah, kotoran tebal langsung rontok seketika.
 [00:11] [emphasis] Menjangkau sela-sela sempit bersih tuntas tanpa baret.
-[00:15] [soft] Bahannya super lembut, awet dipakai berkali-kali.
+[00:15] [soft] Bahannya super awet, nyaman dipakai berkali-kali.
 [00:18] [excited] Harganya murah meriah banget, ramah di kantong!
 [00:21] [excited] Cek keranjang pojok kiri bawah sekarang juga!`;
   }
@@ -2321,7 +2352,10 @@ export function sanitizeScriptVocabulary(text) {
     // 2. Hindari kata kangen:
     .replace(/\bkangen\b/gi, 'ingin')
 
-    // 3. Hindari kata slang awalan "ng":
+    // 3. Hindari kata gaul "fix" / "fiks" sebagai slang kepastian ("fix kurang maksimal" -> "pasti kurang maksimal")
+    .replace(/\b(?:fix|fiks)\b/gi, 'pasti')
+
+    // 4. Hindari kata slang awalan "ng":
     .replace(/\b(?:enggak|engga|nggak|ngga)\b/gi, 'tidak')
     .replace(/\bngasih\b/gi, 'kasih')
     .replace(/\bngeliat\b/gi, 'melihat')
@@ -2712,7 +2746,7 @@ function buildFallbackScenes(productName, segmentDuration, sceneDuration = 3.3) 
   const sceneTemplates = [
     {
       visualDescription: `Hook perbandingan visual: demonstrasi cara lama atau alat biasa yang kurang maksimal.`,
-      voiceover: `Kalau masih pakai cara lama atau kain biasa, fix kurang maksimal!`,
+      voiceover: getDynamicProductHookFallback(productName),
       adAdvisorNotes: 'Teks hook merah/kuning tebal, SFX alert, potongan cepat 3 detik pertama.'
     },
     {
