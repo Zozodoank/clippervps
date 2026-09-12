@@ -178,35 +178,21 @@ export function extractVideoId(url) {
 // ── Clean YouTube Query Helper & Banned/Negative Operators ──────────────────
 
 export const DIRTY_NEGATIVE_OPERATORS = [
-  '-watermark',
-  '-lyric',
-  '-subtitle',
-  '-logo',
-  '-intro',
-  '-overlay',
-  '-cara',
-  '-tutorial',
-  '-unboxing',
-  '-perbaikan',
-  '-penggantian',
-  '-rusak',
-  '-service',
-  '-servis',
-  '-ganti',
-  '-repair',
-  '-reparasi',
-  '-bongkar'
+  '-resep',
+  '-mukbang',
+  '-vlog',
+  '-repair'
 ];
 
 export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
-  // 1. Strip banned keywords: cara, tutorial, unboxing, perbaikan, penggantian, rusak, service, ganti, repair, etc.
+  // 1. Strip repair / broken item / disassembly keywords that derail product discovery
   let cleaned = String(baseQuery)
-    .replace(/\b(?:cara|tutorial|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/gi, '')
+    .replace(/\b(?:perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // 2. Append negative operators if not already included
+  // 2. Append minimal negative operators if not already included
   const existingLower = cleaned.toLowerCase();
   const toAdd = DIRTY_NEGATIVE_OPERATORS.filter(op => !existingLower.includes(op.toLowerCase()));
   if (toAdd.length > 0) {

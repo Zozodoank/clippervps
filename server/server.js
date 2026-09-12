@@ -1184,6 +1184,7 @@ export async function runStage1Pipeline({
           allowFallbackClips: !requireCleanGeminiPlan,
           totalDuration: meta.duration,
           introCutoffSec: candidateIntroCutoff,
+          discardedFaceTimestamps: localCheck.discardedFaceTimestamps || [],
           isVideoFirst: Boolean(options.isVideoFirst),
           onProgress: updateProgress,
         });

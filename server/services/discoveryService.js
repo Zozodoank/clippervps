@@ -1772,17 +1772,21 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
-  // Disqualify any candidate with banned keywords: cara, tutorial, unboxing, perbaikan, penggantian, rusak, service, ganti
-  if (/\b(cara|tutorial|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(titleText)) return false;
+  // Disqualify broken / repair / disassembly / maintenance tutorials (NOT actual product demos)
+  if (/\b(perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
     'podcast', 'reaction', 'kompilasi', 'compilation', 'kumpulan', 'full album', 'playlist',
     'vlog', 'daily vlog', 'a day in my life', 'cerita', 'bincang', 'talkshow', 'ngobrol',
     'cara belanja', 'cara checkout', 'daftar akun', 'tutorial aplikasi', 'cara jualan', 'cara live',
     'shopee affiliate tutorial', 'aplikasi shopee',
+    // Exclude cooking recipes, food vlogs, and mukbangs (must be product demonstration, NOT food recipe!)
+    'resep', 'resep masakan', 'cara memasak', 'cooking recipe', 'baking recipe', 'food recipe',
+    'food vlog', 'kuliner', 'mukbang', 'asmr eating', 'masakan rumahan', 'menu masakan', 'dapur umami',
+    'cook with me', 'masak yuk', 'masak memasak', 'ide jualan makanan', 'resep kue',
     // Creator/face-centric and person-focused videos
     'muka', 'wajah', 'facecam', 'webcam', 'selfie', 'grwm', 'get ready with me',
-    'try on haul', 'try on', 'outfit', 'ootd', 'mukbang', 'skincare routine', 'makeup tutorial',
+    'try on haul', 'try on', 'outfit', 'ootd', 'skincare routine', 'makeup tutorial',
     // Subtitle & lyric indicators (wajib dihindari agar tidak tabrakan subtitle)
     'sub indo', 'subtitle', 'subtitles', 'sub english', 'eng sub', 'terjemahan', 'lirik',
     // Social media re-uploads & watermark indicators (wajib bersih tanpa logo sosmed/watermark)
@@ -2235,14 +2239,14 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '')
         coreWords: allWords,
         multilingualWords: allWords,
         searchQueries: [
-          `${englishNoun} "b-roll"`,
-          `${anchor.noun} "raw footage"`,
-          `${englishNoun} "raw footage"`,
-          `${anchor.noun} "clean version"`,
-          `${englishNoun} "textless"`,
-          `${englishNoun} "no graphics"`,
-          `${englishNoun} demo review`,
-          `${anchor.noun} demo peragaan`,
+          `"${anchor.noun}" review`,
+          `"${englishNoun}" review`,
+          `"${anchor.noun}" demo produk`,
+          `"${anchor.noun}" test pemakaian`,
+          `"${englishNoun}" demo`,
+          `"${englishNoun}" hands on`,
+          `"${anchor.noun}" unboxing review`,
+          `"${englishNoun}" "b-roll"`,
           anchor.noun,
           englishNoun,
         ]
@@ -2268,13 +2272,12 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '')
     coreWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
     multilingualWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
     searchQueries: [
-      `${fallbackNoun} "b-roll"`,
-      `${fallbackNoun} "raw footage"`,
-      `${fallbackNoun} "clean version"`,
-      `${fallbackNoun} "textless"`,
-      `${fallbackNoun} "no graphics"`,
-      `${fallbackNoun} demo review`,
-      `${fallbackNoun} test pemakaian`,
+      `"${fallbackNoun}" review`,
+      `"${fallbackNoun}" demo produk`,
+      `"${fallbackNoun}" test pemakaian`,
+      `"${fallbackNoun}" hands on`,
+      `"${fallbackNoun}" unboxing review`,
+      `"${fallbackNoun}" "b-roll"`,
       fallbackNoun,
     ]
   };
@@ -2288,13 +2291,9 @@ export function isTitleMatchingProduct(candidateTitle, productWords = [], extraM
     : '';
   const combinedText = `${normTitle} ${normDesc} ${normTags}`;
 
-  // Cross-category exclusion for non-kitchen / automotive / phone / clothing / personal vlog
-  const crossCategoryExclusions = [
-    'las', 'pagar', 'bengkel', 'servis hp', 'servis motor', 'knalpot', 'mobil', 'motor', 'sepeda',
-    'gameplay', 'game', 'manga', 'anime', 'vlog', 'skincare', 'makeup', 'gamis', 'hijab', 'outfit'
-  ];
-
-  if (crossCategoryExclusions.some((badWord) => normTitle.includes(badWord))) {
+  // Cross-category exclusion for non-kitchen / automotive / phone / clothing / personal vlog / recipes
+  const crossCategoryRegex = /\b(?:las|pagar|bengkel|servis hp|servis motor|knalpot|mobil|motor|sepeda|gameplay|game|manga|anime|vlog|skincare|makeup|gamis|hijab|outfit|resep|mukbang)\b/i;
+  if (crossCategoryRegex.test(normTitle)) {
     return false;
   }
 

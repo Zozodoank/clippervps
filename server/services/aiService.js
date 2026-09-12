@@ -345,6 +345,7 @@ export async function analyzeYouTubeVideoWithGemini({
   allowFallbackClips = false,
   totalDuration = 600,
   introCutoffSec = 0,
+  discardedFaceTimestamps = [],
   isVideoFirst = false,
   onProgress = () => { },
 }) {
@@ -392,9 +393,14 @@ export async function analyzeYouTubeVideoWithGemini({
     progress: 46,
   });
 
+  const faceBlacklistWarning = (Array.isArray(discardedFaceTimestamps) && discardedFaceTimestamps.length > 0)
+    ? `\nCRITICAL BLACKLIST (DETEKSI WAJAH/PRESENTER LOKAL): Frame visual pada detik [${discardedFaceTimestamps.map(t => Math.round(t)).join(', ')}s] terdeteksi menampakkan wajah/manusia. DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
+    : '';
+
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
 Evaluate this YouTube video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
+${faceBlacklistWarning}
 
 ${isVideoFirstMode ? `
 CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE)
@@ -467,17 +473,16 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAY
   * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
 - ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable.
 
-CRITERION 4: FACE DISCARD RULE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISCARD ALL FACES)
-- KEMUNCULAN WAJAH SESEKALI (HOST / VLOGGER):
-  * Jika video menampilkan wajah vlogger, host, atau orang berbicara sesekali (misal di awal/akhir atau transisi): JANGAN TOLAK VIDEONYA!
-  * Video TETAP DITERIMA (status: 'accept') asalkan terdapat cukup adegan peragaan produk fisik oleh tangan (hands-only tabletop).
-- MANDAT PEMBUANGAN WAJAH:
-  * AI WAJIB MEMBUANG SEMUA SCENE YANG MENAMPILKAN WAJAH, KEPALA, ATAU VLOGGER!
-  * HANYA pilih timestamps yang 100% murni memperagakan produk oleh TANGAN/JARI saja (hands-only on tabletop/countertop)!
-  * Setiap detik dalam array "timestamps" WAJIB 100% bebas dari wajah dan orang.
-- TOLAK (status: 'reject') HANYA JIKA:
-  * Video berupa talking-head / vlog murni tanpa demonstrasi fisik produk.
-  * Wajah manusia muncul mendominasi hampir seluruh video sehingga TIDAK BISA ditemukan minimal 5 cuplikan tangan bersih (${clipSec}s per cuplikan).
+CRITERION 4: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP)
+- MANDATORY AFFILIATE STANDARD:
+  * This is an automated affiliate product video advertisement. It MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
+  * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
+    DILARANG KERAS menampilkan wajah, kepala, rambut, mata, mulut, dagu, leher, atau tubuh/torso manusia di dalam frame 9:16 pada detik-detik klip yang dipilih!
+  * HANYA pilih timestamps ketika kamera menyorot CLOSE-UP produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
+- REJECT IMMEDIATELY (status: 'reject') IF:
+  * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
+  * The video does NOT contain at least 5 distinct, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
+  * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"
 
 CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
@@ -694,6 +699,11 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     for (const rawTs of rawTimestamps) {
       const sec = typeof rawTs === 'number' ? rawTs : parseTimeToSeconds(rawTs);
       if (isNaN(sec) || sec < 0 || sec > totalDuration) continue;
+      // Filter out timestamps colliding with locally detected face frames (+- 3.0s)
+      if (Array.isArray(discardedFaceTimestamps) && discardedFaceTimestamps.some(ft => Math.abs(ft - sec) < 3.0)) {
+        console.log(`[Gemini YouTube Stream] Discarding timestamp ${sec}s because it collides with detected face frame`);
+        continue;
+      }
       const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
       let startSec = Math.max(0, Math.min(totalDuration - clipSec, Math.round(sec * 10) / 10));
       if (startSec < minSafeStart) {
@@ -1334,16 +1344,16 @@ RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN
 - If rejected for wrong product or bulky furniture:
   {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok atau tergolong perabot/rak besar yang dilarang"}
 
-RULE 3: FACE DISCARD MANDATE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISCARD ALL FACES):
-- OCCASIONAL PRESENTER / VLOGGER TOLERANCE:
-  * Jika terdapat vlogger, host, atau orang yang muncul sesekali pada beberapa frame (misal intro/outro atau sekilas berbicara): JANGAN DITOLAK!
-  * Video TETAP DITERIMA (status: 'accept') asalkan terdapat cukup frame yang memperagakan produk oleh tangan saja (hands-only tabletop demonstration).
-- MANDAT PEMBUANGAN WAJAH:
-  * AI WAJIB MEMBUANG SEMUA FRAME YANG MENAMPILKAN WAJAH, KEPALA, ATAU VLOGGER!
-  * HANYA pilih indeks frame ("frames") yang 100% murni memperagakan produk oleh TANGAN/JARI saja!
-  * Setiap indeks frame yang dimasukkan ke dalam daftar "frames" WAJIB 100% bebas dari wajah dan orang.
-- TOLAK (status: 'reject') HANYA JIKA:
-  * Video didominasi 100% oleh wajah / pure talking-head vlog sehingga sama sekali tidak ada frame peragaan produk oleh tangan bersih yang memenuhi syarat affiliate.
+RULE 3: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP):
+- MANDATORY AFFILIATE STANDARD:
+  * Every single selected frame index in "frames" MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
+  * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
+    DILARANG KERAS ada wajah, kepala, rambut, mata, mulut, leher, atau tubuh/torso manusia terlihat pada frame yang dipilih!
+  * HANYA pilih indeks frame yang menyorot close-up produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
+- REJECT IMMEDIATELY (status: 'reject') IF:
+  * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
+  * The video does NOT contain at least 5 distinct, satisfying, 100% faceless hands-only tabletop action frames.
+  * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"
 
 RULE 3B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES):
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:

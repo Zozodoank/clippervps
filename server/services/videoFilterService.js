@@ -610,7 +610,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
   const subStartY = Math.floor(H * 0.75); // y >= 108
   const floatStartY = Math.floor(H * 0.12); // y >= 17
   const floatEndY = Math.floor(H * 0.72); // y <= 104
-  const faceEndY = Math.floor(H * 0.45); // y <= 65
+  const faceEndY = Math.floor(H * 0.65); // y <= 93 (Area atas hingga dada/leher)
 
   for (let i = 0; i < frameBuffers.length; i++) {
     const ts = frames[i]?.timestamp ?? (i * 3);
@@ -662,15 +662,15 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
         ));
         if (isHyperSaturatedGraphic) animatedGraphicPixels++;
 
-        // D. Wajah Manusia di Area Atas 45%
+        // D. Wajah / Tubuh Manusia di Area Atas 65%
         if (y < faceEndY) {
           const isSkin = (
             r > 75 && g > 45 && b > 25 &&
             (r > g) && (g > b) &&
-            (r - g >= 12) && (r - g <= 75) &&
-            (r - b >= 18) && (r - b <= 120) &&
-            (sat >= 0.18 && sat <= 0.65) &&
-            (val >= 60 && val <= 245)
+            (r - g >= 10) && (r - g <= 80) &&
+            (r - b >= 15) && (r - b <= 125) &&
+            (sat >= 0.15 && sat <= 0.70) &&
+            (val >= 55 && val <= 250)
           );
           if (isSkin) upperGenuineSkinPixels++;
         }
@@ -687,11 +687,11 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
       if ((subWhitePixels / subTotal) > 0.05 && avgBrightness > 25) subtitleBandCount++;
       if ((floatTextWhitePixels / floatTotal) > 0.06 && (floatTextEdges / floatTotal) > 0.05) floatingTextCount++;
       if ((animatedGraphicPixels / (W * H)) > 0.03) animatedGraphicCount++;
-      if ((upperGenuineSkinPixels / upperTotal) > 0.20) humanFaceSkinCount++;
+      if ((upperGenuineSkinPixels / upperTotal) > 0.07) humanFaceSkinCount++;
     }
 
     // ── Klasifikasi granular per-frame (face, black, intro bumper vs clean) ──
-    const isFrameFace = (upperGenuineSkinPixels / upperTotal) > 0.18;
+    const isFrameFace = (upperGenuineSkinPixels / upperTotal) > 0.07;
     const isFrameBlack = avgBrightness < 8;
     const isFrameIntro = Boolean(isOpeningFrame);
 
@@ -729,14 +729,18 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
     console.log(`[VideoFilter] Info diagnostik: Terdeteksi saturasi grafis pada ${animatedGraphicCount} frame -> Verifikasi grafis diserahkan ke AI Vision.`);
   }
 
-  // Sesuai mandat pengguna: Seleksi diarahkan ke masing-masing frame, bukan membuang seluruh video.
-  // Hanya tolak jika video tidak memiliki cukup frame peragaan produk bersih (< 4 frame) pada mode tunggal.
-  if (cleanFrames.length < 4 && !allowPartialClean) {
+  // Tolak jika video didominasi wajah/manusia (>= 8 frame) atau tidak cukup frame peragaan produk bersih (< 8 frame) pada mode single
+  const isDominatedByFaces = humanFaceSkinCount >= 8;
+  const lacksCleanFrames = cleanFrames.length < 8;
+
+  if ((isDominatedByFaces || lacksCleanFrames) && !allowPartialClean) {
     return {
       eligible: false,
       cleanFrames: [],
       discardedFrames,
-      reason: `Analisa visual lokal mendeteksi video didominasi wajah / intro (${discardedFrames.length} dari ${frameBuffers.length} frame) tanpa cukup frame peragaan produk bersih.`
+      reason: isDominatedByFaces
+        ? `Analisa visual lokal mendeteksi video menampilkan wajah / presenter manusia (${humanFaceSkinCount} dari ${frameBuffers.length} frame). Wajib video 100% faceless peragaan tangan!`
+        : `Analisa visual lokal mendeteksi video tidak memiliki cukup frame peragaan produk bersih (${cleanFrames.length} frame, minimal 8 frame).`
     };
   }
 
@@ -766,6 +770,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
     discardedFrames,
     cleanFrameCount: cleanFrames.length,
     discardedFrameCount: discardedFrames.length,
+    discardedFaceTimestamps: discardedFrames.filter(f => f.reason === 'face').map(f => f.timestamp),
     hasOpeningIntro: openingBumperCount > 0,
     introCutoffSec: openingBumperCount > 0 ? 5.0 : 0,
     hasOccasionalFace: humanFaceSkinCount > 0,
