@@ -265,7 +265,7 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
     const focusX = clampNumber(reframe.focusX, 0, 1, 0.5).toFixed(3);
     const focusY = clampNumber(reframe.focusY, 0, 1, 0.55).toFixed(3);
     return [
-      `[${inputIndex}:v]${preFlip}scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920:(iw-1080)*${focusX}:(ih-1920)*${focusY},${finish}[${outputLabel}]`
+      `[${inputIndex}:v]${preFlip}scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920:(iw-1080)*${focusX}:(ih-1920)*${focusY},${finish}[${outputLabel}]`
     ];
   }
 
@@ -273,8 +273,8 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
   if (renderMode === 'fit_canvas') {
     return [
       `[${inputIndex}:v]${preFlip}split=2[bgsrc${inputIndex}][fgsrc${inputIndex}]`,
-      `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
-      `[fgsrc${inputIndex}]scale=1080:-2:flags=lanczos,setsar=1[fg${inputIndex}]`,
+      `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
+      `[fgsrc${inputIndex}]scale=1080:-2:flags=bicubic,setsar=1[fg${inputIndex}]`,
       `[bg${inputIndex}][fg${inputIndex}]overlay=(W-w)/2:(H-h)/2,${finish}[${outputLabel}]`,
     ];
   }
@@ -285,8 +285,8 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
     const focusY = clampNumber(reframe.focusY, 0, 1, 0.55).toFixed(3);
     return [
       `[${inputIndex}:v]${preFlip}split=2[bgsrc${inputIndex}][fgsrc${inputIndex}]`,
-      `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
-      `[fgsrc${inputIndex}]scale=1080:1080:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1080:(iw-1080)*${focusX}:(ih-1080)*${focusY},setsar=1[fg${inputIndex}]`,
+      `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
+      `[fgsrc${inputIndex}]scale=1080:1080:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1080:(iw-1080)*${focusX}:(ih-1080)*${focusY},setsar=1[fg${inputIndex}]`,
       `[bg${inputIndex}][fg${inputIndex}]overlay=(W-w)/2:(H-h)/2,${finish}[${outputLabel}]`,
     ];
   }
@@ -303,8 +303,8 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
 
   return [
     `[${inputIndex}:v]${preFlip}split=2[bgsrc${inputIndex}][fgsrc${inputIndex}]`,
-    `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
-    `[fgsrc${inputIndex}]scale=1080:1536:force_original_aspect_ratio=increase:flags=lanczos,crop=1080:1536:(iw-1080)*${focusX}:(ih-1536)*${focusY},setsar=1[fg${inputIndex}]`,
+    `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
+    `[fgsrc${inputIndex}]scale=1080:1536:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1536:(iw-1080)*${focusX}:(ih-1536)*${focusY},setsar=1[fg${inputIndex}]`,
     `[bg${inputIndex}][fg${inputIndex}]overlay=(W-w)/2:(H-h)/2,${finish}[${outputLabel}]`,
   ];
 }

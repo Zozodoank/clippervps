@@ -2615,68 +2615,66 @@ function normalizeText(value = '') {
   return value.toString().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Membangun URL pencarian Shopee Indonesia yang bersih, akurat, dan bebas captcha.
+ * Link pencarian langsung membuka aplikasi Shopee dan menampilkan daftar produk terkait dengan rating/harga terbaik
+ * tanpa terhalang slide puzzle / captcha bot protection seperti pada link produk langsung.
+ * @param {string} productTitle 
+ * @param {string} detectedBrand 
+ * @returns {string}
+ */
+export function buildShopeeSearchUrl(productTitle = '', detectedBrand = '') {
+  if (!productTitle || typeof productTitle !== 'string') {
+    return 'https://shopee.co.id';
+  }
+
+  // 1. Coba ambil kata kunci inti produk dari PRODUCT_ANCHORS
+  const coreInfo = extractCoreProductInfo(productTitle);
+  let baseKeyword = '';
+
+  if (coreInfo?.coreProductNoun && coreInfo.coreProductNoun !== 'Produk Praktis') {
+    baseKeyword = coreInfo.coreProductNoun;
+  } else {
+    // 2. Bersihkan kata-kata clickbait, promo, review, dan stop words
+    const cleaned = cleanTitle(productTitle) || productTitle.trim();
+    const stopWords = new Set([
+      'dan', 'yang', 'untuk', 'dengan', 'dari', 'bisa', 'anti', 'super', 'termurah',
+      'viral', 'original', 'promo', 'murah', 'ready', 'stock', 'import', 'impor',
+      'terlaris', 'terbaru', 'terpercaya', 'kualitas', 'garansi', 'resmi', 'official',
+      'bisa', 'cod', 'gratis', 'ongkir', 'diskon', 'terlengkap', 'store', 'shop', 'indonesia',
+      'review', 'jujur', 'banget', 'ini', 'itu', 'pada', 'saat', 'dalam', 'fungsi', 'maksimal',
+      'alternatif', 'hemat', 'solusi', 'instan', 'rekomendasi', 'spill', 'racun'
+    ]);
+    const words = cleaned
+      .replace(/\[[^\]]*\]/g, ' ')
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ')
+      .split(/\s+/)
+      .filter(w => (w.length >= 2 || /\d/.test(w)) && !stopWords.has(w.toLowerCase()));
+
+    // Ambil 3 sampai 5 kata kunci paling esensial (optimal untuk mesin pencari Shopee)
+    baseKeyword = words.slice(0, 5).join(' ');
+  }
+
+  // 3. Tambahkan merek produk jika terdeteksi dan valid
+  const brandClean = (detectedBrand && detectedBrand !== 'none' && !detectedBrand.includes('Terdeteksi'))
+    ? detectedBrand.trim()
+    : '';
+
+  let finalKeyword = baseKeyword || cleanTitle(productTitle) || productTitle.trim().slice(0, 40);
+  if (brandClean && !finalKeyword.toLowerCase().includes(brandClean.toLowerCase())) {
+    finalKeyword = `${brandClean} ${finalKeyword}`;
+  }
+
+  finalKeyword = finalKeyword.replace(/\s+/g, ' ').trim();
+
+  return `https://shopee.co.id/search?keyword=${encodeURIComponent(finalKeyword)}`;
+}
+
 export async function findMatchingShopeeProductUrl(productTitle, detectedBrand = '', videoDesc = '') {
   if (!productTitle || typeof productTitle !== 'string') return '';
-  const cleanTitleStr = cleanTitle(productTitle) || productTitle.trim();
-  const brand = (detectedBrand && detectedBrand !== 'none' && !detectedBrand.includes('Terdeteksi')) ? detectedBrand.trim() : '';
-  const searchPhrase = (brand && !cleanTitleStr.toLowerCase().includes(brand.toLowerCase()))
-    ? `${brand} ${cleanTitleStr}`.trim()
-    : cleanTitleStr.trim();
-
-  // 1. Direct match from YouTube video description if available
-  const fromDesc = extractShopeeLinkFromText(videoDesc);
-  if (fromDesc) {
-    console.log(`[Discovery] ✅ Menemukan link Shopee langsung dari deskripsi video YouTube: ${fromDesc}`);
-    return fromDesc;
-  }
-
-  console.log(`[Discovery] Mencari link Shopee yang cocok untuk produk video: "${searchPhrase}"...`);
-
-  // 2. Bing Search (Fast ~200-350ms, does not block VPS/datacenter IPs)
-  try {
-    const bingResults = await searchBingShopee(searchPhrase);
-    if (bingResults && bingResults.length > 0) {
-      const match = bingResults.find(r => isShopeeProductUrl(r.url));
-      if (match) {
-        console.log(`[Discovery] ✅ Menemukan link Shopee cocok via Bing: "${match.title}" -> ${match.url}`);
-        return match.url;
-      }
-    }
-  } catch (bingErr) {
-    console.warn(`[Discovery] Gagal mencari link Shopee via Bing:`, bingErr.message);
-  }
-
-  // 3. Brave Search Fallback (~200ms)
-  try {
-    const braveResults = await searchBraveShopee(searchPhrase);
-    if (braveResults && braveResults.length > 0) {
-      const match = braveResults.find(r => isShopeeProductUrl(r.url));
-      if (match) {
-        console.log(`[Discovery] ✅ Menemukan link Shopee cocok via Brave: "${match.title}" -> ${match.url}`);
-        return match.url;
-      }
-    }
-  } catch (braveErr) {
-    console.warn(`[Discovery] Gagal mencari link Shopee via Brave:`, braveErr.message);
-  }
-
-  // 4. DuckDuckGo Fallback (with 1.5s timeout)
-  try {
-    const ddgResults = await searchDuckDuckGoShopee(searchPhrase);
-    if (ddgResults && ddgResults.length > 0) {
-      const match = ddgResults.find(r => isShopeeProductUrl(r.url));
-      if (match) {
-        console.log(`[Discovery] ✅ Menemukan link Shopee cocok via DDG: "${match.title}" -> ${match.url}`);
-        return match.url;
-      }
-    }
-  } catch (err) {
-    console.warn(`[Discovery] Gagal mencari link Shopee via DuckDuckGo:`, err.message);
-  }
-
-  // 5. Fallback: direct search page URL with refined keyword
-  const fallbackUrl = `https://shopee.co.id/search?keyword=${encodeURIComponent(searchPhrase)}`;
-  console.log(`[Discovery] Menggunakan fallback link Shopee: ${fallbackUrl}`);
-  return fallbackUrl;
+  const searchUrl = buildShopeeSearchUrl(productTitle, detectedBrand);
+  console.log(`[Discovery] ✅ Menggunakan link pencarian Shopee akurat (anti-captcha): ${searchUrl}`);
+  return searchUrl;
 }
 
