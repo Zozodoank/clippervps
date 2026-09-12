@@ -1985,7 +1985,11 @@ export async function runStage1Pipeline({
 
     return stage1Result;
   } catch (error) {
-    console.error(`[Job ${jobId}] Stage 1 Pipeline Error:`, error);
+    if (error.isAiRejection) {
+      console.warn(`[Job ${jobId}] ℹ️ Video ditolak Filter AI: ${error.rejectionReason || error.message}`);
+    } else {
+      console.error(`[Job ${jobId}] Stage 1 Pipeline Error:`, error);
+    }
 
     // Immediately clean up temporary files so disk storage is freed
     deleteJobTempDirectory(jobId, tempDir);
