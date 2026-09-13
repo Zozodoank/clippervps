@@ -1495,6 +1495,29 @@ export async function searchMultiEngineVideos(query, {
     console.warn(`[MultiEngineVideo] Bing Video search error: ${err.message}`);
   }
 
+  // 2B. Jika query awal panjang dan belum ada hasil, coba query ringkas dari Core Product Noun
+  if (allCandidates.length === 0) {
+    try {
+      const coreInfo = extractCoreProductInfo(query);
+      const coreQuery = coreInfo?.coreProductNoun;
+      if (coreQuery && coreQuery.toLowerCase() !== query.toLowerCase() && coreQuery.split(' ').length < query.split(' ').length) {
+        console.log(`[MultiEngineVideo] Query awal panjang tidak menemukan hasil, mencoba core product noun: "${coreQuery}"`);
+        const ytCoreResults = await searchYouTubeVideos(coreQuery, { limit: safeLimit, onProgress });
+        if (Array.isArray(ytCoreResults)) {
+          for (const item of ytCoreResults) {
+            const vid = item.id || extractVideoId(item.url);
+            if (vid && !seenIds.has(vid)) {
+              seenIds.add(vid);
+              allCandidates.push({ ...item, id: vid, source: 'youtube' });
+            }
+          }
+        }
+      }
+    } catch (coreErr) {
+      console.warn(`[MultiEngineVideo] Core noun YouTube search notice: ${coreErr.message}`);
+    }
+  }
+
   // 3. Extract core words from the query (ignoring modifiers and negative terms)
   const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'diy', 'how', 'unboxing', 'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw']);
   const queryWords = normalizeText(query).split(' ').filter((w) => w.length >= 3 && !ignoredQueryWords.has(w));
