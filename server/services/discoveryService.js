@@ -2059,8 +2059,8 @@ export function extractShopeeLinkFromText(text = '') {
 
 export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (!candidate.url || !candidate.id) return false;
-  // If duration is known, reject if too short (< 5 min / 300s) or too long (> 15 min / 900s)
-  if (candidate.duration > 0 && (candidate.duration < 300 || candidate.duration > 900)) return false;
+  // If duration is known, reject if too short (< 35s) or too long (> 15 min / 900s)
+  if (candidate.duration > 0 && (candidate.duration < 35 || candidate.duration > 900)) return false;
 
   // Reject vertical Shorts (which already have hardburned music/captions)
   if (candidate.url.includes('/shorts/') || /#shorts\b/i.test(candidate.title || '')) return false;

@@ -236,8 +236,8 @@ async function searchWithYouTubeDataApi(query, limit = 10) {
 
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
-    console.log(`[Downloader] Searching YouTube Data API v3: "${cleanQuery}" (type=video&videoDefinition=high&videoDuration=medium)`);
-    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoDefinition=high&videoDuration=medium&maxResults=${limit}&q=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
+    console.log(`[Downloader] Searching YouTube Data API v3: "${cleanQuery}" (type=video&videoDefinition=high)`);
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&videoDefinition=high&maxResults=${limit}&q=${encodeURIComponent(cleanQuery)}&key=${apiKey}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return null;
     const data = await res.json();
@@ -267,8 +267,8 @@ async function searchWithRapidApi(query, limit = 10) {
 
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
-    console.log(`[Downloader] Searching YouTube via RapidAPI: "${cleanQuery}" (type=video&videoDefinition=high&videoDuration=medium)`);
-    const res = await fetch(`https://${host}/search?query=${encodeURIComponent(cleanQuery)}&type=video&videoDefinition=high&videoDuration=medium`, {
+    console.log(`[Downloader] Searching YouTube via RapidAPI: "${cleanQuery}" (type=video&videoDefinition=high)`);
+    const res = await fetch(`https://${host}/search?query=${encodeURIComponent(cleanQuery)}&type=video&videoDefinition=high`, {
       headers: {
         'x-rapidapi-key': apiKey,
         'x-rapidapi-host': host
@@ -288,7 +288,7 @@ async function searchWithRapidApi(query, limit = 10) {
         channel: item.channelTitle || item.author || '',
         description: (item.description || '').slice(0, 500)
       }))
-      .filter(item => item.id && item.url && (item.duration === 0 || (item.duration >= 300 && item.duration <= 900)))
+      .filter(item => item.id && item.url && (item.duration === 0 || (item.duration >= 35 && item.duration <= 900)))
       .slice(0, limit);
   } catch (e) {
     return null;
@@ -520,8 +520,8 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
           else if (parts.length === 2) duration = (parts[0] * 60) + parts[1];
           else if (parts.length === 1 && parts[0] > 0) duration = parts[0];
 
-          // Filter out videos with known duration < 5 min (300s) or > 15 min (900s)
-          if (duration > 0 && (duration < 300 || duration > 900)) {
+          // Filter out videos with known duration < 35s or > 15 min (900s)
+          if (duration > 0 && (duration < 35 || duration > 900)) {
             continue;
           }
 
@@ -631,7 +631,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
           channel: item.uploader || item.channel || '',
           description: (item.description || '').slice(0, 500),
         }))
-        .filter((item) => item.id && item.url && (item.duration === 0 || (item.duration >= 300 && item.duration <= 900)));
+        .filter((item) => item.id && item.url && (item.duration === 0 || (item.duration >= 35 && item.duration <= 900)));
     }
   } catch (err) {
     console.warn(`[Downloader] yt-dlp search fallback warning: ${err.message}`);
