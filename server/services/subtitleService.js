@@ -190,8 +190,11 @@ export function generateAssSubtitles(scriptText, totalDurationSec, assOutputPath
     // Ensure minimum display duration so quick phrases are readable (0.8s)
     const minDisplaySec = 0.8;
     const maxBoundary = (nextAnchor !== undefined && nextAnchor !== null) ? nextAnchor : safeTotalDuration;
+    const finalEndingSec = (options && options.videoDurationSec && Number(options.videoDurationSec) > safeTotalDuration)
+      ? Number(options.videoDurationSec)
+      : safeTotalDuration;
     const endSec = i === rawPhrases.length - 1
-      ? safeTotalDuration
+      ? finalEndingSec
       : Math.min(maxBoundary, startSec + Math.max(minDisplaySec, proportionalDuration));
 
     currentCursor = endSec;

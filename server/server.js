@@ -1746,6 +1746,9 @@ export async function runStage1Pipeline({
       onProgress: updateProgress,
     });
 
+    const actualSilentDuration = (await getMediaDurationSec(silentOutputPath)) || highlight.duration || 33;
+    highlight.duration = actualSilentDuration;
+
     updateProgress({ step: 'frames_trimmed', message: 'Sampling frames from trimmed video for AI scripting...', progress: 72, status: 'running' });
     const { frames: trimmedFrames } = await extractFrames(silentOutputPath, trimmedFramesDir, updateProgress, {
       sampleIntervalSec: 3,
@@ -1764,23 +1767,25 @@ export async function runStage1Pipeline({
         productDescription,
         shopeeLink,
         productHook: highlight.productHook,
-        segmentDuration: highlight.duration,
+        segmentDuration: actualSilentDuration,
         sceneDuration,
         onProgress: updateProgress,
       });
     } catch (scriptErr) {
       console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah Shopee...`);
-      const fallbackHook = highlight.productHook || `Masih repot pakai alat lama yang bikin capek? Untung ada ${productTitle || 'produk ini'}!`;
+      const fallbackHook = highlight.productHook || `Masih repot pakai cara lama yang bikin capek? Untung ada ${productTitle || 'produk ini'}!`;
       const fallbackVoiceScript = `[00:00] ${fallbackHook}
-[00:04] Praktis digunakan, kualitas premium, dan bikin kerjaan cepat beres.
-[00:09] Bahannya tebal, awet, dan nyaman dipakai sehari-hari.
-[00:14] Harganya murah meriah banget, gak bikin kantong jebol!
-[00:18] Langsung checkout di keranjang pojok kiri bawah sekarang juga!`;
+[00:04] Desainnya modern, praktis, dan bikin semua urusan jadi jauh lebih gampang.
+[00:08] Sekali pakai langsung terasa bedanya, sangat hemat tenaga dan waktu.
+[00:13] Bahannya berkualitas premium, tebal, kuat, dan nyaman digenggam.
+[00:18] Sangat multifungsi dan cocok banget untuk kebutuhan sehari-hari di rumah.
+[00:23] Harganya murah meriah banget, ramah di kantong dan gak bikin boros!
+[00:28] Yuk buruan amankan promo gratis ongkir, langsung checkout di keranjang pojok kiri bawah sekarang juga!`;
 
       scriptData = {
         sampleContext: {
           productName: productTitle || videoMeta?.title || 'Produk Pilihan',
-          videoDuration: `${Math.round(highlight.duration || 24)} detik`,
+          videoDuration: `${Math.round(actualSilentDuration)} detik`,
           targetAudience: 'Pengguna harian dan pembeli Shopee',
           coreProblem: 'Cara konvensional yang merepotkan dan memakan waktu',
           keyFeatures: ['Praktis & Ringkas', 'Kualitas Teruji', 'Mudah Digunakan'],
@@ -1910,18 +1915,17 @@ export async function runStage1Pipeline({
         const finalOutputPath = path.join(outputDir, finalFileName);
         const srtPath = path.join(uploadsDir, `subtitles_${jobId}.ass`);
 
-        const audioDurationSec = await getMediaDurationSec(autoVoiceoverPath);
-        const subtitleTargetDuration = Math.max(silentDurationSec, audioDurationSec || 0);
+        const audioDurationSec = (await getMediaDurationSec(autoVoiceoverPath)) || silentDurationSec;
 
         updateProgress({
           step: 'subtitles',
-          message: `Menyinkronkan subtitle narasi (${silentDurationSec.toFixed(1)}s)...`,
+          message: `Menyinkronkan subtitle narasi (${audioDurationSec.toFixed(1)}s / video ${silentDurationSec.toFixed(1)}s)...`,
           progress: 93,
           status: 'running',
         });
-        // Pass structured script and exact word boundaries to guarantee 100% synchronized subtitles
+        // Pass structured script and exact audio duration to guarantee subtitles sync 1:1 with spoken voice!
         const scriptForSubtitles = scriptData.voiceoverScript || rawVoiceScript || ttsResult.cleanScript;
-        generateSrtSubtitles(scriptForSubtitles, subtitleTargetDuration, srtPath, {
+        generateSrtSubtitles(scriptForSubtitles, audioDurationSec, srtPath, {
           wordBoundaries: ttsResult.wordBoundaries,
           videoDurationSec: silentDurationSec,
           lexicon: scriptData.lexicon_to_replace || {},

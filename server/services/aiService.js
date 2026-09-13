@@ -1830,12 +1830,14 @@ export async function generateAdAdvisorScriptWithAI({
   const targetDuration = Math.max(30, Math.min(45, Math.round(Number(segmentDuration) || 33)));
   const effectiveSceneSec = Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
   const sceneCount = Math.max(7, Math.min(12, Math.round(targetDuration / effectiveSceneSec)));
-  // Natural Indonesian commercial speaking rate: ~1.7 - 1.9 words per second (~105 - 115 WPM)
-  // For a 30-35s video: min ~50 words, ideal ~58 words, max ~65 words (~5-6 words per scene).
-  // AVOID overly long scripts that force the voiceover to speak unnaturally fast!
-  const targetWords = Math.round(targetDuration * 1.8);
-  const minWords = Math.max(50, Math.round(targetDuration * 1.6));
-  const maxWords = Math.min(68, Math.round(targetDuration * 2.0));
+  // Natural Indonesian commercial speaking rate in Edge-TTS & Gemini TTS: ~2.3 - 2.5 words per second (~140 - 150 WPM).
+  // For a 30-35s video, target speech duration is ~targetDuration - 1.5s (leaving 1-2s clean hold for the yellow basket CTA).
+  // Target ~72-80 words (~7-8 words per ~3.3s scene, ~480-550 characters total).
+  // This ensures the voiceover comfortably fills the entire 30-35s runtime without lagging or finishing prematurely!
+  const targetSpeechSec = Math.max(28, targetDuration - 1.5);
+  const targetWords = Math.round(targetSpeechSec * 2.35);
+  const minWords = Math.round(targetSpeechSec * 2.15);
+  const maxWords = Math.round(targetSpeechSec * 2.55);
 
   const systemPrompt = `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
@@ -1860,26 +1862,26 @@ CRITICAL 4-BEAT SHOPEE FYP FORMULA:
      e) Anti-Rugi / Peringatan:
         Contoh: "Stop buang-buang tenaga pakai cara jadul yang hasilnya gak maksimal!" atau "Jangan biarkan alat biasa bikin kerjaan rumah makin numpuk!"
 
-2. BEAT 2: HERO SOLUTION & VALUE INTRODUCTION (00:03 - 00:07)
+2. BEAT 2: HERO SOLUTION & VALUE INTRODUCTION (00:03 - 00:08)
    - Introduce the product as the hero solution that immediately eliminates the pain point.
    - Audiences buy "solutions", not just static items.
    - Contoh: "Untung sekarang ada ${effectiveTitle} ini, sekali usap langsung beres tanpa ribet!"
 
-3. BEAT 3: SATISFYING VISUAL DEMONSTRATION & CORE BENEFITS (00:07 - 00:17)
-   - Describe the satisfying visual proof seen in the video frames: rich foam (busa melimpah), cleaning hard-to-reach crevices (menjangkau sela-sela), smooth effortless cutting, hands protected from scratches/cuts (tangan aman gak lecet).
+3. BEAT 3: SATISFYING VISUAL DEMONSTRATION & CORE BENEFITS (00:08 - 00:24)
+   - Describe the satisfying visual proof seen in the video frames across multiple actions: rich foam (busa melimpah), cleaning hard-to-reach crevices (menjangkau sela-sela), smooth effortless cutting, hands protected from scratches/cuts (tangan aman gak lecet), bahan tebal awet, mudah dibersihkan.
    - Satisfying demonstrations keep viewers glued to the screen (high completion watch-time).
 
-4. BEAT 4: PRICE PSYCHOLOGY & SHOPEE KERANJANG POJOK KIRI BAWAH CTA (00:17 - ${formatSeconds(targetDuration)})
-   - Voiceover MUST state the price appeal: "Harganya murah meriah..." or "Harganya murah meriah banget, gak bikin kantong jebol!"
+4. BEAT 4: PRICE PSYCHOLOGY & SHOPEE KERANJANG POJOK KIRI BAWAH CTA (00:24 - ${formatSeconds(targetDuration)})
+   - Voiceover MUST state the price appeal: "Harganya murah meriah banget, ramah di kantong!"
    - Direct viewers with urgent FOMO to the Shopee Keranjang Kuning at the bottom-left corner:
-     "Buruan cek keranjang pojok kiri bawah sebelum kehabisan!" or "Langsung checkout di keranjang pojok kiri bawah mumpung lagi promo!"
+     "Yuk buruan amankan promo dan gratis ongkir, langsung checkout di keranjang pojok kiri bawah sekarang juga!"
    - The Shopee algorithm prioritizes clicks on the yellow shopping bag icon at the bottom-left. Calling out "keranjang pojok kiri bawah" is essential for conversion!
 
 CRITICAL DURATION & WORD-COUNT TIMING RULES:
 - The final video duration is EXACTLY ${targetDuration} seconds (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
-- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, only ~5-6 punchy words per ~${effectiveSceneSec.toFixed(1)}s scene).
-- DILARANG MEMBUAT NASKAH TERLALU PANJANG! Naskah yang terlalu panjang akan memaksa narator berbicara terlalu cepat seperti terburu-buru dan tidak enak didengar.
-- Jaga agar setiap kalimat singkat, padat, lugas, santai, dan to-the-point (~5-6 kata per adegan).
+- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, ~7-8 punchy conversational words per ~${effectiveSceneSec.toFixed(1)}s scene).
+- NASKAH WAJIB CUKUP PANJANG UNTUK MENGISI PENUH DURASI ${targetDuration} DETIK (${minWords} - ${maxWords} KATA)! Jangan membuat naskah terlalu pendek (< ${minWords} kata) karena suara narator akan selesai terlalu cepat sebelum video selesai.
+- Jaga agar setiap kalimat mengalir santai, jelas, berenergi, dan to-the-point (~7-8 kata per adegan).
 
 1. 'sampleContext':
    - 'productName': Explicit product name.
@@ -1954,9 +1956,9 @@ Gunakan informasi judul dan deskripsi produk di atas agar naskah sangat relevan 
 Buat Kotak Scene, Sample Context, Naskah Voiceover Ad Advisor, dan AI Studio prompt.
 
 PENTING - ATURAN DURASI, TIMESTAMP & TEMPO NASKAH:
-1. Pada bagian 'Sample Context' (baik di JSON maupun di prompt AI Studio), WAJIB sertakan durasi voice over sesuai timestamp detik terakhir di Speaker 1, misal: "Durasi voice over 30 detik. Iklan affiliate viral...".
-2. Naskah voiceover HARUS pas ${minWords} s/d ${maxWords} kata (sekitar 12-14 kata tiap scene 5 detik) agar pas dengan durasi video tanpa perlu diperlambat!
-3. Setiap baris naskah voiceover dan prompt AI Studio WAJIB diawali penanda waktu video, misal: [00:00], [00:05], [00:10], [00:15], [00:20], [00:25], [00:30], [00:35], dst.
+1. Pada bagian 'Sample Context' (baik di JSON maupun di prompt AI Studio), WAJIB sertakan durasi voice over: "Durasi voice over ${targetDuration} detik. Iklan affiliate viral...".
+2. Naskah voiceover HARUS pas ${minWords} s/d ${maxWords} kata (sekitar 7-8 kata tiap scene ~${effectiveSceneSec.toFixed(1)}s) agar mengisi penuh durasi video tanpa terputus atau hening di akhir!
+3. Setiap baris naskah voiceover dan prompt AI Studio WAJIB diawali penanda waktu video yang merata, misal: [00:00], [00:03], [00:07], [00:11], [00:15], [00:19], [00:23], [00:27], [00:30], dst.
 4. JANGAN gunakan nama karakter suara khusus (cukup gunakan header "Speaker 1").
 5. DILARANG KERAS menggunakan kata "kece"! Gunakan kata seperti keren, elegan, praktis, atau bagus.
 6. DILARANG KERAS menggunakan kata "kangen" dan HINDARI kata gaul berawalan "ng" (seperti: nggak, ngasih, ngeliat, ngerasain, ngapain, dll). Gunakan bahasa Indonesia baku (tidak, memberi, melihat, dll).
