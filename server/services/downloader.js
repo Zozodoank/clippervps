@@ -471,8 +471,8 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
 
-    // sp=CAMSAggD enforces YouTube Video + High Definition (HD) + Medium Duration (4-20m)
-    let res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}&sp=CAMSAggD`, {
+    // sp=EgIQAQ%253D%253D enforces YouTube Video filter (all durations, from 35s upwards)
+    let res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}&sp=EgIQAQ%253D%253D`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
         'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
@@ -486,9 +486,9 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
     let sections = parsedData?.contents?.twoColumnSearchResultsRenderer?.primaryContents?.sectionListRenderer?.contents || [];
     let hasVideos = sections.some(sec => (sec.itemSectionRenderer?.contents || []).some(item => item.videoRenderer));
 
-    // Fallback: If HD filter returned 0 items, query with Medium Duration filter sp=EgQQASgB
+    // Fallback: If filtered query returned 0 items, query standard search without sp
     if (!hasVideos) {
-      const fallbackRes = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}&sp=EgQQASgB`, {
+      const fallbackRes = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
           'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
