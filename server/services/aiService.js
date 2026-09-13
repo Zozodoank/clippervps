@@ -131,13 +131,13 @@ function getOpenRouterKeys(apiKeyOverride) {
 let currentOpenRouterKeyIndex = 0;
 
 export const defaultGeminiDirectModels = [
+  'gemini-3.5-flash-lite',
+  'gemini-flash-latest',
+  'gemini-3.1-flash-lite',
+  'gemini-3.5-flash',
   'gemini-3.6-flash',
   'gemini-3.7-flash',
-  'gemini-3.8-flash',
-  'gemini-3.5-flash',
-  'gemini-3.5-flash-lite',
-  'gemini-3.1-flash-lite',
-  'gemini-flash-latest'
+  'gemini-3.8-flash'
 ];
 
 export function getDirectGeminiApiKey(apiKeyOverride) {
@@ -580,13 +580,13 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
   const candidateModels = [
+    'gemini-3.5-flash-lite',
+    'gemini-flash-latest',
+    'gemini-3.1-flash-lite',
+    'gemini-3.5-flash',
     'gemini-3.6-flash',
     'gemini-3.7-flash',
-    'gemini-3.8-flash',
-    'gemini-3.5-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
-    'gemini-flash-latest'
+    'gemini-3.8-flash'
   ];
   let parsed = null;
   let activeGeminiModel = candidateModels[0];

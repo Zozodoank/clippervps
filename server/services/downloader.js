@@ -198,14 +198,24 @@ export const DIRTY_NEGATIVE_OPERATORS = [
   '-pabrik',
   '-manufacturing',
   '-factory',
-  '-slideshow'
+  '-slideshow',
+  '-ternak',
+  '-pakan',
+  '-limbah',
+  '-chopper',
+  '-choper',
+  '-selep',
+  '-perontok',
+  '-pemanen',
+  '-traktor',
+  '-silase'
 ];
 
 export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
-  // 1. Strip repair / broken item / disassembly / recipe / mukbang / cara / tutorial / DIY / factory / bulky grill keywords that derail product discovery
+  // 1. Strip repair / broken item / disassembly / recipe / mukbang / cara / tutorial / DIY / factory / bulky grill / agricultural keywords that derail product discovery
   let cleaned = String(baseQuery)
-    .replace(/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing)\b/gi, '')
+    .replace(/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper|choper|selep|perontok|pemanen|traktor)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 

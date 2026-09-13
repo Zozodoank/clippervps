@@ -444,7 +444,20 @@ export const BULKY_EXCLUDE_WORDS = [
   'factory',
   'proses pembuatan',
   'industri',
-  'produksi masal'
+  'produksi masal',
+
+  // Pertanian / Peternakan / Mesin Berat / Penggilingan
+  'pakan ternak',
+  'mesin ternak',
+  'mesin selep',
+  'pemipil jagung',
+  'perontok',
+  'pemanen',
+  'traktor',
+  'mesin pencacah',
+  'chopper multifungsi',
+  'giling janggel',
+  'silase'
 ];
 
 export function isBulkyOrUnsuitableProduct(text = '') {
@@ -461,8 +474,8 @@ export function isBulkyOrUnsuitableProduct(text = '') {
     return true;
   }
 
-  // 1C. Factory / manufacturing / industrial process / bulky grills
-  if (/\b(?:blackstone|weber|smoker|barbecue|bbq|pabrik|factory|manufacturing|industri|pembuatan)\b/i.test(normalized)) {
+  // 1C. Factory / manufacturing / industrial process / bulky grills / agricultural machinery
+  if (/\b(?:blackstone|weber|smoker|barbecue|bbq|pabrik|factory|manufacturing|industri|pembuatan|ternak|pakan|limbah|selep|pemipil|perontok|pemanen|traktor|chopper|choper|cacah|silase|janggel)\b/i.test(normalized)) {
     return true;
   }
 
@@ -1587,11 +1600,12 @@ export async function extractVisualKeywordsWithAI({ imageUrl, productTitle = '' 
     const { GoogleGenerativeAI } = await import('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(rawApiKey);
     const candidateModels = [
+      'gemini-3.5-flash-lite',
+      'gemini-flash-latest',
       'gemini-3.6-flash',
       'gemini-3.7-flash',
       'gemini-3.8-flash',
-      'gemini-3.5-flash',
-      'gemini-flash-latest'
+      'gemini-3.5-flash'
     ];
 
     const prompt = `Analisa gambar produk fisik ini dengan sangat teliti untuk keperluan pencarian footage demonstrasi produk di YouTube.
@@ -2087,7 +2101,9 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     // Filter pemanggang besar / bulky outdoor grill / Blackstone / smoker
     'blackstone', 'weber', 'smoker', 'barbecue', 'bbq outdoor', 'grill outdoor', 'pemanggang besar', 'panggangan besar', 'commercial grill',
     // Filter slide foto statis
-    'slideshow', 'slide foto', 'katalog foto'
+    'slideshow', 'slide foto', 'katalog foto',
+    // Filter mesin pertanian, peternakan, limbah, dan chopper pakan
+    'pakan ternak', 'mesin ternak', 'limbah', 'janggel', 'selep', 'pemipil', 'perontok', 'pemanen', 'traktor', 'chopper multifungsi', 'mesin pencacah', 'chopper', 'choper', 'silase', 'alat berat'
   ];
   if (excludedTitleWords.some((keyword) => titleText.includes(keyword))) return false;
 
