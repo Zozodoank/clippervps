@@ -140,7 +140,7 @@ class FaceGatekeeper:
 # 2. TAHAP 2: TEXT & SUBTITLE DETECTOR (DBNet PP-OCRv4 ONNX)
 # ─────────────────────────────────────────────────────────────────────────────
 class TextGatekeeper:
-    def __init__(self, max_total_coverage=0.10, max_bottom_coverage=0.14):
+    def __init__(self, max_total_coverage=0.08, max_bottom_coverage=0.10):
         self.max_total_coverage = max_total_coverage
         self.max_bottom_coverage = max_bottom_coverage
         self.ort_session = None
@@ -174,6 +174,25 @@ class TextGatekeeper:
             return False, 0.0, 0.0, "Frame terlalu kecil"
 
         bottom_y = int(h * 0.65) # Bottom 35% zone where subtitles sit
+
+        # ── Deteksi Kotak Banner Berlatar Warna / Teks Statis (Promo Card / Lower-Third) ──
+        try:
+            small_color = cv2.resize(crop_bgr, (160, 280), interpolation=cv2.INTER_AREA)
+            gray_small = cv2.cvtColor(small_color, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray_small, 50, 150)
+            k_banner = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
+            dilated_banner = cv2.dilate(edges, k_banner)
+            contours, _ = cv2.findContours(dilated_banner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            for cnt in contours:
+                bx, by, bw, bh = cv2.boundingRect(cnt)
+                # Kartu banner lebar (>= 45% lebar frame 9:16) dan tinggi 6%-35% frame
+                if bw >= int(160 * 0.45) and int(280 * 0.06) <= bh <= int(280 * 0.35):
+                    if (bw * bh) > (160 * 280 * 0.08) and (by + bh / 2) > (280 * 0.15):
+                        inner_edge_density = np.count_nonzero(edges[by:by+bh, bx:bx+bw]) / float(bw * bh)
+                        if inner_edge_density > 0.06:
+                            return True, 0.12, 0.15, f"Banner promosi / kartu teks statis terdeteksi di frame 9:16 ({bw}x{bh}px)"
+        except Exception:
+            pass
 
         # ── Jalur 1: DBNet PP-OCRv4 ONNX Inference (Real-time sub-10ms) ──
         if self.ort_session:
@@ -231,9 +250,9 @@ class TextGatekeeper:
         bottom_zone_area = float((h - bottom_y) * w)
         bottom_cov = float(cv2.countNonZero(bottom_roi)) / bottom_zone_area if bottom_zone_area > 0 else 0.0
 
-        if bottom_cov >= 0.28:
+        if bottom_cov >= 0.20:
             return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (densitas {bottom_cov * 100:.1f}%)"
-        if total_cov >= 0.22:
+        if total_cov >= 0.16:
             return True, total_cov, bottom_cov, f"Densitas teks/grafis dominan ({total_cov * 100:.1f}%)"
 
         return False, total_cov, bottom_cov, "Teks dalam batas wajar"

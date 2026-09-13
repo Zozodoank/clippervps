@@ -338,18 +338,18 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
           hasProductBrand: clip?.hasProductBrand !== undefined ? clip.hasProductBrand : clip?.reframe?.hasProductBrand,
         },
       });
-      if (normalized.length === 8) break; // Max 8 clips (support up to ~26s)
+      if (normalized.length === 12) break; // Max 12 clips (support up to ~35s)
     }
   }
 
   if (normalized.length) {
-    // Safety Duration Guard: Pastikan durasi total klip yang dirender minimal 18-22s (minimal 6 klip)
+    // Safety Duration Guard: Pastikan durasi total klip yang dirender minimal 30-35s (minimal 10 klip)
     // agar sinkron dengan durasi naskah Voiceover dan standar optimal video promosi Affiliate.
-    if (normalized.length < 6) {
-      console.log(`[normalizeRenderClips] Total klip saat ini ${normalized.length} (${normalized.reduce((acc, c) => acc + c.duration, 0).toFixed(1)}s). Menjalankan Safety Duration Guard menuju minimal 18-22s...`);
+    if (normalized.length < 10 || normalized.reduce((acc, c) => acc + c.duration, 0) < 30.0) {
+      console.log(`[normalizeRenderClips] Total klip saat ini ${normalized.length} (${normalized.reduce((acc, c) => acc + c.duration, 0).toFixed(1)}s). Menjalankan Safety Duration Guard menuju minimal 30-35s (minimal 10 klip)...`);
       const baseClips = [...normalized];
       let cycleIdx = 0;
-      while (normalized.length < 6 && normalized.reduce((acc, c) => acc + c.duration, 0) < 20) {
+      while ((normalized.length < 10 || normalized.reduce((acc, c) => acc + c.duration, 0) < 30.0) && cycleIdx < 20) {
         const src = baseClips[cycleIdx % baseClips.length];
         const canHflip = !src.reframe?.hasProductBrand && src.reframe?.allowHflip !== false;
         normalized.push({
@@ -368,8 +368,8 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
   const fallbackStart = parseTimeToSeconds(fallbackStartTime);
   const fallbackEnd = parseTimeToSeconds(fallbackEndTime);
   const clipLength = defaultClipLength;
-  const fallbackDuration = fallbackEnd > fallbackStart ? fallbackEnd - fallbackStart : (clipLength * 7);
-  const clipCount = Math.max(5, Math.min(8, Math.floor(fallbackDuration / clipLength)));
+  const fallbackDuration = fallbackEnd > fallbackStart ? fallbackEnd - fallbackStart : (clipLength * 10);
+  const clipCount = Math.max(10, Math.min(12, Math.floor(fallbackDuration / clipLength)));
 
   for (let index = 0; index < clipCount; index++) {
     normalized.push({

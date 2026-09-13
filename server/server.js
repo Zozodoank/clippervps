@@ -6,7 +6,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import multer from 'multer';
-import { exec, spawn } from 'child_process';
+import { exec, spawn, execSync } from 'child_process';
 
 import { checkSystemDependencies } from './services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from './services/downloader.js';
@@ -40,7 +40,8 @@ import {
   sampleFramesFromStream,
   inspectFramesLocally,
   filterCandidateFramesPerFrame,
-  poolMultiCandidateFrames
+  poolMultiCandidateFrames,
+  callAIGatekeeperMicroservice
 } from './services/videoFilterService.js';
 import {
   getBandwidthStats,
@@ -1430,14 +1431,20 @@ export async function runStage1Pipeline({
         throw new Error(`Video awal ditolak AI (${lastRejectionError?.rejectionReason || 'tidak cocok'}), dan tidak ditemukan video YouTube pengganti baru untuk "${productTitle}".`);
       }
 
-      console.log(`[Job ${jobId}] Menemukan ${targetCandidates.length} kandidat video YouTube. Memulai Multi-Video Frame Pooling & Clip Harvesting (maksimal 5 video)...`);
+      console.log(`[Job ${jobId}] Menemukan ${targetCandidates.length} kandidat video YouTube. Memulai Multi-Video Frame Pooling & Clip Harvesting (target 30 frame bersih untuk durasi 30-35s)...`);
 
-      // Ambil hingga 5 kandidat video teratas
-      const candidatesToProcess = targetCandidates.slice(0, 5);
+      // Ambil hingga 10 kandidat dan terus stream sampai minimal 30 frame bersih terkumpul
+      const candidatesToProcess = targetCandidates.slice(0, 10);
       const candidateResults = [];
       const downloadedCandidatesMap = new Map();
+      let totalCleanCount = 0;
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
+        if (totalCleanCount >= 30 && candidateResults.length >= 2) {
+          console.log(`[Job ${jobId}] ✅ Target 30 frame bersih terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video). Lanjut ke AI Vision.`);
+          break;
+        }
+
         const candidate = candidatesToProcess[i];
         const candVid = extractVideoId(candidate.url) || candidate.id;
         if (candVid) usedVids.add(candVid);
@@ -1494,6 +1501,7 @@ export async function runStage1Pipeline({
               videoMeta: candMeta,
               cleanFrames: frameFilterRes.cleanFrames,
             });
+            totalCleanCount += frameFilterRes.cleanFrames.length;
           }
         } catch (candErr) {
           console.warn(`[Job ${jobId}] Gagal memproses stream ${candLabel}: ${candErr.message}`);
@@ -1628,6 +1636,84 @@ export async function runStage1Pipeline({
       const updatedMeta = { ...jobMeta, downloadedVideoPath: rawVideoPath, stage: 'downloaded' };
       activeJobs.set(jobId, updatedMeta);
       persistJob(jobId, updatedMeta);
+    }
+
+    // ── AUDIT WAJAH MULTI-TITIK PASCA-DOWNLOAD (ANTI-WAJAH 1 DETIK) ──
+    // Mengekstrak 2 frame per klip (t+0.8s dan t+2.2s) dari video 1080p yang sudah diunduh
+    // untuk memverifikasi tidak ada wajah manusia yang muncul sekilas di tengah klip.
+    if (Array.isArray(highlight.clips) && highlight.clips.length > 0) {
+      updateProgress({
+        step: 'face_audit',
+        message: 'Melakukan audit bebas wajah multi-titik pada seluruh cuplikan...',
+        progress: 60,
+        status: 'running'
+      });
+
+      const auditFramesDir = path.join(sessionTempDir, 'face_audit_frames');
+      if (!fs.existsSync(auditFramesDir)) fs.mkdirSync(auditFramesDir, { recursive: true });
+
+      const cleanAuditedClips = [];
+      const discardedFaceClips = [];
+
+      for (let cIdx = 0; cIdx < highlight.clips.length; cIdx++) {
+        const c = highlight.clips[cIdx];
+        const clipVid = c.videoPath || rawVideoPath;
+        if (!clipVid || !fs.existsSync(clipVid)) {
+          cleanAuditedClips.push(c);
+          continue;
+        }
+
+        const t1 = Math.round((c.startSeconds + 0.8) * 10) / 10;
+        const t2 = Math.round((c.startSeconds + Math.min(2.4, Math.max(1.2, (c.duration || 3.3) - 0.6))) * 10) / 10;
+
+        const f1Path = path.join(auditFramesDir, `clip_${cIdx}_t1.jpg`);
+        const f2Path = path.join(auditFramesDir, `clip_${cIdx}_t2.jpg`);
+
+        const ffmpegBin = 'ffmpeg';
+        try {
+          execSync(`"${ffmpegBin}" -y -ss ${t1} -i "${clipVid}" -vframes 1 -q:v 2 "${f1Path}"`, { stdio: 'ignore', timeout: 3000 });
+          execSync(`"${ffmpegBin}" -y -ss ${t2} -i "${clipVid}" -vframes 1 -q:v 2 "${f2Path}"`, { stdio: 'ignore', timeout: 3000 });
+        } catch {}
+
+        const testFrames = [
+          { filePath: f1Path, timestamp: t1 },
+          { filePath: f2Path, timestamp: t2 },
+        ].filter(f => fs.existsSync(f.filePath));
+
+        let hasFace = false;
+        if (testFrames.length > 0) {
+          const gkRes = callAIGatekeeperMicroservice(testFrames, { timeoutSec: 4 });
+          if (gkRes && Array.isArray(gkRes.allFrames)) {
+            const faceDet = gkRes.allFrames.find(f => f.status !== 'clean' && f.stage === 'face');
+            if (faceDet) {
+              hasFace = true;
+              console.warn(`[FaceAudit] ⛔ Wajah manusia terdeteksi pada klip #${cIdx + 1} di detik ${faceDet.timestamp}s (${faceDet.reason}). Klip dibuang!`);
+            }
+          }
+        }
+
+        if (hasFace) {
+          discardedFaceClips.push(c);
+        } else {
+          cleanAuditedClips.push(c);
+        }
+      }
+
+      if (discardedFaceClips.length > 0) {
+        console.log(`[FaceAudit] Berhasil membuang ${discardedFaceClips.length} klip berwajah. Tersisa ${cleanAuditedClips.length} klip 100% faceless.`);
+        if (cleanAuditedClips.length >= 3) {
+          highlight.clips = cleanAuditedClips;
+          highlight.duration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || 3.3), 0);
+        } else {
+          console.warn(`[FaceAudit] Klip bersih tersisa terlalu sedikit (${cleanAuditedClips.length}). Menolak video untuk mencari kandidat lain...`);
+          const auditErr = new Error('Video ditolak pada audit pasca-download: klip terpilih terdeteksi menampilkan wajah manusia.');
+          auditErr.isAiRejection = true;
+          auditErr.rejectionReason = 'Menampilkan wajah atau presenter manusia pada klip terpilih.';
+          throw auditErr;
+        }
+      } else {
+        console.log(`[FaceAudit] ✅ Seluruh ${highlight.clips.length} klip terverifikasi 100% bebas wajah multi-titik.`);
+      }
     }
 
     const isBrandDetected = highlight.hasProductBrand === true ||

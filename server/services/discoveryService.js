@@ -423,7 +423,28 @@ export const BULKY_EXCLUDE_WORDS = [
   'stand laptop',
   'catokan',
   'alat pijat',
-  'lampu tidur'
+  'lampu tidur',
+
+  // Pemanggang besar / Outdoor Grills / Commercial BBQ (Blackstone dsb)
+  'blackstone',
+  'weber',
+  'smoker',
+  'barbecue',
+  'bbq outdoor',
+  'grill outdoor',
+  'pemanggang besar',
+  'panggangan besar',
+  'panggangan standing',
+  'griddle outdoor',
+  'commercial grill',
+
+  // Pabrik / Industri / Proses Pembuatan
+  'pabrik',
+  'manufacturing',
+  'factory',
+  'proses pembuatan',
+  'industri',
+  'produksi masal'
 ];
 
 export function isBulkyOrUnsuitableProduct(text = '') {
@@ -437,6 +458,11 @@ export function isBulkyOrUnsuitableProduct(text = '') {
 
   // 1B. Disqualify 'cara', 'tutorial', 'DIY', 'how to', 'do it yourself'
   if (/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 1C. Factory / manufacturing / industrial process / bulky grills
+  if (/\b(?:blackstone|weber|smoker|barbecue|bbq|pabrik|factory|manufacturing|industri|pembuatan)\b/i.test(normalized)) {
     return true;
   }
 
@@ -2055,7 +2081,13 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     'ai generated', 'ai video', 'generative ai', 'sora', 'runway', 'kling', 'hailuo', 'pika',
     'animation', 'animasi', '3d animation', 'cgi', 'cartoon', 'kartun', 'anime',
     // Filter Perbaikan / Service / Kerusakan / Penggantian (Bukan video demo produk baru)
-    'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'membongkar', 'mati total'
+    'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'membongkar', 'mati total',
+    // Filter pabrik / proses pembuatan / industrial manufacturing (Bukan peragaan konsumen)
+    'pabrik', 'manufacturing', 'factory', 'proses pembuatan', 'industrial', 'produksi masal', 'how it\'s made', 'how its made',
+    // Filter pemanggang besar / bulky outdoor grill / Blackstone / smoker
+    'blackstone', 'weber', 'smoker', 'barbecue', 'bbq outdoor', 'grill outdoor', 'pemanggang besar', 'panggangan besar', 'commercial grill',
+    // Filter slide foto statis
+    'slideshow', 'slide foto', 'katalog foto'
   ];
   if (excludedTitleWords.some((keyword) => titleText.includes(keyword))) return false;
 

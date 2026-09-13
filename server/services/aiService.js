@@ -432,6 +432,8 @@ CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TO
   * In "detectedBrand", output any brand name visible on the physical body (or "none").
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
+  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
   * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
   * REJECT if non-kitchen unrelated items.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
@@ -457,6 +459,8 @@ ${refImageInlineData ? `
 `}
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
+  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
   * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo, tutorial solder/baut). Affiliate product promotion requires showcasing a brand-new working product in action, NOT a repair tutorial!
@@ -476,7 +480,7 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOL
 - PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
   * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
-CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
+CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
 - The backend generates and burns its own clean, animated subtitles.
 - 9:16 CROP TOLERANCE MANDATE FOR ANIMATED GRAPHICS & OVERLAYS (CRITICAL):
   * SAMA SEPERTI ATURAN LOGO/WATERMARK PADA CRITERION 2: Bagian video yang akan dipakai hanyalah area tengah vertikal rasio 9:16. Area sayap kiri (0-25%) dan sayap kanan (75-100%) AKAN TERPOTONG HABIS (CROPPED OUT) atau tertutup pilar background!
@@ -492,6 +496,7 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAY
   * GEMINI WAJIB MEMBUANG INTRO TERSEBUT dengan cara: HANYA memilih timestamps klip yang dimulai SETELAH INTRO SELESAI (misal: mulai detik >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
 - REJECT ONLY IF:
+  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS BAN: DILARANG KERAS jika ada banner teks statis, kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan tulisan di dalamnya), lower-third card, atau label promosi digital yang menempel di dalam frame 9:16 tengah!
   * Kartu bumper foto / slide diam mendominasi isi tengah video (video berupa kumpulan foto/slideshow statis).
   * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
   * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
@@ -501,11 +506,14 @@ CRITERION 4: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP 
 - MANDATORY AFFILIATE STANDARD:
   * This is an automated affiliate product video advertisement. It MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
   * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
-    DILARANG KERAS menampilkan wajah, kepala, rambut, mata, mulut, dagu, leher, atau tubuh/torso manusia di dalam frame 9:16 pada detik-detik klip yang dipilih!
+    DILARANG KERAS menampilkan wajah, kepala, rambut, mata, mulut, dagu, leher, atau tubuh/torso manusia di dalam frame 9:16 pada detik-detik klip yang dipilih, BAHKAN UNTUK 0.5 DETIK SEKALI PUN!
   * HANYA pilih timestamps ketika kamera menyorot CLOSE-UP produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
+- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) BAN:
+  * DILARANG KERAS memilih frame atau klip yang berupa foto/gambar diam (slideshow katalog) dengan efek zoom perlahan (Ken Burns effect)!
+  * Klip WAJIB memiliki gerakan fisik dinamis dan nyata (tangan mengoperasikan produk, bahan terpotong/terkupas, cairan mengalir, tombol ditekan, motor berputar).
 - REJECT IMMEDIATELY (status: 'reject') IF:
   * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
-  * The video does NOT contain at least 5 distinct, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
+  * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
   * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"
 
 CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
@@ -518,10 +526,10 @@ CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DI
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh isi video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
 
-CRITERION 5: CLEAN TIMESTAMP SELECTION
-- Select 5 to 8 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions.
-- Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, and free of watermarks/logos.
-- If the video does NOT contain at least 5 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
+CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
+- Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions for a full 30 to 35 second video ad.
+- Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
+- If the video does NOT contain at least 10 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -541,7 +549,7 @@ If ACCEPTED:
   "hasFloatingTextIn916Frame": false,
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
-  "timestamps": [15, 25, 40, 60, 85, 110],
+  "timestamps": [10, 22, 35, 48, 62, 75, 90, 105, 120, 135],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
@@ -896,6 +904,8 @@ CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TO
   * In "detectedBrand", output any brand name visible on the physical body (or "none").
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
+  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
   * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
   * REJECT if non-kitchen unrelated items.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
@@ -911,6 +921,8 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
   * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
+  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
   * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo). Affiliate product promotion requires showcasing a clean working product in action!
@@ -930,7 +942,7 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOL
 - PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
   * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
-CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
+CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
 - The backend generates and burns its own clean, animated subtitles.
 - 9:16 CROP TOLERANCE MANDATE FOR ANIMATED GRAPHICS & OVERLAYS (CRITICAL):
   * SAMA SEPERTI ATURAN LOGO/WATERMARK PADA CRITERION 2: Bagian video yang akan dipakai hanyalah area tengah vertikal rasio 9:16. Area sayap kiri (0-25%) dan sayap kanan (75-100%) AKAN TERPOTONG HABIS (CROPPED OUT) atau tertutup pilar background!
@@ -946,22 +958,25 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, & ZERO ANIMATED GRAPHIC OVERLAY
   * GEMINI WAJIB MEMBUANG INTRO TERSEBUT dengan cara: HANYA memilih timestamps klip yang dimulai SETELAH INTRO SELESAI (misal: mulai detik >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
 - REJECT ONLY IF:
+  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS BAN: DILARANG KERAS jika ada banner teks statis, kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan tulisan di dalamnya), lower-third card, atau label promosi digital yang menempel di dalam frame 9:16 tengah!
   * Kartu bumper foto / slide diam mendominasi isi tengah video (video berupa kumpulan foto/slideshow statis).
   * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
   * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
 - Physical text/button markings printed/embossed directly on the physical product body ("Power", "ON/OFF", "500ml") are 100% ACCEPTABLE.
 
-CRITERION 4: FACE DISCARD RULE (CHERRY-PICK CLEAN HANDS-ON PRODUCT ACTIONS, DISCARD ALL FACES)
-- KEMUNCULAN WAJAH SESEKALI (HOST / VLOGGER):
-  * Jika video menampilkan wajah vlogger, host, atau orang berbicara sesekali (misal di awal/akhir atau transisi): JANGAN TOLAK VIDEONYA!
-  * Video TETAP DITERIMA (status: 'accept') asalkan terdapat cukup adegan peragaan produk fisik oleh tangan (hands-only tabletop).
-- MANDAT PEMBUANGAN WAJAH:
-  * AI WAJIB MEMBUANG SEMUA SCENE YANG MENAMPILKAN WAJAH, KEPALA, ATAU VLOGGER!
-  * HANYA pilih timestamps yang 100% murni memperagakan produk oleh TANGAN/JARI saja (hands-only on tabletop/countertop)!
-  * Setiap detik dalam array "timestamps" WAJIB 100% bebas dari wajah dan orang.
-- TOLAK (status: 'reject') HANYA JIKA:
-  * Video berupa talking-head / vlog murni tanpa demonstrasi fisik produk.
-  * Wajah manusia muncul mendominasi hampir seluruh video sehingga TIDAK BISA ditemukan minimal 4 cuplikan tangan bersih (${clipSec}s per cuplikan).
+CRITERION 4: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP)
+- MANDATORY AFFILIATE STANDARD:
+  * This is an automated affiliate product video advertisement. It MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
+  * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
+    DILARANG KERAS menampilkan wajah, kepala, rambut, mata, mulut, dagu, leher, atau tubuh/torso manusia di dalam frame 9:16 pada detik-detik klip yang dipilih, BAHKAN UNTUK 0.5 DETIK SEKALI PUN!
+  * HANYA pilih timestamps ketika kamera menyorot CLOSE-UP produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
+- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) BAN:
+  * DILARANG KERAS memilih frame atau klip yang berupa foto/gambar diam (slideshow katalog) dengan efek zoom perlahan (Ken Burns effect)!
+  * Klip WAJIB memiliki gerakan fisik dinamis dan nyata (tangan mengoperasikan produk, bahan terpotong/terkupas, cairan mengalir, tombol ditekan, motor berputar).
+- REJECT IMMEDIATELY (status: 'reject') IF:
+  * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
+  * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
+  * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"
 
 CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
@@ -973,10 +988,10 @@ CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DI
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh isi video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
 
-CRITERION 5: CLEAN TIMESTAMP SELECTION
-- Select 4 to 8 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions.
-- Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, and free of watermarks/logos.
-- If the video does NOT contain at least 4 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
+CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
+- Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions for a full 30 to 35 second video ad.
+- Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
+- If the video does NOT contain at least 10 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -996,7 +1011,7 @@ If ACCEPTED:
   "hasFloatingTextIn916Frame": false,
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
-  "timestamps": [3, 7, 12, 16, 21, 26],
+  "timestamps": [10, 22, 35, 48, 62, 75, 90, 105, 120, 135],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
@@ -1334,7 +1349,7 @@ RULE 1: ABSOLUTE ZERO HARDCODED SPEECH SUBTITLES & ZERO BURNED-IN CAPTION BARS:
 - DILARANG KERAS MENERIMA VIDEO YANG MEMILIKI SUBTITLE / TEKS CAPTION UCAPAN BAWAAN!
 - Inspect every frame (bottom, middle, top, edges) for burned-in speech subtitles, translated lyric bars, or running dialogue captions.
 - Reason: The affiliate clipper generates and burns its own clean, animated Indonesian subtitles. Any source video with existing burned-in speech subtitles causes terrible overlapping double-subtitles and is unwatchable!
-- ZERO TOLERANCE FOR POST-PRODUCTION TEXT OVERLAYS: Dilarang ada stiker teks, teks keterangan digital editan, atau teks promo tempelan.
+- ZERO TOLERANCE FOR POST-PRODUCTION TEXT OVERLAYS & COLORED BANNERS: Dilarang ada stiker teks, teks keterangan digital editan, banner teks statis, atau kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan teks) di frame 9:16 tengah.
 - OPENING INTRO BUMPER / TITLE CARD TOLERANCE (CRITICAL MANDATE):
   * JIKA VIDEO MEMILIKI KARTU INTRO / BUMPER PEMBUKA / LOGO CHANNEL ANIMASI DI DETIK 0 SAMPAI DETIK 5 (Frame 1 atau 2): JANGAN DITOLAK!
   * Video TETAP DITERIMA (status: 'accept') asalkan frame demonstrasi produk setelahnya bersih dan faceless.
@@ -1354,6 +1369,8 @@ RULE 2: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS N
   * In "detectedBrand", output any brand name visible on the physical body (or "none").
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). Consumer hands-on demonstration required!
+  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor gear) that fills the frame!
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
@@ -1368,6 +1385,8 @@ RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN
   * Minor variations in brand logo on chassis, color accent, or button placement are 100% ACCEPTABLE.
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). Consumer hands-on demonstration required!
+  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor gear) that fills the frame!
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
   * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
@@ -1380,11 +1399,13 @@ RULE 3: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE
 - MANDATORY AFFILIATE STANDARD:
   * Every single selected frame index in "frames" MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
   * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
-    DILARANG KERAS ada wajah, kepala, rambut, mata, mulut, leher, atau tubuh/torso manusia terlihat pada frame yang dipilih!
+    DILARANG KERAS ada wajah, kepala, rambut, mata, mulut, leher, atau tubuh/torso manusia terlihat pada frame yang dipilih, BAHKAN SEKILAS!
   * HANYA pilih indeks frame yang menyorot close-up produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
+- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) BAN:
+  * DILARANG KERAS memilih frame yang berupa foto katalog statis dengan efek zoom lambat (Ken Burns effect). Wajib ada interaksi tangan dan peragaan fisik aktif!
 - REJECT IMMEDIATELY (status: 'reject') IF:
   * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
-  * The video does NOT contain at least 5 distinct, satisfying, 100% faceless hands-only tabletop action frames.
+  * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action frames.
   * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"
 
 RULE 3B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES):
@@ -1424,9 +1445,9 @@ RULE 5B: ANIMATED GRAPHICS, STICKERS & OVERLAYS (9:16 CROP TOLERANCE RULE):
 CRITERIA FOR ACCEPTANCE (ALL MUST BE TRUE):
 1. Functionally & physically matches target product: "${coreNoun}" (${effectiveTitle}).
 2. Clean Hands-On Demonstration in Selected Frames: Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.
-3. 100% Clean from hardburned speech subtitles/captions inside 9:16 frame (physical text/labels on the product are 100% allowed).
+3. 100% Clean from hardburned speech subtitles/captions and colored text banner boxes inside 9:16 frame (physical text/labels on the product are 100% allowed).
 4. 100% Clean from watermarks, social media logos, and channel identities inside the 9:16 central frame (outer left/right watermarks that get cropped/covered are acceptable).
-5. Real authentic physical demonstration.
+5. Real authentic physical demonstration (10 to 12 frames for full 30 to 35 second video ad).
 
 Output strictly valid JSON with this exact schema:
 If ACCEPTED:
@@ -1445,7 +1466,7 @@ If ACCEPTED:
   "hasStaticChannelLogoIn916Frame": false,
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
-  "frames": [4, 8, 12, 16, 20, 24],
+  "frames": [2, 4, 7, 10, 13, 16, 19, 22, 25, 28],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
@@ -1790,7 +1811,7 @@ export async function generateAdAdvisorScriptWithAI({
   productDescription,
   shopeeLink,
   productHook,
-  segmentDuration = 24,
+  segmentDuration = 33,
   sceneDuration = 3.3,
   onProgress = () => { }
 }) {
@@ -1806,15 +1827,15 @@ export async function generateAdAdvisorScriptWithAI({
 
   const effectiveTitle = (productTitle || '').trim() || videoMetadata?.title || 'Produk Viral Shopee';
   const effectiveDesc = (productDescription || '').trim();
-  const targetDuration = Math.max(18, Math.min(32, Math.round(Number(segmentDuration) || 24)));
+  const targetDuration = Math.max(30, Math.min(45, Math.round(Number(segmentDuration) || 33)));
   const effectiveSceneSec = Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
-  const sceneCount = Math.max(5, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
+  const sceneCount = Math.max(7, Math.min(12, Math.round(targetDuration / effectiveSceneSec)));
   // Natural Indonesian commercial speaking rate: ~1.7 - 1.9 words per second (~105 - 115 WPM)
-  // For a 24s video: min ~36 words, ideal ~42 words, max ~48 words (~5-6 words per scene).
+  // For a 30-35s video: min ~50 words, ideal ~58 words, max ~65 words (~5-6 words per scene).
   // AVOID overly long scripts that force the voiceover to speak unnaturally fast!
   const targetWords = Math.round(targetDuration * 1.8);
-  const minWords = Math.round(targetDuration * 1.5);
-  const maxWords = Math.round(targetDuration * 2.0);
+  const minWords = Math.max(50, Math.round(targetDuration * 1.6));
+  const maxWords = Math.min(68, Math.round(targetDuration * 2.0));
 
   const systemPrompt = `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
@@ -2574,17 +2595,17 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     });
     previousEndsByCand.set(candKey, endSeconds);
     previousEnd = endSeconds;
-    if (normalized.length === 8) break; // Target max 8 clips (~24-26s)
+    if (normalized.length === 12) break; // Target max 12 clips (~33-35s)
   }
 
   console.log(`[normalizeClipPlan] Accepted ${normalized.length} valid clips from AI vision`);
 
-  // Continuous Stride Expansion: Jika AI menyetujui 1 sampai 4 anchor clip bersih,
+  // Continuous Stride Expansion: Jika AI menyetujui anchor clip bersih,
   // lakukan ekspansi stride berurutan (consecutive stride intervals) dari anchor frame tersebut
-  // agar video akhir mencapai durasi optimal 18-25 detik (5-8 klip) tanpa memerlukan ekstra token AI!
-  if (normalized.length > 0 && normalized.length < 5) {
-    console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Continuous Stride Expansion menuju minimal 5-7 klip...`);
-    const targetClips = Math.min(8, Math.max(6, Math.floor(24 / clipLength)));
+  // agar video akhir mencapai durasi optimal 30-35 detik (10-12 klip) tanpa memerlukan ekstra token AI!
+  if (normalized.length > 0 && normalized.length < 10) {
+    console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Continuous Stride Expansion menuju minimal 10-12 klip (30-35s)...`);
+    const targetClips = Math.min(12, Math.max(10, Math.floor(33 / clipLength)));
     const originalAnchors = [...normalized];
 
     // Scoped tracking of intervals per candidate to avoid overlaps
@@ -2677,11 +2698,11 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     throw cleanErr;
   }
 
-  // Fallback: build 6 to 8 evenly spaced clips (around 20 to 26 seconds total, exactly clipLength per clip)
-  console.log(`[normalizeClipPlan] Building ~20-26s fallback clip plan for ${totalDuration}s video with clipLength=${clipLength}s`);
+  // Fallback: build 10 to 12 evenly spaced clips (around 30 to 35 seconds total, exactly clipLength per clip)
+  console.log(`[normalizeClipPlan] Building ~30-35s fallback clip plan for ${totalDuration}s video with clipLength=${clipLength}s`);
   const fallbackClips = [];
-  const targetTotalSec = 24;
-  const fallbackTargetClips = Math.min(8, Math.max(5, Math.floor(Math.min(totalDuration, targetTotalSec) / clipLength)));
+  const targetTotalSec = 33;
+  const fallbackTargetClips = Math.min(12, Math.max(10, Math.floor(Math.min(totalDuration, targetTotalSec) / clipLength)));
   const maxStart = Math.max(0, Math.floor(totalDuration - clipLength));
   // Avoid first 15-18% of video in fallback to bypass intro unboxing segments on YouTube
   const fallbackStart = totalDuration > 30
@@ -2740,9 +2761,9 @@ function clampNumber(value, min, max, fallback) {
 }
 
 function buildFallbackScenes(productName, segmentDuration, sceneDuration = 3.3) {
-  const totalDuration = Math.max(18, Math.min(35, Math.round(Number(segmentDuration) || 24)));
+  const totalDuration = Math.max(30, Math.min(45, Math.round(Number(segmentDuration) || 33)));
   const sceneLength = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
-  const sceneCount = Math.max(5, Math.min(8, Math.round(totalDuration / sceneLength)));
+  const sceneCount = Math.max(7, Math.min(12, Math.round(totalDuration / sceneLength)));
   const sceneTemplates = [
     {
       visualDescription: `Hook perbandingan visual: demonstrasi cara lama atau alat biasa yang kurang maksimal.`,
