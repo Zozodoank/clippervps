@@ -30,7 +30,7 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'food chopper blender mini portable',
   'alat pelumat bawang putih press garlic',
   'parutan keju kelapa stainless praktis',
-  'cetakan bakso manual praktis serbaguna',
+  'sendok tirisan penggorengan stainless serbaguna',
   'alat pengupas kulit udang praktis',
   'alat pembuang biji apel buah praktis',
   'alat pemotong nanas spiral stainless',
@@ -61,7 +61,7 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'gunting daun bawang sayur 5 lapis stainless',
   'alat pembersih sisik ikan dengan wadah',
   'sendok pembuat bakso bakwan anti lengket',
-  'alat pencetak burger patty press manual',
+  'alat pembuka kaleng putar can opener praktis',
   'pemisah putih kuning telur stainless',
   'alat pengupas nanas nenas corer slicer',
   'pemotong telur rebus kawat stainless',
@@ -73,12 +73,12 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'alat perajang rempah daun stainless herb cutter',
   'alat pengocok telur semi otomatis putar tekan',
   'alat pelindung jari iris sayur stainless cutter guard',
-  'pisau dapur chef knife stainless tajam anti karat',
-  'pisau kupas buah sayur mini cover pelindung',
-  'pisau roti kue gerigi stainless steel',
-  'pisau daging mini cleaver stainless dapur',
-  'alat pengasah pisau dapur praktis 3 tahap roda',
-  'batu asahan pisau dapur grit halus presisi',
+  'alat pemotong nanas nenas spiral stainless',
+  'alat pengupas kulit apel putar otomatis praktis',
+  'alat pemeras jeruk perasan lemon stainless',
+  'alat pemecah cangkang kepiting walnut stainless',
+  'alat pelubang kelapa muda stainless praktis',
+  'alat penusuk daging tenderizer empuk stainless',
   'alat pemotong pisang sosis praktis stainless',
   'pemotong mentimun spiral wortel slicer',
 
@@ -91,36 +91,36 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'sutil silikon anti panas food grade',
   'timbangan digital dapur mini presisi',
   'timer dapur digital magnetik masak',
-  'alat pengasah pisau dapur praktis 3 stage',
-  'alat pembuat es batu silikon pencet praktis',
-  'cetakan es batu bulat bola silikon viral',
+  'saringan teh infuser stainless reusable praktis',
+  'pematik api kompor gas elektrik usb recharge',
+  'tatakan kompor gas pelindung api hemat gas',
   'splash guard pelindung cipratan minyak kompor',
   'alas silikon adonan kue baking anti lengket',
-  'alat pencetak kue kering biskuit praktis',
+  'alat pembuat crepes mini pan elektrik',
   'capitan makanan silikon stainless food grade',
   'termometer makanan digital masak dapur',
   'alat pembuat crepes mini elektrik anti lengket',
   'panci kukus mini elektrik serbaguna',
-  'cetakan takoyaki mini anti lengket teflon',
+  'alat pembersih kerak wajan gosong stainless',
   'wajan grill pan mini anti lengket pemanggang',
   'mixer tangan mini elektrik portable usb',
   'frother pengocok susu kopi mini elektrik',
   'kertas baking parchment paper air fryer bulat',
   'silikon pot air fryer reusable anti lengket',
-  'cetakan es loli popsicle silikon bpa free',
+  'spons kawat cuci piring sabut stainless anti gores',
   'dispenser adonan kue pencet pancake batter',
   'spatula silikon tahan panas food grade',
   'kuas minyak silikon baking tahan panas',
-  'cetakan donat manual praktis adonan',
+  'alat pemipil jagung serbaguna stainless',
   'rolling pin kayu silikon penggiling adonan',
-  'cetakan puding silikon bentuk bunga estetik',
+  'alat pemeras jeruk lemon putar manual',
   'sendok takar bumbu dapur digital lcd',
   'saringan tepung stainless putar manual praktis',
   'pemanggang sandwich toaster mini elektrik',
-  'cetakan sushi roll manual praktis bazooka',
-  'cetakan onigiri nasi bento segitiga praktis',
+  'alat pembuka tutup botol toples serbaguna',
+  'alat pemotong alpukat 3 in 1 multifungsi',
   'alat tusuk sate praktis pembuat sate cepat',
-  'cetakan martabak mini 7 lubang anti lengket',
+  'wajan tamagoyaki teflon telur gulung jepang mini',
   'panci rebus mie telur mini stainless gagang',
   'penutup silikon microwave anti cipratan',
   'tatakan kompor gas pelindung api hemat gas',
@@ -131,10 +131,10 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'alas tatakan panci panas silikon tahan panas',
   'sendok ukur bumbu stainless magnetic',
   'saringan tirisan mie minyak serbaguna stainless',
-  'pembuat churros cetakan kue semprit manual',
+  'saringan tepung ayakan stainless putar manual',
   'capitan gorengan stainless dengan saringan tirisan',
   'tatakan sutil tutup panci silikon anti panas',
-  'cetakan kue pukis mini anti lengket teflon',
+  'pemanggang sandwich toaster mini kompor',
   'centong nasi silikon anti lengket berdiri',
   'sendok kuah sup sayur silikon gagang kayu',
   'irus sayur kuah stainless gagang tahan panas',
@@ -160,7 +160,7 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'wadah tirisan cuci beras buah sayur praktis',
   'botol bumbu dapur sendok terintegrasi praktis',
   'wadah bumbu 4 sekat praktis sendok',
-  'tempat pisau dapur magnetic strip dinding',
+  'gantungan alat masak dinding putar 360',
   'wadah penyimpanan sayur kulkas drain basket',
   'kotak bumbu dapur putar 360 derajat mini',
   'dispenser minyak goreng kaca otomatis tuang',
@@ -176,7 +176,7 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'wadah pencuci beras sayur drain bowl putar',
   'botol saus mayones kecap squeeze bottle putar',
   'saringan teh kopi stainless reusable infuser',
-  'tempat pisau blok dapur minimalis tirisan',
+  'tikar pengering piring silikon dish drying mat',
   'wadah bumbu sekat toples bumbu kaca sendok',
   'kotak telur organizer kulkas roll gravitasi',
   'dispenser sabun cuci piring sponge pump otomatis',
@@ -207,8 +207,8 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'sendok takar bumbu stainless magnetik multifungsi',
   'silikon pot air fryer tahan panas anti lengket loyang',
   'kertas minyak alas air fryer baking paper bulat',
-  'cetakan es batu silikon pencet lepas mudah',
-  'pembuat dumpling pastel pastelan manual praktis cetakan',
+  'alat pemotong pisang sosis praktis stainless',
+  'alat perajang bawang manual putar praktis',
   'sutil spatula silikon tahan panas multifungsi',
   'capitan makanan capitan kue silikon jepit makanan',
   'gunting serbaguna dapur potong tulang ayam daging sk5',
@@ -227,22 +227,22 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'kain lap nano berserat pembersih minyak dapur',
   'alat pembersih kerak wajan panci serbaguna',
   'sikat pembersih botol tumbler sedotan panjang',
-  'sikat pembersih blender mata pisau dapur',
+  'sikat pembersih tabung botol dapur',
   'alat pembersih sisik ikan stainless dengan wadah',
   'sikat pembersih celah kompor wastafel serbaguna',
   'spons cuci piring jaring busa tebal higienis anti bau'
 ];
 
 export const TOOL_INDICATORS = [
-  'alat', 'cetakan', 'wadah', 'saringan', 'pembuat', 'parutan',
-  'pisau', 'gunting', 'wajan', 'panci', 'spatula', 'sutil', 'capitan',
+  'alat', 'wadah', 'saringan', 'pembuat', 'parutan',
+  'gunting', 'wajan', 'panci', 'spatula', 'sutil', 'capitan',
   'timbangan', 'termometer', 'dispenser', 'sealer', 'pengupas', 'peeler',
   'slicer', 'chopper', 'blender', 'grater', 'organizer', 'tempat bumbu', 'rak bumbu meja',
   'penjepit', 'tatakan', 'kuas silikon', 'frother', 'whisk', 'rolling pin', 'loyang',
   'serutan', 'pemeras', 'pelumat', 'perajang', 'sikat', 'spons', 'kain lap',
   'tudung saji', 'sarung tangan oven', 'pematik', 'splash guard', 'masher',
   'ricer', 'timer dapur', 'sendok takar', 'sendok ukur', 'centong', 'irus', 'corong',
-  'tirisan', 'pencacah', 'pengocok', 'pengiris', 'pemipil', 'pengasah', 'batu asah',
+  'tirisan', 'pencacah', 'pengocok', 'pengiris', 'pemipil',
   'pan', 'pot', 'steamer', 'toaster', 'waffle maker', 'botol minyak', 'botol bumbu',
   'botol semprot', 'botol spray', 'botol saus', 'botol kecap', 'squeeze bottle',
   'grinder', 'french press', 'coffee maker', 'teko', 'drain bowl', 'drying mat'
@@ -345,6 +345,77 @@ export function isBundleOrSetProduct(text = '') {
 
   // 4. "1 set", "satu set", "1 paket", "1 pack"
   if (/\b(?:1\s*set|satu\s*set|1\s*paket|1\s*pack|se-set)\b/i.test(normalized)) {
+    return true;
+  }
+
+  return false;
+}
+
+export const HIGH_VARIATION_EXCLUDE_WORDS = [
+  // Cetakan & Molds (terlalu banyak variasi bentuk, ukuran, dan motif antar produsen)
+  'cetakan', 'pencetak', 'cetak', 'mold', 'mould', 'patty press', 'pancake mold', 'ice mold', 'ice tray',
+  'popsicle mold', 'silicone mold', 'cetakan kue', 'cetakan puding', 'cetakan es', 'cetakan donat',
+  'cetakan pastel', 'cetakan dumpling', 'cetakan sushi', 'cetakan onigiri', 'cetakan bakso',
+  'cetakan takoyaki', 'cetakan pukis', 'cetakan martabak', 'cetakan semprit', 'cetakan tumpeng',
+  'cetakan jelly', 'cetakan cokelat', 'cetakan coklat', 'cetakan burger', 'cetakan bento',
+
+  // Pisau & Aksesoris Bilah/Pengasah (terlalu banyak variasi model bilah, gagang, dan motif baja)
+  'pisau', 'knife', 'knives', 'cleaver', 'santoku', 'golok', 'chef knife', 'paring knife',
+  'utility knife', 'carving knife', 'boning knife', 'bread knife', 'pisau dapur', 'pisau buah',
+  'pisau daging', 'pisau set', 'pisau lipat', 'pisau kupas', 'pisau roti', 'tempat pisau',
+  'rak pisau', 'knife block', 'knife holder', 'pengasah pisau', 'asah pisau', 'asahan pisau',
+  'batu asah', 'batu asahan', 'whetstone', 'sharpening stone', 'knife sharpener',
+
+  // Peralatan bentuk umum / komoditas polos tanpa mekanisme unik (sulit dicocokkan 1-ke-1 dengan video)
+  'talenan', 'cutting board', 'chopping board',
+  'piring keramik', 'piring makan', 'mangkok keramik', 'mangkok makan',
+  'cangkir keramik', 'mug keramik', 'gelas kaca',
+  'sendok makan', 'garpu makan', 'sumpit makan',
+  'serbet kain', 'lap piring', 'kain lap dapur'
+];
+
+export function isHighVariationOrHardToMatchProduct(text = '') {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+
+  // 1. Cetakan / Mold variations (selalu hindari cetakan karena bentuk/motif ribuan ragam dan sulit dicari video persamaannya)
+  if (/\b(?:cetakan|pencetak|mould?s?|patty\s+press|ice\s+tray)\b/i.test(normalized)) {
+    return true;
+  }
+  // Standalone word 'cetak' (misal 'cetak pastel', 'cetak kue', 'cetak es')
+  if (/\bcetak\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 2. Pisau / Knife / Cleaver / Sharpener variations
+  // Pengecualian: jangan tolak jika itu chopper atau blender utuh (misal: "chopper 3 mata pisau")
+  const isAppliance = /\b(?:chopper|blender|food\s+processor)\b/i.test(normalized);
+  if (!isAppliance) {
+    if (/\b(?:pisau|knives|knife|cleaver|santoku|golok)\b/i.test(normalized)) {
+      return true;
+    }
+  } else {
+    // Jika blender/chopper tapi hanya menjual suku cadang mata pisau
+    if (/\b(?:sparepart|cadangan|pengganti|mata\s+pisau\s+saja)\b/i.test(normalized)) {
+      return true;
+    }
+  }
+
+  // Pengasah pisau & batu asah
+  if (/\b(?:pengasah|asahan|asah)\s*(?:pisau|gunting|batu)?\b/i.test(normalized)) {
+    return true;
+  }
+  if (/\b(?:batu\s+asah(?:an)?|whetstone|knife\s+sharpener)\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 3. Talenan / Cutting board
+  if (/\b(?:talenan|cutting\s+board|chopping\s+board)\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 4. Periksa kecocokan daftar kata
+  if (HIGH_VARIATION_EXCLUDE_WORDS.some((word) => normalized.includes(word))) {
     return true;
   }
 
@@ -483,12 +554,12 @@ export const BULKY_EXCLUDE_WORDS = [
   'pakan ternak',
   'mesin ternak',
   'mesin selep',
-  'pemipil jagung',
-  'perontok',
+  'mesin pemipil jagung',
+  'perontok padi',
   'pemanen',
   'traktor',
-  'mesin pencacah',
-  'chopper multifungsi',
+  'mesin pencacah pakan',
+  'chopper pakan ternak',
   'giling janggel',
   'silase'
 ];
@@ -508,12 +579,17 @@ export function isBulkyOrUnsuitableProduct(text = '') {
   }
 
   // 1C. Factory / manufacturing / industrial process / bulky grills / agricultural machinery
-  if (/\b(?:blackstone|weber|smoker|barbecue|bbq|pabrik|factory|manufacturing|industri|pembuatan|ternak|pakan|limbah|selep|pemipil|perontok|pemanen|traktor|chopper|choper|cacah|silase|janggel)\b/i.test(normalized)) {
+  if (/\b(?:blackstone|weber|smoker|barbecue|bbq|pabrik|factory|manufacturing|industri|pembuatan|ternak|pakan|limbah|selep|mesin\s+pemipil|perontok|pemanen|traktor|chopper\s+ternak|chopper\s+rumput|cacah\s+rumput|silase|janggel)\b/i.test(normalized)) {
     return true;
   }
 
   // 1D. Disqualify sets, packs, bundles, multi-item packages (sulit dicocokkan dengan 1 video demo)
   if (isBundleOrSetProduct(normalized)) {
+    return true;
+  }
+
+  // 1E. Disqualify molds (cetakan), knives (pisau), sharpeners, and hard-to-match high-variation items
+  if (isHighVariationOrHardToMatchProduct(normalized)) {
     return true;
   }
 
@@ -768,8 +844,8 @@ export const KITCHEN_CORE_TOOLS = [
   'alat pengiris telur rebus stainless',
   'alat pemecah cangkang kepiting walnut',
   'sendok pembuat bakso bakwan anti lengket',
-  'cetakan bakso manual serbaguna',
-  'alat pencetak burger patty press manual',
+  'sendok tirisan minyak stainless serbaguna',
+  'alat pembuka tutup kaleng putar can opener',
   'alat pengupas buah sayur peeler praktis',
   'alat pengupas kulit udang praktis',
   'alat pembuang biji apel pir praktis',
@@ -784,15 +860,15 @@ export const KITCHEN_CORE_TOOLS = [
   'alat penusuk daging tenderizer empuk',
   'sendok porsi es krim scoop trigger',
   'alat pelubang kelapa muda stainless',
-  'pisau dapur stainless tajam chef knife',
-  'pisau kupas buah sayur mini cover',
-  'pisau roti kue gerigi stainless',
-  'pisau daging mini cleaver dapur',
+  'alat pemotong nanas spiral corer stainless',
+  'alat pengupas apel putar otomatis',
+  'alat pemotong pisang sosis praktis stainless',
+  'alat pemecah cangkang kepiting walnut',
   'gunting dapur serbaguna stainless sk5',
   'gunting daging tulang unggas heavy duty',
   'gunting sayur daun bawang 5 lapis',
-  'alat pengasah pisau praktis 3 tahap',
-  'batu asah pisau dapur grit halus',
+  'alat pelubang kelapa muda stainless',
+  'alat penusuk daging tenderizer empuk',
   'alat pembuka kaleng putar praktis aman',
   'alat pembuka tutup botol toples serbaguna',
   'alat pencabut bulu ayam ikan stainless',
@@ -809,8 +885,8 @@ export const KITCHEN_CORE_TOOLS = [
   'kotak bumbu dapur putar serbaguna',
   'tempat sendok garpu tirisan mini tertutup',
   'tempat sendok tirisan meja anti debu',
-  'tempat pisau dapur magnetic strip dinding',
-  'tempat pisau blok dapur minimalis tirisan',
+  'gantungan alat masak dinding putar 360',
+  'tikar pengering piring silikon dish drying mat',
   'toples kaca kedap udara tutup bambu estetik',
   'wadah bumbu kaca sendok label terintegrasi',
   'dispenser beras mini otomatis anti kutu',
@@ -858,15 +934,15 @@ export const KITCHEN_CORE_TOOLS = [
   'pemanggang sandwich toaster mini lipat kompor',
   'alat pembuat waffle mini elektrik praktis',
   'alat pembuat crepes mini pan elektrik',
-  'cetakan martabak mini 7 lubang anti lengket',
-  'cetakan takoyaki mini anti lengket teflon',
-  'cetakan pukis mini teflon anti lengket',
-  'cetakan donat manual praktis adonan kue',
-  'cetakan pastel dumpling pangsit gyoza manual',
-  'cetakan sushi roll manual bazooka praktis',
-  'cetakan onigiri nasi bento segitiga praktis',
-  'cetakan kue kering biskuit cookies press manual',
-  'pembuat churros cetakan kue semprit manual',
+  'wajan tamagoyaki teflon telur gulung jepang',
+  'alat pembuat sempol sate telur gulung mini',
+  'panci sauce pan mini anti lengket susu mie',
+  'wajan teflon mini penggorengan telur 12cm',
+  'saringan tepung ayakan stainless putar manual',
+  'dispenser adonan kue pencet batter dispenser',
+  'alat pembersih kerak wajan panci gosong',
+  'penutup silikon microwave anti cipratan',
+  'saringan tirisan mie goreng minyak stainless',
   'sutil silikon tahan panas food grade',
   'spatula silikon tahan panas gagang kayu estetik',
   'capitan makanan gorengan silikon stainless',
@@ -901,7 +977,7 @@ export const KITCHEN_CORE_TOOLS = [
   'spons sabut kawat stainless anti gores cuci piring',
   'sikat cuci piring dispenser sabun otomatis',
   'sikat pembersih botol tumbler sedotan panjang',
-  'sikat pembersih blender mata pisau dapur',
+  'sikat pembersih tabung botol dapur',
   'kain lap microfiber nano berserat pembersih minyak',
   'alat pembersih kerak wajan panci gosong',
   'alat pembersih sisik ikan stainless dengan wadah',
@@ -932,7 +1008,7 @@ export const KITCHEN_VARIANTS = [
   'hemat tempat ringkas dapur sempit',
   'compact gampang disimpan di laci',
   'travel friendly ringkas mudah dibawa',
-  'mata pisau tajam presisi anti karat',
+  'mata pemotong tajam presisi anti karat',
   'aman digunakan food grade bpa free',
   'bebas bpa bpa free higienis',
   'hemat minyak goreng sehat',
@@ -982,7 +1058,7 @@ export const KITCHEN_TARGETS = [
   'untuk menghaluskan bumbu masak praktis',
   'untuk mengupas buah sayur harian',
   'untuk memotong mengiris daging beku cincang',
-  'untuk mengaduk mencetak adonan kue roti',
+  'untuk mengaduk meratakan adonan kue roti',
   'untuk menggoreng telur sarapan 4 lubang',
   'untuk memanggang sarapan roti sandwich praktis',
   'untuk membuat waffle kue mini cemilan anak',
@@ -994,15 +1070,15 @@ export const KITCHEN_TARGETS = [
   'untuk menata telur rapi di kulkas',
   'untuk merekatkan bungkus plastik makanan sisa',
   'untuk menutup wadah mangkok elastis kedap udara',
-  'untuk mengasah pisau gunting dapur tumpul',
+  'untuk memotong merapikan sayur buah bumbu',
   'untuk membuka kaleng toples tutup botol keras',
   'untuk mengukur menimbang takaran bumbu resep',
   'untuk mengukur suhu minyak daging panggang',
   'untuk pelindung cipratan minyak kompor gas',
   'untuk tatakan wajan panci panas di meja',
-  'untuk mencetak pastel dumpling gyoza praktis',
-  'untuk mencetak sushi roll bento anak',
-  'untuk mencetak bakso bakwan bentuk bulat rapi',
+  'untuk membuat sarapan telur praktis hemat waktu',
+  'untuk menyaring memeras santan jeruk higienis',
+  'untuk mengocok telur adonan cepat mengembang',
   'untuk membuat foam busa susu kopi lembut',
   'untuk membersihkan kerak wajan panci gosong',
   'untuk mencuci piring wastafel higienis',
@@ -2321,12 +2397,12 @@ export const PRODUCT_ANCHORS = [
     multilingual: ['garlic press', 'garlic crusher', 'garlic mincer', 'bawang', 'garlic', 'pelumat bawang', 'penghancur bawang', '压蒜器', '蒜泥器', 'kẹp tỏi', 'nghiền tỏi', 'ép tỏi', 'ที่บดกระเทียม', 'ที่กดกระเทียม', 'pandurog ng bawang']
   },
   {
-    pattern: /\b(?:cetakan\s+bakso|pembuat\s+bakso|meatball\s+maker)\b/i,
-    noun: 'Cetakan Bakso Manual Praktis',
-    englishNoun: 'Meatball Maker Spoon Mold',
+    pattern: /\b(?:pembuka\s+kaleng|can\s+opener)\b/i,
+    noun: 'Alat Pembuka Kaleng Putar',
+    englishNoun: 'Manual Can Opener Tool',
     category: 'kitchen_prep',
-    core: ['cetakan', 'bakso'],
-    multilingual: ['meatball maker', 'meatball mold', 'cetakan bakso', 'pembuat bakso', 'bakso', 'meatball spoon', '肉丸器', '丸子模具', 'khuôn làm thịt viên', 'แม่พิมพ์ทำลูกชิ้น', 'ที่ทำลูกชิ้น']
+    core: ['pembuka', 'kaleng'],
+    multilingual: ['can opener', 'tin opener', 'pembuka kaleng', 'can opener manual', '开罐器', 'dụng cụ mở hộp', 'ที่เปิดกระป๋อง']
   },
   {
     pattern: /\b(?:pemotong\s+daging\s+beku|meat\s+slicer\s+manual|pengiris\s+daging)\b/i,
@@ -2337,12 +2413,12 @@ export const PRODUCT_ANCHORS = [
     multilingual: ['meat slicer', 'frozen meat', 'pengiris daging', 'pemotong daging', 'meat cutter', 'slicer manual', '切肉机', '切片机', 'máy cắt thịt', 'thái thịt', 'เครื่องสไลด์เนื้อ', 'ที่สไลด์เนื้อ']
   },
   {
-    pattern: /\b(?:pembuat\s+dumpling|cetakan\s+pastel|dumpling\s+maker)\b/i,
-    noun: 'Alat Pembuat Dumpling Pastel',
-    englishNoun: 'Dumpling Maker Mold Press',
+    pattern: /\b(?:pembersih\s+sisik|pengupas\s+sisik|fish\s+scaler)\b/i,
+    noun: 'Alat Pembersih Sisik Ikan',
+    englishNoun: 'Fish Scale Scraper Remover',
     category: 'kitchen_prep',
-    core: ['dumpling', 'pastel'],
-    multilingual: ['dumpling maker', 'dumpling press', 'empanada maker', 'cetakan dumpling', 'pembuat pastel', 'cetakan pastel', 'dumpling', 'pastel', '包饺子神器', '饺子模具', 'khuôn làm sủi cảo', 'khuôn bánh bao', 'ที่ทำเกี๊ยว', 'แม่พิมพ์เกี๊ยว']
+    core: ['sisik', 'ikan'],
+    multilingual: ['fish scaler', 'fish scale scraper', 'fish scale remover', 'pembersih sisik', 'pengupas sisik', '刮鱼鳞器', 'dụng cụ đánh vảy cá', 'ที่ขูดเกล็ดปลา']
   },
   {
     pattern: /\b(?:sealer\s+plastik|perekat\s+plastik|heat\s+sealer|mini\s+sealer)\b/i,
@@ -2353,12 +2429,12 @@ export const PRODUCT_ANCHORS = [
     multilingual: ['sealer', 'heat sealer', 'bag sealer', 'plastic sealer', 'mini sealer', 'perekat plastik', 'sealer plastik', 'press plastik', '封口机', 'máy hàn miệng túi', 'เครื่องซีลถุง', 'ที่ซีลถุง']
   },
   {
-    pattern: /\b(?:pengasah\s+pisau|knife\s+sharpener|asah\s+pisau)\b/i,
-    noun: 'Alat Pengasah Pisau Praktis',
-    englishNoun: 'Kitchen Knife Sharpener',
+    pattern: /\b(?:pelubang\s+kelapa|coconut\s+opener|pembuka\s+kelapa)\b/i,
+    noun: 'Alat Pelubang Kelapa Muda Stainless',
+    englishNoun: 'Coconut Opener Tool Stainless Steel',
     category: 'kitchen_prep',
-    core: ['pengasah', 'pisau'],
-    multilingual: ['knife sharpener', 'blade sharpener', 'sharpening', 'whetstone', 'pengasah pisau', 'asah pisau', 'asahan pisau', '磨刀器', '磨刀石', 'dụng cụ mài dao', 'mài dao', 'ที่ลับมีด', 'เครื่องลับมีด']
+    core: ['pelubang', 'kelapa'],
+    multilingual: ['coconut opener', 'coconut drill', 'pelubang kelapa', 'pembuka kelapa', '开椰器', 'dụng cụ khui dừa', 'ที่เจาะมะพร้าว']
   },
   {
     pattern: /\b(?:timbangan\s+digital|kitchen\s+scale|timbangan\s+dapur)\b/i,
@@ -2417,12 +2493,12 @@ export const PRODUCT_ANCHORS = [
     multilingual: ['cheese grater', 'grater', 'zester', 'parutan keju', 'parutan kelapa', 'parutan stainless', '芝士擦丝器', '奶酪刨', 'bào phô mai', 'nạo phô mai', 'ที่ขูดชีส', 'ที่ขูดเนย']
   },
   {
-    pattern: /\b(?:pisau\s+dapur|chef\s+knife|pisau\s+stainless)\b/i,
-    noun: 'Pisau Dapur Stainless Praktis',
-    englishNoun: 'Kitchen Chef Knife Stainless',
+    pattern: /\b(?:pengupas\s+nanas|pemotong\s+nanas|pineapple\s+corer)\b/i,
+    noun: 'Alat Pemotong Pengupas Nanas Spiral',
+    englishNoun: 'Pineapple Corer Slicer Tool',
     category: 'kitchen_prep',
-    core: ['pisau', 'dapur'],
-    multilingual: ['chef knife', 'kitchen knife', 'cleaver', 'santoku', 'pisau dapur', 'pisau stainless', 'pisau', '菜刀', '主厨刀', 'dao nhà bếp', 'dao bếp', 'มีดทำครัว', 'มีดเชฟ']
+    core: ['pengupas', 'nanas'],
+    multilingual: ['pineapple corer', 'pineapple slicer', 'pineapple peeler', 'pengupas nanas', 'pemotong nanas', '削菠萝器', 'dụng cụ gọt dứa', 'ที่ปอกสับปะรด']
   },
 
   // 2. Cookware, Mini Cooking & Baking
@@ -2451,12 +2527,12 @@ export const PRODUCT_ANCHORS = [
     multilingual: ['tamagoyaki pan', 'egg roll pan', 'omelette pan', 'tamagoyaki', 'wajan tamagoyaki', 'telur gulung', '玉子烧锅', '蛋卷锅', 'chảo tamagoyaki', 'chảo cuộn trứng', 'กระทะไข่ม้วน']
   },
   {
-    pattern: /\b(?:pembuat\s+waffle|waffle\s+maker|cetakan\s+waffle)\b/i,
+    pattern: /\b(?:pembuat\s+waffle|waffle\s+maker)\b/i,
     noun: 'Alat Pembuat Waffle Mini',
     englishNoun: 'Mini Waffle Maker Machine',
     category: 'cooking_pot',
     core: ['waffle', 'maker'],
-    multilingual: ['waffle maker', 'waffle iron', 'mini waffle', 'pancake maker', 'pembuat waffle', 'cetakan waffle', 'waffle', '华夫饼机', 'máy làm bánh waffle', 'máy nướng waffle', 'เครื่องทำวาฟเฟิล']
+    multilingual: ['waffle maker', 'waffle iron', 'mini waffle', 'pancake maker', 'pembuat waffle', 'waffle', '华夫饼机', 'máy làm bánh waffle', 'máy nướng waffle', 'เครื่องทำวาฟเฟิล']
   },
   {
     pattern: /\b(?:sutil\s+silikon|spatula\s+silikon|spatula\s+set|silicone\s+spatula)\b/i,
@@ -2467,12 +2543,12 @@ export const PRODUCT_ANCHORS = [
     multilingual: ['silicone spatula', 'spatula set', 'kitchen utensils', 'turner', 'sutil silikon', 'spatula silikon', 'sutil', 'spatula', '硅胶铲', '硅胶锅铲', 'xẻng silicon', 'bộ muỗng silicon', 'ตะหลิวซิลิโคน', 'พายซิลิโคน']
   },
   {
-    pattern: /\b(?:cetakan\s+es\s+batu|ice\s+cube\s+tray|cetakan\s+es\s+silikon)\b/i,
-    noun: 'Cetakan Es Batu Silikon',
-    englishNoun: 'Silicone Ice Cube Tray Mold',
+    pattern: /\b(?:pematik\s+api|pemantik\s+kompor|electric\s+lighter)\b/i,
+    noun: 'Pematik Api Kompor Gas Elektrik',
+    englishNoun: 'Electric Arc USB Gas Lighter',
     category: 'cooking_pot',
-    core: ['cetakan', 'batu'],
-    multilingual: ['ice cube tray', 'ice mold', 'ice maker', 'ice tray', 'cetakan es batu', 'cetakan es silikon', 'es batu', '制冰盒', '硅胶冰格', 'khay làm đá', 'khuôn đá silicon', 'ถาดทำน้ำแข็ง', 'แม่พิมพ์น้ำแข็ง']
+    core: ['pematik', 'kompor'],
+    multilingual: ['electric lighter', 'arc lighter', 'gas lighter', 'pematik api', 'pemantik kompor', '点火枪', 'bật lửa điện', 'ปืนจุดแก๊ส']
   },
   {
     pattern: /\b(?:pemanggang\s+sandwich|sandwich\s+maker|toaster\s+mini)\b/i,
@@ -2483,12 +2559,12 @@ export const PRODUCT_ANCHORS = [
     multilingual: ['sandwich maker', 'toaster', 'sandwich toaster', 'pemanggang sandwich', 'sandwich', 'pemanggang roti', '三明治机', '轻食机', 'máy nướng sandwich', 'kẹp bánh mì', 'เครื่องทำแซนด์วิช']
   },
   {
-    pattern: /\b(?:cetakan\s+takoyaki|takoyaki\s+pan)\b/i,
-    noun: 'Cetakan Takoyaki Mini',
-    englishNoun: 'Takoyaki Pan Grill Maker',
-    category: 'cooking_pot',
-    core: ['cetakan', 'takoyaki'],
-    multilingual: ['takoyaki pan', 'takoyaki maker', 'takoyaki grill', 'cetakan takoyaki', 'takoyaki', '章鱼烧机', '章鱼烧盘', 'chảo làm takoyaki', 'เตาทาโกะยากิ']
+    pattern: /\b(?:pemeras\s+santan|perasan\s+kelapa|coconut\s+press)\b/i,
+    noun: 'Alat Pemeras Santan Manual',
+    englishNoun: 'Manual Coconut Milk Squeezer Press',
+    category: 'kitchen_prep',
+    core: ['pemeras', 'santan'],
+    multilingual: ['coconut squeezer', 'milk press', 'pemeras santan', 'perasan santan', 'dụng cụ ép nước cốt dừa', 'ที่คั้นกะทิ']
   },
   {
     pattern: /\b(?:pot\s+air\s+fryer|silikon\s+air\s+fryer|wadah\s+air\s+fryer)\b/i,
@@ -2507,12 +2583,12 @@ export const PRODUCT_ANCHORS = [
     multilingual: ['food thermometer', 'meat thermometer', 'cooking thermometer', 'termometer makanan', 'termometer digital', '食品温度计', 'nhiệt kế nấu ăn', 'nhiệt kế thực phẩm', 'ที่วัดอุณหภูมิอาหาร']
   },
   {
-    pattern: /\b(?:cetakan\s+sushi|sushi\s+bazooka|cetakan\s+onigiri)\b/i,
-    noun: 'Cetakan Sushi Onigiri Praktis',
-    englishNoun: 'Sushi Onigiri Maker Mold Roller',
-    category: 'cooking_pot',
-    core: ['cetakan', 'sushi'],
-    multilingual: ['sushi maker', 'sushi mold', 'onigiri mold', 'sushi bazooka', 'cetakan sushi', 'cetakan onigiri', 'sushi', 'onigiri', '寿司模具', '饭团模具', 'khuôn làm sushi', 'khuôn cơm nắm', 'แม่พิมพ์ซูชิ', 'ที่ทำซูชิ']
+    pattern: /\b(?:pemecah\s+kepiting|walnut\s+cracker|nut\s+cracker)\b/i,
+    noun: 'Alat Pemecah Cangkang Kepiting Walnut',
+    englishNoun: 'Crab Walnut Nut Cracker Tool',
+    category: 'kitchen_prep',
+    core: ['pemecah', 'kepiting'],
+    multilingual: ['crab cracker', 'nut cracker', 'walnut cracker', 'pemecah kepiting', 'pemecah walnut', '螃蟹钳', 'kẹp cua', 'ที่หนีบก้ามปู']
   },
   {
     pattern: /\b(?:capitan\s+makanan|food\s+tongs|capitan\s+silikon)\b/i,

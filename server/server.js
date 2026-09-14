@@ -2263,6 +2263,7 @@ async function runAutoStage1Worker(run) {
     let keywordQueue = getAutoKeywords(200, { excludeUsed: true, shuffle: true });
     let emptyKeywordRetryCount = 0;
     let quotaExhausted = false;
+    let quotaErrorMessage = '';
 
     while (run.status !== 'stopping' && run.status !== 'stopped') {
       if (!isUnlimited && run.successfulJobs >= run.maxJobs) {
@@ -2418,15 +2419,30 @@ async function runAutoStage1Worker(run) {
 
           run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
 
-          // If all models in the fallback chain exhausted their quota, stop autorun!
-          if (err.isAllModelsQuotaExhausted) {
-            console.error('[Auto] Seluruh model AI dalam rantai fallback telah mencapai batas limit kuota token harian. Menghentikan Auto Mode.');
+          // If Gemini Visual or Gemini TTS (or any AI fallback chain) exhausts its quota/rate limit, stop autorun immediately!
+          const msg = (err.message || '').toLowerCase();
+          const isQuota = Boolean(
+            err.isAllModelsQuotaExhausted ||
+            err.isQuotaError ||
+            (err.status === 429 || err.statusCode === 429) ||
+            isQuotaErrorMessage(err.message) ||
+            msg.includes('resource_exhausted') ||
+            msg.includes('quota') ||
+            msg.includes('kuota') ||
+            msg.includes('rate limit') ||
+            msg.includes('rate_limit') ||
+            msg.includes('429') ||
+            (msg.includes('gemini') && (msg.includes('limit') || msg.includes('exhausted') || msg.includes('too many requests')))
+          );
+
+          if (isQuota) {
+            console.error(`[Auto] 🛑 Limit kuota/rate limit Gemini (Visual atau TTS) telah habis: ${err.message}. Menghentikan Auto Mode.`);
             quotaExhausted = true;
+            quotaErrorMessage = err.message;
             break;
           }
 
           // Check for fatal authentication error (401 with invalid api key)
-          const msg = (err.message || '').toLowerCase();
           const isFatalAuth = (err.status === 401 || err.statusCode === 401) && (msg.includes('api key') || msg.includes('unauthorized'));
           if (isFatalAuth) {
             console.error('[Auto] API Key tidak valid. Menghentikan Auto Mode.');
@@ -2478,7 +2494,7 @@ async function runAutoStage1Worker(run) {
     if (quotaExhausted) {
       updateAutoRun(run, {
         status: 'completed',
-        message: `⚠️ Auto Mode berhenti otomatis: Seluruh model AI utama dan fallback telah mencapai batas limit kuota harian. Total video berhasil dibuat: ${run.successfulJobs}, Gagal: ${run.failedJobs}, Dilewati: ${run.skippedProducts}.`,
+        message: `⚠️ Auto Mode berhenti otomatis: Limit kuota/rate limit model Gemini (Visual atau TTS) telah habis (${quotaErrorMessage || 'Batas kuota harian tercapai'}). Total video berhasil dibuat: ${run.successfulJobs}, Gagal: ${run.failedJobs}, Dilewati: ${run.skippedProducts}.`,
         progress: 100,
         finishedAt: new Date().toISOString(),
         currentJobId: null,

@@ -768,8 +768,9 @@ export async function generateVoiceoverGeminiTTS({
         const errObj = new Error(`Gemini TTS API HTTP ${resp.status}: ${msg}`);
         errObj.status = resp.status;
         errObj.statusCode = resp.status;
-        if (resp.status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted')) {
+        if (resp.status === 429 || msg.toLowerCase().includes('quota') || msg.toLowerCase().includes('resource_exhausted') || msg.toLowerCase().includes('rate limit')) {
           errObj.isQuotaError = true;
+          errObj.isAllModelsQuotaExhausted = true;
           errObj.canRetry = true;
         }
         throw errObj;
@@ -802,7 +803,18 @@ export async function generateVoiceoverGeminiTTS({
   if (!audioBuffer) {
     // IMPORTANT: Edge TTS is NOT an automatic fallback (user explicitly requested Edge TTS not be fallback)
     const err = new Error(`Gagal menghasilkan voice over dengan Gemini TTS (${modelsToTry.join(' & ')}): ${lastError?.message}`);
-    err.isQuotaError = lastError?.isQuotaError || false;
+    const isQuota = Boolean(
+      lastError?.isQuotaError ||
+      lastError?.isAllModelsQuotaExhausted ||
+      lastError?.status === 429 ||
+      lastError?.statusCode === 429 ||
+      String(lastError?.message || '').toLowerCase().includes('quota') ||
+      String(lastError?.message || '').toLowerCase().includes('resource_exhausted') ||
+      String(lastError?.message || '').toLowerCase().includes('rate limit') ||
+      String(lastError?.message || '').toLowerCase().includes('429')
+    );
+    err.isQuotaError = isQuota;
+    err.isAllModelsQuotaExhausted = isQuota;
     err.canRetry = true;
     throw err;
   }

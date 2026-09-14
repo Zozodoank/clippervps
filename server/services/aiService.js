@@ -454,12 +454,13 @@ ${refImageInlineData ? `
 ` : `
 - Does the item demonstrated in the video physically and functionally match this product category/tool?
 - ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
   * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
   * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
 `}
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
+  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan (cetakan es batu, cetakan kue, cetakan pastel, cetakan bakso, cetakan sushi, burger patty press, silicone mold) or knife/blade/sharpener (pisau dapur, pisau buah, pisau daging, cleaver, knife sharpener, talenan/cutting board) because visual shapes, styles, and mechanisms vary too drastically across manufacturers, making matching impossible.
   * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
   * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
@@ -641,8 +642,9 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   }
 
   if (!parsed) {
-    if (allQuotaErrors && candidateModels.length > 0) {
-      const quotaErr = new Error('Semua model Gemini (model utama hingga seluruh fallback) telah mencapai batas limit kuota token harian.');
+    const isLastQuota = isQuotaError(lastGeminiErr) || (lastGeminiErr?.status === 429) || (lastGeminiErr?.statusCode === 429);
+    if ((allQuotaErrors || isLastQuota) && candidateModels.length > 0) {
+      const quotaErr = new Error(`Model Gemini Visual (${candidateModels.join(' & ')}) telah mencapai batas limit kuota token: ${lastGeminiErr?.message || 'Resource exhausted'}`);
       quotaErr.isAllModelsQuotaExhausted = true;
       quotaErr.isQuotaError = true;
       throw quotaErr;
@@ -919,11 +921,12 @@ CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS N
 ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
 - Does the item demonstrated in the video physically and functionally match this product category/tool?
 - ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
   * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
   * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
+  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan (cetakan es batu, cetakan kue, cetakan pastel, cetakan bakso, cetakan sushi, burger patty press, silicone mold) or knife/blade/sharpener (pisau dapur, pisau buah, pisau daging, cleaver, knife sharpener, talenan/cutting board) because visual shapes, styles, and mechanisms vary too drastically across manufacturers, making matching impossible.
   * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
   * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
@@ -1090,6 +1093,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     }
 
     if (!parsed) {
+      if (isQuotaError(lastGeminiErr) || (lastGeminiErr?.status === 429) || (lastGeminiErr?.statusCode === 429)) {
+        const quotaErr = new Error(`Model Gemini Visual File API telah mencapai batas limit kuota/rate limit token: ${lastGeminiErr?.message}`);
+        quotaErr.isAllModelsQuotaExhausted = true;
+        quotaErr.isQuotaError = true;
+        throw quotaErr;
+      }
       throw lastGeminiErr || new Error('Gemini File API gagal menganalisa video.');
     }
 
@@ -1368,11 +1377,12 @@ RULE 2: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS N
 - Discovery Query Keyword / Topic: "${coreNoun}"
 - PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
 - ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg dispenser, oil pot, sharpening stone/roll, vegetable washer basket, etc.) that comfortably fit in the central 9:16 vertical crop.
-  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
   * In "detectedBrand", output any brand name visible on the physical body (or "none").
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
+  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan (cetakan es batu, cetakan kue, cetakan pastel, cetakan bakso, cetakan sushi, burger patty press, silicone mold) or knife/blade/sharpener (pisau dapur, pisau buah, pisau daging, cleaver, knife sharpener, talenan/cutting board) because visual shapes, styles, and mechanisms vary too drastically across manufacturers, making matching impossible.
   * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). Consumer hands-on demonstration required!
   * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor gear) that fills the frame!
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
@@ -1385,11 +1395,12 @@ RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 - Compare the physical product demonstrated in the frames directly with the target product: "${coreNoun}".
 - ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
   * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
   * Minor variations in brand logo on chassis, color accent, or button placement are 100% ACCEPTABLE.
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
+  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan (cetakan es batu, cetakan kue, cetakan pastel, cetakan bakso, cetakan sushi, burger patty press, silicone mold) or knife/blade/sharpener (pisau dapur, pisau buah, pisau daging, cleaver, knife sharpener, talenan/cutting board) because visual shapes, styles, and mechanisms vary too drastically across manufacturers, making matching impossible.
   * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). Consumer hands-on demonstration required!
   * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor gear) that fills the frame!
   * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
