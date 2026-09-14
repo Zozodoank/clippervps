@@ -12,7 +12,11 @@ import os
 import sys
 import time
 import copy
+import json
+import shutil
 import argparse
+
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 import torch
 import torch.nn as nn
