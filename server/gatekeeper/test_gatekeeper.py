@@ -64,6 +64,27 @@ def run_tests():
         status_icon = "✅" if f["status"] == "clean" else "❌"
         print(f"  [{idx + 1}] {status_icon} Frame {os.path.basename(f['filePath'])}: {f['status']} ({f.get('stage', 'none')}) - {f['reason']}")
 
+    # 4. Uji Coba Terhadap Frame Validasi Nyata (Real Dataset) Jika Tersedia
+    import glob
+    val_real_frames = glob.glob(os.path.join(os.path.dirname(__file__), "dataset", "val", "valid_real", "*.*"))[:4]
+    val_reject_frames = glob.glob(os.path.join(os.path.dirname(__file__), "dataset", "val", "rejected", "*.*"))[:4]
+
+    if val_real_frames or val_reject_frames:
+        print("\n🎯 Menjalankan Pengujian Terhadap Frame Riil (Validation Set):")
+        if val_real_frames:
+            print("  --- Kategori Real Products (Seharusnya CLEAN / PASSED) ---")
+            for rf in val_real_frames:
+                r = gatekeeper.process_frame(rf, 1.0)
+                icon = "✅" if r["status"] == "clean" else "⚠️"
+                print(f"    {icon} {os.path.basename(rf)}: {r['status']} ({r.get('stage', 'ok')}) -> {r['reason']}")
+
+        if val_reject_frames:
+            print("  --- Kategori Rejected/Bumper/Kartun (Seharusnya DISCARDED) ---")
+            for rj in val_reject_frames:
+                r = gatekeeper.process_frame(rj, 1.0)
+                icon = "❌" if r["status"] == "discarded" else "⚠️"
+                print(f"    {icon} {os.path.basename(rj)}: {r['status']} ({r.get('stage', 'ok')}) -> {r['reason']}")
+
     # Clean up test temp
     try:
         os.remove(clean_path)
