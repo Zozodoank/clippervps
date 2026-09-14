@@ -77,7 +77,7 @@ def evaluate_frame_heuristic(crop_bgr):
     return "valid_real", "Peragaan produk fisik nyata alami"
 
 
-def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2):
+def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2, max_frames=None):
     print(f"🎬 [Collector] Mengekstrak frame dari video: {video_path}")
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -97,6 +97,10 @@ def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2):
     video_base = os.path.splitext(os.path.basename(video_path))[0]
 
     while True:
+        if max_frames and (saved_counts["valid_real"] + saved_counts["rejected"]) >= max_frames:
+            print(f"   Mencapai batas maksimal {max_frames} frame per video.")
+            break
+
         ret, frame = cap.read()
         if not ret:
             break
@@ -218,17 +222,34 @@ def print_stats():
     print(f"  Grand Total    : {train_valid + train_reject + val_valid + val_reject} frame\n")
 
 
+def extract_from_videos_dir(video_dir, sample_interval_sec=1.0, val_ratio=0.2, max_per_video=30):
+    print(f"🎬 [Collector] Memindai semua video di folder: {video_dir}")
+    video_files = glob.glob(os.path.join(video_dir, "**", "*.mp4"), recursive=True)
+    if not video_files:
+        print(f"⚠️ Tidak ada video .mp4 ditemukan di {video_dir}")
+        return
+
+    print(f"   Ditemukan {len(video_files)} file video. Memulai ekstraksi...")
+    for idx, vpath in enumerate(video_files):
+        print(f"\n--- [{idx + 1}/{len(video_files)}] Memproses: {os.path.basename(vpath)} ---")
+        extract_from_video(vpath, sample_interval_sec=sample_interval_sec, val_ratio=val_ratio, max_frames=max_per_video)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Dataset Collector & Frame Extractor for ClipperVPS AI")
     parser.add_argument("--video", type=str, help="Path ke file video MP4 untuk diekstrak framenya")
+    parser.add_argument("--video-dir", type=str, help="Path ke direktori berisi file video MP4")
     parser.add_argument("--frames-dir", type=str, help="Path ke direktori frame gambar yang sudah ada")
     parser.add_argument("--interval", type=float, default=1.0, help="Interval pengambilan frame (detik)")
+    parser.add_argument("--max-per-video", type=int, default=30, help="Maksimal frame yang diambil per video")
     parser.add_argument("--zip", action="store_true", help="Kompres dataset ke dataset_v2.zip untuk Colab")
     parser.add_argument("--stats", action="store_true", help="Tampilkan statistik frame yang terkumpul")
     args = parser.parse_args()
 
     if args.video:
-        extract_from_video(args.video, sample_interval_sec=args.interval)
+        extract_from_video(args.video, sample_interval_sec=args.interval, max_frames=args.max_per_video)
+    elif args.video_dir:
+        extract_from_videos_dir(args.video_dir, sample_interval_sec=args.interval, max_per_video=args.max_per_video)
     elif args.frames_dir:
         process_existing_frames(args.frames_dir)
 
