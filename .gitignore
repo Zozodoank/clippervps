@@ -42,6 +42,7 @@ server/cookies.txt
 # AI Gatekeeper Model weights & test cache
 server/gatekeeper/models/*.onnx
 server/gatekeeper/models/*.tflite
+server/gatekeeper/models/*.data
 server/gatekeeper/test_temp/
 server/gatekeeper/dataset/
 *.zip
