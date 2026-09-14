@@ -164,15 +164,44 @@ def train_model(dataset_dir="dataset", epochs=10, batch_size=16, lr=0.0008, outp
     print(f"📦 Mengekspor model ke ONNX format: {output_onnx}...")
     dummy_input = torch.randn(1, 3, 224, 224, device="cpu")
 
-    torch.onnx.export(
-        model,
-        dummy_input,
-        output_onnx,
-        input_names=["input"],
-        output_names=["output"],
-        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
-        opset_version=12
-    )
+    try:
+        torch.onnx.export(
+            model,
+            dummy_input,
+            output_onnx,
+            input_names=["input"],
+            output_names=["output"],
+            dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}},
+            opset_version=18,
+            dynamo=False
+        )
+    except Exception as e:
+        print(f"ℹ️ Exporting with standard onnx dispatcher: {e}")
+        torch.onnx.export(
+            model,
+            dummy_input,
+            output_onnx,
+            input_names=["input"],
+            output_names=["output"],
+            opset_version=18
+        )
+
+    # Sinkronisasi ke folder models/
+    models_dir = os.path.join(CURRENT_DIR, "models")
+    os.makedirs(models_dir, exist_ok=True)
+    target_in_models = os.path.join(models_dir, os.path.basename(output_onnx))
+    if os.path.abspath(output_onnx) != os.path.abspath(target_in_models):
+        shutil.copy2(output_onnx, target_in_models)
+        if os.path.exists(output_onnx + ".data"):
+            shutil.copy2(output_onnx + ".data", target_in_models + ".data")
+        print(f"🎯 Model otomatis dipasang ke: {target_in_models}")
+    elif os.path.exists(output_onnx + ".data"):
+        print(f"ℹ️ External weights data tersimpan: {output_onnx}.data")
+
+    labels_file = os.path.join(models_dir, "labels.json")
+    with open(labels_file, "w", encoding="utf-8") as f:
+        json.dump(train_dataset.classes, f, indent=2)
+    print(f"   Daftar label disimpan ke: {labels_file}")
 
     file_size_mb = os.path.getsize(output_onnx) / (1024 * 1024)
     print(f"✅ Model ONNX berhasil dibuat!")
@@ -193,7 +222,8 @@ def main():
     parser.add_argument("--epochs", type=int, default=10, help="Jumlah epoch training (default: 10)")
     parser.add_argument("--batch-size", type=int, default=16, help="Ukuran batch (default: 16)")
     parser.add_argument("--lr", type=float, default=0.0008, help="Learning rate (default: 0.0008)")
-    parser.add_argument("--output", type=str, default="scene_filter_v2.onnx", help="Nama file ONNX output")
+    default_out = os.path.join("models", "scene_filter_v2.onnx")
+    parser.add_argument("--output", type=str, default=default_out, help="Nama file ONNX output")
     args = parser.parse_args()
 
     train_model(

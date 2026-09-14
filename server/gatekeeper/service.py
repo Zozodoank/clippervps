@@ -302,8 +302,19 @@ class SceneGatekeeper:
                 except Exception as e:
                     print(f"  [SceneGatekeeper] ⚠️ Gagal memuat MobileNetV3 generic: {e}")
 
+        self.labels = ["rejected", "valid_real"]
+        labels_path = os.path.join(MODELS_DIR, "labels.json")
+        if os.path.exists(labels_path):
+            try:
+                with open(labels_path, "r", encoding="utf-8") as f:
+                    self.labels = json.load(f)
+            except Exception:
+                pass
+
     def evaluate(self, crop_bgr):
         h, w = crop_bgr.shape[:2]
+        if h < 50 or w < 50:
+            return False, 0.99, "Dimensi crop terlalu kecil"
 
         # 1. Color Quantization Check (Detects 2D vector graphic cards, flat slide bumpers)
         small = cv2.resize(crop_bgr, (64, 64), interpolation=cv2.INTER_AREA)
@@ -335,16 +346,17 @@ class SceneGatekeeper:
                 outputs = self.ort_session.run(None, {input_name: blob})
                 raw_logits = outputs[0][0]
 
-                # ── Custom Model Fine-Tuned (Class 0: valid_real, Class 1: rejected) ──
+                # ── Custom Model Fine-Tuned (Uses labels mapping) ──
                 if self.is_custom_model:
                     exp_l = np.exp(raw_logits - np.max(raw_logits))
                     probs = exp_l / np.sum(exp_l)
                     pred_class = int(np.argmax(probs))
                     conf = float(probs[pred_class])
+                    label_name = self.labels[pred_class] if pred_class < len(self.labels) else str(pred_class)
 
-                    if pred_class == 1 and conf > 0.55:
+                    if label_name == "rejected" and conf > 0.55:
                         return False, conf, f"Custom AI: Terdeteksi grafis/kartun/slide non-produk (confidence: {conf * 100:.1f}%)"
-                    elif pred_class == 0:
+                    elif label_name == "valid_real":
                         return True, conf, f"Custom AI: Peragaan produk fisik nyata valid (confidence: {conf * 100:.1f}%)"
 
                 # ── Generic ImageNet Model Fallback ──
