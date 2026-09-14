@@ -88,7 +88,7 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'wajan penggorengan mini telur 4 lubang anti lengket',
   'panci listrik mini serbaguna portable',
   'alat pembuat waffle mini elektrik praktis',
-  'sutil silikon set anti panas food grade',
+  'sutil silikon anti panas food grade',
   'timbangan digital dapur mini presisi',
   'timer dapur digital magnetik masak',
   'alat pengasah pisau dapur praktis 3 stage',
@@ -109,7 +109,7 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'silikon pot air fryer reusable anti lengket',
   'cetakan es loli popsicle silikon bpa free',
   'dispenser adonan kue pencet pancake batter',
-  'spatula silikon tahan panas food grade set',
+  'spatula silikon tahan panas food grade',
   'kuas minyak silikon baking tahan panas',
   'cetakan donat manual praktis adonan',
   'rolling pin kayu silikon penggiling adonan',
@@ -129,7 +129,7 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'sarung tangan oven silikon anti panas tebal',
   'jepitan mangkok piring panas silikon stainless',
   'alas tatakan panci panas silikon tahan panas',
-  'sendok ukur bumbu set stainless magnetic',
+  'sendok ukur bumbu stainless magnetic',
   'saringan tirisan mie minyak serbaguna stainless',
   'pembuat churros cetakan kue semprit manual',
   'capitan gorengan stainless dengan saringan tirisan',
@@ -204,12 +204,12 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'termometer minyak daging digital probe lcd dapur',
   'timer dapur digital magnetik pengingat waktu masak',
   'sendok takar digital timbangan bumbu lcd presisi',
-  'sendok takar bumbu stainless magnetik set komplit',
+  'sendok takar bumbu stainless magnetik multifungsi',
   'silikon pot air fryer tahan panas anti lengket loyang',
   'kertas minyak alas air fryer baking paper bulat',
   'cetakan es batu silikon pencet lepas mudah',
   'pembuat dumpling pastel pastelan manual praktis cetakan',
-  'sutil spatula silikon set spatula kuas kocokan',
+  'sutil spatula silikon tahan panas multifungsi',
   'capitan makanan capitan kue silikon jepit makanan',
   'gunting serbaguna dapur potong tulang ayam daging sk5',
   'alat pemotong kentang sayur spiral tornado fries',
@@ -226,7 +226,7 @@ export const DEFAULT_AUTO_KEYWORDS = [
   'spons kawat cuci piring sabut stainless anti gores',
   'kain lap nano berserat pembersih minyak dapur',
   'alat pembersih kerak wajan panci serbaguna',
-  'sikat pembersih botol tumbler sedotan set',
+  'sikat pembersih botol tumbler sedotan panjang',
   'sikat pembersih blender mata pisau dapur',
   'alat pembersih sisik ikan stainless dengan wadah',
   'sikat pembersih celah kompor wastafel serbaguna',
@@ -313,6 +313,39 @@ export function isFoodOrBeverageProduct(text = '') {
     if (!hasTool) {
       return true;
     }
+  }
+
+  return false;
+}
+
+export const BUNDLE_SET_EXCLUDE_WORDS = [
+  'set', 'pack', 'packs', 'package', 'paket', 'bundle', 'bundling', 'kombo', 'combo',
+  'lusin', 'grosir', 'renteng', 'multipack'
+];
+
+export function isBundleOrSetProduct(text = '') {
+  const normalized = normalizeText(text);
+  if (!normalized) return false;
+
+  // 1. Check for standalone bundle/set words: "set", "pack", "packs", "package", "paket", "bundle", "bundling", "combo", "kombo"
+  // Using \b word boundary so words like "keset", "reset", "offset" are not falsely flagged
+  if (/\b(?:set|pack|packs|package|paket|bundle|bundling|kombo|combo|lusin|grosir|renteng|multipack)\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 2. Multi-item quantity indicators: "isi 3", "isi 5", "isi 10", "isi 12", "isi banyak"
+  if (/\bisi\s*(?:\d+|banyak|beberapa)\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 3. Piece count indicators: "3 pcs", "5pcs", "10 pcs", "12 pcs"
+  if (/\b\d+\s*pcs\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 4. "1 set", "satu set", "1 paket", "1 pack"
+  if (/\b(?:1\s*set|satu\s*set|1\s*paket|1\s*pack|se-set)\b/i.test(normalized)) {
+    return true;
   }
 
   return false;
@@ -476,6 +509,11 @@ export function isBulkyOrUnsuitableProduct(text = '') {
 
   // 1C. Factory / manufacturing / industrial process / bulky grills / agricultural machinery
   if (/\b(?:blackstone|weber|smoker|barbecue|bbq|pabrik|factory|manufacturing|industri|pembuatan|ternak|pakan|limbah|selep|pemipil|perontok|pemanen|traktor|chopper|choper|cacah|silase|janggel)\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 1D. Disqualify sets, packs, bundles, multi-item packages (sulit dicocokkan dengan 1 video demo)
+  if (isBundleOrSetProduct(normalized)) {
     return true;
   }
 
@@ -827,9 +865,9 @@ export const KITCHEN_CORE_TOOLS = [
   'cetakan pastel dumpling pangsit gyoza manual',
   'cetakan sushi roll manual bazooka praktis',
   'cetakan onigiri nasi bento segitiga praktis',
-  'cetakan kue kering biskuit cookies press set',
+  'cetakan kue kering biskuit cookies press manual',
   'pembuat churros cetakan kue semprit manual',
-  'sutil silikon set tahan panas food grade',
+  'sutil silikon tahan panas food grade',
   'spatula silikon tahan panas gagang kayu estetik',
   'capitan makanan gorengan silikon stainless',
   'capitan gorengan stainless dengan saringan tirisan',
@@ -844,7 +882,7 @@ export const KITCHEN_CORE_TOOLS = [
   'timer dapur digital magnetik masak baking',
   'termometer makanan digital masak probe presisi',
   'timbangan digital dapur mini presisi gram',
-  'sendok takar bumbu dapur set magnetic stainless',
+  'sendok takar bumbu dapur magnetic stainless',
   'sendok takar digital timbangan bumbu lcd',
   'saringan tepung ayakan stainless putar manual',
   'whisk pengocok adonan telur manual stainless',
@@ -862,7 +900,7 @@ export const KITCHEN_CORE_TOOLS = [
   'spons cuci piring nano magic sponge pembersih kerak',
   'spons sabut kawat stainless anti gores cuci piring',
   'sikat cuci piring dispenser sabun otomatis',
-  'sikat pembersih botol tumbler sedotan set',
+  'sikat pembersih botol tumbler sedotan panjang',
   'sikat pembersih blender mata pisau dapur',
   'kain lap microfiber nano berserat pembersih minyak',
   'alat pembersih kerak wajan panci gosong',
@@ -1176,7 +1214,8 @@ function formatKeywordToProductTitle(keyword) {
 
 export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
   try {
-    const results = (await searchShopeeProducts(keyword)).filter(r => !seen.has(r.url));
+    const results = (await searchShopeeProducts(keyword))
+      .filter(r => !seen.has(r.url) && !isBundleOrSetProduct(r.title));
     results.forEach(r => seen.add(r.url));
 
     if (results.length > 0) {
@@ -1188,6 +1227,10 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
         const pageMeta = metas[i].status === 'fulfilled' ? metas[i].value : {};
 
         const rawTitle = pageMeta.title || result.title || '';
+        if (isBundleOrSetProduct(rawTitle)) {
+          continue;
+        }
+
         let titleCandidate = cleanTitle(rawTitle, result.url);
         if (!titleCandidate || isGenericShopeeTitle(titleCandidate)) {
           titleCandidate = formatKeywordToProductTitle(keyword);
@@ -2044,12 +2087,16 @@ function decodeBingRedirect(value) {
 }
 
 function buildShopeeSearchQueries(keyword) {
-  const cleanKeyword = keyword.replace(/\s+/g, ' ').trim();
+  const cleanKeyword = keyword
+    .replace(/\b(?:set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const negativeSetOperators = '-set -pack -paket -bundle';
   return [
-    `site:shopee.co.id ${cleanKeyword} "i."`,
-    `site:shopee.co.id/ ${cleanKeyword}`,
-    `site:shopee.co.id ${cleanKeyword}`,
-    `"shopee.co.id" ${cleanKeyword}`,
+    `site:shopee.co.id ${cleanKeyword} ${negativeSetOperators} "i."`,
+    `site:shopee.co.id/ ${cleanKeyword} ${negativeSetOperators}`,
+    `site:shopee.co.id ${cleanKeyword} ${negativeSetOperators}`,
+    `"shopee.co.id" ${cleanKeyword} ${negativeSetOperators}`,
   ];
 }
 
@@ -2075,6 +2122,10 @@ export function extractShopeeLinkFromText(text = '') {
   if (match) {
     let url = match[0].trim();
     url = url.replace(/[.,;!?]+$/, '');
+    const slugTitle = titleFromShopeeUrl(url);
+    if (slugTitle && isBundleOrSetProduct(slugTitle)) {
+      return '';
+    }
     return url;
   }
   return '';
@@ -2091,8 +2142,8 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
-  // Disqualify broken / repair / disassembly / maintenance tutorials / DIY (NOT actual product demos)
-  if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total)\b/i.test(titleText)) return false;
+  // Disqualify broken / repair / disassembly / maintenance tutorials / DIY / set / pack / bundle (NOT actual single product demos)
+  if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
     'cara', 'tutorial', 'diy', 'how to', 'do it yourself',
@@ -2737,7 +2788,10 @@ export function buildShopeeSearchUrl(productTitle = '', detectedBrand = '') {
     finalKeyword = `${brandClean} ${finalKeyword}`;
   }
 
-  finalKeyword = finalKeyword.replace(/\s+/g, ' ').trim();
+  finalKeyword = finalKeyword
+    .replace(/\b(?:set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 
   return `https://shopee.co.id/search?keyword=${encodeURIComponent(finalKeyword)}`;
 }

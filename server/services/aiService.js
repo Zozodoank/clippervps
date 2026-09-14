@@ -438,6 +438,7 @@ CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TO
   * REJECT if non-kitchen unrelated items.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
   * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
+  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
 ` : `
 CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
@@ -466,6 +467,7 @@ ${refImageInlineData ? `
   * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo, tutorial solder/baut). Affiliate product promotion requires showcasing a brand-new working product in action, NOT a repair tutorial!
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
   * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
+  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the target product or video shows an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
 `}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
@@ -705,7 +707,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       } else if (isSynthetic) {
         rejectionMsg = 'Video ditolak oleh AI: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
       } else if (isBulky) {
-        rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar'}) tergolong perabot/rak besar yang dilarang.`;
+        rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar / produk set'}) tergolong perabot/rak besar atau paket/set/bundle yang dilarang.`;
       } else if (isMatchFalse) {
         rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
       } else {
@@ -910,6 +912,7 @@ CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TO
   * REJECT if non-kitchen unrelated items.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
   * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
+  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
 ` : `
 CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
@@ -928,6 +931,7 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
   * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo). Affiliate product promotion requires showcasing a clean working product in action!
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
   * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
+  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the target product or video shows an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
 `}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
@@ -1147,7 +1151,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         } else if (isSynthetic) {
           rejectionMsg = 'Video ditolak oleh AI: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
         } else if (isBulky) {
-          rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar'}) tergolong perabot/rak besar yang dilarang.`;
+          rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar / produk set'}) tergolong perabot/rak besar atau paket/set/bundle yang dilarang.`;
         } else if (isMatchFalse) {
           rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
         } else {
@@ -1375,6 +1379,7 @@ RULE 2: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS N
   * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
   * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
+  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
 ` : `
 RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN TOOLS NICHE):
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
@@ -1391,9 +1396,10 @@ RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN
   * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
   * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
+  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the target product or video shows an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
 `}
 - If rejected for wrong product or bulky furniture:
-  {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok atau tergolong perabot/rak besar yang dilarang"}
+  {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok, tergolong perabot/rak besar, atau produk set/bundle yang dilarang"}
 
 RULE 3: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP):
 - MANDATORY AFFILIATE STANDARD:
@@ -1676,7 +1682,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
           } else if (isSynthetic) {
             rejectionMsg = 'Video ditolak: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
           } else if (isBulky) {
-            rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar'}) tergolong perabot/rak besar yang dilarang.`;
+            rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar / produk set'}) tergolong perabot/rak besar atau paket/set/bundle yang dilarang.`;
           } else if (isMatchFalse) {
             rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
           } else if (!hasValidFrames) {

@@ -219,6 +219,12 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Judul video mengindikasikan konten resep makanan, kuliner, mukbang, atau review minuman (bukan demonstrasi produk alat dapur).' };
   }
 
+  // 2E. Filter Produk Set, Multi-Pack, Bundle, dan Kombo
+  const bundleSetRegex = /\b(1\s*set|satu\s*set|1\s*paket|1\s*pack|bundle|bundling|kombo|combo|isi\s*\d+|isi\s+banyak|\d+\s*pcs|lusin|renteng|grosir|multipack)\b/i;
+  if (bundleSetRegex.test(titleLower)) {
+    return { eligible: false, reason: 'Judul video mengindikasikan produk set/bundle/multi-pack/kombo (sulit dicocokkan dengan link shopee tunggal).' };
+  }
+
   // 3. Filter Iklan & Sponsor Komersial
   const adKeywords = [
     'sponsored', 'promoted', 'paid promotion', 'endorsement', 'iklan',
