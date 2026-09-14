@@ -259,27 +259,48 @@ class TextGatekeeper:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. TAHAP 3: SCENE & OVERLAY CLASSIFIER (MobileNetV3 + Visual Variance)
+# 3. TAHAP 3: SCENE & OVERLAY CLASSIFIER (Custom MobileNetV3 + Visual Variance)
 # ─────────────────────────────────────────────────────────────────────────────
 class SceneGatekeeper:
     def __init__(self):
         self.ort_session = None
+        self.is_custom_model = False
         self.backend = "entropy_variance"
 
-        model_path = os.path.join(MODELS_DIR, "mobilenetv3_small.onnx")
-        if HAS_ORT and os.path.exists(model_path):
-            try:
-                opts = ort.SessionOptions()
-                opts.intra_op_num_threads = 2
-                self.ort_session = ort.InferenceSession(
-                    model_path,
-                    sess_options=opts,
-                    providers=["CPUExecutionProvider"]
-                )
-                self.backend = "mobilenetv3"
-                print("  [SceneGatekeeper] ✅ MobileNetV3 Scene Classifier aktif.")
-            except Exception as e:
-                print(f"  [SceneGatekeeper] ⚠️ Gagal memuat MobileNetV3: {e}")
+        custom_model_path = os.path.join(MODELS_DIR, "scene_filter_v2.onnx")
+        generic_model_path = os.path.join(MODELS_DIR, "mobilenetv3_small.onnx")
+
+        if HAS_ORT:
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = 2
+
+            # Prioritas 1: Model Custom Hasil Training (scene_filter_v2.onnx)
+            if os.path.exists(custom_model_path):
+                try:
+                    self.ort_session = ort.InferenceSession(
+                        custom_model_path,
+                        sess_options=opts,
+                        providers=["CPUExecutionProvider"]
+                    )
+                    self.is_custom_model = True
+                    self.backend = "custom_scene_filter_v2"
+                    print("  [SceneGatekeeper] 🎯 AI Custom Model (scene_filter_v2.onnx) AKTIF (Class 0: Real, Class 1: Reject).")
+                except Exception as e:
+                    print(f"  [SceneGatekeeper] ⚠️ Gagal memuat custom scene_filter_v2.onnx: {e}")
+
+            # Prioritas 2: Generic ImageNet Pretrained Fallback
+            if not self.ort_session and os.path.exists(generic_model_path):
+                try:
+                    self.ort_session = ort.InferenceSession(
+                        generic_model_path,
+                        sess_options=opts,
+                        providers=["CPUExecutionProvider"]
+                    )
+                    self.is_custom_model = False
+                    self.backend = "mobilenetv3_imagenet"
+                    print("  [SceneGatekeeper] ℹ️ MobileNetV3 Generic ImageNet Classifier aktif.")
+                except Exception as e:
+                    print(f"  [SceneGatekeeper] ⚠️ Gagal memuat MobileNetV3 generic: {e}")
 
     def evaluate(self, crop_bgr):
         h, w = crop_bgr.shape[:2]
@@ -290,7 +311,7 @@ class SceneGatekeeper:
         unique_colors = len(np.unique(quantized, axis=0))
 
         # Real live camera footage has rich color gradients (> 40 unique colors at 64x64)
-        # Flat vector graphics, solid color slide bumpers, and intro cards have very few colors (< 24)
+        # Flat vector graphics, solid color slide bumpers, and intro cards have very few colors (< 22)
         if unique_colors < 22:
             return False, 0.90, f"Terdeteksi kartu bumper statis / grafis 2D datar ({unique_colors} kluster warna)"
 
@@ -300,7 +321,7 @@ class SceneGatekeeper:
         if laplacian_var < 15.0:
             return False, 0.85, f"Frame polos tanpa tekstur / slide bumper (laplacian: {laplacian_var:.1f})"
 
-        # 3. MobileNetV3 Inference (if available)
+        # 3. AI Scene Classification (Custom Fine-tuned or Generic ImageNet)
         if self.ort_session:
             try:
                 resized = cv2.resize(crop_bgr, (224, 224), interpolation=cv2.INTER_LINEAR)
@@ -312,13 +333,26 @@ class SceneGatekeeper:
 
                 input_name = self.ort_session.get_inputs()[0].name
                 outputs = self.ort_session.run(None, {input_name: blob})
-                preds = outputs[0][0]
-                top_class = int(np.argmax(preds))
+                raw_logits = outputs[0][0]
 
-                # ImageNet classes for digital screen, web site, comic book, cartoon, billboard, scoreboard, book jacket
-                graphic_classes = {918, 919, 921, 664, 782, 916, 922}
-                if top_class in graphic_classes:
-                    return False, 0.80, f"MobileNetV3 mengklasifikasikan sebagai grafis/kartun/layar (class #{top_class})"
+                # ── Custom Model Fine-Tuned (Class 0: valid_real, Class 1: rejected) ──
+                if self.is_custom_model:
+                    exp_l = np.exp(raw_logits - np.max(raw_logits))
+                    probs = exp_l / np.sum(exp_l)
+                    pred_class = int(np.argmax(probs))
+                    conf = float(probs[pred_class])
+
+                    if pred_class == 1 and conf > 0.55:
+                        return False, conf, f"Custom AI: Terdeteksi grafis/kartun/slide non-produk (confidence: {conf * 100:.1f}%)"
+                    elif pred_class == 0:
+                        return True, conf, f"Custom AI: Peragaan produk fisik nyata valid (confidence: {conf * 100:.1f}%)"
+
+                # ── Generic ImageNet Model Fallback ──
+                else:
+                    top_class = int(np.argmax(raw_logits))
+                    graphic_classes = {918, 919, 921, 664, 782, 916, 922}
+                    if top_class in graphic_classes:
+                        return False, 0.80, f"MobileNetV3 mengklasifikasikan sebagai grafis/kartun/layar (class #{top_class})"
             except Exception:
                 pass
 
