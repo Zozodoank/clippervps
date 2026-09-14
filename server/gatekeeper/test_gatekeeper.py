@@ -74,14 +74,14 @@ def run_tests():
         if val_real_frames:
             print("  --- Kategori Real Products (Seharusnya CLEAN / PASSED) ---")
             for rf in val_real_frames:
-                r = gatekeeper.process_frame(rf, 1.0)
+                r = gatekeeper.process_single_frame(rf, 1.0)
                 icon = "✅" if r["status"] == "clean" else "⚠️"
                 print(f"    {icon} {os.path.basename(rf)}: {r['status']} ({r.get('stage', 'ok')}) -> {r['reason']}")
 
         if val_reject_frames:
             print("  --- Kategori Rejected/Bumper/Kartun (Seharusnya DISCARDED) ---")
             for rj in val_reject_frames:
-                r = gatekeeper.process_frame(rj, 1.0)
+                r = gatekeeper.process_single_frame(rj, 1.0)
                 icon = "❌" if r["status"] == "discarded" else "⚠️"
                 print(f"    {icon} {os.path.basename(rj)}: {r['status']} ({r.get('stage', 'ok')}) -> {r['reason']}")
 
