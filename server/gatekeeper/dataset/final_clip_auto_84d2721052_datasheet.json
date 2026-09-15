@@ -1,0 +1,517 @@
+[
+  {
+    "filename": "clip_84d2721052_t001.jpg",
+    "source_frame": "frame_001.jpg",
+    "timestamp_sec": 1,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 67.6%)",
+    "details": {
+      "confidence": 0.676195502281189,
+      "box": [
+        917,
+        1196,
+        70,
+        123
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t002.jpg",
+    "source_frame": "frame_002.jpg",
+    "timestamp_sec": 2,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t003.jpg",
+    "source_frame": "frame_003.jpg",
+    "timestamp_sec": 3,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 70.0%)",
+    "details": {
+      "confidence": 0.6997119784355164,
+      "box": [
+        450,
+        806,
+        366,
+        477
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t004.jpg",
+    "source_frame": "frame_004.jpg",
+    "timestamp_sec": 4,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t005.jpg",
+    "source_frame": "frame_005.jpg",
+    "timestamp_sec": 5,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t006.jpg",
+    "source_frame": "frame_006.jpg",
+    "timestamp_sec": 6,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t007.jpg",
+    "source_frame": "frame_007.jpg",
+    "timestamp_sec": 7,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 45.1%)",
+    "details": {
+      "confidence": 0.4508584439754486,
+      "box": [
+        365,
+        1337,
+        76,
+        103
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t008.jpg",
+    "source_frame": "frame_008.jpg",
+    "timestamp_sec": 8,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 45.8%)",
+    "details": {
+      "confidence": 0.45805490016937256,
+      "box": [
+        287,
+        383,
+        511,
+        509
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t009.jpg",
+    "source_frame": "frame_009.jpg",
+    "timestamp_sec": 9,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 50.9%)",
+    "details": {
+      "confidence": 0.5089560747146606,
+      "box": [
+        229,
+        1054,
+        76,
+        80
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t010.jpg",
+    "source_frame": "frame_010.jpg",
+    "timestamp_sec": 10,
+    "label": "rejected",
+    "split": "val",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 73.3%)",
+    "details": {
+      "confidence": 0.7334945797920227,
+      "box": [
+        334,
+        961,
+        64,
+        85
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t011.jpg",
+    "source_frame": "frame_011.jpg",
+    "timestamp_sec": 11,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 56.2%)",
+    "details": {
+      "confidence": 0.5619794130325317,
+      "box": [
+        709,
+        785,
+        197,
+        219
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t012.jpg",
+    "source_frame": "frame_012.jpg",
+    "timestamp_sec": 12,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 53.6%)",
+    "details": {
+      "confidence": 0.5361311435699463,
+      "box": [
+        642,
+        177,
+        160,
+        180
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t013.jpg",
+    "source_frame": "frame_013.jpg",
+    "timestamp_sec": 13,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t014.jpg",
+    "source_frame": "frame_014.jpg",
+    "timestamp_sec": 14,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t015.jpg",
+    "source_frame": "frame_015.jpg",
+    "timestamp_sec": 15,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t016.jpg",
+    "source_frame": "frame_016.jpg",
+    "timestamp_sec": 16,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 48.2%)",
+    "details": {
+      "confidence": 0.48156729340553284,
+      "box": [
+        613,
+        509,
+        434,
+        544
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t017.jpg",
+    "source_frame": "frame_017.jpg",
+    "timestamp_sec": 17,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 68.8%)",
+    "details": {
+      "confidence": 0.6882100105285645,
+      "box": [
+        333,
+        1550,
+        56,
+        87
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t018.jpg",
+    "source_frame": "frame_018.jpg",
+    "timestamp_sec": 18,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 45.8%)",
+    "details": {
+      "confidence": 0.45848676562309265,
+      "box": [
+        776,
+        1357,
+        336,
+        431
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t019.jpg",
+    "source_frame": "frame_019.jpg",
+    "timestamp_sec": 19,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x38px)",
+    "details": {
+      "totalCoverage": 0.12,
+      "bottomCoverage": 0.15
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t020.jpg",
+    "source_frame": "frame_020.jpg",
+    "timestamp_sec": 20,
+    "label": "rejected",
+    "split": "val",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (confidence: 64.8%)",
+    "details": {
+      "confidence": 0.6480511426925659,
+      "box": [
+        480,
+        782,
+        371,
+        371
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t021.jpg",
+    "source_frame": "frame_021.jpg",
+    "timestamp_sec": 21,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x87px)",
+    "details": {
+      "totalCoverage": 0.12,
+      "bottomCoverage": 0.15
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t022.jpg",
+    "source_frame": "frame_022.jpg",
+    "timestamp_sec": 22,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x85px)",
+    "details": {
+      "totalCoverage": 0.12,
+      "bottomCoverage": 0.15
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t023.jpg",
+    "source_frame": "frame_023.jpg",
+    "timestamp_sec": 23,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x34px)",
+    "details": {
+      "totalCoverage": 0.12,
+      "bottomCoverage": 0.15
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t024.jpg",
+    "source_frame": "frame_024.jpg",
+    "timestamp_sec": 24,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.02,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t025.jpg",
+    "source_frame": "frame_025.jpg",
+    "timestamp_sec": 25,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t026.jpg",
+    "source_frame": "frame_026.jpg",
+    "timestamp_sec": 26,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 76.5%)",
+    "details": {
+      "confidence": 0.765151858329773,
+      "box": [
+        723,
+        895,
+        148,
+        148
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t027.jpg",
+    "source_frame": "frame_027.jpg",
+    "timestamp_sec": 27,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (YuNet 75.4%)",
+    "details": {
+      "confidence": 0.7535358667373657,
+      "box": [
+        714,
+        899,
+        153,
+        147
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t028.jpg",
+    "source_frame": "frame_028.jpg",
+    "timestamp_sec": 28,
+    "label": "rejected",
+    "split": "train",
+    "stage": "scene",
+    "reason": "Custom AI: Terdeteksi grafis/kartun/slide non-produk (confidence: 64.1%)",
+    "details": {
+      "confidence": 0.6407392024993896
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t029.jpg",
+    "source_frame": "frame_029.jpg",
+    "timestamp_sec": 29,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t030.jpg",
+    "source_frame": "frame_030.jpg",
+    "timestamp_sec": 30,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "passed",
+    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "details": {
+      "totalCoverage": 0.0,
+      "bottomCoverage": 0.0
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t031.jpg",
+    "source_frame": "frame_031.jpg",
+    "timestamp_sec": 31,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x38px)",
+    "details": {
+      "totalCoverage": 0.12,
+      "bottomCoverage": 0.15
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t032.jpg",
+    "source_frame": "frame_032.jpg",
+    "timestamp_sec": 32,
+    "label": "rejected",
+    "split": "train",
+    "stage": "face",
+    "reason": "Wajah manusia terdeteksi (confidence: 62.8%)",
+    "details": {
+      "confidence": 0.6278247833251953,
+      "box": [
+        332,
+        748,
+        472,
+        472
+      ]
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t033.jpg",
+    "source_frame": "frame_033.jpg",
+    "timestamp_sec": 33,
+    "label": "rejected",
+    "split": "train",
+    "stage": "scene",
+    "reason": "Terdeteksi kartu bumper statis / grafis 2D datar (17 kluster warna)",
+    "details": {
+      "confidence": 0.9
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t034.jpg",
+    "source_frame": "frame_034.jpg",
+    "timestamp_sec": 34,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (116x73px)",
+    "details": {
+      "totalCoverage": 0.12,
+      "bottomCoverage": 0.15
+    }
+  }
+]

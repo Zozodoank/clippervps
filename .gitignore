@@ -44,7 +44,8 @@ server/gatekeeper/models/*.onnx
 server/gatekeeper/models/*.tflite
 server/gatekeeper/models/*.data
 server/gatekeeper/test_temp/
-server/gatekeeper/dataset/
+server/gatekeeper/dataset/*
+!server/gatekeeper/dataset/*.json
 *.zip
 __pycache__/
 *.pyc

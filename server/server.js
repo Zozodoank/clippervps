@@ -1798,20 +1798,20 @@ export async function runStage1Pipeline({
 
     // ── AUDIT WAJAH MULTI-TITIK PASCA-DOWNLOAD (ANTI-WAJAH 1 DETIK) ──
     // Mengekstrak 2 frame per klip (t+0.8s dan t+2.2s) dari video 1080p yang sudah diunduh
-    // untuk memverifikasi tidak ada wajah manusia yang muncul sekilas di tengah klip.
+    // untuk memverifikasi kualitas klip (bebas teks overlay/animasi promosi, wajah manusia, dan bumper grafis).
     if (Array.isArray(highlight.clips) && highlight.clips.length > 0) {
       updateProgress({
-        step: 'face_audit',
-        message: 'Melakukan audit bebas wajah multi-titik pada seluruh cuplikan...',
+        step: 'clip_audit',
+        message: 'Melakukan audit kualitas multi-titik (anti-teks & anti-wajah) pada klip terpilih...',
         progress: 60,
         status: 'running'
       });
 
-      const auditFramesDir = path.join(sessionTempDir, 'face_audit_frames');
+      const auditFramesDir = path.join(sessionTempDir, 'clip_audit_frames');
       if (!fs.existsSync(auditFramesDir)) fs.mkdirSync(auditFramesDir, { recursive: true });
 
       const cleanAuditedClips = [];
-      const discardedFaceClips = [];
+      const discardedDirtyClips = [];
 
       for (let cIdx = 0; cIdx < highlight.clips.length; cIdx++) {
         const c = highlight.clips[cIdx];
@@ -1838,39 +1838,41 @@ export async function runStage1Pipeline({
           { filePath: f2Path, timestamp: t2 },
         ].filter(f => fs.existsSync(f.filePath));
 
-        let hasFace = false;
+        let hasDirtyContent = false;
+        let dirtyReason = '';
         if (testFrames.length > 0) {
-          const gkRes = callAIGatekeeperMicroservice(testFrames, { timeoutSec: 4 });
+          const gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 10 });
           if (gkRes && Array.isArray(gkRes.allFrames)) {
-            const faceDet = gkRes.allFrames.find(f => f.status !== 'clean' && f.stage === 'face');
-            if (faceDet) {
-              hasFace = true;
-              console.warn(`[FaceAudit] ⛔ Wajah manusia terdeteksi pada klip #${cIdx + 1} di detik ${faceDet.timestamp}s (${faceDet.reason}). Klip dibuang!`);
+            const dirtyDet = gkRes.allFrames.find(f => f.status !== 'clean');
+            if (dirtyDet) {
+              hasDirtyContent = true;
+              dirtyReason = `[${dirtyDet.stage ? dirtyDet.stage.toUpperCase() : 'DIRTY'}] ${dirtyDet.reason || 'Konten tidak layak'}`;
+              console.warn(`[ClipAudit] ⛔ Konten tidak layak terdeteksi pada klip #${cIdx + 1} di detik ${dirtyDet.timestamp}s (${dirtyReason}). Klip dibuang!`);
             }
           }
         }
 
-        if (hasFace) {
-          discardedFaceClips.push(c);
+        if (hasDirtyContent) {
+          discardedDirtyClips.push({ clip: c, reason: dirtyReason });
         } else {
           cleanAuditedClips.push(c);
         }
       }
 
-      if (discardedFaceClips.length > 0) {
-        console.log(`[FaceAudit] Berhasil membuang ${discardedFaceClips.length} klip berwajah. Tersisa ${cleanAuditedClips.length} klip 100% faceless.`);
+      if (discardedDirtyClips.length > 0) {
+        console.log(`[ClipAudit] Berhasil membuang ${discardedDirtyClips.length} klip kotor (teks overlay/wajah/bumper). Tersisa ${cleanAuditedClips.length} klip bersih.`);
         if (cleanAuditedClips.length >= 3) {
           highlight.clips = cleanAuditedClips;
           highlight.duration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || 3.3), 0);
         } else {
-          console.warn(`[FaceAudit] Klip bersih tersisa terlalu sedikit (${cleanAuditedClips.length}). Menolak video untuk mencari kandidat lain...`);
-          const auditErr = new Error('Video ditolak pada audit pasca-download: klip terpilih terdeteksi menampilkan wajah manusia.');
+          console.warn(`[ClipAudit] Klip bersih tersisa terlalu sedikit (${cleanAuditedClips.length}). Menolak video untuk mencari kandidat lain...`);
+          const auditErr = new Error('Video ditolak pada audit pasca-download: klip terpilih terdeteksi mengandung teks overlay promosi, bumper statis, atau wajah manusia.');
           auditErr.isAiRejection = true;
-          auditErr.rejectionReason = 'Menampilkan wajah atau presenter manusia pada klip terpilih.';
+          auditErr.rejectionReason = 'Mengandung teks overlay promosi, bumper statis, atau wajah manusia pada klip terpilih.';
           throw auditErr;
         }
       } else {
-        console.log(`[FaceAudit] ✅ Seluruh ${highlight.clips.length} klip terverifikasi 100% bebas wajah multi-titik.`);
+        console.log(`[ClipAudit] ✅ Seluruh ${highlight.clips.length} klip terverifikasi 100% bersih bebas teks overlay, bumper statis, dan wajah.`);
       }
     }
 
