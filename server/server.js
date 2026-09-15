@@ -21,6 +21,7 @@ import {
   formatSeconds
 } from './services/aiService.js';
 import { generateSrtSubtitles } from './services/subtitleService.js';
+import { loadEnglishDictionary, saveToEnglishDictionary } from './services/dictionaryService.js';
 import {
   renderSilentAntiDetectionVideo,
   mergeVoiceoverAndBurnSubtitles,
