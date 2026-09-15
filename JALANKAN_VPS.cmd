@@ -85,7 +85,7 @@ echo 3. Tekan Ctrl+C untuk berhenti dan kembali ke menu.
 echo =====================================================================
 echo.
 start "" "http://localhost:3000"
-ssh -t -L 3000:localhost:3000 -L 5000:localhost:5000 -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 stop clipper >/dev/null 2>&1; cd ~/clipperVPS && node dev-runner.js; pm2 start clipper >/dev/null 2>&1"
+ssh -t -R 10808 -L 3000:localhost:3000 -L 5000:localhost:5000 -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 stop clipper >/dev/null 2>&1; cd ~/clipperVPS && node dev-runner.js; pm2 start clipper >/dev/null 2>&1"
 echo.
 echo Dev-runner dihentikan. Background service otomatis diaktifkan kembali.
 pause
@@ -98,7 +98,7 @@ echo 📋 MENAMPILKAN LOG REAL-TIME (PM2 LOGS)...
 echo Tekan Ctrl+C untuk keluar dari tampilan log.
 echo =====================================================================
 echo.
-ssh -t -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 logs"
+ssh -t -R 10808 -p %VPS_PORT% %VPS_USER%@%VPS_HOST% "pm2 logs"
 pause
 goto MENU
 
@@ -129,11 +129,11 @@ goto MENU
 :SSH_TERMINAL
 cls
 echo =====================================================================
-echo 💻 MASUK KE SHELL VPS UBUNTU...
+echo 💻 MASUK KE SHELL VPS UBUNTU (Reverse SOCKS5 Aktif)...
 echo Ketik 'exit' untuk kembali ke menu.
 echo =====================================================================
 echo.
-ssh -p %VPS_PORT% %VPS_USER%@%VPS_HOST%
+ssh -R 10808 -p %VPS_PORT% %VPS_USER%@%VPS_HOST%
 pause
 goto MENU
 

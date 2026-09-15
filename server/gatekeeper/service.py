@@ -15,8 +15,19 @@ import math
 import argparse
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 
+# VPS 2-core: batasi thread OpenMP/BLAS SEBELUM cv2/numpy/onnxruntime dimuat,
+# mencegah kontensi thread dengan Node.js + FFmpeg yang berjalan bersamaan.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import cv2
 import numpy as np
+
+try:
+    cv2.setNumThreads(1)
+except Exception:
+    pass
 
 # ONNX runtime & MediaPipe
 try:
@@ -74,7 +85,7 @@ class FaceGatekeeper:
                     model=yunet_path,
                     config="",
                     input_size=(320, 320),
-                    score_threshold=self.min_confidence,
+                    score_threshold=0.45,
                     nms_threshold=0.3,
                     top_k=5000
                 )
@@ -87,15 +98,17 @@ class FaceGatekeeper:
         if self.backend == "none":
             print("  [FaceGatekeeper] ⚠️ Mode fallback aktif.")
 
-    def detect(self, crop_bgr):
-        h, w = crop_bgr.shape[:2]
+    def detect(self, image_bgr):
+        h, w = image_bgr.shape[:2]
         if h < 30 or w < 30:
             return False, 0.0, None, "Dimensi frame terlalu kecil"
 
-        # 1. Try MediaPipe
+        min_face_px = max(10, int(min(h, w) * 0.025))
+
+        # 1. Try MediaPipe BlazeFace
         if self.mp_detector:
             try:
-                rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+                rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                 results = self.mp_detector.detect(mp_image)
                 if results and results.detections:
@@ -109,7 +122,7 @@ class FaceGatekeeper:
                             by = max(0, int(bbox.origin_y))
                             bw = int(bbox.width)
                             bh = int(bbox.height)
-                            if bh > h * 0.04 and bw > w * 0.04:
+                            if bh >= min_face_px and bw >= min_face_px:
                                 if score > best_score:
                                     best_score = score
                                     best_box = [bx, by, bw, bh]
@@ -118,18 +131,18 @@ class FaceGatekeeper:
             except Exception:
                 pass
 
-        # 2. Try YuNet
+        # 2. Try OpenCV YuNet (Second-pass detector for angled / in-the-wild faces)
         if self.yunet_detector:
             try:
                 self.yunet_detector.setInputSize((w, h))
-                _, faces = self.yunet_detector.detect(crop_bgr)
+                _, faces = self.yunet_detector.detect(image_bgr)
                 if faces is not None and len(faces) > 0:
                     for face in faces:
                         score = float(face[-1])
-                        if score >= self.min_confidence:
+                        if score >= 0.45:
                             bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-                            if bh > h * 0.04 and bw > w * 0.04:
-                                return True, score, [bx, by, bw, bh], f"Wajah manusia terdeteksi (confidence: {score * 100:.1f}%)"
+                            if bh >= min_face_px and bw >= min_face_px:
+                                return True, score, [bx, by, bw, bh], f"Wajah manusia terdeteksi (YuNet {score * 100:.1f}%)"
             except Exception:
                 pass
 
@@ -140,7 +153,7 @@ class FaceGatekeeper:
 # 2. TAHAP 2: TEXT & SUBTITLE DETECTOR (DBNet PP-OCRv4 ONNX)
 # ─────────────────────────────────────────────────────────────────────────────
 class TextGatekeeper:
-    def __init__(self, max_total_coverage=0.08, max_bottom_coverage=0.10):
+    def __init__(self, max_total_coverage=0.050, max_bottom_coverage=0.040):
         self.max_total_coverage = max_total_coverage
         self.max_bottom_coverage = max_bottom_coverage
         self.ort_session = None
@@ -250,9 +263,9 @@ class TextGatekeeper:
         bottom_zone_area = float((h - bottom_y) * w)
         bottom_cov = float(cv2.countNonZero(bottom_roi)) / bottom_zone_area if bottom_zone_area > 0 else 0.0
 
-        if bottom_cov >= 0.20:
+        if bottom_cov >= 0.08:
             return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (densitas {bottom_cov * 100:.1f}%)"
-        if total_cov >= 0.16:
+        if total_cov >= 0.07:
             return True, total_cov, bottom_cov, f"Densitas teks/grafis dominan ({total_cov * 100:.1f}%)"
 
         return False, total_cov, bottom_cov, "Teks dalam batas wajar"
@@ -413,17 +426,31 @@ class FrameGatekeeper:
 
         crop = self.crop_9_16(img)
 
-        # ── TAHAP 1: Face Detection ──
-        has_face, face_conf, face_box, face_reason = self.face_gate.detect(crop)
-        if has_face:
+        # ── TAHAP 1A: Face Detection pada Crop 9:16 (Area Tengah Fokus Klip) ──
+        has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = self.face_gate.detect(crop)
+        if has_face_crop:
             return {
                 "filePath": file_path,
                 "timestamp": timestamp,
                 "status": "discarded",
                 "stage": "face",
-                "reason": face_reason,
-                "confidence": face_conf,
-                "box": face_box
+                "reason": face_reason_crop,
+                "confidence": face_conf_crop,
+                "box": face_box_crop
+            }
+
+        # ── TAHAP 1B: Face Detection pada Full 16:9 Frame (Presenter di Sisi Kiri / Kanan Video) ──
+        # Mencegah vlogger/presenter yang berdiri di pinggir layar lolos ke Gemini Vision
+        has_face_full, face_conf_full, face_box_full, face_reason_full = self.face_gate.detect(img)
+        if has_face_full:
+            return {
+                "filePath": file_path,
+                "timestamp": timestamp,
+                "status": "discarded",
+                "stage": "face",
+                "reason": f"Presenter terdeteksi di video (area samping): {face_reason_full}",
+                "confidence": face_conf_full,
+                "box": face_box_full
             }
 
         # ── TAHAP 2: Text Detection ──

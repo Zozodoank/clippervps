@@ -55,18 +55,65 @@ function findCookiesFile() {
  * 5. Automatic detection of session cookies.txt across root and server/ folders
  */
 /**
+ * Fast zero-overhead check if a local port is listening via /proc/net/tcp (Linux/Termux)
+ */
+export function isLocalPortListening(port) {
+  try {
+    const hexPort = Number(port).toString(16).toUpperCase().padStart(4, '0');
+    if (fs.existsSync('/proc/net/tcp')) {
+      const tcp = fs.readFileSync('/proc/net/tcp', 'utf8');
+      if (tcp.includes(`:${hexPort} `) || tcp.includes(`:${hexPort}\t`)) {
+        return true;
+      }
+    }
+    if (fs.existsSync('/proc/net/tcp6')) {
+      const tcp6 = fs.readFileSync('/proc/net/tcp6', 'utf8');
+      if (tcp6.includes(`:${hexPort} `) || tcp6.includes(`:${hexPort}\t`)) {
+        return true;
+      }
+    }
+  } catch {}
+  return false;
+}
+
+/**
+ * Returns proxy args with automatic fallback:
+ * If a local reverse SOCKS5 proxy (e.g. 127.0.0.1:10808) is defined, checks if port is listening.
+ * If not connected yet via SSH -R, safely omits --proxy to avoid connection refused errors.
+ */
+export function getSmartProxyArgs() {
+  const proxy = (process.env.RESIDENTIAL_PROXY || process.env.PROXY_URL || '').trim();
+  if (!proxy) return [];
+
+  if (proxy.includes('127.0.0.1') || proxy.includes('localhost')) {
+    const match = proxy.match(/:(\d+)/);
+    const port = match ? parseInt(match[1], 10) : 10808;
+    if (fs.existsSync('/proc/net/tcp')) {
+      const isListening = isLocalPortListening(port);
+      if (!isListening) {
+        return [];
+      }
+    }
+  }
+
+  return ['--proxy', proxy];
+}
+
+/**
  * Base yt-dlp args used for all requests (search + download).
  * Stripped of --remote-components and --js-runtimes which break on Android/Termux.
  */
 function getYtDlpArgs(clientSpoof = null) {
-  const residentialProxy = (process.env.RESIDENTIAL_PROXY || process.env.PROXY_URL || '').trim();
-  const proxyArgs = residentialProxy ? ['--proxy', residentialProxy] : [];
+  const proxyArgs = getSmartProxyArgs();
 
   const foundCookies = findCookiesFile();
   const cookiesArgs = foundCookies ? ['--cookies', foundCookies] : [];
 
   if (foundCookies) {
     console.log(`[Downloader] 🍪 Found active session cookies: ${foundCookies}`);
+  }
+  if (proxyArgs.length) {
+    console.log(`[Downloader] 🛡️ Active Anti-Block Proxy: ${proxyArgs[1]}`);
   }
 
   const args = [

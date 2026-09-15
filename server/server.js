@@ -428,7 +428,7 @@ app.get('/api/health', async (req, res) => {
     openRouterKeyConfigured: openRouterKeySet,
     geminiKeyConfigured: geminiKeySet,
     geminiFallbackConfigured: geminiKeySet,
-    geminiModel: 'gemini-1.5-flash',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     geminiFileApiConfigured: geminiKeySet,
     activeAiEngine,
     defaultAiProvider: activeAiEngine !== 'none' ? activeAiEngine : 'gemini',
@@ -1231,7 +1231,7 @@ export async function runStage1Pipeline({
       }
 
       preSampledFrames = sampled;
-      const localCheck = inspectFramesLocally(sampled, {
+      const localCheck = await inspectFramesLocally(sampled, {
         aspectRatio: options.aspectRatio || '9:16',
         onProgress: updateProgress,
       });
@@ -1393,7 +1393,7 @@ export async function runStage1Pipeline({
         });
 
         // Verifikasi filter lokal pada frame video cache (bebas teks mengambang & bebas wajah)
-        const localCacheCheck = inspectFramesLocally(rawFrames, {
+        const localCacheCheck = await inspectFramesLocally(rawFrames, {
           aspectRatio: options.aspectRatio || '9:16',
           onProgress: updateProgress,
         });
@@ -1620,7 +1620,7 @@ export async function runStage1Pipeline({
           }
 
           // Filter granular per-frame: buang frame wajah/intro/rusak, simpan frame peragaan produk!
-          const frameFilterRes = filterCandidateFramesPerFrame(sampleRes.frames, {
+          const frameFilterRes = await filterCandidateFramesPerFrame(sampleRes.frames, {
             candidateIndex: i,
             candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
           });
@@ -3729,4 +3729,27 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🔑 Google Gemini API: configured (Direct fallback ready)`);
   }
   console.log(`======================================================\n`);
+
+  // ── HEALTH CHECK AI LOCAL GATEKEEPER (port 5050) ──
+  (async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:5050/health', { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const health = await res.json();
+        const m = health.models || {};
+        console.log(`🤖 AI Local Gatekeeper: ONLINE (face: ${m.face || '?'}, text: ${m.text || '?'}, scene: ${m.scene || '?'})`);
+        const weakBackends = [];
+        if (!m.face || m.face === 'none') weakBackends.push('face');
+        if (!m.text || m.text === 'gradient_fallback' || m.text === 'none') weakBackends.push('text');
+        if (!m.scene || m.scene === 'entropy_variance') weakBackends.push('scene');
+        if (weakBackends.length > 0) {
+          console.warn(`⚠️  Gatekeeper berjalan TANPA model AI untuk: [${weakBackends.join(', ')}]. Jalankan: bash setup-gatekeeper.sh agar akurasi filter lokal maksimal.`);
+        }
+      } else {
+        console.warn(`⚠️  AI Local Gatekeeper merespons HTTP ${res.status}.`);
+      }
+    } catch {
+      console.warn('⚠️  AI Local Gatekeeper (port 5050) OFFLINE.');
+    }
+  })();
 });

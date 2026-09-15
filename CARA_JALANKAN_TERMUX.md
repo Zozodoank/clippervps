@@ -40,16 +40,17 @@ Ketik perintah ini di Termux (cukup sekali di awal):
 pkg update && pkg install openssh termux-tools -y
 ```
 
-### Langkah 2: Hubungkan SSH Tunnel & Langsung Tampilkan Log
-Jalankan perintah ini di Termux (catatan: wajib ada flag `-t` agar log real-time bisa tampil di HP):
+### Langkah 2: Hubungkan SSH Tunnel (Port Forwarding & Anti-Blokir IP)
+Jalankan perintah ini di Termux (catatan: flag `-R 10808` membagikan koneksi internet HP Anda ke VPS sebagai SOCKS5 proxy agar tidak diblokir YouTube, dan `-t` agar log real-time tampil di HP):
 ```bash
-ssh -t -L 3000:localhost:3000 -p 14115 ubuntu@208.76.40.194 "pm2 logs clipper"
+ssh -t -R 10808 -L 3000:localhost:3000 -p 14115 ubuntu@208.76.40.194 "pm2 logs clipper"
 ```
 * Masukkan password VPS:
   ```text
   @Zozo06070786
   ```
 * Layar Termux Anda akan langsung menampilkan **live streaming log** server!
+* Koneksi internet seluler HP Anda otomatis menjadi tameng anti-blokir untuk unduhan YouTube di VPS!
 
 ### Langkah 3: Buka Browser di HP
 Sambil Termux tetap terbuka di background:

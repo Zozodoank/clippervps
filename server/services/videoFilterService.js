@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
 import { trackBandwidth, trackSavedBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isTitleMatchingProduct } from './discoveryService.js';
+import { getSmartProxyArgs } from './downloader.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,8 +48,7 @@ export function findCookiesFile() {
  * Base yt-dlp arguments with residential proxy and cookies
  */
 function getYtDlpBaseArgs() {
-  const residentialProxy = (process.env.RESIDENTIAL_PROXY || process.env.PROXY_URL || '').trim();
-  const proxyArgs = residentialProxy ? ['--proxy', residentialProxy] : [];
+  const proxyArgs = getSmartProxyArgs();
 
   const foundCookies = findCookiesFile();
   const cookiesArgs = foundCookies ? ['--cookies', foundCookies] : [];
@@ -56,7 +56,6 @@ function getYtDlpBaseArgs() {
   const args = [
     '--no-check-certificates',
     '--geo-bypass',
-    '--remote-components', 'ejs:github',
   ];
 
   if (cookiesArgs.length) args.push(...cookiesArgs);
@@ -339,8 +338,8 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   console.log(`[VideoFilterService] Fast seek sampling ${safeMax} frames across ${safeDuration}s from stream...`);
 
-  // Fast seek each timestamp with concurrency limit (5 parallel workers)
-  const concurrency = 5;
+  // Fast seek each timestamp with concurrency limit (2 parallel workers on 2-core VPS)
+  const concurrency = 2;
   const executing = [];
   for (const point of samplePoints) {
     const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
@@ -467,7 +466,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
-export function callAIGatekeeperMicroservice(frames, { timeoutSec = 5, onProgress = () => {} } = {}) {
+export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 20, onProgress = () => {} } = {}) {
   try {
     const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
     if (validFrames.length === 0) return null;
@@ -479,23 +478,26 @@ export function callAIGatekeeperMicroservice(frames, { timeoutSec = 5, onProgres
       }))
     });
 
-    const res = spawnSync('curl', [
-      '-s',
-      '-m', String(timeoutSec),
-      '-X', 'POST',
-      'http://127.0.0.1:5050/filter-frames',
-      '-H', 'Content-Type: application/json',
-      '-d', payload
-    ], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const res = await fetch('http://127.0.0.1:5050/filter-frames', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: payload,
+      signal: AbortSignal.timeout(timeoutSec * 1000)
+    });
 
-    if (res.status === 0 && res.stdout) {
-      const parsed = JSON.parse(res.stdout.trim());
+    if (res.ok) {
+      const parsed = await res.json();
       if (parsed && parsed.status === 'success') {
         return parsed;
       }
+    } else {
+      console.warn(`[Gatekeeper] Microservice HTTP ${res.status}. Falling back to heuristic.`);
     }
   } catch (err) {
-    // Graceful fallback to heuristic checks
+    // Graceful fallback to heuristic checks with informative log
+    console.log(`[Gatekeeper] Microservice fallback to heuristic (${err.message || 'offline'}).`);
   }
   return null;
 }
@@ -507,13 +509,13 @@ export function callAIGatekeeperMicroservice(frames, { timeoutSec = 5, onProgres
  * Tahap 2: DBNet Text Detection (membuang subtitle terbakar & promo overlay).
  * Tahap 3: MobileNetV3 (membuang bumper foto statis & kartun/animasi).
  */
-export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {} } = {}) {
+export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {} } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
     return { eligible: false, cleanFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
   }
 
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
-  const aiResult = callAIGatekeeperMicroservice(frames, { timeoutSec: 4, onProgress });
+  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 20, onProgress });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
     const cleanFrames = aiResult.allFrames
@@ -900,8 +902,8 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
  * Memfilter frame visual dari 1 kandidat secara granular per frame:
  * Membuang hanya frame berwajah / intro / corrupt, mempertahankan frame bersih peragaan produk.
  */
-export function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null } = {}) {
-  const result = inspectFramesLocally(frames, { allowPartialClean: true });
+export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null } = {}) {
+  const result = await inspectFramesLocally(frames, { allowPartialClean: true });
   if (!result.eligible && result.reason && result.reason.includes('kosong / rusak')) {
     return { candidateIndex, candidate, cleanFrames: [], eligible: false, reason: result.reason };
   }

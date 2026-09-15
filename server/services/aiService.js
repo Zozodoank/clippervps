@@ -265,6 +265,24 @@ export function isQuotaError(err) {
     message.includes('credits') ||
     message.includes('tokens')
   );
+export function truncateProductDescription(desc = '', maxChars = 500) {
+  const clean = String(desc || '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxChars) return clean;
+  const cut = clean.slice(0, maxChars);
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > maxChars * 0.6 ? cut.slice(0, lastSpace) : cut) + '…';
+}
+
+export function isDailyQuotaExhaustedError(err) {
+  if (!err) return false;
+  const message = String(err.message || '').toLowerCase();
+  return (
+    message.includes('perday') ||
+    message.includes('per day') ||
+    message.includes('daily') ||
+    message.includes('requests per day') ||
+    (message.includes('quota') && message.includes('exceeded') && !message.includes('minute'))
+  );
 }
 
 /**
@@ -385,7 +403,7 @@ export async function analyzeYouTubeVideoWithGemini({
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
-  const effectiveDesc = (productDescription || '').trim();
+  const effectiveDesc = (productDescription || '').trim().slice(0, 500);
 
   let refImageInlineData = null;
   if (productImage) {
@@ -609,6 +627,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         generationConfig: {
           responseMimeType: 'application/json',
           temperature: 0.2,
+          mediaResolution: 'MEDIA_RESOLUTION_LOW',
         },
       });
 
@@ -618,6 +637,9 @@ CRITICAL RULES FOR REJECTION OUTPUT:
           fileData: {
             fileUri: youtubeUrl,
             mimeType: 'video/mp4',
+          },
+          videoMetadata: {
+            fps: 0.5,
           },
         },
       ];
@@ -640,7 +662,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       if (!isQuota) {
         allQuotaErrors = false;
       }
+      const isDailyQuota = isQuota && (gemErr.message?.toLowerCase().includes('per-day') || gemErr.message?.toLowerCase().includes('daily') || gemErr.message?.toLowerCase().includes('per day'));
       console.warn(`[Gemini YouTube Stream] Model ${modelName} gagal: ${gemErr.message}. ${isQuota ? '⚠️ [Limit Kuota/Token Tercapai]' : ''} ${i < candidateModels.length - 1 ? `Mencoba model fallback berikutnya (${candidateModels[i + 1]})...` : 'Semua model Gemini dalam rantai fallback telah dicoba.'}`);
+      if (isDailyQuota) {
+        console.warn('[Gemini YouTube Stream] ⛔ Kuota harian API Key habis (Daily RPD limit). Menghentikan loop fallback.');
+        break;
+      }
     }
   }
 
@@ -831,7 +858,7 @@ export async function analyzeVideoWithGeminiFileApi({
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
-  const effectiveDesc = (productDescription || '').trim();
+  const effectiveDesc = (productDescription || '').trim().slice(0, 500);
 
   let refImageInlineData = null;
   if (productImage) {
@@ -1051,7 +1078,11 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 1. "isExactProductMatch": Set to true if the item demonstrated in the video matches "${coreNoun}", even if rejected for policy. Set to false ONLY if the product is physically different.
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
-    const candidateModels = ['gemini-1.5-flash', 'gemini-flash-latest'];
+    const candidateModels = [
+      process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      'gemini-3.5-flash',
+      'gemini-flash-latest'
+    ];
     let parsed = null;
     let activeGeminiModel = candidateModels[0];
     let lastGeminiErr = null;
@@ -1342,7 +1373,7 @@ export async function selectHighlightWithAI({
   const prodInfo = extractCoreProductInfo(productTitle || videoMetadata?.title, productDescription || videoMetadata?.description);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || videoMetadata?.title || '').trim() || coreNoun;
-  const effectiveDesc = productDescription || videoMetadata?.description || '';
+  const effectiveDesc = (productDescription || videoMetadata?.description || '').trim().slice(0, 500);
 
   let resolvedRefImage = null;
   if (productImage) {
@@ -1821,7 +1852,13 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const status = err.status || err.statusCode;
       const msg = (err.message || '').toLowerCase();
       const isFatalAuthOrBilling = status === 401 || status === 402 || msg.includes('balance') || msg.includes('credits');
-      const isOverloaded = status === 503 || status === 529 || status === 429 || msg.includes('overload') || msg.includes('overloaded') || msg.includes('rate limit');
+      const isDailyQuotaExhausted = msg.includes('per-day') || msg.includes('daily') || msg.includes('per day') || msg.includes('quota exceeded for metric');
+
+      if (isFatalAuthOrBilling || isDailyQuotaExhausted) {
+        clearInterval(heartbeat);
+        console.warn(`[AIService Vision] Fatal quota / billing error: ${msg}. Menghentikan rantai fallback.`);
+        throw new Error(formatApiError(err, activeModel, provider));
+      }
 
       if (attempt < totalRetries - 1) {
         console.warn(`[AIService Vision] AI model ${activeModel} (${provider}) gagal (attempt ${attempt + 1}, status: ${status}, error: ${msg}). Mencoba model berikutnya...`);
@@ -1874,7 +1911,7 @@ export async function generateAdAdvisorScriptWithAI({
   });
 
   const effectiveTitle = (productTitle || '').trim() || videoMetadata?.title || 'Produk Viral Shopee';
-  const effectiveDesc = (productDescription || '').trim();
+  const effectiveDesc = truncateProductDescription(productDescription, 900);
   const targetDuration = Math.max(30, Math.min(45, Math.round(Number(segmentDuration) || 33)));
   const effectiveSceneSec = Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
   const sceneCount = Math.max(7, Math.min(12, Math.round(targetDuration / effectiveSceneSec)));
