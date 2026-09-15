@@ -2218,13 +2218,18 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
-  // Disqualify broken / repair / disassembly / maintenance tutorials / DIY / set / pack / bundle (NOT actual single product demos)
-  if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total)\b/i.test(titleText)) return false;
+  // Disqualify broken / repair / disassembly / maintenance tutorials / DIY / set / pack / bundle / western retail (NOT actual single product demos)
+  if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total|amazon|walmart|target|bestbuy|homedepot)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
     'cara', 'tutorial', 'diy', 'how to', 'do it yourself',
+    // Western / US retail chain & Amazon exclusive haul filters (incompatible with Shopee)
+    'amazon finds', 'amazon haul', 'amazon must haves', 'amazon favorites', 'found on amazon', 'bought on amazon',
+    'walmart', 'target haul', 'best buy', 'home depot', 'dollar tree',
     'podcast', 'reaction', 'kompilasi', 'compilation', 'kumpulan', 'full album', 'playlist',
     'vlog', 'daily vlog', 'a day in my life', 'cerita', 'bincang', 'talkshow', 'ngobrol',
+    'rutinitas', 'keseharian', 'beres-beres', 'beberes', 'bersih-bersih', 'ibu rumah tangga', 'irt', 'belanja bulanan',
+    'room tour', 'house tour', 'kitchen tour', 'keseharian irt', 'aktivitas pagi', 'kegiatan harian', 'beres rumah',
     'cara belanja', 'cara checkout', 'daftar akun', 'tutorial aplikasi', 'cara jualan', 'cara live',
     'shopee affiliate tutorial', 'aplikasi shopee',
     // Exclude cooking recipes, food vlogs, and mukbangs (must be product demonstration, NOT food recipe!)

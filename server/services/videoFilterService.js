@@ -56,6 +56,8 @@ function getYtDlpBaseArgs() {
   const args = [
     '--no-check-certificates',
     '--geo-bypass',
+    '--extractor-args', 'youtube:formats=missing_pot',
+    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
   ];
 
   if (cookiesArgs.length) args.push(...cookiesArgs);
@@ -322,11 +324,14 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   const safeMax = Math.max(5, Math.min(30, Number(maxSampleFrames) || 30));
   const safeDuration = Math.max(10, Number(duration) || 60);
 
-  // Generate evenly distributed timestamps across the video timeline (avoiding extreme 0s and last seconds)
-  const interval = safeDuration / (safeMax + 1);
+  // Generate evenly distributed timestamps across video (skipping first 3.5s intro bumpers/ads and last 4.5s outro endcards)
+  const safeStart = Math.min(3.5, safeDuration * 0.1);
+  const safeEnd = Math.max(safeStart + 2, safeDuration - 4.5);
+  const effectiveSpan = Math.max(1, safeEnd - safeStart);
+  const interval = effectiveSpan / (safeMax + 1);
   const samplePoints = [];
   for (let i = 1; i <= safeMax; i++) {
-    const ts = Math.max(1, Math.min(Math.floor(safeDuration - 2), Math.round(i * interval)));
+    const ts = Math.round((safeStart + (i * interval)) * 10) / 10;
     samplePoints.push({ index: i, timestamp: ts });
   }
 
@@ -338,21 +343,30 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   console.log(`[VideoFilterService] Fast seek sampling ${safeMax} frames across ${safeDuration}s from stream...`);
 
+  const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
+  const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
+
   // Fast seek each timestamp with concurrency limit (2 parallel workers on 2-core VPS)
   const concurrency = 2;
   const executing = [];
   for (const point of samplePoints) {
+    // 50ms gentle pacing delay between seek dispatches to avoid burst traffic
+    await new Promise(r => setTimeout(r, 50));
+
     const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
     const outputPath = path.join(outputDir, frameFile);
 
     const p = new Promise((resolve) => {
       // Input seeking (-ss before -i) fetches only the keyframe near timestamp via HTTP Range headers
+      // Browser headers and user-agent mimic real browser / IDM buffering
       const proc = spawn(ffmpegPath, [
         '-y',
-        '-ss', String(point.timestamp),
+        '-user_agent', browserUserAgent,
+        '-headers', browserHeaders,
         '-reconnect', '1',
         '-reconnect_streamed', '1',
         '-reconnect_delay_max', '4',
+        '-ss', String(point.timestamp),
         '-i', streamUrl,
         '-frames:v', '1',
         '-vf', 'scale=-2:360',
@@ -385,6 +399,8 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
       await new Promise((resolve) => {
         const proc = spawn(ffmpegPath, [
           '-y',
+          '-user_agent', browserUserAgent,
+          '-headers', browserHeaders,
           '-reconnect', '1',
           '-reconnect_streamed', '1',
           '-reconnect_delay_max', '4',

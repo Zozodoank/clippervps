@@ -17,7 +17,8 @@ import {
   getDirectGeminiApiKey,
   generateAdAdvisorScriptWithAI,
   detectPhoneticLexiconWithAI,
-  formatEnrichedCaption
+  formatEnrichedCaption,
+  formatSeconds
 } from './services/aiService.js';
 import { generateSrtSubtitles } from './services/subtitleService.js';
 import {
@@ -428,7 +429,7 @@ app.get('/api/health', async (req, res) => {
     openRouterKeyConfigured: openRouterKeySet,
     geminiKeyConfigured: geminiKeySet,
     geminiFallbackConfigured: geminiKeySet,
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
     geminiFileApiConfigured: geminiKeySet,
     activeAiEngine,
     defaultAiProvider: activeAiEngine !== 'none' ? activeAiEngine : 'gemini',

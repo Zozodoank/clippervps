@@ -130,9 +130,11 @@ function getYtDlpArgs(clientSpoof = null) {
   if (cookiesArgs.length) args.push(...cookiesArgs);
   if (proxyArgs.length) args.push(...proxyArgs);
 
-  // Only supply custom Android User Agent if clientSpoof explicitly starts with android
+  // Standard Chrome desktop User-Agent to mimic browser / IDM
   if (clientSpoof && clientSpoof.startsWith('android')) {
     args.push('--user-agent', 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36');
+  } else {
+    args.push('--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36');
   }
 
   return args;
@@ -272,14 +274,25 @@ export const DIRTY_NEGATIVE_OPERATORS = [
   '-set',
   '-pack',
   '-paket',
-  '-bundle'
+  '-bundle',
+  '-amazon',
+  '-walmart',
+  '-target',
+  '-bestbuy',
+  '-homedepot',
+  '-"amazon finds"',
+  '-"amazon must haves"',
+  '-rutinitas',
+  '-keseharian',
+  '-beberes',
+  '-"beres-beres"'
 ];
 
 export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
-  // 1. Strip repair / broken item / disassembly / recipe / mukbang / cara / tutorial / DIY / factory / bulky grill / agricultural / bundle keywords that derail product discovery
+  // 1. Strip repair / broken item / disassembly / recipe / mukbang / cara / tutorial / DIY / factory / bulky grill / agricultural / bundle / western retail keywords that derail product discovery
   let cleaned = String(baseQuery)
-    .replace(/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper|choper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs)\b/gi, '')
+    .replace(/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper|choper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -539,7 +552,7 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
     let res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}&sp=EgIQAQ%253D%253D`, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+        'Accept-Language': 'id-ID,id;q=0.9,ms-MY,ms;q=0.8,th-TH,th;q=0.7,vi-VN,vi;q=0.6,en;q=0.5'
       },
       signal: AbortSignal.timeout(8000)
     });
@@ -555,7 +568,7 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
       const fallbackRes = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
+          'Accept-Language': 'id-ID,id;q=0.9,ms-MY,ms;q=0.8,th-TH,th;q=0.7,vi-VN,vi;q=0.6,en;q=0.5'
         },
         signal: AbortSignal.timeout(8000)
       });
@@ -762,13 +775,12 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   }
 
   // Multi-profile rotation:
-  // First attempt uses yt-dlp default (visionos) which reliably extracts 1080p+, 1440p, 4K without SABR / PO-token blocks.
-  // Fallbacks try android, ios, mweb. We avoid tv_embedded (deprecated in yt-dlp) and web_creator (forces sign-in).
+  // First attempt uses yt-dlp default (visionos/desktop) which reliably extracts 1080p+, 720p HD without SABR blocks.
+  // Fallbacks use web and web_safari desktop clients. We avoid mobile profiles (android, ios) which trigger SABR 403.
   const clientProfiles = [
     'default',
-    'android,web',
-    'ios,mweb',
-    'mweb',
+    'web',
+    'web_safari',
   ];
 
   let lastDownloadError = '';
@@ -792,16 +804,16 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
 
     const dlBaseArgs = getDownloadArgs(clientType);
 
-    // Resilient format selector: 360p preview for AI analysis vs STRICT 1080p+ Full HD for final rendering
-    // NOTE: Strictly requires >=1080p (no 720p, no 480p, no 360p).
+    // Resilient format selector: 360p preview for AI analysis vs High Quality HD (1080p+ preferred, 720p HD accepted)
     const formatSelector = isPreview
       ? '18/bestvideo[height<=360]+bestaudio/best[height<=360]/bestvideo[height<=480]+bestaudio/best[height<=480]/worstvideo+worstaudio/worst/best'
-      : 'bestvideo[height>=1080]+bestaudio/bestvideo[width>=1080]+bestaudio/bestvideo[height>=1080]/bestvideo[width>=1080]/best[height>=1080]/best[width>=1080]';
+      : 'bestvideo[height>=1080]+bestaudio/bestvideo[width>=1080]+bestaudio/bestvideo[height>=720]+bestaudio/bestvideo[width>=720]+bestaudio/best[height>=720]/best[width>=720]/bestvideo+bestaudio/best';
 
     const dlArgs = [
       '--ffmpeg-location',
       ffmpegPath,
       ...dlBaseArgs,
+      '--sponsorblock-remove', 'sponsor,selfpromo',
       '-f',
       formatSelector,
       '--merge-output-format',
@@ -870,20 +882,20 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
           const dims = await getVideoDimensions(downloadedFile, ffmpegPath);
           if (dims) {
             console.log(`[Downloader] Video resolution: ${dims.width}x${dims.height} (1080p+: ${dims.is1080pOrHigher})`);
-            const isStrict1080p = dims.is1080pOrHigher;
-            if (isStrict1080p) {
-              console.log(`[Downloader] ✅ Resolusi ${dims.width}x${dims.height} memenuhi standar minimal 1080p Full HD ke atas. Siap di-render.`);
+            const isHD = dims.height >= 720 || dims.width >= 720 || dims.is1080pOrHigher;
+            if (isHD) {
+              console.log(`[Downloader] ✅ Resolusi ${dims.width}x${dims.height} memenuhi standar minimal HD 720p/1080p+. Siap di-render.`);
             } else {
-              // Video is below 1080p (e.g. 720p, 480p, 360p). Strictly reject and delete it!
-              console.warn(`[Downloader] ❌ Resolusi video (${dims.width}x${dims.height}) di bawah 1080p Full HD. Menolak video dan mencoba profil lain untuk 1080p+...`);
+              // Video is below 720p (e.g. 480p, 360p). Strictly reject and delete it!
+              console.warn(`[Downloader] ❌ Resolusi video (${dims.width}x${dims.height}) di bawah standar HD 720p. Menolak video...`);
               try { fs.unlinkSync(downloadedFile); } catch {}
-              lastDownloadError = `Resolusi video (${dims.width}x${dims.height}) di bawah standar 1080p Full HD. Wajib minimal 1080p ke atas.`;
+              lastDownloadError = `Resolusi video (${dims.width}x${dims.height}) di bawah standar HD 720p. Wajib minimal HD 720p/1080p ke atas.`;
               continue;
             }
           }
         }
         const videoSize = fs.statSync(downloadedFile).size;
-        trackBandwidth('videoDownload', videoSize, `Download video 1080p (${path.basename(downloadedFile)} - ${(videoSize / (1024 * 1024)).toFixed(2)} MB)`);
+        trackBandwidth('videoDownload', videoSize, `Download video HD (${path.basename(downloadedFile)} - ${(videoSize / (1024 * 1024)).toFixed(2)} MB)`);
 
         onProgress({ step: 'download', message: `Video download (${qualityLabel}) completed successfully.`, progress: 35 });
         return { filePath: downloadedFile, metadata };
@@ -901,9 +913,9 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     if (rapidDl && fs.existsSync(rapidDl.filePath)) {
       if (!isPreview) {
         const dims = await getVideoDimensions(rapidDl.filePath, ffmpegPath);
-        if (dims && !dims.is1080pOrHigher) {
+        if (dims && !(dims.height >= 720 || dims.width >= 720 || dims.is1080pOrHigher)) {
           try { fs.unlinkSync(rapidDl.filePath); } catch {}
-          throw new Error(`Resolusi video RapidAPI (${dims.width}x${dims.height}) di bawah standar minimal 1080p Full HD.`);
+          throw new Error(`Resolusi video RapidAPI (${dims.width}x${dims.height}) di bawah standar minimal HD 720p.`);
         }
       }
       return rapidDl;
@@ -911,12 +923,12 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   }
 
   // Format clean human-readable error with actionable advice for IP block / bot detection
-  const isBotOrIpBlock = (lastDownloadError || '').includes('Sign in to confirm') ||
-    (lastDownloadError || '').includes('429') ||
-    (lastDownloadError || '').includes('403') ||
-    (lastDownloadError || '').includes('block') ||
-    (lastDownloadError || '').includes('bot') ||
-    (lastDownloadError || '').includes('rate limit');
+  const lowerErr = (lastDownloadError || '').toLowerCase();
+  const isBotOrIpBlock =
+    lowerErr.includes('sign in to confirm') ||
+    lowerErr.includes('automated queries') ||
+    lowerErr.includes('too many requests') ||
+    (lowerErr.includes('http error 429') || lowerErr.includes('status: 429'));
 
   if (isBotOrIpBlock) {
     throw new Error(

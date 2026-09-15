@@ -131,11 +131,9 @@ function getOpenRouterKeys(apiKeyOverride) {
 let currentOpenRouterKeyIndex = 0;
 
 export const defaultGeminiDirectModels = [
-  'gemini-2.5-flash',
-  'gemini-3.5-flash',
   'gemini-flash-latest',
+  'gemini-3.5-flash',
   'gemini-3.5-flash-lite',
-  'gemini-2.5-flash-lite',
   'gemini-3.1-flash-lite',
 ];
 
@@ -603,13 +601,9 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
   const candidateModels = [
-    'gemini-3.6-flash',
-    'gemini-3.5-flash',
     'gemini-flash-latest',
+    'gemini-3.5-flash',
     'gemini-3.5-flash-lite',
-    'gemini-3.7-flash',
-    'gemini-3.8-flash',
-    'gemini-2.5-flash-lite',
     'gemini-3.1-flash-lite',
   ];
   let parsed = null;
@@ -1079,9 +1073,10 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
     const candidateModels = [
-      process.env.GEMINI_MODEL || 'gemini-2.5-flash',
+      process.env.GEMINI_MODEL || 'gemini-flash-latest',
+      'gemini-flash-latest',
       'gemini-3.5-flash',
-      'gemini-flash-latest'
+      'gemini-3.5-flash-lite'
     ];
     let parsed = null;
     let activeGeminiModel = candidateModels[0];
@@ -1499,6 +1494,9 @@ RULE 5B: ANIMATED GRAPHICS, STICKERS & OVERLAYS (9:16 CROP TOLERANCE RULE):
 
 CRITERIA FOR ACCEPTANCE (ALL MUST BE TRUE):
 1. Functionally & physically matches target product: "${coreNoun}" (${effectiveTitle}).
+   - MARKET COMPATIBILITY: The product demonstrated MUST match generic OEM / white-label household gadgets, kitchen tools, or daily appliances widely sold across Shopee regional markets (Shopee Indonesia, Malaysia, Thailand, Vietnam, Philippines, Singapore, Taiwan, Brazil).
+   - Multi-country Shopee / Asian OEM demonstration videos (hands-on tabletop demos from SEA/Asian sellers or creators) are 100% WELCOME and ACCEPTABLE.
+   - STRICTLY REJECT US/Western-exclusive retail items: If the video clearly shows an exclusive US/Western retail product or retail packaging with Amazon, Walmart, Target, Home Depot, or Best Buy branding not found on Shopee, output status reject.
 2. Clean Hands-On Demonstration in Selected Frames: Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.
 3. 100% Clean from hardburned speech subtitles/captions and colored text banner boxes inside 9:16 frame (physical text/labels on the product are 100% allowed).
 4. 100% Clean from watermarks, social media logos, and channel identities inside the 9:16 central frame (outer left/right watermarks that get cropped/covered are acceptable).
@@ -1581,8 +1579,9 @@ Sampled Frames:
 ${evalFrames.map((f, i) => `#${i + 1} (${f.displayLabel || f.timeFormatted || formatSeconds(f.timestamp)})`).join(', ')}
 
 Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
-1. Exact Product Match: Does the physical item in the video match "${effectiveTitle}" exactly?
-   - If DIFFERENT product or compilation: output {"status": "reject", "detectedProduct": "<nama produk>", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan link Shopee"}
+1. Exact Product Match & Shopee Regional Market Compatibility:
+   - Does the physical item in the video match "${effectiveTitle}" and is it compatible with products sold across Shopee (Shopee Indonesia, Malaysia, Thailand, Vietnam, Philippines, Taiwan)? Hands-on tabletop demos of Asian OEM items are 100% WELCOME.
+   - If DIFFERENT product, compilation, or US/Western-exclusive retail item (prominent Amazon, Walmart, Target packaging not found on Shopee): output {"status": "reject", "detectedProduct": "<nama produk>", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan ekosistem produk Shopee (eksklusif pasar barat/Amazon)"}
 2. Faceless QC: Inspect ALL ${evalFrames.length} frames. Does ANY frame show a human face, head, hair, or person talking?
    - If ANY face or person is visible in ANY frame: output {"status": "reject", "hasHumanOrFaceAnywhereInFrames": true, "isFacelessIn916Frame": false, "hasFaceIn916Frame": true, "reason": "Video ditolak: Menampilkan wajah/orang (wajib 100% faceless tabletop)"}
    - Dilarang memilih frame tangan dari video yang ada vlogger/orangnya!
@@ -2530,7 +2529,7 @@ function repairJson(raw) {
 }
 
 // Helpers
-function formatSeconds(secs) {
+export function formatSeconds(secs) {
   const m = Math.floor(secs / 60).toString().padStart(2, '0');
   const s = Math.floor(secs % 60).toString().padStart(2, '0');
   return `${m}:${s}`;
