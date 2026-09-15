@@ -265,6 +265,8 @@ export function isQuotaError(err) {
     message.includes('credits') ||
     message.includes('tokens')
   );
+}
+
 export function truncateProductDescription(desc = '', maxChars = 500) {
   const clean = String(desc || '').replace(/\s+/g, ' ').trim();
   if (clean.length <= maxChars) return clean;
