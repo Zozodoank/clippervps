@@ -1519,7 +1519,16 @@ If ACCEPTED:
   "hasStaticChannelLogoIn916Frame": false,
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
-  "frames": [2, 4, 7, 10, 13, 16, 19, 22, 25, 28],
+  "storyboard": {
+    "clip1_full_product": 2,
+    "clip2_feature": 5,
+    "clip3_action_demo": 9,
+    "clip4_action_demo_diff": 14,
+    "clip5_action_demo": 19,
+    "clip6_full_product": 25,
+    "clip7_full_product": 28
+  },
+  "frames": [2, 5, 9, 14, 19, 25, 28],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
@@ -1592,17 +1601,22 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 4. Watermark & Logo QC (9:16 Crop Tolerance):
    - Watermark/logo di pojok KIRI atau KANAN video (di luar area tengah 9:16) TETAP DITERIMA karena akan terpotong/tertutup pilar.
    - Hanya tolak jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE AREA 9:16 TENGAH: output {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Watermark masuk ke dalam frame 9:16."}
-5. Strict Live Footage & Dynamic Scene Cuts (NO STATIC SLIDESHOWS):
-   - DILARANG KERAS menerima video yang berupa kumpulan foto statis, slideshow gambar diam, atau foto katalog dengan zoom lambat.
-   - Wajib rekaman kamera fisik bergerak nyata yang mendemonstrasikan fungsi alat.
-   - Pilihlah 6 hingga 8 indeks frame yang mewakili sudut pandang atau fase aksi yang BERBEDA (berganti adegan dinamis setiap ~5 detik). Jangan pilih frame yang identik atau dari satu sudut unmoving yang sama!
-6. Multi-Video Candidate Harvesting & Selection (AVOID MONOTONY & PREVENT COPYRIGHT BLOCKS):
-   - Notice that frames are tagged with their source video (e.g. "Video #1 (00:08)", "Video #2 (00:15)", "Video #3 (00:05)")!
-   - When frames from multiple videos are available, YOU MUST SELECT FRAMES FROM MULTIPLE DIFFERENT VIDEOS (pick 1 to 2 clean frames from EACH distinct video, picking 6 to 8 frames in total)!
-   - This creates an engaging affiliate video that cuts to a DIFFERENT video source every ~5 seconds, reaches at least 30 to 35 seconds, and completely avoids copyright blocking!
-7. If there are at least 5 clean frames demonstrating the product (100% entirely faceless across all frames, zero watermark inside 9:16, zero subtitles, zero floating text, matching product, live authentic motion):
-   - Select 6 to 8 frame indices in "frames" array.
-   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "frames": [indices], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
+5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
+   Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton menampilkan adegan gosok yang sama!
+   Petakan indeks frame ke dalam 7 peran "storyboard" berikut:
+   - "clip1_full_product": Slot 1 (00:00-00:05) -> VISUAL PRODUK UTUH (Establishing Shot). Frame yang memperlihatkan fisik produk secara utuh/lengkap (misal di atas meja, dipegang, atau baru dibuka). BUKAN sedang digosok atau di-zoom ekstrem!
+   - "clip2_feature": Slot 2 (00:05-00:10) -> FITUR PRODUK. Frame close-up yang menonjolkan fitur/material/komponen fisik alat (misal: tekstur spons, jaring kawat, bahan stainless, pegangan, tombol, ketebalan).
+   - "clip3_action_demo": Slot 3 (00:10-00:15) -> PERAGAAN #1. Aksi penggunaan alat pertama kali mendemonstrasikan fungsinya (misal: mulai menggosok noda/kotoran).
+   - "clip4_action_demo_diff": Slot 4 (00:15-00:20) -> PERAGAAN DENGAN VISUAL BERBEDA. Aksi peragaan dengan SUDUT KAMERA / ANGLE BERBEDA, atau pada permukaan/objek berbeda (misal: wajan vs kompor vs wastafel, atau angle samping vs angle atas). Jika tersedia beberapa video ("Video #1", "Video #2"), WAJIB pilih dari video BERBEDA! DILARANG sudut/adegan yang sama persis dengan Slot 3!
+   - "clip5_action_demo": Slot 5 (00:20-00:25) -> PERAGAAN #3 / HASIL BUKTI. Aksi peragaan lanjutan atau hasil (misal: dibilas air bersih, busa melimpah, dilap, atau perbandingan kinclong).
+   - "clip6_full_product": Slot 6 (00:25-00:30) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh kembali (misal produk bersih ditaruh di meja atau dipegang) sebagai penutup yang meyakinkan penonton.
+   - "clip7_full_product": Slot 7 (00:30-00:35) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh yang selaras dengan ajakan checkout di keranjang kuning/oranye pojok kiri bawah. DILARANG diisi klip gosok-gosok yang sama!
+6. Multi-Video Candidate Harvesting:
+   - Jika tersedia beberapa kandidat video ("Video #1", "Video #2", "Video #3"), sebarkan pilihan frame ke kandidat video yang berbeda agar video berganti sumber secara dinamis dan kaya visual!
+7. Output Format:
+   - Isi objek "storyboard" dengan 7 indeks frame di atas.
+   - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
+   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "storyboard": {"clip1_full_product": N1, "clip2_feature": N2, "clip3_action_demo": N3, "clip4_action_demo_diff": N4, "clip5_action_demo": N5, "clip6_full_product": N6, "clip7_full_product": N7}, "frames": [N1, N2, N3, N4, N5, N6, N7], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
 
   const messageContent = [
     { type: 'text', text: userPrompt },
@@ -1764,14 +1778,29 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         throw rejectError;
       }
 
-      let candidateClips = [];
+      // Gunakan 7-Slot Storyboard Architecture sesuai permintaan pengguna:
+      // Slot 1: Visual produk utuh (Opening Hero)
+      // Slot 2: Fitur & keunggulan fisik
+      // Slot 3: Peragaan #1 (Aksi awal)
+      // Slot 4: Peragaan #2 dengan visual berbeda (angle / surface / video berbeda)
+      // Slot 5: Peragaan #3 (hasil / pembuktian / busa / bilas)
+      // Slot 6 & 7: WAJIB visual produk utuh (Penutup & Call to Action Checkout)
+      let candidateClips = build7SlotStoryboardClips({
+        parsed,
+        frames: evalFrames,
+        totalDuration,
+        clipSec,
+        introCutoffSec
+      });
 
-      if (selectedIndices.length > 0) {
+      // Fallback ke legacy loop jika build7SlotStoryboardClips kosong
+      if ((!candidateClips || candidateClips.length === 0) && selectedIndices.length > 0) {
+        candidateClips = [];
         for (const rawIdx of selectedIndices) {
           const idx = parseInt(rawIdx, 10);
-          if (isNaN(idx) || idx < 1 || idx > frames.length) continue;
-          const frameObj = frames[idx - 1];
-          const ts = frameObj ? frameObj.timestamp : (idx * (totalDuration / frames.length));
+          if (isNaN(idx) || idx < 1 || idx > evalFrames.length) continue;
+          const frameObj = evalFrames[idx - 1];
+          const ts = frameObj ? frameObj.timestamp : (idx * (totalDuration / evalFrames.length));
           const minSafeStart = Math.max(introCutoffSec || 0, 0);
           const rawStart = Math.max(0, Math.min(totalDuration - clipSec, Math.round(ts * 10) / 10));
           if (rawStart < minSafeStart) {
@@ -2575,6 +2604,221 @@ function normalizeReframe(reframe = {}) {
   };
 }
 
+/**
+ * Membangun 7 klip storyboard bervariasi sesuai permintaan pengguna:
+ * Slot 1: Visual Produk Utuh (Opening Hero)
+ * Slot 2: Fitur & Keunggulan Fisik
+ * Slot 3: Peragaan #1 (Aksi Produk)
+ * Slot 4: Peragaan #2 (Visual Berbeda / Angle Lain / Beda Video)
+ * Slot 5: Peragaan #3 (Hasil / Bukti Nyata)
+ * Slot 6: WAJIB Visual Produk Utuh (Penutup)
+ * Slot 7: WAJIB Visual Produk Utuh (Call to Action Checkout)
+ */
+export function build7SlotStoryboardClips({
+  parsed,
+  frames = [],
+  totalDuration = 60,
+  clipSec = 4.8,
+  introCutoffSec = 0
+}) {
+  const sb = parsed?.storyboard || {};
+  const selectedIndices = Array.isArray(parsed?.frames) ? parsed.frames : [];
+  const minSafeStart = Math.max(introCutoffSec || 0, 0);
+
+  const validFrames = (frames || []).filter(f => f && (f.filePath || f.base64 || f.timestamp !== undefined));
+  const totalFramesCount = validFrames.length;
+
+  const slotsConfig = [
+    { slot: 1, key: 'clip1_full_product', label: 'Visual Produk Utuh (Opening Hero)', role: 'full_product' },
+    { slot: 2, key: 'clip2_feature', label: 'Fitur & Keunggulan Fisik', role: 'feature' },
+    { slot: 3, key: 'clip3_action_demo', label: 'Peragaan #1 (Aksi Produk)', role: 'action_demo' },
+    { slot: 4, key: 'clip4_action_demo_diff', label: 'Peragaan #2 (Visual Berbeda / Angle Lain)', role: 'action_demo_diff' },
+    { slot: 5, key: 'clip5_action_demo', label: 'Peragaan #3 (Hasil / Bukti Nyata)', role: 'action_demo' },
+    { slot: 6, key: 'clip6_full_product', label: 'WAJIB Visual Produk Utuh (Penutup)', role: 'full_product' },
+    { slot: 7, key: 'clip7_full_product', label: 'WAJIB Visual Produk Utuh (Call to Action)', role: 'full_product' }
+  ];
+
+  const storyboardClips = [];
+
+  const getFrameByIdx = (idx) => {
+    if (typeof idx !== 'number' || isNaN(idx) || idx < 1 || idx > totalFramesCount) return null;
+    return validFrames[idx - 1];
+  };
+
+  const rawSlotIndices = [];
+  for (let i = 0; i < slotsConfig.length; i++) {
+    const config = slotsConfig[i];
+    let chosenIdx = null;
+
+    if (sb[config.key]) {
+      const parsedIdx = parseInt(sb[config.key], 10);
+      if (!isNaN(parsedIdx) && parsedIdx >= 1 && parsedIdx <= totalFramesCount) {
+        chosenIdx = parsedIdx;
+      }
+    }
+
+    if (!chosenIdx && selectedIndices[i]) {
+      const parsedIdx = parseInt(selectedIndices[i], 10);
+      if (!isNaN(parsedIdx) && parsedIdx >= 1 && parsedIdx <= totalFramesCount) {
+        chosenIdx = parsedIdx;
+      }
+    }
+
+    rawSlotIndices.push(chosenIdx);
+  }
+
+  let slot1Clip = null;
+
+  for (let sIdx = 0; sIdx < slotsConfig.length; sIdx++) {
+    const config = slotsConfig[sIdx];
+    let frameObj = null;
+    let chosenIdx = rawSlotIndices[sIdx];
+
+    if (chosenIdx) {
+      frameObj = getFrameByIdx(chosenIdx);
+    }
+
+    if (config.slot === 1) {
+      // Slot 1: Must be full product hero shot (early clean frame, index 2-6)
+      if (!frameObj) {
+        const earlyCandidateIdx = Math.min(totalFramesCount, Math.max(2, Math.floor(totalFramesCount * 0.15)));
+        frameObj = getFrameByIdx(earlyCandidateIdx) || validFrames[0];
+      }
+    } else if (config.slot === 2) {
+      // Slot 2: Feature close-up (typically slightly after hero shot)
+      if (!frameObj) {
+        const featCandidateIdx = Math.min(totalFramesCount, Math.max(3, Math.floor(totalFramesCount * 0.28)));
+        frameObj = getFrameByIdx(featCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 2)];
+      }
+    } else if (config.slot === 3) {
+      // Slot 3: Action demo 1 (first demonstration action)
+      if (!frameObj) {
+        const demoCandidateIdx = Math.min(totalFramesCount, Math.max(4, Math.floor(totalFramesCount * 0.42)));
+        frameObj = getFrameByIdx(demoCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 4)];
+      }
+    } else if (config.slot === 4) {
+      // Slot 4: Action demo 2 with DIFFERENT visual / angle / object / candidate video
+      const prevActionCandIdx = storyboardClips[2]?.candidateIndex;
+      const prevActionTs = storyboardClips[2]?.startSeconds || 0;
+      const isDiff = frameObj && (
+        (frameObj.candidateIndex !== undefined && frameObj.candidateIndex !== prevActionCandIdx) ||
+        Math.abs((frameObj.timestamp || 0) - prevActionTs) >= 10.0
+      );
+
+      if (!isDiff) {
+        // Prioritize picking from another video candidate if multi-candidate is available
+        const diffCandFrame = validFrames.find(f => f.candidateIndex !== undefined && f.candidateIndex !== prevActionCandIdx);
+        if (diffCandFrame) {
+          frameObj = diffCandFrame;
+        } else {
+          // From same video: ensure at least 20s distance from Slot 3
+          const distantFrame = validFrames.find(f => Math.abs((f.timestamp || 0) - prevActionTs) >= 20.0);
+          if (distantFrame) {
+            frameObj = distantFrame;
+          } else if (!frameObj) {
+            const midCandidateIdx = Math.min(totalFramesCount, Math.max(5, Math.floor(totalFramesCount * 0.60)));
+            frameObj = getFrameByIdx(midCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 6)];
+          }
+        }
+      }
+    } else if (config.slot === 5) {
+      // Slot 5: Action demo 3 (rinsing / proof / result)
+      if (!frameObj) {
+        const resultCandidateIdx = Math.min(totalFramesCount, Math.max(6, Math.floor(totalFramesCount * 0.78)));
+        frameObj = getFrameByIdx(resultCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 8)];
+      }
+    } else if (config.slot === 6 || config.slot === 7) {
+      // Slot 6 & 7: WAJIB Visual Produk Utuh!
+      if (!frameObj) {
+        const lateCleanHero = validFrames.find((f, i) => i >= Math.floor(totalFramesCount * 0.82) && (f.timestamp || 0) > 0);
+        if (lateCleanHero && config.slot === 6) {
+          frameObj = lateCleanHero;
+        } else if (slot1Clip) {
+          // Reprise the full-product hero shot from Slot 1
+          frameObj = {
+            candidateIndex: slot1Clip.candidateIndex,
+            candidateTitle: slot1Clip.candidateTitle,
+            candidateUrl: slot1Clip.candidateUrl,
+            videoId: slot1Clip.videoId,
+            candidate: slot1Clip.candidate,
+            timestamp: config.slot === 6 ? slot1Clip.startSeconds : Math.min(totalDuration - clipSec, slot1Clip.startSeconds + 2.5)
+          };
+        } else {
+          frameObj = validFrames[0];
+        }
+      }
+    }
+
+    if (!frameObj) frameObj = validFrames[0] || {};
+
+    const candIdx = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : 0;
+    const candDuration = frameObj?.candidate?.duration || totalDuration;
+    const frameTs = frameObj.timestamp !== undefined ? frameObj.timestamp : (sIdx * (candDuration / 7));
+
+    let startSec = Math.max(0, Math.min(candDuration - clipSec, Math.round(frameTs * 10) / 10));
+    if (startSec < minSafeStart && config.slot !== 6 && config.slot !== 7) {
+      startSec = minSafeStart;
+    }
+
+    // Jika slot 2 sampai 5 bertabrakan (< 2.0s) dengan klip sebelumnya di kandidat yang sama,
+    // sebarkan secara proporsional di sepanjang durasi video
+    if (config.slot >= 2 && config.slot <= 5) {
+      const collides = storyboardClips.some(sc =>
+        sc.candidateIndex === candIdx && Math.abs(sc.startSeconds - startSec) < 2.0
+      );
+      if (collides) {
+        const span = Math.max(0, candDuration - clipSec - minSafeStart);
+        const proportionalSec = minSafeStart + ((sIdx / 6) * span);
+        startSec = Math.round(Math.min(candDuration - clipSec, Math.max(minSafeStart, proportionalSec)) * 10) / 10;
+        while (storyboardClips.some(sc => sc.candidateIndex === candIdx && Math.abs(sc.startSeconds - startSec) < 1.5) && startSec + 1.5 <= candDuration - clipSec) {
+          startSec = Math.round((startSec + 1.5) * 10) / 10;
+        }
+      }
+    }
+
+    if (config.slot === 7 && storyboardClips.length >= 6) {
+      const slot6 = storyboardClips[5];
+      if (slot6.candidateIndex === candIdx && Math.abs(slot6.startSeconds - startSec) < 2.0) {
+        if (slot6.startSeconds + 2.5 <= candDuration - clipSec) {
+          startSec = slot6.startSeconds + 2.5;
+        } else {
+          startSec = Math.max(0, slot6.startSeconds - 2.5);
+        }
+      }
+    }
+
+    const endSec = Math.round((startSec + clipSec) * 10) / 10;
+
+    const clipObj = {
+      startSeconds: startSec,
+      endSeconds: endSec,
+      duration: clipSec,
+      startTime: formatSeconds(startSec),
+      endTime: formatSeconds(endSec),
+      candidateIndex: candIdx,
+      candidateTitle: frameObj?.candidateTitle || '',
+      candidateUrl: frameObj?.candidateUrl || '',
+      videoId: frameObj?.videoId || '',
+      candidate: frameObj?.candidate || null,
+      storyboardSlot: config.slot,
+      storyboardRole: config.role,
+      reason: `${config.label} [Slot #${config.slot}]`,
+      isCleanAffiliateShot: true,
+      hasProductBrand: Boolean(parsed?.hasProductBrand),
+      reframe: {
+        ...DEFAULT_REFRAME,
+        renderMode: 'stage_80',
+        focusY: config.slot === 7 ? 0.60 : (config.slot === 4 ? 0.65 : 0.55)
+      }
+    };
+
+    if (config.slot === 1) slot1Clip = clipObj;
+    storyboardClips.push(clipObj);
+  }
+
+  return storyboardClips;
+}
+
 export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 4.8 } = {}) {
   const clipLength = Math.max(3.5, Math.min(5.0, Number(sceneDuration) || 4.8));
   const sourceClips = Array.isArray(rawClips) ? rawClips : [];
@@ -2612,12 +2856,15 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   }
 
   const previousEndsByCand = new Map();
+  const hasStoryboardSlots = sourceClips.some(c => c.storyboardSlot !== undefined);
 
   for (const rawClip of sourceClips) {
     let startSeconds = Math.max(0, Math.round(parseTimeToSeconds(rawClip?.startSeconds ?? rawClip?.startTime)));
     const candKey = rawClip?.candidateIndex !== null && rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : 'default';
     const prevEnd = previousEndsByCand.get(candKey) || 0;
-    if (startSeconds < prevEnd) {
+
+    // In storyboard mode, cuts can jump backwards to reprise full product hero shots
+    if (!hasStoryboardSlots && startSeconds < prevEnd) {
       console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s (Candidate ${candKey}): overlaps previous end ${prevEnd}s in same video`);
       continue;
     }
@@ -2666,6 +2913,8 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       videoId: rawClip?.videoId || '',
       videoPath: rawClip?.videoPath || null,
       candidate: rawClip?.candidate || null,
+      storyboardSlot: rawClip?.storyboardSlot,
+      storyboardRole: rawClip?.storyboardRole,
       reason: (rawClip?.reason || 'Clean full-product affiliate shot.').toString().slice(0, 180),
       hasProductBrand: clipHasBrand,
       allowHflip: clipAllowHflip,
@@ -2677,20 +2926,17 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     });
     previousEndsByCand.set(candKey, endSeconds);
     previousEnd = endSeconds;
-    if (normalized.length === 8) break; // Target 6-8 distinct clips (~30-35s)
+    if (normalized.length === 8) break; // Target 7-8 distinct clips (~30-35s)
   }
 
   console.log(`[normalizeClipPlan] Accepted ${normalized.length} valid clips from AI vision`);
 
-  // Continuous Stride Expansion: Jika AI menyetujui anchor clip bersih,
-  // lakukan ekspansi stride berjarak dinamis dari anchor frame tersebut
-  // agar video akhir mencapai durasi optimal 30-35 detik (6-8 klip @ 4.5-5.0s)
+  // Continuous Stride Expansion if fewer than 7 clips
   if (normalized.length > 0 && normalized.length < 7) {
     console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Dynamic Stride Expansion menuju 7-8 klip (30-35s)...`);
     const targetClips = Math.min(8, Math.max(7, Math.ceil(31 / clipLength)));
     const originalAnchors = [...normalized];
 
-    // Scoped tracking of intervals per candidate to avoid overlaps
     const intervalsByCand = new Map();
     for (const clip of normalized) {
       const cKey = clip.candidateIndex !== null && clip.candidateIndex !== undefined ? clip.candidateIndex : 'default';
@@ -2700,10 +2946,8 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
 
     const isIntervalFree = (cKey, start, end, candDuration) => {
       if (start < 0 || end > candDuration) return false;
-      // Hindari dirty timestamps (watermark, subtitle, unboxing, face)
       const hitsDirty = dirtyTimestamps.some(ts => ts >= start && ts <= end);
       if (hitsDirty) return false;
-      // Hindari tabrakan dengan klip lain pada kandidat yang sama
       const intervals = intervalsByCand.get(cKey) || [];
       const overlaps = intervals.some(iv => Math.max(start, iv.start) < Math.min(end, iv.end));
       return !overlaps;
@@ -2719,7 +2963,6 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
         const cKey = baseClip.candidateIndex !== null && baseClip.candidateIndex !== undefined ? baseClip.candidateIndex : 'default';
         const candDuration = baseClip.candidate?.duration || totalDuration;
 
-        // 1. Forward Stride dengan jeda waktu minimal 3.5s agar adegan berganti dinamis (bukan potongan berdempetan)
         const sceneJump = Math.max(3.5, strideRound * 3.5);
         const fwdStart = Math.round((baseClip.endSeconds + sceneJump) * 10) / 10;
         const fwdEnd = Math.round((fwdStart + clipLength) * 10) / 10;
@@ -2732,13 +2975,13 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
             duration: clipLength,
             startTime: formatSeconds(fwdStart),
             endTime: formatSeconds(fwdEnd),
+            storyboardSlot: normalized.length + 1,
             reason: `${baseClip.reason} (Dynamic Scene Cut #${strideRound})`,
           });
           intervalsByCand.get(cKey).push({ start: fwdStart, end: fwdEnd });
           expanded = true;
           if (normalized.length >= targetClips) break;
         } else {
-          // 2. Backward Stride berjarak sebelum anchor jika aman
           const bwdStart = Math.round((baseClip.startSeconds - sceneJump - clipLength) * 10) / 10;
           const bwdEnd = Math.round((bwdStart + clipLength) * 10) / 10;
           if (bwdStart >= 0 && isIntervalFree(cKey, bwdStart, bwdEnd, candDuration)) {
@@ -2749,6 +2992,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
               duration: clipLength,
               startTime: formatSeconds(bwdStart),
               endTime: formatSeconds(bwdEnd),
+              storyboardSlot: normalized.length + 1,
               reason: `${baseClip.reason} (Pre-Anchor Scene Cut #${strideRound})`,
             });
             intervalsByCand.get(cKey).push({ start: bwdStart, end: bwdEnd });
@@ -2760,23 +3004,38 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       strideRound++;
     }
 
-    normalized.sort((a, b) => {
-      const candA = a.candidateIndex ?? 0;
-      const candB = b.candidateIndex ?? 0;
-      if (candA !== candB) return candA - candB;
-      return a.startSeconds - b.startSeconds;
-    });
+    // Preserve storyboard slot order if defined, otherwise sort ascending
+    if (!hasStoryboardSlots) {
+      normalized.sort((a, b) => {
+        const candA = a.candidateIndex ?? 0;
+        const candB = b.candidateIndex ?? 0;
+        if (candA !== candB) return candA - candB;
+        return a.startSeconds - b.startSeconds;
+      });
+    } else {
+      normalized.sort((a, b) => (a.storyboardSlot || 0) - (b.storyboardSlot || 0));
+    }
 
     console.log(`[normalizeClipPlan] ✅ Dynamic Stride Expansion sukses: menghasilkan total ${normalized.length} klip (${(normalized.length * clipLength).toFixed(1)}s total).`);
+  } else if (hasStoryboardSlots) {
+    normalized.sort((a, b) => (a.storyboardSlot || 0) - (b.storyboardSlot || 0));
   }
 
   // Deduplikasi ketat: Pastikan tidak ada 2 klip dari kandidat yang sama dengan selisih waktu < 2.0 detik
   const dedupedClips = [];
   for (const c of normalized) {
-    const isDup = dedupedClips.some(e =>
-      (e.candidateIndex === c.candidateIndex || (!e.candidateIndex && !c.candidateIndex)) &&
-      Math.abs(e.startSeconds - c.startSeconds) < 2.0
-    );
+    const isDup = dedupedClips.some(e => {
+      // Di storyboard mode, lindungi Slot 6 dan Slot 7 (reprise visual produk utuh penutup/CTA)
+      if (hasStoryboardSlots && (c.storyboardSlot === 6 || c.storyboardSlot === 7)) {
+        if (e.storyboardSlot === c.storyboardSlot) return true;
+        if (e.storyboardSlot === 6 && c.storyboardSlot === 7 && Math.abs(e.startSeconds - c.startSeconds) < 1.0) return true;
+        return false;
+      }
+      return (
+        (e.candidateIndex === c.candidateIndex || (!e.candidateIndex && !c.candidateIndex)) &&
+        Math.abs(e.startSeconds - c.startSeconds) < 2.0
+      );
+    });
     if (!isDup) {
       dedupedClips.push(c);
     }
