@@ -170,13 +170,15 @@ export async function mergeVoiceoverAndBurnSubtitles({
   const outDir = path.dirname(outputVideoPath);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  const videoDuration = await getMediaDurationSec(silentVideoPath, ffmpegPath) || Number(targetDurationSec) || 45;
+  const rawVideoDur = await getMediaDurationSec(silentVideoPath, ffmpegPath) || Number(targetDurationSec) || 33;
   const audioDuration = await getMediaDurationSec(voiceoverAudioPath, ffmpegPath);
+  const videoDuration = Math.max(rawVideoDur, audioDuration ? audioDuration + 0.3 : 30.0);
 
-  // Speed-up voiceover if audio duration exceeds video duration
+  // Speed-up voiceover ONLY slightly (max 1.10x) if audio duration exceeds video duration
+  // Speech must sound natural, clear, and unhurried at ~1.0x normal speed.
   let atempoFactor = 1.0;
-  if (audioDuration && videoDuration && audioDuration > videoDuration + 0.3) {
-    atempoFactor = Math.min(1.25, Math.max(1.0, audioDuration / videoDuration));
+  if (audioDuration && rawVideoDur && audioDuration > rawVideoDur + 0.3) {
+    atempoFactor = Math.min(1.10, Math.max(1.0, audioDuration / rawVideoDur));
   }
 
   // If audio is sped up via atempo, rescale ASS subtitle timestamps to match 100%
@@ -220,9 +222,15 @@ export async function mergeVoiceoverAndBurnSubtitles({
       mapArgs.push('-map', '1:a');
     }
 
+    // If audio is longer than raw video, loop video smoothly so speech and video finish naturally together
+    const needsLoop = Boolean(audioDuration && rawVideoDur < audioDuration + 0.2);
+    const videoInputArgs = needsLoop
+      ? ['-stream_loop', '-1', '-i', silentVideoPath]
+      : ['-i', silentVideoPath];
+
     const args = [
       '-y',
-      '-i', silentVideoPath,
+      ...videoInputArgs,
       '-i', voiceoverAudioPath,
       '-filter_complex', filterChains.join(';'),
       ...mapArgs,
@@ -310,7 +318,7 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
 }
 
 export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, fallbackReframe = {}) {
-  const defaultClipLength = 3.3;
+  const defaultClipLength = 4.8;
   const sourceClips = Array.isArray(clips) ? clips : [];
   const normalized = [];
 
@@ -327,7 +335,7 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
 
       normalized.push({
         startSeconds,
-        duration: clipDuration,
+        duration: Math.max(3.5, Math.min(5.0, clipDuration)),
         videoPath: clip?.videoPath || clip?.sourceVideo || null,
         candidateIndex: clip?.candidateIndex !== undefined ? clip.candidateIndex : null,
         reframe: {
@@ -346,24 +354,69 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
     // Deduplikasi ketat: Pastikan tidak ada klip yang identik atau berjarak < 2 detik dari video yang sama
     const deduplicated = [];
     for (const c of normalized) {
-      const isDuplicate = deduplicated.some(existing =>
-        (existing.videoPath === c.videoPath || (!existing.videoPath && !c.videoPath)) &&
-        Math.abs(existing.startSeconds - c.startSeconds) < 2.0
-      );
+      const isDuplicate = deduplicated.some(existing => {
+        const sameVideo = (existing.videoPath && c.videoPath && existing.videoPath === c.videoPath) ||
+          (existing.candidateIndex !== null && existing.candidateIndex !== undefined && existing.candidateIndex === c.candidateIndex) ||
+          (!existing.videoPath && !c.videoPath && existing.candidateIndex === c.candidateIndex);
+        return sameVideo && Math.abs(existing.startSeconds - c.startSeconds) < 2.0;
+      });
       if (!isDuplicate) {
         deduplicated.push(c);
       } else {
         console.log(`[normalizeRenderClips] ⚠️ Membuang klip duplikat pada timestamp ${c.startSeconds}s.`);
       }
     }
+
+    // JAMINAN DURASI MINIMAL 30 DETIK (Target 30-35s):
+    // Jika total durasi deduplicated kurang dari 30.0 detik, lakukan dynamic scene expansion
+    let currentTotal = deduplicated.reduce((sum, c) => sum + (c.duration || defaultClipLength), 0);
+    const MIN_REQUIRED_SEC = 30.0;
+
+    if (currentTotal < MIN_REQUIRED_SEC && deduplicated.length > 0) {
+      console.log(`[normalizeRenderClips] Total durasi klip (${currentTotal.toFixed(1)}s) di bawah minimal 30 detik. Melakukan ekspansi adegan dinamis ke target 30-35s...`);
+      
+      // Tahap 1: Tingkatkan durasi per klip ke 4.8 detik jika durasi saat ini lebih pendek
+      for (const c of deduplicated) {
+        if (c.duration < 4.8) {
+          c.duration = 4.8;
+        }
+      }
+      currentTotal = deduplicated.reduce((sum, c) => sum + c.duration, 0);
+
+      // Tahap 2: Jika masih di bawah 30s, sintesis potongan adegan dinamis baru dari video yang tersedia
+      // dengan loncatan waktu aman (scene jump +4.0s) agar adegan berganti variatif setiap ~5 detik
+      let round = 1;
+      const basePool = [...deduplicated];
+      while (currentTotal < MIN_REQUIRED_SEC && round <= 4) {
+        for (const base of basePool) {
+          if (currentTotal >= MIN_REQUIRED_SEC) break;
+          const newStart = Math.max(0, base.startSeconds + base.duration + (round * 4.0));
+          const newClip = {
+            ...base,
+            startSeconds: newStart,
+            duration: 4.8,
+            reframe: {
+              ...base.reframe,
+              // Variasikan framing focusY agar terasa seperti sudut kamera berbeda
+              focusY: round % 2 === 0 ? 0.65 : 0.55,
+            },
+          };
+          deduplicated.push(newClip);
+          currentTotal += 4.8;
+        }
+        round++;
+      }
+      console.log(`[normalizeRenderClips] ✅ Total durasi akhir: ${currentTotal.toFixed(1)}s (${deduplicated.length} klip). Memenuhi standar minimal 30 detik!`);
+    }
+
     return deduplicated;
   }
 
   const fallbackStart = parseTimeToSeconds(fallbackStartTime);
   const fallbackEnd = parseTimeToSeconds(fallbackEndTime);
   const clipLength = defaultClipLength;
-  const fallbackDuration = fallbackEnd > fallbackStart ? fallbackEnd - fallbackStart : (clipLength * 10);
-  const clipCount = Math.max(10, Math.min(12, Math.floor(fallbackDuration / clipLength)));
+  const fallbackDuration = fallbackEnd > fallbackStart ? fallbackEnd - fallbackStart : (clipLength * 7);
+  const clipCount = Math.max(7, Math.min(10, Math.floor(fallbackDuration / clipLength)));
 
   for (let index = 0; index < clipCount; index++) {
     normalized.push({

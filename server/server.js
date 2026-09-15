@@ -884,6 +884,7 @@ app.get('/api/progress/:jobId', (req, res) => {
 export async function runStage1Pipeline({
   jobId,
   youtubeUrl,
+  targetCandidates = null,
   shopeeLink,
   productTitle,
   productDescription,
@@ -1023,7 +1024,7 @@ export async function runStage1Pipeline({
       ? 'openrouter'
       : (geminiKeySet ? 'gemini' : (openRouterKeySet ? 'openrouter' : 'gemini'));
     const aiProvider = options.aiProvider || jobMeta.aiProvider || defaultProvider;
-    const sceneDuration = Number(options.sceneDuration) || 3.3;
+    const sceneDuration = Number(options.sceneDuration) || 4.8;
 
     let currentYoutubeUrl = youtubeUrl;
     let highlight = null;
@@ -1353,15 +1354,33 @@ export async function runStage1Pipeline({
     }
 
     // Evaluasi video YouTube awal jika belum disetujui dari cache
-    if (!approved && currentYoutubeUrl) {
+    const preferMultiVideo = Boolean(
+      options.multiVideoHarvesting ||
+      !currentYoutubeUrl ||
+      (Array.isArray(targetCandidates) && targetCandidates.length > 0)
+    );
+
+    if (!approved && currentYoutubeUrl && !preferMultiVideo) {
       try {
         const initialRes = await evaluateCandidate(currentYoutubeUrl, '', {
           isVisualSearch: Boolean(effectiveProductImage),
         });
-        highlight = initialRes.highlight;
-        videoMeta = initialRes.videoMeta;
-        previewVideoPath = initialRes.previewVideoPath;
-        approved = true;
+        const initialClips = initialRes.highlight?.clips || [];
+        const initialDuration = initialClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+        if (initialClips.length >= 6 && initialDuration >= 30.0) {
+          highlight = initialRes.highlight;
+          videoMeta = initialRes.videoMeta;
+          previewVideoPath = initialRes.previewVideoPath;
+          approved = true;
+        } else {
+          console.log(`[Job ${jobId}] ⚠️ Video tunggal (${currentYoutubeUrl}) hanya menghasilkan ${initialClips.length} klip (${initialDuration.toFixed(1)}s, target minimal 30-35s). Membuka Multi-Video Harvesting (stream 3-5 video) untuk variasi adegan & durasi penuh...`);
+          if (!targetCandidates) targetCandidates = [];
+          targetCandidates.unshift({
+            url: currentYoutubeUrl,
+            title: initialRes.videoMeta?.title || productTitle,
+            duration: initialRes.videoMeta?.duration || 60,
+          });
+        }
       } catch (initErr) {
         if (initErr.isAiRejection || String(initErr?.message || '').toLowerCase().includes('ditolak')) {
           console.warn(`[Job ${jobId}] ⛔ Video awal (${currentYoutubeUrl}) ditolak AI: ${initErr.message}`);
@@ -1374,29 +1393,37 @@ export async function runStage1Pipeline({
       }
     }
 
-    // Jika video awal ditolak oleh AI: Jalankan Auto Search Fallback untuk mencari kandidat video baru!
+    // Jika belum disetujui atau masuk mode Multi-Video Harvesting: Jalankan Stream 3-5 Video & Frame Pooling!
     if (!approved) {
       const allowAutoSearch = options.autoSearchFallback !== false && Boolean(productTitle);
-      if (!allowAutoSearch) {
+      if (!allowAutoSearch && !preferMultiVideo) {
         throw lastRejectionError || new Error('Video ditolak oleh AI.');
       }
 
       const engineName = aiProvider === 'gemini' ? 'Google Gemini Direct' : 'AI';
       updateProgress({
         step: 'auto_search_fallback',
-        message: `⛔ Video awal ditolak AI (${lastRejectionError?.rejectionReason || 'tidak cocok'}). ${engineName} mencari video YouTube baru untuk target "${coreProductNoun}"...`,
+        message: preferMultiVideo
+          ? `Menyiapkan streaming 3-5 video untuk target "${coreProductNoun}"...`
+          : `⛔ Video awal ditolak AI (${lastRejectionError?.rejectionReason || 'tidak cocok'}). ${engineName} mencari video YouTube baru untuk target "${coreProductNoun}"...`,
         progress: 15,
         status: 'running',
         coreProductNoun,
       });
 
-      console.log(`[Job ${jobId}] Memulai pencarian kandidat YouTube baru untuk "${productTitle}" karena video awal ditolak...`);
+      console.log(`[Job ${jobId}] Memulai pencarian/streaming kandidat YouTube (3-5 video) untuk "${productTitle}"...`);
 
       let searchIteration = 0;
-      let targetCandidates = [];
+      let candidatePool = Array.isArray(targetCandidates) ? [...targetCandidates] : [];
+      if (currentYoutubeUrl && !candidatePool.some(c => c.url === currentYoutubeUrl)) {
+        candidatePool.unshift({
+          url: currentYoutubeUrl,
+          title: productTitle,
+        });
+      }
 
       // 1. Prioritas Visual Search: Jika URL foto produk tersedia, cari video berbasis gambar!
-      if (effectiveProductImage) {
+      if (effectiveProductImage && candidatePool.length < 3) {
         try {
           updateProgress({
             step: 'auto_search_fallback',
@@ -1415,7 +1442,11 @@ export async function runStage1Pipeline({
             onProgress: (p) => updateProgress({ ...p, status: 'running' }),
           });
           if (visualCandidates && visualCandidates.length > 0) {
-            targetCandidates = visualCandidates;
+            for (const cand of visualCandidates) {
+              if (!candidatePool.some(t => (t.url && t.url === cand.url) || (t.id && t.id === cand.id))) {
+                candidatePool.push(cand);
+              }
+            }
             console.log(`[Job ${jobId}] ✅ Ditemukan ${visualCandidates.length} kandidat video dari pencarian visual gambar!`);
           }
         } catch (vErr) {
@@ -1423,8 +1454,8 @@ export async function runStage1Pipeline({
         }
       }
 
-      // 2. Fallback Multi-Engine Keyword Search jika visual search belum menemukan kandidat
-      while (searchIteration < 2 && targetCandidates.length === 0) {
+      // 2. Multi-Engine Keyword Search jika belum mencapai target minimal 6 kandidat
+      while (searchIteration < 3 && candidatePool.length < 6) {
         const fresh = await discoverYouTubeCandidatesForProduct({
           productTitle,
           productDescription,
@@ -1434,26 +1465,31 @@ export async function runStage1Pipeline({
           onProgress: (p) => updateProgress({ ...p, status: 'running' }),
         });
         if (fresh && fresh.length > 0) {
-          targetCandidates = fresh;
+          for (const cand of fresh) {
+            if (!candidatePool.some(t => (t.url && t.url === cand.url) || (t.id && t.id === cand.id))) {
+              candidatePool.push(cand);
+            }
+          }
         }
         searchIteration++;
       }
 
-      if (!targetCandidates || targetCandidates.length === 0) {
-        throw new Error(`Video awal ditolak AI (${lastRejectionError?.rejectionReason || 'tidak cocok'}), dan tidak ditemukan video YouTube pengganti baru untuk "${productTitle}".`);
+      if (!candidatePool || candidatePool.length === 0) {
+        throw new Error(`Tidak ditemukan video YouTube yang cocok untuk "${productTitle}": ${lastRejectionError?.rejectionReason || 'kandidat kosong'}.`);
       }
 
-      console.log(`[Job ${jobId}] Menemukan ${targetCandidates.length} kandidat video YouTube. Memulai Multi-Video Frame Pooling & Clip Harvesting (target 30 frame bersih untuk durasi 30-35s)...`);
+      console.log(`[Job ${jobId}] Menemukan ${candidatePool.length} kandidat video YouTube. Memulai Multi-Video Stream & Harvesting (stream 3-5 video, target klip 30-35s)...`);
 
-      // Ambil hingga 10 kandidat dan terus stream sampai minimal 30 frame bersih terkumpul
-      const candidatesToProcess = targetCandidates.slice(0, 10);
+      // Ambil hingga 12 kandidat dan stream 3 sampai 5 video dengan frame bersih
+      const candidatesToProcess = candidatePool.slice(0, 12);
       const candidateResults = [];
       const downloadedCandidatesMap = new Map();
       let totalCleanCount = 0;
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
-        if (totalCleanCount >= 30 && candidateResults.length >= 2) {
-          console.log(`[Job ${jobId}] ✅ Target 30 frame bersih terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video). Lanjut ke AI Vision.`);
+        // Berhenti jika sudah mengumpulkan 3 sampai 5 video dengan frame bersih
+        if (candidateResults.length >= 3 && (totalCleanCount >= 25 || candidateResults.length >= 5)) {
+          console.log(`[Job ${jobId}] ✅ Target streaming 3-5 video terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video). Lanjut ke AI Vision.`);
           break;
         }
 
@@ -1461,7 +1497,7 @@ export async function runStage1Pipeline({
         const candVid = extractVideoId(candidate.url) || candidate.id;
         if (candVid) usedVids.add(candVid);
 
-        const candLabel = `Kandidat ${i + 1}/${candidatesToProcess.length}`;
+        const candLabel = `Video ${candidateResults.length + 1} (Kandidat ${i + 1}/${candidatesToProcess.length})`;
         updateProgress({
           step: 'stream_sampling',
           message: `[${candLabel}] Streaming & sampling frame: "${(candidate.title || productTitle).slice(0, 32)}..."`,
@@ -1600,6 +1636,31 @@ export async function runStage1Pipeline({
           videoPath: vPath,
         };
       });
+
+      // Jaminan klip minimal 6-8 klip (30-35s) dengan adegan berganti dinamis:
+      const currentHlDuration = hl.clips.reduce((sum, c) => sum + (c.duration || sceneDuration), 0);
+      if (hl.clips.length < 6 || currentHlDuration < 30.0) {
+        console.log(`[Job ${jobId}] ⚠️ AI Vision memilih ${hl.clips.length} klip (${currentHlDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai durasi standar minimal 30-35s...`);
+        const baseClips = [...hl.clips];
+        let expRound = 1;
+        while (hl.clips.length < 7 && expRound <= 4) {
+          for (const base of baseClips) {
+            if (hl.clips.length >= 7) break;
+            const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 4.0));
+            hl.clips.push({
+              ...base,
+              startSeconds: newStart,
+              endSeconds: newStart + sceneDuration,
+              duration: sceneDuration,
+              startTime: formatSeconds(newStart),
+              endTime: formatSeconds(newStart + sceneDuration),
+              reason: `${base.reason} (Dynamic Scene Cut #${expRound})`,
+            });
+          }
+          expRound++;
+        }
+        hl.duration = hl.clips.reduce((sum, c) => sum + (c.duration || sceneDuration), 0);
+      }
 
       rawVideoPath = [...downloadedCandidatesMap.values()][0];
       highlight = hl;
@@ -2346,141 +2407,140 @@ async function runAutoStage1Worker(run) {
       }
 
       let jobSuccess = false;
-      for (const candidate of candidates) {
-        if (run.status === 'stopping' || run.status === 'stopped') break;
-        const candidateVid = extractVideoId(candidate.url) || candidate.id;
-        if (candidateVid) {
-          usedYouTubeVideoIds.add(candidateVid);
-        }
+      if (run.status === 'stopping' || run.status === 'stopped') break;
 
-        const autoJobId = `auto_${crypto.randomBytes(5).toString('hex')}`;
-        run.currentJobId = autoJobId;
-        const currentCandidateTitle = candidate.title || keyword;
+      const autoJobId = `auto_${crypto.randomBytes(5).toString('hex')}`;
+      run.currentJobId = autoJobId;
+      const currentCandidateTitle = keyword || candidates[0]?.title;
 
-        try {
-          updateAutoRun(run, {
-            currentProductTitle: currentCandidateTitle,
-            message: `[${targetLabel}] Menguji video: "${currentCandidateTitle.slice(0, 30)}..."...`,
-            progress: isUnlimited ? 25 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 5),
-          });
+      for (const cand of candidates) {
+        const candidateVid = extractVideoId(cand.url) || cand.id;
+        if (candidateVid) usedYouTubeVideoIds.add(candidateVid);
+      }
 
-          const candidateShopeeLink = buildShopeeSearchUrl(keyword || currentCandidateTitle);
-          const completedResult = await runStage1Pipeline({
-            jobId: autoJobId,
-            youtubeUrl: candidate.url,
-            shopeeLink: candidateShopeeLink || '',
-            productTitle: currentCandidateTitle,
-            productDescription: candidate.description || '',
-            apiKey: undefined,
-            options: {
-              ...run.options,
-              aiProvider: run.options?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter'),
-              autoSearchFallback: false,
-              isVideoFirst: true,
-            },
-            extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true, isVideoFirst: true, searchKeyword: keyword },
-            requireCleanGeminiPlan: true,
-            onProgress: (p) => {
-              if (isUnlimited) {
-                updateAutoRun(run, {
-                  message: `[${targetLabel}] ${p.message}`,
-                  progress: Math.min(98, Math.max(10, p.progress || 10)),
-                });
-              } else {
-                const baseProgress = Math.round((run.successfulJobs / run.maxJobs) * 100);
-                const stepFraction = Math.round(((p.progress || 0) / 100) * (100 / run.maxJobs));
-                updateAutoRun(run, {
-                  message: `[${targetLabel}] ${p.message}`,
-                  progress: Math.min(98, baseProgress + stepFraction),
-                });
-              }
-            },
-          });
+      try {
+        updateAutoRun(run, {
+          currentProductTitle: currentCandidateTitle,
+          message: `[${targetLabel}] Multi-Video Stream (3-5 video) untuk "${currentCandidateTitle.slice(0, 30)}..."...`,
+          progress: isUnlimited ? 25 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 5),
+        });
 
-          const finalItemTitle = completedResult?.productTitle || currentCandidateTitle;
+        const candidateShopeeLink = buildShopeeSearchUrl(keyword || currentCandidateTitle);
+        const completedResult = await runStage1Pipeline({
+          jobId: autoJobId,
+          youtubeUrl: null, // Mode Multi-Video Harvesting!
+          targetCandidates: candidates,
+          shopeeLink: candidateShopeeLink || '',
+          productTitle: currentCandidateTitle,
+          productDescription: candidates[0]?.description || '',
+          apiKey: undefined,
+          options: {
+            ...run.options,
+            aiProvider: run.options?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter'),
+            autoSearchFallback: true,
+            multiVideoHarvesting: true,
+            isVideoFirst: true,
+            sceneDuration: 4.8,
+            minDuration: 30.0,
+          },
+          extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true, isVideoFirst: true, searchKeyword: keyword },
+          requireCleanGeminiPlan: true,
+          onProgress: (p) => {
+            if (isUnlimited) {
+              updateAutoRun(run, {
+                message: `[${targetLabel}] ${p.message}`,
+                progress: Math.min(98, Math.max(10, p.progress || 10)),
+              });
+            } else {
+              const baseProgress = Math.round((run.successfulJobs / run.maxJobs) * 100);
+              const stepFraction = Math.round(((p.progress || 0) / 100) * (100 / run.maxJobs));
+              updateAutoRun(run, {
+                message: `[${targetLabel}] ${p.message}`,
+                progress: Math.min(98, baseProgress + stepFraction),
+              });
+            }
+          },
+        });
+
+        const finalItemTitle = completedResult?.productTitle || currentCandidateTitle;
+        run.successfulJobs++;
+        jobSuccess = true;
+        markKeywordAsUsed(keyword, { productTitle: finalItemTitle, jobId: autoJobId, source: 'auto_worker' });
+        const finishedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
+        updateAutoRun(run, {
+          message: `✅ [${finishedDisplay}] Selesai: "${finalItemTitle.slice(0, 35)}..."`,
+          progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
+        });
+      } catch (err) {
+        console.warn(`[Auto] Multi-video harvesting failed for ${keyword}:`, err.message);
+        // Delete temporary files ONLY IF the job did NOT already save a media asset
+        const existingJob = activeJobs.get(autoJobId);
+        const hasSavedMedia = existingJob && (existingJob.finalLocalPath || existingJob.silentLocalPath || existingJob.downloadedVideoPath);
+        if (!hasSavedMedia) {
+          deleteJobFiles(autoJobId, outputDir, tempDir);
+          activeJobs.delete(autoJobId);
+          deletePersistedJob(autoJobId);
+        } else {
+          const savedItemTitle = existingJob.productTitle || currentCandidateTitle;
           run.successfulJobs++;
           jobSuccess = true;
-          markKeywordAsUsed(keyword, { productTitle: finalItemTitle, jobId: autoJobId, source: 'auto_worker' });
-          const finishedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
+          markKeywordAsUsed(keyword, { productTitle: savedItemTitle, jobId: autoJobId, source: 'auto_worker' });
+          const savedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
           updateAutoRun(run, {
-            message: `✅ [${finishedDisplay}] Selesai: "${finalItemTitle.slice(0, 35)}..."`,
+            message: `✅ [${savedDisplay}] Video 1080p tersimpan (Menunggu Voiceover): "${savedItemTitle.slice(0, 30)}..."`,
             progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
           });
-          break; // Video lolos dan selesai! Lanjut ke kata kunci berikutnya
-        } catch (err) {
-          console.warn(`[Auto] Candidate rejected for ${keyword}:`, err.message);
-          // Delete temporary files ONLY IF the job did NOT already save a media asset
-          const existingJob = activeJobs.get(autoJobId);
-          const hasSavedMedia = existingJob && (existingJob.finalLocalPath || existingJob.silentLocalPath || existingJob.downloadedVideoPath);
-          if (!hasSavedMedia) {
-            deleteJobFiles(autoJobId, outputDir, tempDir);
-            activeJobs.delete(autoJobId);
-            deletePersistedJob(autoJobId);
-          } else {
-            const savedItemTitle = existingJob.productTitle || currentCandidateTitle;
-            run.successfulJobs++;
-            jobSuccess = true;
-            markKeywordAsUsed(keyword, { productTitle: savedItemTitle, jobId: autoJobId, source: 'auto_worker' });
-            const savedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
-            updateAutoRun(run, {
-              message: `✅ [${savedDisplay}] Video 1080p tersimpan (Menunggu Voiceover): "${savedItemTitle.slice(0, 30)}..."`,
-              progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
-            });
-            break;
-          }
+        }
 
-          run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
+        run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
 
-          // If Gemini Visual or Gemini TTS (or any AI fallback chain) exhausts its quota/rate limit, stop autorun immediately!
-          const msg = (err.message || '').toLowerCase();
-          const isQuota = Boolean(
-            err.isAllModelsQuotaExhausted ||
-            err.isQuotaError ||
-            (err.status === 429 || err.statusCode === 429) ||
-            isQuotaErrorMessage(err.message) ||
-            msg.includes('resource_exhausted') ||
-            msg.includes('quota') ||
-            msg.includes('kuota') ||
-            msg.includes('rate limit') ||
-            msg.includes('rate_limit') ||
-            msg.includes('429') ||
-            (msg.includes('gemini') && (msg.includes('limit') || msg.includes('exhausted') || msg.includes('too many requests')))
-          );
+        // If Gemini Visual or Gemini TTS (or any AI fallback chain) exhausts its quota/rate limit, stop autorun immediately!
+        const msg = (err.message || '').toLowerCase();
+        const isQuota = Boolean(
+          err.isAllModelsQuotaExhausted ||
+          err.isQuotaError ||
+          (err.status === 429 || err.statusCode === 429) ||
+          isQuotaErrorMessage(err.message) ||
+          msg.includes('resource_exhausted') ||
+          msg.includes('quota') ||
+          msg.includes('kuota') ||
+          msg.includes('rate limit') ||
+          msg.includes('rate_limit') ||
+          msg.includes('429') ||
+          (msg.includes('gemini') && (msg.includes('limit') || msg.includes('exhausted') || msg.includes('too many requests')))
+        );
 
-          if (isQuota) {
-            console.error(`[Auto] 🛑 Limit kuota/rate limit Gemini (Visual atau TTS) telah habis: ${err.message}. Menghentikan Auto Mode.`);
-            quotaExhausted = true;
-            quotaErrorMessage = err.message;
-            break;
-          }
+        if (isQuota) {
+          console.error(`[Auto] 🛑 Limit kuota/rate limit Gemini (Visual atau TTS) telah habis: ${err.message}. Menghentikan Auto Mode.`);
+          quotaExhausted = true;
+          quotaErrorMessage = err.message;
+          break;
+        }
 
-          // Check for fatal authentication error (401 with invalid api key)
-          const isFatalAuth = (err.status === 401 || err.statusCode === 401) && (msg.includes('api key') || msg.includes('unauthorized'));
-          if (isFatalAuth) {
-            console.error('[Auto] API Key tidak valid. Menghentikan Auto Mode.');
-            throw err;
-          }
+        // Check for fatal authentication error (401 with invalid api key)
+        const isFatalAuth = (err.status === 401 || err.statusCode === 401) && (msg.includes('api key') || msg.includes('unauthorized'));
+        if (isFatalAuth) {
+          console.error('[Auto] API Key tidak valid. Menghentikan Auto Mode.');
+          throw err;
+        }
 
-          // Check for YouTube cookies/authentication error - stop auto-run instead of infinite loop
-          const isYouTubeAuthError = msg.includes('from-browser') || msg.includes('--cookies') ||
-            msg.includes('cookies for the authentication') || msg.includes('sign in to confirm') ||
-            msg.includes('login required') || msg.includes('private video') ||
-            (msg.includes('yt-dlp') && msg.includes('authentication'));
-          if (isYouTubeAuthError) {
-            console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
-            console.error('[Auto] Upload file cookies.txt ke ~/clipper/server/cookies.txt dan restart PM2.');
-            updateAutoRun(run, {
-              status: 'error',
-              message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Upload cookies.txt ke server/cookies.txt dan restart server.',
-              progress: 100,
-              finishedAt: new Date().toISOString(),
-              currentJobId: null,
-              currentProductTitle: null,
-            });
-            return; // Stop the auto-run worker entirely
-          }
-
-          // Any ordinary candidate rejection (watermark, face, no clip, download glitch) -> try next candidate
+        // Check for YouTube cookies/authentication error - stop auto-run instead of infinite loop
+        const isYouTubeAuthError = msg.includes('from-browser') || msg.includes('--cookies') ||
+          msg.includes('cookies for the authentication') || msg.includes('sign in to confirm') ||
+          msg.includes('login required') || msg.includes('private video') ||
+          (msg.includes('yt-dlp') && msg.includes('authentication'));
+        if (isYouTubeAuthError) {
+          console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
+          console.error('[Auto] Upload file cookies.txt ke ~/clipper/server/cookies.txt dan restart PM2.');
+          updateAutoRun(run, {
+            status: 'error',
+            message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Upload cookies.txt ke server/cookies.txt dan restart server.',
+            progress: 100,
+            finishedAt: new Date().toISOString(),
+            currentJobId: null,
+            currentProductTitle: null,
+          });
+          return; // Stop the auto-run worker entirely
         }
       }
 

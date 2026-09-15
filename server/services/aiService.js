@@ -1269,7 +1269,7 @@ export async function selectHighlightWithAI({
   productDescription,
   productImage = '',
   shopeeLink,
-  sceneDuration = 3.3,
+  sceneDuration = 4.8,
   allowFallbackClips = false,
   introCutoffSec = 0,
   isVideoFirst = false,
@@ -1324,7 +1324,7 @@ export async function selectHighlightWithAI({
   let { client, models: modelFallbackList, provider } = activeConfig;
   let activeModel = modelFallbackList[0];
 
-  const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const clipSec = Math.max(3.5, Math.min(5.0, Number(sceneDuration) || 4.8));
   const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
 
   onProgress({
@@ -1563,7 +1563,11 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - DILARANG KERAS menerima video yang berupa kumpulan foto statis, slideshow gambar diam, atau foto katalog dengan zoom lambat.
    - Wajib rekaman kamera fisik bergerak nyata yang mendemonstrasikan fungsi alat.
    - Pilihlah 6 hingga 8 indeks frame yang mewakili sudut pandang atau fase aksi yang BERBEDA (berganti adegan dinamis setiap ~5 detik). Jangan pilih frame yang identik atau dari satu sudut unmoving yang sama!
-6. If there are at least 5 clean frames demonstrating the product (100% entirely faceless across all frames, zero watermark inside 9:16, zero subtitles, zero floating text, matching product, live authentic motion):
+6. Multi-Video Candidate Harvesting & Selection (AVOID MONOTONY & PREVENT COPYRIGHT BLOCKS):
+   - Notice that frames are tagged with their source video (e.g. "Video #1 (00:08)", "Video #2 (00:15)", "Video #3 (00:05)")!
+   - When frames from multiple videos are available, YOU MUST SELECT FRAMES FROM MULTIPLE DIFFERENT VIDEOS (pick 1 to 2 clean frames from EACH distinct video, picking 6 to 8 frames in total)!
+   - This creates an engaging affiliate video that cuts to a DIFFERENT video source every ~5 seconds, reaches at least 30 to 35 seconds, and completely avoids copyright blocking!
+7. If there are at least 5 clean frames demonstrating the product (100% entirely faceless across all frames, zero watermark inside 9:16, zero subtitles, zero floating text, matching product, live authentic motion):
    - Select 6 to 8 frame indices in "frames" array.
    - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "frames": [indices], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
 
@@ -1731,8 +1735,9 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
             continue; // Lewati frame yang berada di area intro bumper
           }
           const startSec = rawStart;
-          // Cegah memasukkan frame dengan timestamp berdekatan (< 2.5s)
-          if (candidateClips.some(c => Math.abs(c.startSeconds - startSec) < 2.5)) {
+          // Cegah memasukkan frame dengan timestamp berdekatan (< 2.5s) pada kandidat video yang sama
+          const candIdx = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : null;
+          if (candidateClips.some(c => (c.candidateIndex === candIdx || (!c.candidateIndex && !candIdx)) && Math.abs(c.startSeconds - startSec) < 2.5)) {
             continue;
           }
           const endSec = Math.round((startSec + clipSec) * 10) / 10;
@@ -2525,8 +2530,8 @@ function normalizeReframe(reframe = {}) {
   };
 }
 
-export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 4.5 } = {}) {
-  const clipLength = Math.max(3.0, Math.min(5.0, Number(sceneDuration) || 4.5));
+export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 4.8 } = {}) {
+  const clipLength = Math.max(3.5, Math.min(5.0, Number(sceneDuration) || 4.8));
   const sourceClips = Array.isArray(rawClips) ? rawClips : [];
   const normalized = [];
   let previousEnd = -1;
@@ -2636,8 +2641,8 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   // lakukan ekspansi stride berjarak dinamis dari anchor frame tersebut
   // agar video akhir mencapai durasi optimal 30-35 detik (6-8 klip @ 4.5-5.0s)
   if (normalized.length > 0 && normalized.length < 7) {
-    console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Dynamic Stride Expansion menuju 6-8 klip (30-35s)...`);
-    const targetClips = Math.min(8, Math.max(6, Math.floor(33 / clipLength)));
+    console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Dynamic Stride Expansion menuju 7-8 klip (30-35s)...`);
+    const targetClips = Math.min(8, Math.max(7, Math.ceil(31 / clipLength)));
     const originalAnchors = [...normalized];
 
     // Scoped tracking of intervals per candidate to avoid overlaps
