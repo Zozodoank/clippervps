@@ -343,26 +343,20 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
   }
 
   if (normalized.length) {
-    // Safety Duration Guard: Pastikan durasi total klip yang dirender minimal 30-35s (minimal 10 klip)
-    // agar sinkron dengan durasi naskah Voiceover dan standar optimal video promosi Affiliate.
-    if (normalized.length < 10 || normalized.reduce((acc, c) => acc + c.duration, 0) < 30.0) {
-      console.log(`[normalizeRenderClips] Total klip saat ini ${normalized.length} (${normalized.reduce((acc, c) => acc + c.duration, 0).toFixed(1)}s). Menjalankan Safety Duration Guard menuju minimal 30-35s (minimal 10 klip)...`);
-      const baseClips = [...normalized];
-      let cycleIdx = 0;
-      while ((normalized.length < 10 || normalized.reduce((acc, c) => acc + c.duration, 0) < 30.0) && cycleIdx < 20) {
-        const src = baseClips[cycleIdx % baseClips.length];
-        const canHflip = !src.reframe?.hasProductBrand && src.reframe?.allowHflip !== false;
-        normalized.push({
-          ...src,
-          reframe: {
-            ...src.reframe,
-            allowHflip: canHflip ? (cycleIdx % 2 === 0 ? false : true) : false,
-          },
-        });
-        cycleIdx++;
+    // Deduplikasi ketat: Pastikan tidak ada klip yang identik atau berjarak < 2 detik dari video yang sama
+    const deduplicated = [];
+    for (const c of normalized) {
+      const isDuplicate = deduplicated.some(existing =>
+        (existing.videoPath === c.videoPath || (!existing.videoPath && !c.videoPath)) &&
+        Math.abs(existing.startSeconds - c.startSeconds) < 2.0
+      );
+      if (!isDuplicate) {
+        deduplicated.push(c);
+      } else {
+        console.log(`[normalizeRenderClips] ⚠️ Membuang klip duplikat pada timestamp ${c.startSeconds}s.`);
       }
     }
-    return normalized;
+    return deduplicated;
   }
 
   const fallbackStart = parseTimeToSeconds(fallbackStartTime);

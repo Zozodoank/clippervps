@@ -1418,8 +1418,12 @@ RULE 3: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE
   * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
     DILARANG KERAS ada wajah, kepala, rambut, mata, mulut, leher, atau tubuh/torso manusia terlihat pada frame yang dipilih, BAHKAN SEKILAS!
   * HANYA pilih indeks frame yang menyorot close-up produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
-- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) BAN:
-  * DILARANG KERAS memilih frame yang berupa foto katalog statis dengan efek zoom lambat (Ken Burns effect). Wajib ada interaksi tangan dan peragaan fisik aktif!
+- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) STRICT BAN:
+  * DILARANG KERAS memilih frame yang berupa foto katalog statis atau slideshow foto dengan efek zoom lambat (Ken Burns effect)! Video WAJIB rekaman kamera fisik bergerak nyata dengan tangan manusia beroperasi aktif.
+  * Jika video terdeteksi kumpulan foto statis/slideshow diam, TOLAK LANGSUNG (status: 'reject', reason: 'Video berupa slideshow foto statis / gambar diam (wajib video rekaman fisik bergerak nyata)').
+- DYNAMIC SCENE CUTS MANDATE (GANTI ADEGAN TIAP ~5 DETIK):
+  * Video affiliate pendek membutuhkan variasi potongan adegan yang berganti aksi/sudut pandang setiap 4 sampai 5 detik.
+  * HANYA pilih frame yang mewakili fase penggunaan produk yang berbeda (misal: penampakan fisik alat -> memasukkan bahan -> menekan/memotong/mengoperasikan -> hasil nyata produk -> membersihkan/menyimpan). Dilarang memilih frame diam berulang dari 1 sudut unmoving yang sama!
 - REJECT IMMEDIATELY (status: 'reject') IF:
   * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
   * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action frames.
@@ -1555,8 +1559,12 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 4. Watermark & Logo QC (9:16 Crop Tolerance):
    - Watermark/logo di pojok KIRI atau KANAN video (di luar area tengah 9:16) TETAP DITERIMA karena akan terpotong/tertutup pilar.
    - Hanya tolak jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE AREA 9:16 TENGAH: output {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Watermark masuk ke dalam frame 9:16."}
-5. If there are at least 5 clean frames demonstrating the product (100% entirely faceless across all frames, zero watermark inside 9:16, zero subtitles, zero floating text, matching product):
-   - Select 5 to 8 frame indices in "frames" array.
+5. Strict Live Footage & Dynamic Scene Cuts (NO STATIC SLIDESHOWS):
+   - DILARANG KERAS menerima video yang berupa kumpulan foto statis, slideshow gambar diam, atau foto katalog dengan zoom lambat.
+   - Wajib rekaman kamera fisik bergerak nyata yang mendemonstrasikan fungsi alat.
+   - Pilihlah 6 hingga 8 indeks frame yang mewakili sudut pandang atau fase aksi yang BERBEDA (berganti adegan dinamis setiap ~5 detik). Jangan pilih frame yang identik atau dari satu sudut unmoving yang sama!
+6. If there are at least 5 clean frames demonstrating the product (100% entirely faceless across all frames, zero watermark inside 9:16, zero subtitles, zero floating text, matching product, live authentic motion):
+   - Select 6 to 8 frame indices in "frames" array.
    - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "frames": [indices], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
 
   const messageContent = [
@@ -1718,9 +1726,14 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
           const frameObj = frames[idx - 1];
           const ts = frameObj ? frameObj.timestamp : (idx * (totalDuration / frames.length));
           const minSafeStart = Math.max(introCutoffSec || 0, 0);
-          let startSec = Math.max(0, Math.min(totalDuration - clipSec, Math.round(ts * 10) / 10));
-          if (startSec < minSafeStart) {
-            startSec = Math.min(totalDuration - clipSec, minSafeStart);
+          const rawStart = Math.max(0, Math.min(totalDuration - clipSec, Math.round(ts * 10) / 10));
+          if (rawStart < minSafeStart) {
+            continue; // Lewati frame yang berada di area intro bumper
+          }
+          const startSec = rawStart;
+          // Cegah memasukkan frame dengan timestamp berdekatan (< 2.5s)
+          if (candidateClips.some(c => Math.abs(c.startSeconds - startSec) < 2.5)) {
+            continue;
           }
           const endSec = Math.round((startSec + clipSec) * 10) / 10;
           candidateClips.push({
@@ -2512,8 +2525,8 @@ function normalizeReframe(reframe = {}) {
   };
 }
 
-export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.3 } = {}) {
-  const clipLength = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 4.5 } = {}) {
+  const clipLength = Math.max(3.0, Math.min(5.0, Number(sceneDuration) || 4.5));
   const sourceClips = Array.isArray(rawClips) ? rawClips : [];
   const normalized = [];
   let previousEnd = -1;
@@ -2614,17 +2627,17 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     });
     previousEndsByCand.set(candKey, endSeconds);
     previousEnd = endSeconds;
-    if (normalized.length === 12) break; // Target max 12 clips (~33-35s)
+    if (normalized.length === 8) break; // Target 6-8 distinct clips (~30-35s)
   }
 
   console.log(`[normalizeClipPlan] Accepted ${normalized.length} valid clips from AI vision`);
 
   // Continuous Stride Expansion: Jika AI menyetujui anchor clip bersih,
-  // lakukan ekspansi stride berurutan (consecutive stride intervals) dari anchor frame tersebut
-  // agar video akhir mencapai durasi optimal 30-35 detik (10-12 klip) tanpa memerlukan ekstra token AI!
-  if (normalized.length > 0 && normalized.length < 10) {
-    console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Continuous Stride Expansion menuju minimal 10-12 klip (30-35s)...`);
-    const targetClips = Math.min(12, Math.max(10, Math.floor(33 / clipLength)));
+  // lakukan ekspansi stride berjarak dinamis dari anchor frame tersebut
+  // agar video akhir mencapai durasi optimal 30-35 detik (6-8 klip @ 4.5-5.0s)
+  if (normalized.length > 0 && normalized.length < 7) {
+    console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Dynamic Stride Expansion menuju 6-8 klip (30-35s)...`);
+    const targetClips = Math.min(8, Math.max(6, Math.floor(33 / clipLength)));
     const originalAnchors = [...normalized];
 
     // Scoped tracking of intervals per candidate to avoid overlaps
@@ -2656,8 +2669,9 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
         const cKey = baseClip.candidateIndex !== null && baseClip.candidateIndex !== undefined ? baseClip.candidateIndex : 'default';
         const candDuration = baseClip.candidate?.duration || totalDuration;
 
-        // 1. Forward Stride: lanjutan demonstrasi produk fisik ke depan
-        const fwdStart = Math.round((baseClip.endSeconds + (strideRound - 1) * clipLength) * 10) / 10;
+        // 1. Forward Stride dengan jeda waktu minimal 3.5s agar adegan berganti dinamis (bukan potongan berdempetan)
+        const sceneJump = Math.max(3.5, strideRound * 3.5);
+        const fwdStart = Math.round((baseClip.endSeconds + sceneJump) * 10) / 10;
         const fwdEnd = Math.round((fwdStart + clipLength) * 10) / 10;
 
         if (isIntervalFree(cKey, fwdStart, fwdEnd, candDuration)) {
@@ -2668,14 +2682,14 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
             duration: clipLength,
             startTime: formatSeconds(fwdStart),
             endTime: formatSeconds(fwdEnd),
-            reason: `${baseClip.reason} (Continuous Stride #${strideRound})`,
+            reason: `${baseClip.reason} (Dynamic Scene Cut #${strideRound})`,
           });
           intervalsByCand.get(cKey).push({ start: fwdStart, end: fwdEnd });
           expanded = true;
           if (normalized.length >= targetClips) break;
         } else {
-          // 2. Backward Stride: potongan sebelum anchor jika aman
-          const bwdStart = Math.round((baseClip.startSeconds - strideRound * clipLength) * 10) / 10;
+          // 2. Backward Stride berjarak sebelum anchor jika aman
+          const bwdStart = Math.round((baseClip.startSeconds - sceneJump - clipLength) * 10) / 10;
           const bwdEnd = Math.round((bwdStart + clipLength) * 10) / 10;
           if (bwdStart >= 0 && isIntervalFree(cKey, bwdStart, bwdEnd, candDuration)) {
             normalized.push({
@@ -2685,7 +2699,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
               duration: clipLength,
               startTime: formatSeconds(bwdStart),
               endTime: formatSeconds(bwdEnd),
-              reason: `${baseClip.reason} (Pre-Anchor Stride #${strideRound})`,
+              reason: `${baseClip.reason} (Pre-Anchor Scene Cut #${strideRound})`,
             });
             intervalsByCand.get(cKey).push({ start: bwdStart, end: bwdEnd });
             expanded = true;
@@ -2703,11 +2717,23 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       return a.startSeconds - b.startSeconds;
     });
 
-    console.log(`[normalizeClipPlan] ✅ Continuous Stride Expansion sukses: menghasilkan total ${normalized.length} klip (${(normalized.length * clipLength).toFixed(1)}s total).`);
+    console.log(`[normalizeClipPlan] ✅ Dynamic Stride Expansion sukses: menghasilkan total ${normalized.length} klip (${(normalized.length * clipLength).toFixed(1)}s total).`);
   }
 
-  if (normalized.length > 0) {
-    return normalized;
+  // Deduplikasi ketat: Pastikan tidak ada 2 klip dari kandidat yang sama dengan selisih waktu < 2.0 detik
+  const dedupedClips = [];
+  for (const c of normalized) {
+    const isDup = dedupedClips.some(e =>
+      (e.candidateIndex === c.candidateIndex || (!e.candidateIndex && !c.candidateIndex)) &&
+      Math.abs(e.startSeconds - c.startSeconds) < 2.0
+    );
+    if (!isDup) {
+      dedupedClips.push(c);
+    }
+  }
+
+  if (dedupedClips.length > 0) {
+    return dedupedClips;
   }
 
   if (!allowFallback) {

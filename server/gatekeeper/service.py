@@ -468,10 +468,37 @@ class FrameGatekeeper:
         discarded_frames = []
 
         start_time = time.time()
-        for item in frame_items:
+
+        # ── 1. Inter-Frame Motion & Static Frame Detection (MAD < 6.0) ──
+        prev_small = None
+        static_transitions = 0
+        static_indices = set()
+
+        for idx, item in enumerate(frame_items):
+            path = item.get("filePath") if isinstance(item, dict) else str(item)
+            if path and os.path.exists(path):
+                img = cv2.imread(path)
+                if img is not None:
+                    small = cv2.resize(img, (80, 144))
+                    if prev_small is not None:
+                        diff = float(cv2.absdiff(small, prev_small).mean())
+                        if diff < 6.0:
+                            static_transitions += 1
+                            static_indices.add(idx)
+                    prev_small = small
+
+        # ── 2. Per-Frame Gatekeeper Evaluation ──
+        for idx, item in enumerate(frame_items):
             path = item.get("filePath") if isinstance(item, dict) else str(item)
             ts = item.get("timestamp", 0.0) if isinstance(item, dict) else 0.0
             verdict = self.process_single_frame(path, ts)
+
+            # Jika frame terdeteksi statis diam di badan video, buang frame tersebut
+            if idx in static_indices and ts > 3.0 and verdict["status"] == "clean":
+                verdict["status"] = "discarded"
+                verdict["stage"] = "static_frame"
+                verdict["reason"] = "Frame foto statis diam tanpa gerakan fisik peragaan"
+
             results.append(verdict)
 
             if verdict["status"] == "clean":
@@ -484,21 +511,28 @@ class FrameGatekeeper:
 
         # Check for opening intro cutoff
         intro_cutoff_sec = 0.0
-        if len(results) >= 2 and results[0]["status"] == "discarded" and results[0]["stage"] in ("text", "scene"):
+        if len(results) >= 2 and results[0]["status"] == "discarded" and results[0]["stage"] in ("text", "scene", "static_frame"):
             intro_cutoff_sec = max(3.0, results[0].get("timestamp", 3.0))
-            if results[1]["status"] == "discarded" and results[1]["stage"] in ("text", "scene"):
+            if results[1]["status"] == "discarded" and results[1]["stage"] in ("text", "scene", "static_frame"):
                 intro_cutoff_sec = max(intro_cutoff_sec, results[1].get("timestamp", 5.0))
 
         # Eligible if at least 4 clean frames and clean frames represent >= 35% of video
-        eligible = len(clean_frames) >= 4 and (len(clean_frames) / max(1, len(frame_items)) >= 0.35)
+        # AND not a static slideshow (static transitions < 35% and static_transitions < 3)
+        static_ratio = float(static_transitions) / max(1, len(frame_items) - 1)
+        is_static_slideshow = (static_transitions >= 3) or (static_ratio >= 0.35)
+
+        eligible = (not is_static_slideshow) and len(clean_frames) >= 4 and (len(clean_frames) / max(1, len(frame_items)) >= 0.35)
 
         summary_reason = "Visual video bersih dan fokus pada produk natural."
         if not eligible:
             face_discards = sum(1 for d in discarded_frames if d["stage"] == "face")
             text_discards = sum(1 for d in discarded_frames if d["stage"] == "text")
             scene_discards = sum(1 for d in discarded_frames if d["stage"] == "scene")
+            static_discards = sum(1 for d in discarded_frames if d["stage"] == "static_frame")
 
-            if face_discards >= 3:
+            if is_static_slideshow or static_discards >= 3:
+                summary_reason = f"Ditolak AI Gatekeeper: Video terdeteksi berupa slideshow foto statis / gambar diam ({static_transitions} transisi beku). Wajib video dengan gerakan fisik nyata."
+            elif face_discards >= 3:
                 summary_reason = f"Ditolak AI Gatekeeper: Terdeteksi {face_discards} frame menampilkan wajah manusia."
             elif text_discards >= 4:
                 summary_reason = f"Ditolak AI Gatekeeper: {text_discards} frame dipenuhi subtitle / teks promosi dominan."

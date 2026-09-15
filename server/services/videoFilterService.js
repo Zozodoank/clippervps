@@ -519,9 +519,9 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
     const discardedFrames = aiResult.allFrames.filter(f => f.status !== 'clean');
 
     const cleanRatio = cleanFrames.length / frames.length;
-    const isEligible = allowPartialClean
+    const isEligible = (aiResult.eligible !== false) && (allowPartialClean
       ? cleanFrames.length >= 3
-      : (cleanFrames.length >= 4 && cleanRatio >= 0.35);
+      : (cleanFrames.length >= 4 && cleanRatio >= 0.35));
 
     if (isEligible) {
       console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame bersih lolos (${aiResult.benchmarks?.totalMs || 0}ms).`);
@@ -583,6 +583,7 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
   // Membedakan kartu intro pembuka (detik 0-5) dengan bumper / slideshow di badan video
   let openingBumperCount = 0;
   let bodyBumperCount = 0;
+  const staticFrameIndices = new Set();
 
   for (let i = 0; i < frameBuffers.length - 1; i++) {
     const b1 = frameBuffers[i];
@@ -592,8 +593,10 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
       diff += Math.abs(b1[j] - b2[j]);
     }
     const mad = diff / b1.length;
-    // Jika MAD < 5.0 (selisih < 2.0% piksel), frame identik diam / bumper hold
-    if (mad < 5.0) {
+    // Jika MAD < 6.0 (selisih < 2.5% piksel), frame identik diam / bumper hold / foto statis
+    if (mad < 6.0) {
+      staticFrameIndices.add(i);
+      staticFrameIndices.add(i + 1);
       const ts = frames[i]?.timestamp ?? (i * 3);
       if (ts <= 5.0 || i <= 1) {
         openingBumperCount++;
@@ -772,18 +775,19 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
       if ((upperGenuineSkinPixels / upperTotal) > 0.07) humanFaceSkinCount++;
     }
 
-    // ── Klasifikasi granular per-frame (face, black, intro bumper vs clean) ──
+    // ── Klasifikasi granular per-frame (face, black, intro bumper, static frame vs clean) ──
     const isFrameFace = (upperGenuineSkinPixels / upperTotal) > 0.07;
     const isFrameBlack = avgBrightness < 8;
     const isFrameIntro = Boolean(isOpeningFrame);
+    const isFrameStatic = staticFrameIndices.has(i) && !isFrameIntro;
 
-    if (isFrameFace || isFrameBlack || isFrameIntro) {
+    if (isFrameFace || isFrameBlack || isFrameIntro || isFrameStatic) {
       discardedFrames.push({
         ...frames[i],
         index: i,
         timestamp: ts,
         filePath: frames[i]?.filePath,
-        reason: isFrameFace ? 'face' : (isFrameBlack ? 'black' : 'intro_bumper'),
+        reason: isFrameFace ? 'face' : (isFrameBlack ? 'black' : (isFrameStatic ? 'static_frame' : 'intro_bumper')),
       });
     } else {
       cleanFrames.push({
@@ -830,8 +834,15 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
     console.log(`[VideoFilter] Info diagnostik: Terdeteksi ${humanFaceSkinCount} frame wajah -> ${allowPartialClean ? 'Frame wajah disingkirkan dari pool AI' : 'AI akan membuang scene wajah'}.`);
   }
   const totalBumperFrames = openingBumperCount + bodyBumperCount;
-  if (bodyBumperCount >= 3) {
-    console.log(`[VideoFilter] Info diagnostik: Terdeteksi ${bodyBumperCount} frame diam -> Verifikasi keaslian video diserahkan ke AI Vision.`);
+  const bumperRatio = totalBumperFrames / Math.max(1, frameBuffers.length - 1);
+  if (bodyBumperCount >= 3 || bumperRatio >= 0.35) {
+    console.warn(`[VideoFilter] ⛔ Ditolak: Terdeteksi ${bodyBumperCount} frame diam / slideshow (${(bumperRatio * 100).toFixed(0)}% frame beku).`);
+    return {
+      eligible: false,
+      cleanFrames: [],
+      discardedFrames,
+      reason: `Analisa visual lokal mendeteksi video berupa slideshow foto statis / gambar diam (${bodyBumperCount} frame beku, ${(bumperRatio * 100).toFixed(0)}% tidak bergerak). Wajib video dengan gerakan fisik peragaan nyata!`
+    };
   }
 
   // Hanya tolak jika mayoritas frame blank / hitam pekat (> 75%) yang menandakan stream corrupt

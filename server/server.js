@@ -1198,14 +1198,20 @@ export async function runStage1Pipeline({
           throw noClipErr;
         }
 
-        // Pastikan backend membuang intro pembuka jika terdeteksi
+        // Pastikan backend membuang intro pembuka jika terdeteksi tanpa menduplikasi timestamp
         if (candidateIntroCutoff > 0 && Array.isArray(hl.clips)) {
+          hl.clips = hl.clips.filter(c => (c.startSeconds + c.duration) > candidateIntroCutoff);
+          let prevEnd = candidateIntroCutoff;
           hl.clips = hl.clips.map(c => {
-            if (c.startSeconds < candidateIntroCutoff) {
-              const newStart = Math.min(meta.duration - c.duration, candidateIntroCutoff);
-              return { ...c, startSeconds: newStart, startTime: formatSeconds(newStart), endTime: formatSeconds(newStart + c.duration) };
-            }
-            return c;
+            let start = Math.max(c.startSeconds, prevEnd);
+            prevEnd = start + c.duration;
+            return {
+              ...c,
+              startSeconds: start,
+              endSeconds: start + c.duration,
+              startTime: formatSeconds(start),
+              endTime: formatSeconds(start + c.duration),
+            };
           });
         }
 
@@ -1267,14 +1273,20 @@ export async function runStage1Pipeline({
         throw noClipErr;
       }
 
-      // Pastikan backend membuang intro pembuka jika terdeteksi
+      // Pastikan backend membuang intro pembuka jika terdeteksi tanpa menduplikasi timestamp
       if (candidateIntroCutoff > 0 && Array.isArray(hl.clips)) {
+        hl.clips = hl.clips.filter(c => (c.startSeconds + c.duration) > candidateIntroCutoff);
+        let prevEnd = candidateIntroCutoff;
         hl.clips = hl.clips.map(c => {
-          if (c.startSeconds < candidateIntroCutoff) {
-            const newStart = Math.min(meta.duration - c.duration, candidateIntroCutoff);
-            return { ...c, startSeconds: newStart, startTime: formatSeconds(newStart), endTime: formatSeconds(newStart + c.duration) };
-          }
-          return c;
+          let start = Math.max(c.startSeconds, prevEnd);
+          prevEnd = start + c.duration;
+          return {
+            ...c,
+            startSeconds: start,
+            endSeconds: start + c.duration,
+            startTime: formatSeconds(start),
+            endTime: formatSeconds(start + c.duration),
+          };
         });
       }
 

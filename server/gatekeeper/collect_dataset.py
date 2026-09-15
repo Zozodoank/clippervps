@@ -93,6 +93,7 @@ def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2, max_f
     frame_idx = 0
     saved_counts = {"valid_real": 0, "rejected": 0}
     datasheet = []
+    prev_small = None
 
     video_base = os.path.splitext(os.path.basename(video_path))[0]
 
@@ -108,7 +109,17 @@ def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2, max_f
         if frame_idx % frame_step == 0:
             ts_sec = round(frame_idx / fps, 2)
             cropped = crop_9_16(frame)
+            small = cv2.resize(cropped, (80, 144))
+
             label, reason = evaluate_frame_heuristic(cropped)
+
+            # Jika frame statis diam terhadap frame sebelumnya (MAD < 6.0), otomatis tolak ke rejected!
+            if prev_small is not None:
+                diff = float(cv2.absdiff(small, prev_small).mean())
+                if diff < 6.0:
+                    label = "rejected"
+                    reason = f"Foto statis / frame beku tanpa peragaan gerakan fisik (MAD: {diff:.2f})"
+            prev_small = small
 
             is_val = (np.random.rand() < val_ratio)
             target_sub = VAL_DIR if is_val else TRAIN_DIR
