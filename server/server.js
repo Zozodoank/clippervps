@@ -1684,6 +1684,7 @@ export async function runStage1Pipeline({
       const neededIndices = [...new Set(hl.clips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0))];
       console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh 1080p Full HD hanya untuk video-video ini...`);
 
+      let lastDlError = null;
       for (const candIdx of neededIndices) {
         const candObj = candidateResults.find(c => c.candidateIndex === candIdx)?.candidate || candidatesToProcess[candIdx];
         if (!candObj?.url) continue;
@@ -1708,15 +1709,34 @@ export async function runStage1Pipeline({
             console.warn(`[Job ${jobId}] Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}.`);
           }
         } catch (dlErr) {
+          lastDlError = dlErr;
           console.warn(`[Job ${jobId}] ⚠️ Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}: ${dlErr.message}`);
         }
       }
 
+      // Jika seluruh kandidat gagal diunduh (termasuk jika diblokir YouTube)
       if (downloadedCandidatesMap.size === 0) {
-        throw new Error('Gagal mengunduh video 1080p Full HD dari seluruh kandidat terpilih.');
+        throw lastDlError || new Error('Gagal mengunduh video 1080p Full HD dari seluruh kandidat terpilih.');
       }
 
-      // Petakan videoPath 1080p ke masing-masing klip yang terpilih (fallback ke kandidat pertama yang berhasil)
+      // Evaluasi apakah video 1080p yang sudah terunduh dapat memenuhi kebutuhan frame
+      const validDownloadedClips = hl.clips.filter(c => {
+        const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
+        return downloadedCandidatesMap.has(candIdx);
+      });
+
+      // Jika ada kandidat lain yang gagal/diblokir tapi kita SUDAH memiliki minimal 2 klip 1080p yang terunduh:
+      // Kita lanjutkan dan lakukan retry/ekspansi frame menggunakan video 1080p yang sudah ada
+      if (validDownloadedClips.length >= 2) {
+        hl.clips = validDownloadedClips;
+        console.log(`[Job ${jobId}] 🎯 Menggunakan video 1080p yang telah terunduh (${hl.clips.length} cuplikan awal). Klip dari kandidat yang gagal diunduh disingkirkan.`);
+      } else if (validDownloadedClips.length < 2 && neededIndices.length > downloadedCandidatesMap.size) {
+        // Klip dari video yang terunduh tidak cukup memenuhi frame (< 2 klip) dan kandidat lain gagal/diblokir
+        console.warn(`[Job ${jobId}] ⛔ Video 1080p yang terunduh tidak cukup memenuhi kebutuhan frame (${validDownloadedClips.length} klip).`);
+        throw lastDlError || new Error('Video 1080p yang terunduh tidak mencukupi kebutuhan frame dan YouTube membatasi pengunduhan kandidat lainnya.');
+      }
+
+      // Petakan videoPath 1080p ke masing-masing klip yang terpilih
       const fallbackVPath = [...downloadedCandidatesMap.values()][0];
       hl.clips = hl.clips.map(c => {
         const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
@@ -2643,10 +2663,48 @@ async function runAutoStage1Worker(run) {
 
         run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
 
-        // If Gemini Visual or Gemini TTS (or any AI fallback chain) exhausts its quota/rate limit, stop autorun immediately!
-        // PENTING: Jangan salah mengira error YouTube / yt-dlp (429 IP Bot block) sebagai kuota Gemini!
+        // Pengecekan Error Kritis untuk Menghentikan Auto Mode secara Tepat:
         const msg = (err.message || '').toLowerCase();
-        const isYouTubeError = msg.includes('youtube') || msg.includes('yt-dlp');
+
+        // 1. YouTube IP Block / Bot Detection / HTTP 429 (Stop Auto Mode untuk mencegah ban/looping sia-sia)
+        const isYouTubeBotBlock = (
+          msg.includes('youtube membatasi') ||
+          msg.includes('memblokir ip') ||
+          msg.includes('bot detection') ||
+          (msg.includes('youtube') && (msg.includes('429') || msg.includes('too many requests') || msg.includes('sign in to confirm')))
+        );
+        if (isYouTubeBotBlock) {
+          console.error(`[Auto] 🛑 YouTube memblokir/membatasi IP server (HTTP 429 / Bot Detection). Menghentikan Auto Mode.`);
+          updateAutoRun(run, {
+            status: 'stopped',
+            message: `⚠️ Auto Mode berhenti otomatis: YouTube memblokir IP server (HTTP 429 / Bot Detection). Solusi: Ganti IP proxy / aktifkan Mode Pesawat HP atau perbarui cookies.txt. (Berhasil: ${run.successfulJobs}, Gagal: ${run.failedJobs}).`,
+            progress: 100,
+            finishedAt: new Date().toISOString(),
+            currentJobId: null,
+            currentProductTitle: null,
+          });
+          return;
+        }
+
+        // 2. YouTube Cookies / Authentication Error
+        const isYouTubeAuthError = msg.includes('from-browser') || msg.includes('--cookies') ||
+          msg.includes('cookies for the authentication') || msg.includes('login required') || msg.includes('private video') ||
+          (msg.includes('yt-dlp') && msg.includes('authentication'));
+        if (isYouTubeAuthError) {
+          console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
+          updateAutoRun(run, {
+            status: 'stopped',
+            message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Upload cookies.txt ke server/cookies.txt dan restart server.',
+            progress: 100,
+            finishedAt: new Date().toISOString(),
+            currentJobId: null,
+            currentProductTitle: null,
+          });
+          return;
+        }
+
+        // 3. Limit Kuota Model Gemini AI (Visual atau TTS)
+        const isYouTubeError = isYouTubeBotBlock || isYouTubeAuthError || msg.includes('youtube') || msg.includes('yt-dlp');
         const isQuota = !isYouTubeError && Boolean(
           err.isAllModelsQuotaExhausted ||
           err.isQuotaError ||
@@ -2667,30 +2725,11 @@ async function runAutoStage1Worker(run) {
           break;
         }
 
-        // Check for fatal authentication error (401 with invalid api key)
+        // 4. Fatal authentication error (401 with invalid api key)
         const isFatalAuth = (err.status === 401 || err.statusCode === 401) && (msg.includes('api key') || msg.includes('unauthorized'));
         if (isFatalAuth) {
           console.error('[Auto] API Key tidak valid. Menghentikan Auto Mode.');
           throw err;
-        }
-
-        // Check for YouTube cookies/authentication error - stop auto-run instead of infinite loop
-        const isYouTubeAuthError = msg.includes('from-browser') || msg.includes('--cookies') ||
-          msg.includes('cookies for the authentication') || msg.includes('sign in to confirm') ||
-          msg.includes('login required') || msg.includes('private video') ||
-          (msg.includes('yt-dlp') && msg.includes('authentication'));
-        if (isYouTubeAuthError) {
-          console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
-          console.error('[Auto] Upload file cookies.txt ke ~/clipper/server/cookies.txt dan restart PM2.');
-          updateAutoRun(run, {
-            status: 'error',
-            message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Upload cookies.txt ke server/cookies.txt dan restart server.',
-            progress: 100,
-            finishedAt: new Date().toISOString(),
-            currentJobId: null,
-            currentProductTitle: null,
-          });
-          return; // Stop the auto-run worker entirely
         }
       }
 
