@@ -103,7 +103,9 @@ class FaceGatekeeper:
         if h < 30 or w < 30:
             return False, 0.0, None, "Dimensi frame terlalu kecil"
 
-        min_face_px = max(10, int(min(h, w) * 0.025))
+        # Mencegah false-positive pada objek bulat kecil (tombol, wadah pot, makanan/kentang).
+        # Wajah manusia presenter/vlogger yang masuk akal berukuran minimal 5% dimensi frame (min 40px).
+        min_face_px = max(40, int(min(h, w) * 0.05))
 
         # 1. Try MediaPipe BlazeFace
         if self.mp_detector:
@@ -132,6 +134,7 @@ class FaceGatekeeper:
                 pass
 
         # 2. Try OpenCV YuNet (Second-pass detector for angled / in-the-wild faces)
+        # Threshold dinaikkan ke 0.70 agar tidak salah mengira wadah silikon/kentang sebagai wajah
         if self.yunet_detector:
             try:
                 self.yunet_detector.setInputSize((w, h))
@@ -139,7 +142,7 @@ class FaceGatekeeper:
                 if faces is not None and len(faces) > 0:
                     for face in faces:
                         score = float(face[-1])
-                        if score >= 0.45:
+                        if score >= 0.70:
                             bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
                             if bh >= min_face_px and bw >= min_face_px:
                                 return True, score, [bx, by, bw, bh], f"Wajah manusia terdeteksi (YuNet {score * 100:.1f}%)"

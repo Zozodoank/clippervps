@@ -3,18 +3,15 @@
     "filename": "clip_84d2721052_t001.jpg",
     "source_frame": "frame_001.jpg",
     "timestamp_sec": 1,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 67.6%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.676195502281189,
-      "box": [
-        917,
-        1196,
-        70,
-        123
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -23,29 +20,28 @@
     "timestamp_sec": 2,
     "label": "valid_real",
     "split": "train",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t003.jpg",
     "source_frame": "frame_003.jpg",
     "timestamp_sec": 3,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 70.0%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.6997119784355164,
-      "box": [
-        450,
-        806,
-        366,
-        477
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -54,11 +50,13 @@
     "timestamp_sec": 4,
     "label": "valid_real",
     "split": "train",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -67,11 +65,13 @@
     "timestamp_sec": 5,
     "label": "valid_real",
     "split": "val",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -80,119 +80,103 @@
     "timestamp_sec": 6,
     "label": "valid_real",
     "split": "train",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t007.jpg",
     "source_frame": "frame_007.jpg",
     "timestamp_sec": 7,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 45.1%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.4508584439754486,
-      "box": [
-        365,
-        1337,
-        76,
-        103
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t008.jpg",
     "source_frame": "frame_008.jpg",
     "timestamp_sec": 8,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 45.8%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.45805490016937256,
-      "box": [
-        287,
-        383,
-        511,
-        509
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t009.jpg",
     "source_frame": "frame_009.jpg",
     "timestamp_sec": 9,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 50.9%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.5089560747146606,
-      "box": [
-        229,
-        1054,
-        76,
-        80
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t010.jpg",
     "source_frame": "frame_010.jpg",
     "timestamp_sec": 10,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "val",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 73.3%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.7334945797920227,
-      "box": [
-        334,
-        961,
-        64,
-        85
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t011.jpg",
     "source_frame": "frame_011.jpg",
     "timestamp_sec": 11,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 56.2%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.5619794130325317,
-      "box": [
-        709,
-        785,
-        197,
-        219
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t012.jpg",
     "source_frame": "frame_012.jpg",
     "timestamp_sec": 12,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 53.6%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.5361311435699463,
-      "box": [
-        642,
-        177,
-        160,
-        180
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -201,11 +185,13 @@
     "timestamp_sec": 13,
     "label": "valid_real",
     "split": "train",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -214,11 +200,13 @@
     "timestamp_sec": 14,
     "label": "valid_real",
     "split": "train",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -227,65 +215,58 @@
     "timestamp_sec": 15,
     "label": "valid_real",
     "split": "val",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t016.jpg",
     "source_frame": "frame_016.jpg",
     "timestamp_sec": 16,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 48.2%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.48156729340553284,
-      "box": [
-        613,
-        509,
-        434,
-        544
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t017.jpg",
     "source_frame": "frame_017.jpg",
     "timestamp_sec": 17,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 68.8%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.6882100105285645,
-      "box": [
-        333,
-        1550,
-        56,
-        87
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t018.jpg",
     "source_frame": "frame_018.jpg",
     "timestamp_sec": 18,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 45.8%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.45848676562309265,
-      "box": [
-        776,
-        1357,
-        336,
-        431
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -295,28 +276,26 @@
     "label": "rejected",
     "split": "train",
     "stage": "text",
-    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x38px)",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
     "details": {
-      "totalCoverage": 0.12,
-      "bottomCoverage": 0.15
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t020.jpg",
     "source_frame": "frame_020.jpg",
     "timestamp_sec": 20,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "val",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (confidence: 64.8%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.6480511426925659,
-      "box": [
-        480,
-        782,
-        371,
-        371
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -326,10 +305,11 @@
     "label": "rejected",
     "split": "train",
     "stage": "text",
-    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x87px)",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
     "details": {
-      "totalCoverage": 0.12,
-      "bottomCoverage": 0.15
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
     }
   },
   {
@@ -339,10 +319,11 @@
     "label": "rejected",
     "split": "train",
     "stage": "text",
-    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x85px)",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
     "details": {
-      "totalCoverage": 0.12,
-      "bottomCoverage": 0.15
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
     }
   },
   {
@@ -352,10 +333,11 @@
     "label": "rejected",
     "split": "train",
     "stage": "text",
-    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x34px)",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
     "details": {
-      "totalCoverage": 0.12,
-      "bottomCoverage": 0.15
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
     }
   },
   {
@@ -364,11 +346,13 @@
     "timestamp_sec": 24,
     "label": "valid_real",
     "split": "train",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.02,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -377,59 +361,58 @@
     "timestamp_sec": 25,
     "label": "valid_real",
     "split": "val",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t026.jpg",
     "source_frame": "frame_026.jpg",
     "timestamp_sec": 26,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 76.5%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.765151858329773,
-      "box": [
-        723,
-        895,
-        148,
-        148
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t027.jpg",
     "source_frame": "frame_027.jpg",
     "timestamp_sec": 27,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (YuNet 75.4%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.7535358667373657,
-      "box": [
-        714,
-        899,
-        153,
-        147
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t028.jpg",
     "source_frame": "frame_028.jpg",
     "timestamp_sec": 28,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "scene",
-    "reason": "Custom AI: Terdeteksi grafis/kartun/slide non-produk (confidence: 64.1%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.6407392024993896
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -438,11 +421,13 @@
     "timestamp_sec": 29,
     "label": "valid_real",
     "split": "train",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -451,11 +436,13 @@
     "timestamp_sec": 30,
     "label": "valid_real",
     "split": "val",
-    "stage": "passed",
-    "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "totalCoverage": 0.0,
-      "bottomCoverage": 0.0
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -465,40 +452,41 @@
     "label": "rejected",
     "split": "train",
     "stage": "text",
-    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (160x38px)",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
     "details": {
-      "totalCoverage": 0.12,
-      "bottomCoverage": 0.15
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t032.jpg",
     "source_frame": "frame_032.jpg",
     "timestamp_sec": 32,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "face",
-    "reason": "Wajah manusia terdeteksi (confidence: 62.8%)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.6278247833251953,
-      "box": [
-        332,
-        748,
-        472,
-        472
-      ]
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
     "filename": "clip_84d2721052_t033.jpg",
     "source_frame": "frame_033.jpg",
     "timestamp_sec": 33,
-    "label": "rejected",
+    "label": "valid_real",
     "split": "train",
-    "stage": "scene",
-    "reason": "Terdeteksi kartu bumper statis / grafis 2D datar (17 kluster warna)",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
     "details": {
-      "confidence": 0.9
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
     }
   },
   {
@@ -508,10 +496,11 @@
     "label": "rejected",
     "split": "train",
     "stage": "text",
-    "reason": "Banner promosi / kartu teks statis terdeteksi di frame 9:16 (116x73px)",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
     "details": {
-      "totalCoverage": 0.12,
-      "bottomCoverage": 0.15
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
     }
   }
 ]
