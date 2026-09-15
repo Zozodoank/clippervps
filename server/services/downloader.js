@@ -149,12 +149,25 @@ function getFastArgs() {
 }
 
 /**
- * Download args with gentle rate-limiting and anti-bot spoofing.
+ * Download args with IDM-style progressive buffering, rate-limiting, and anti-bot human pacing.
+ * - Simulates a real browser player buffering chunks (10MB progressive chunks)
+ * - Throttles download rate to ~2.2 MB/s (approx 18 Mbps, 3-4x real-time 1080p playback speed)
+ * - Adds human-like request pacing (sleep between DASH fragment requests)
+ * - Avoids sudden 50-100 Mbps burst spikes that trigger YouTube SABR bot detection
  */
 function getDownloadArgs(clientProfile = 'default') {
+  const rateLimit = process.env.YTDLP_RATE_LIMIT || '2.2M';
   return [
     ...getYtDlpArgs(clientProfile),
-    '--limit-rate', '6M',
+    // 1. IDM-style Progressive Rate Pacing (hindari burst traffic bot)
+    '--limit-rate', rateLimit,
+    '--throttled-rate', '100K',
+    // 2. IDM-style DASH Chunk Slicing (10MB chunk range buffering)
+    '--http-chunk-size', '10M',
+    '--buffer-size', '16M',
+    // 3. Human-like Request Jitter (jeda alami antar request segmen)
+    '--sleep-subtitles', '1',
+    '--sleep-requests', '1.5',
     '--rm-cache-dir',
   ];
 }
@@ -763,6 +776,13 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   for (let attempt = 0; attempt < clientProfiles.length; attempt++) {
     const clientType = clientProfiles[attempt];
     const attemptLabel = attempt > 0 ? ` (Retry ${attempt + 1}/${clientProfiles.length} via ${clientType})` : '';
+
+    // Anti-bot human pacing: pause with random jitter between retry attempts
+    if (attempt > 0) {
+      const jitterMs = 2500 + Math.floor(Math.random() * 2500); // 2.5s - 5.0s natural pause
+      console.log(`[Downloader] ⏳ Human pacing delay before retry (${attempt + 1}/${clientProfiles.length}): ${(jitterMs / 1000).toFixed(1)}s...`);
+      await new Promise(r => setTimeout(r, jitterMs));
+    }
 
     onProgress({
       step: 'download',
