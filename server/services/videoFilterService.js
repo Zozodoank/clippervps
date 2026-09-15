@@ -339,8 +339,9 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   console.log(`[VideoFilterService] Fast seek sampling ${safeMax} frames across ${safeDuration}s from stream...`);
 
-  // Fast seek each timestamp with concurrency limit (5 parallel workers)
-  const concurrency = 5;
+  // Fast seek each timestamp with concurrency limit.
+  // VPS 2-core: 5 worker paralel memicu kontensi CPU dengan Node + gatekeeper Python → 2 worker lebih stabil.
+  const concurrency = Math.max(1, Number(process.env.FFMPEG_SAMPLING_CONCURRENCY) || 2);
   const executing = [];
   for (const point of samplePoints) {
     const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
@@ -467,7 +468,10 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
-export function callAIGatekeeperMicroservice(frames, { timeoutSec = 5, onProgress = () => {} } = {}) {
+export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 25, onProgress = () => {} } = {}) {
+  // Timeout default dinaikkan 4s -> 25s: di CPU 2-core, pipeline 3-tahap (BlazeFace + DBNet + MobileNetV3)
+  // butuh ±150-300ms/frame. Untuk 25-30 frame = 4-9 detik (lebih lama saat FFmpeg ikut berjalan).
+  // Panggilan kini async (fetch non-blocking) sehingga event loop Node TIDAK membeku selama menunggu.
   try {
     const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
     if (validFrames.length === 0) return null;
@@ -479,23 +483,33 @@ export function callAIGatekeeperMicroservice(frames, { timeoutSec = 5, onProgres
       }))
     });
 
-    const res = spawnSync('curl', [
-      '-s',
-      '-m', String(timeoutSec),
-      '-X', 'POST',
-      'http://127.0.0.1:5050/filter-frames',
-      '-H', 'Content-Type: application/json',
-      '-d', payload
-    ], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 });
+    const res = await fetch('http://127.0.0.1:5050/filter-frames', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      signal: AbortSignal.timeout(Math.max(1, timeoutSec) * 1000),
+    });
 
-    if (res.status === 0 && res.stdout) {
-      const parsed = JSON.parse(res.stdout.trim());
+    if (res.ok) {
+      const parsed = await res.json();
       if (parsed && parsed.status === 'success') {
         return parsed;
       }
+      console.warn(`[AIGatekeeper] ⚠️ Respons service tidak valid (status: ${parsed?.status || 'unknown'}). Fallback ke heuristik piksel lokal.`);
+    } else {
+      console.warn(`[AIGatekeeper] ⚠️ HTTP ${res.status} dari service gatekeeper. Fallback ke heuristik piksel lokal.`);
     }
   } catch (err) {
-    // Graceful fallback to heuristic checks
+    // JANGAN diam-diam: log eksplisit supaya terlihat seberapa sering gatekeeper AI gagal dipakai
+    const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError';
+    const isOffline = err?.cause?.code === 'ECONNREFUSED' || (err?.message || '').includes('ECONNREFUSED') || (err?.message || '').includes('fetch failed');
+    if (isTimeout) {
+      console.warn(`[AIGatekeeper] ⏱️ Timeout ${timeoutSec}s terlampaui untuk ${frames.length} frame. Fallback ke heuristik piksel lokal (akurasi lebih rendah).`);
+    } else if (isOffline) {
+      console.warn('[AIGatekeeper] 🔌 Service gatekeeper (port 5050) OFFLINE. Jalankan: pm2 start service.py --name gatekeeper. Fallback ke heuristik piksel lokal.');
+    } else {
+      console.warn(`[AIGatekeeper] ⚠️ Error: ${err.message}. Fallback ke heuristik piksel lokal.`);
+    }
   }
   return null;
 }
@@ -507,13 +521,15 @@ export function callAIGatekeeperMicroservice(frames, { timeoutSec = 5, onProgres
  * Tahap 2: DBNet Text Detection (membuang subtitle terbakar & promo overlay).
  * Tahap 3: MobileNetV3 (membuang bumper foto statis & kartun/animasi).
  */
-export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {} } = {}) {
+export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {} } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
     return { eligible: false, cleanFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
   }
 
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
-  const aiResult = callAIGatekeeperMicroservice(frames, { timeoutSec: 4, onProgress });
+  // Timeout 25s (sebelumnya 4s): gatekeeper AI jauh lebih akurat daripada heuristik piksel,
+  // memberi waktu jawab jauh lebih murah daripada mengirim frame kotor ke Gemini.
+  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 25, onProgress });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
     const cleanFrames = aiResult.allFrames
@@ -900,8 +916,8 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
  * Memfilter frame visual dari 1 kandidat secara granular per frame:
  * Membuang hanya frame berwajah / intro / corrupt, mempertahankan frame bersih peragaan produk.
  */
-export function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null } = {}) {
-  const result = inspectFramesLocally(frames, { allowPartialClean: true });
+export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null } = {}) {
+  const result = await inspectFramesLocally(frames, { allowPartialClean: true });
   if (!result.eligible && result.reason && result.reason.includes('kosong / rusak')) {
     return { candidateIndex, candidate, cleanFrames: [], eligible: false, reason: result.reason };
   }

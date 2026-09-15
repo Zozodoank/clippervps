@@ -268,6 +268,38 @@ export function isQuotaError(err) {
 }
 
 /**
+ * Deteksi error KUOTA HARIAN (RPD / requests-per-day) vs rate-limit sesaat (RPM).
+ * Jika kuota HARIAN project habis, semua model keluarga Gemini pada API key yang sama
+ * hampir pasti ikut gagal — melanjutkan cascade fallback hanya mengirim ulang payload
+ * (30 frame base64 + prompt) berkali-kali tanpa peluang sukses.
+ */
+/**
+ * HEMAT TOKEN: Potong deskripsi produk Shopee yang bisa ribuan karakter.
+ * Untuk prompt VISION, 500 karakter pertama sudah memuat identitas produk;
+ * sisanya (tabel ukuran, S&K toko, hashtag) hanya membuang token tanpa nilai visual.
+ */
+export function truncateProductDescription(desc = '', maxChars = 500) {
+  const clean = String(desc || '').replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxChars) return clean;
+  // Potong di batas kata terdekat agar tidak memenggal kata di tengah
+  const cut = clean.slice(0, maxChars);
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > maxChars * 0.6 ? cut.slice(0, lastSpace) : cut) + '…';
+}
+
+export function isDailyQuotaExhaustedError(err) {
+  if (!err) return false;
+  const message = String(err.message || '').toLowerCase();
+  return (
+    message.includes('perday') ||
+    message.includes('per day') ||
+    message.includes('daily') ||
+    message.includes('requests per day') ||
+    (message.includes('quota') && message.includes('exceeded') && !message.includes('minute'))
+  );
+}
+
+/**
  * Resolves an image source (data URI, local file path, or remote URL)
  * into a base64 string and MIME type for AI multimodal vision input.
  */
@@ -385,7 +417,7 @@ export async function analyzeYouTubeVideoWithGemini({
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
-  const effectiveDesc = (productDescription || '').trim();
+  const effectiveDesc = truncateProductDescription(productDescription, 500); // hemat token: deskripsi Shopee bisa ribuan karakter
 
   let refImageInlineData = null;
   if (productImage) {
@@ -609,6 +641,9 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         generationConfig: {
           responseMimeType: 'application/json',
           temperature: 0.2,
+          // Hemat token: screening accept/reject memakai resolusi media rendah (±66 token/frame vs ±258).
+          // Deteksi produk/wajah/subtitle tetap andal di resolusi LOW; verifikasi detail dilakukan downstream.
+          mediaResolution: 'MEDIA_RESOLUTION_LOW',
         },
       });
 
@@ -618,6 +653,11 @@ CRITICAL RULES FOR REJECTION OUTPUT:
           fileData: {
             fileUri: youtubeUrl,
             mimeType: 'video/mp4',
+          },
+          // Hemat token: sampling 0.5 fps di SELURUH durasi (bukan memotong menit awal),
+          // sehingga B-roll di menit 4-8 tetap terlihat tapi jumlah frame terpangkas ±50%.
+          videoMetadata: {
+            fps: 0.5,
           },
         },
       ];
@@ -640,6 +680,14 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       if (!isQuota) {
         allQuotaErrors = false;
       }
+
+      // HEMAT TOKEN: kuota HARIAN (RPD) habis → hentikan cascade 8 model.
+      // Mode fileUri mengirim SELURUH video (±300 token/detik) di tiap percobaan — pengulangan paling boros di seluruh pipeline.
+      if (isDailyQuotaExhaustedError(gemErr)) {
+        console.error(`[Gemini YouTube Stream] ⛔ Kuota HARIAN Gemini habis pada ${modelName}. Menghentikan cascade fallback (hemat ${candidateModels.length - i - 1}x pengiriman ulang video penuh).`);
+        break;
+      }
+
       console.warn(`[Gemini YouTube Stream] Model ${modelName} gagal: ${gemErr.message}. ${isQuota ? '⚠️ [Limit Kuota/Token Tercapai]' : ''} ${i < candidateModels.length - 1 ? `Mencoba model fallback berikutnya (${candidateModels[i + 1]})...` : 'Semua model Gemini dalam rantai fallback telah dicoba.'}`);
     }
   }
@@ -831,7 +879,7 @@ export async function analyzeVideoWithGeminiFileApi({
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
-  const effectiveDesc = (productDescription || '').trim();
+  const effectiveDesc = truncateProductDescription(productDescription, 500); // hemat token: deskripsi Shopee bisa ribuan karakter
 
   let refImageInlineData = null;
   if (productImage) {
@@ -1051,7 +1099,8 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 1. "isExactProductMatch": Set to true if the item demonstrated in the video matches "${coreNoun}", even if rejected for policy. Set to false ONLY if the product is physically different.
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
-    const candidateModels = ['gemini-1.5-flash', 'gemini-flash-latest'];
+    // gemini-1.5-flash sudah pensiun dari Gemini API — gunakan model aktif agar percobaan pertama tidak selalu gagal
+    const candidateModels = ['gemini-3.5-flash-lite', 'gemini-flash-latest'];
     let parsed = null;
     let activeGeminiModel = candidateModels[0];
     let lastGeminiErr = null;
@@ -1342,7 +1391,7 @@ export async function selectHighlightWithAI({
   const prodInfo = extractCoreProductInfo(productTitle || videoMetadata?.title, productDescription || videoMetadata?.description);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || videoMetadata?.title || '').trim() || coreNoun;
-  const effectiveDesc = productDescription || videoMetadata?.description || '';
+  const effectiveDesc = truncateProductDescription(productDescription || videoMetadata?.description || '', 500); // hemat token
 
   let resolvedRefImage = null;
   if (productImage) {
@@ -1823,6 +1872,17 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const isFatalAuthOrBilling = status === 401 || status === 402 || msg.includes('balance') || msg.includes('credits');
       const isOverloaded = status === 503 || status === 529 || status === 429 || msg.includes('overload') || msg.includes('overloaded') || msg.includes('rate limit');
 
+      // HEMAT TOKEN: jika kuota HARIAN (RPD) project habis, semua model keluarga sama pasti ikut gagal.
+      // Hentikan cascade fallback agar payload (30 frame + prompt) tidak dikirim ulang berkali-kali sia-sia.
+      if (isDailyQuotaExhaustedError(err) && provider === 'Google Gemini Direct') {
+        clearInterval(heartbeat);
+        console.error(`[AIService Vision] ⛔ Kuota HARIAN Gemini habis pada ${activeModel}. Menghentikan cascade fallback (hemat ${totalRetries - attempt - 1}x pengiriman ulang payload).`);
+        const quotaErr = new Error(formatApiError(err, activeModel, provider));
+        quotaErr.isAllModelsQuotaExhausted = true;
+        quotaErr.isQuotaError = true;
+        throw quotaErr;
+      }
+
       if (attempt < totalRetries - 1) {
         console.warn(`[AIService Vision] AI model ${activeModel} (${provider}) gagal (attempt ${attempt + 1}, status: ${status}, error: ${msg}). Mencoba model berikutnya...`);
         continue;
@@ -1874,7 +1934,7 @@ export async function generateAdAdvisorScriptWithAI({
   });
 
   const effectiveTitle = (productTitle || '').trim() || videoMetadata?.title || 'Produk Viral Shopee';
-  const effectiveDesc = (productDescription || '').trim();
+  const effectiveDesc = truncateProductDescription(productDescription, 900); // scripting butuh lebih banyak konteks USP daripada vision
   const targetDuration = Math.max(30, Math.min(45, Math.round(Number(segmentDuration) || 33)));
   const effectiveSceneSec = Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
   const sceneCount = Math.max(7, Math.min(12, Math.round(targetDuration / effectiveSceneSec)));
@@ -2120,6 +2180,16 @@ Return strict JSON in this format:
       const msg = (err.message || '').toLowerCase();
       const isFatalAuthOrBilling = status === 401 || status === 402 || msg.includes('balance') || msg.includes('credits');
       const isOverloaded = status === 503 || status === 529 || status === 429 || msg.includes('overload') || msg.includes('overloaded') || msg.includes('rate limit');
+
+      // HEMAT TOKEN: kuota HARIAN habis → hentikan cascade fallback (semua model keluarga sama pasti gagal)
+      if (isDailyQuotaExhaustedError(err) && provider === 'Google Gemini Direct') {
+        clearInterval(heartbeat);
+        console.error(`[AIService Scripting] ⛔ Kuota HARIAN Gemini habis pada ${activeModel}. Menghentikan cascade fallback.`);
+        const quotaErr = new Error(formatApiError(err, activeModel, provider));
+        quotaErr.isAllModelsQuotaExhausted = true;
+        quotaErr.isQuotaError = true;
+        throw quotaErr;
+      }
 
       if (attempt < totalRetries - 1) {
         console.warn(`[AIService Scripting] AI model ${activeModel} (${provider}) gagal (attempt ${attempt + 1}, status: ${status}, error: ${msg}). Mencoba model berikutnya...`);

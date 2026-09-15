@@ -15,8 +15,19 @@ import math
 import argparse
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 
+# VPS 2-core: batasi thread OpenMP/BLAS SEBELUM cv2/numpy/onnxruntime dimuat,
+# mencegah kontensi thread dengan Node.js + FFmpeg yang berjalan bersamaan.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+
 import cv2
 import numpy as np
+
+try:
+    cv2.setNumThreads(1)
+except Exception:
+    pass
 
 # ONNX runtime & MediaPipe
 try:
@@ -109,7 +120,7 @@ class FaceGatekeeper:
                             by = max(0, int(bbox.origin_y))
                             bw = int(bbox.width)
                             bh = int(bbox.height)
-                            if bh > h * 0.04 and bw > w * 0.04:
+                            if bh > h * 0.03 and bw > w * 0.03:  # 3% (sebelumnya 4%): tangkap wajah vlogger kecil/jauh di crop 9:16
                                 if score > best_score:
                                     best_score = score
                                     best_box = [bx, by, bw, bh]
@@ -128,7 +139,7 @@ class FaceGatekeeper:
                         score = float(face[-1])
                         if score >= self.min_confidence:
                             bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-                            if bh > h * 0.04 and bw > w * 0.04:
+                            if bh > h * 0.03 and bw > w * 0.03:  # 3% (sebelumnya 4%): tangkap wajah vlogger kecil/jauh di crop 9:16
                                 return True, score, [bx, by, bw, bh], f"Wajah manusia terdeteksi (confidence: {score * 100:.1f}%)"
             except Exception:
                 pass
@@ -150,7 +161,7 @@ class TextGatekeeper:
         if HAS_ORT and os.path.exists(model_path):
             try:
                 opts = ort.SessionOptions()
-                opts.intra_op_num_threads = 2
+                opts.intra_op_num_threads = 1  # VPS 2-core: hindari kontensi thread dengan Node/FFmpeg
                 opts.inter_op_num_threads = 1
                 opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
                 self.ort_session = ort.InferenceSession(
@@ -272,7 +283,7 @@ class SceneGatekeeper:
 
         if HAS_ORT:
             opts = ort.SessionOptions()
-            opts.intra_op_num_threads = 2
+            opts.intra_op_num_threads = 1  # VPS 2-core: hindari kontensi thread dengan Node/FFmpeg
 
             # Prioritas 1: Model Custom Hasil Training (scene_filter_v2.onnx)
             if os.path.exists(custom_model_path):

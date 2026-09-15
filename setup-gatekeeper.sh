@@ -24,8 +24,8 @@ if command -v pm2 &> /dev/null; then
         echo "🔄 Me-restart service gatekeeper di PM2..."
         pm2 restart gatekeeper
     else
-        echo "▶️ Mendaftarkan service gatekeeper di PM2..."
-        pm2 start service.py --name "gatekeeper" --interpreter python3 -- --port 5050
+        echo "▶️ Mendaftarkan service gatekeeper di PM2 (OMP_NUM_THREADS=1 untuk VPS 2-core)..."
+        OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 pm2 start service.py --name "gatekeeper" --interpreter python3 --max-memory-restart 400M -- --port 5050
         pm2 save
     fi
     echo "✅ AI Local Gatekeeper berjalan di background (PM2 ID: gatekeeper, Port: 5050)"

@@ -1231,7 +1231,7 @@ export async function runStage1Pipeline({
       }
 
       preSampledFrames = sampled;
-      const localCheck = inspectFramesLocally(sampled, {
+      const localCheck = await inspectFramesLocally(sampled, {
         aspectRatio: options.aspectRatio || '9:16',
         onProgress: updateProgress,
       });
@@ -1393,7 +1393,7 @@ export async function runStage1Pipeline({
         });
 
         // Verifikasi filter lokal pada frame video cache (bebas teks mengambang & bebas wajah)
-        const localCacheCheck = inspectFramesLocally(rawFrames, {
+        const localCacheCheck = await inspectFramesLocally(rawFrames, {
           aspectRatio: options.aspectRatio || '9:16',
           onProgress: updateProgress,
         });
@@ -1620,7 +1620,7 @@ export async function runStage1Pipeline({
           }
 
           // Filter granular per-frame: buang frame wajah/intro/rusak, simpan frame peragaan produk!
-          const frameFilterRes = filterCandidateFramesPerFrame(sampleRes.frames, {
+          const frameFilterRes = await filterCandidateFramesPerFrame(sampleRes.frames, {
             candidateIndex: i,
             candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
           });
@@ -1840,7 +1840,8 @@ export async function runStage1Pipeline({
 
         let hasFace = false;
         if (testFrames.length > 0) {
-          const gkRes = callAIGatekeeperMicroservice(testFrames, { timeoutSec: 4 });
+          // FaceAudit hanya 2 frame → 10 detik sudah lebih dari cukup di CPU 2-core
+          const gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 10 });
           if (gkRes && Array.isArray(gkRes.allFrames)) {
             const faceDet = gkRes.allFrames.find(f => f.status !== 'clean' && f.stage === 'face');
             if (faceDet) {
@@ -3729,4 +3730,30 @@ app.listen(PORT, '0.0.0.0', () => {
     console.log(`🔑 Google Gemini API: configured (Direct fallback ready)`);
   }
   console.log(`======================================================\n`);
+
+  // ── HEALTH CHECK AI LOCAL GATEKEEPER (port 5050) ──
+  // Peringatan dini jika gatekeeper offline atau model ONNX belum terunduh,
+  // supaya fallback heuristik piksel (akurasi lebih rendah) tidak terjadi diam-diam.
+  (async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:5050/health', { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const health = await res.json();
+        const m = health.models || {};
+        console.log(`🤖 AI Local Gatekeeper: ONLINE (face: ${m.face || '?'}, text: ${m.text || '?'}, scene: ${m.scene || '?'})`);
+        const weakBackends = [];
+        if (!m.face || m.face === 'none') weakBackends.push('face');
+        if (!m.text || m.text === 'gradient_fallback' || m.text === 'none') weakBackends.push('text');
+        if (!m.scene || m.scene === 'entropy_variance') weakBackends.push('scene');
+        if (weakBackends.length > 0) {
+          console.warn(`⚠️  Gatekeeper berjalan TANPA model AI untuk: [${weakBackends.join(', ')}]. Jalankan: bash setup-gatekeeper.sh (atau python3 server/gatekeeper/download_models.py) agar akurasi filter lokal maksimal.`);
+        }
+      } else {
+        console.warn(`⚠️  AI Local Gatekeeper merespons HTTP ${res.status}. Filter lokal memakai heuristik piksel (akurasi lebih rendah).`);
+      }
+    } catch {
+      console.warn('⚠️  AI Local Gatekeeper (port 5050) OFFLINE. Filter frame lokal memakai heuristik piksel yang jauh lebih kasar.');
+      console.warn('   Jalankan: bash setup-gatekeeper.sh  (atau: pm2 start server/gatekeeper/service.py --name gatekeeper --interpreter python3 -- --port 5050)');
+    }
+  })();
 });
