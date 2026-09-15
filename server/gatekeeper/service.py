@@ -21,8 +21,8 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
-import cv2
-import numpy as np
+import cv2  # type: ignore
+import numpy as np  # type: ignore
 
 try:
     cv2.setNumThreads(1)
@@ -31,16 +31,16 @@ except Exception:
 
 # ONNX runtime & MediaPipe
 try:
-    import onnxruntime as ort
+    import onnxruntime as ort  # type: ignore
     HAS_ORT = True
 except ImportError:
     ort = None
     HAS_ORT = False
 
 try:
-    import mediapipe as mp
-    from mediapipe.tasks import python as mp_tasks
-    from mediapipe.tasks.python import vision as mp_vision
+    import mediapipe as mp  # type: ignore
+    from mediapipe.tasks import python as mp_tasks  # type: ignore
+    from mediapipe.tasks.python import vision as mp_vision  # type: ignore
     HAS_MEDIAPIPE = True
 except ImportError:
     mp = None

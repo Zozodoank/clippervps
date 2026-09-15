@@ -9,7 +9,7 @@ import os
 import sys
 import glob
 import json
-import cv2
+import cv2  # type: ignore
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATASET_DIR = os.path.join(CURRENT_DIR, "dataset")
