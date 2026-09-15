@@ -158,7 +158,8 @@ export function getDirectGeminiClientConfig({ apiKeyOverride } = {}) {
     client: new OpenAI({
       apiKey,
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-      timeout: 120000,
+      timeout: 35000,
+      maxRetries: 0,
     }),
     models: defaultGeminiDirectModels,
     provider: 'Google Gemini Direct',
@@ -1647,7 +1648,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         response_format: { type: 'json_object' },
         temperature: 0.2,
         max_tokens: 4096,
-      });
+      }, { timeout: 35000, maxRetries: 0 });
 
       clearInterval(heartbeat);
 
