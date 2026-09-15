@@ -1681,7 +1681,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         response_format: { type: 'json_object' },
         temperature: 0.2,
         max_tokens: 4096,
-      }, { timeout: 35000, maxRetries: 0 });
+      }, { timeout: 60000, maxRetries: 0 });
 
       clearInterval(heartbeat);
 
@@ -1866,10 +1866,6 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         console.warn(`[AIService Vision] AI model ${activeModel} (${provider}) gagal (attempt ${attempt + 1}, status: ${status}, error: ${msg}). Mencoba model berikutnya...`);
         continue;
       }
-
-      clearInterval(heartbeat);
-      console.error(`[AIService ${provider} ${activeModel}] Error:`, err);
-      throw new Error(formatApiError(err, activeModel, provider));
 
       clearInterval(heartbeat);
       console.error(`[AIService ${provider} ${activeModel}] Error:`, err);

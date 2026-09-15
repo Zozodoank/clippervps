@@ -1695,27 +1695,32 @@ export async function runStage1Pipeline({
           status: 'running',
         });
 
-        const hdDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
-          quality: '1080p',
-          prefix: `raw_cand_${candIdx}`,
-        });
+        try {
+          const hdDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
+            quality: '1080p',
+            prefix: `raw_cand_${candIdx}`,
+          });
 
-        if (hdDl?.filePath && fs.existsSync(hdDl.filePath)) {
-          downloadedCandidatesMap.set(candIdx, hdDl.filePath);
-          console.log(`[Job ${jobId}] ✅ Video 1080p Full HD untuk Kandidat #${candIdx + 1} berhasil diunduh (${hdDl.filePath}).`);
-        } else {
-          console.warn(`[Job ${jobId}] Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}.`);
+          if (hdDl?.filePath && fs.existsSync(hdDl.filePath)) {
+            downloadedCandidatesMap.set(candIdx, hdDl.filePath);
+            console.log(`[Job ${jobId}] ✅ Video 1080p Full HD untuk Kandidat #${candIdx + 1} berhasil diunduh (${hdDl.filePath}).`);
+          } else {
+            console.warn(`[Job ${jobId}] Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}.`);
+          }
+        } catch (dlErr) {
+          console.warn(`[Job ${jobId}] ⚠️ Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}: ${dlErr.message}`);
         }
       }
 
       if (downloadedCandidatesMap.size === 0) {
-        throw new Error('Gagal mengunduh video 1080p Full HD dari kandidat terpilih.');
+        throw new Error('Gagal mengunduh video 1080p Full HD dari seluruh kandidat terpilih.');
       }
 
-      // Petakan videoPath 1080p ke masing-masing klip yang terpilih
+      // Petakan videoPath 1080p ke masing-masing klip yang terpilih (fallback ke kandidat pertama yang berhasil)
+      const fallbackVPath = [...downloadedCandidatesMap.values()][0];
       hl.clips = hl.clips.map(c => {
         const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
-        const vPath = downloadedCandidatesMap.get(candIdx) || [...downloadedCandidatesMap.values()][0];
+        const vPath = downloadedCandidatesMap.get(candIdx) || fallbackVPath;
         return {
           ...c,
           videoPath: vPath,
@@ -2639,18 +2644,19 @@ async function runAutoStage1Worker(run) {
         run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
 
         // If Gemini Visual or Gemini TTS (or any AI fallback chain) exhausts its quota/rate limit, stop autorun immediately!
+        // PENTING: Jangan salah mengira error YouTube / yt-dlp (429 IP Bot block) sebagai kuota Gemini!
         const msg = (err.message || '').toLowerCase();
-        const isQuota = Boolean(
+        const isYouTubeError = msg.includes('youtube') || msg.includes('yt-dlp');
+        const isQuota = !isYouTubeError && Boolean(
           err.isAllModelsQuotaExhausted ||
           err.isQuotaError ||
-          (err.status === 429 || err.statusCode === 429) ||
           isQuotaErrorMessage(err.message) ||
           msg.includes('resource_exhausted') ||
-          msg.includes('quota') ||
-          msg.includes('kuota') ||
-          msg.includes('rate limit') ||
+          (msg.includes('quota') && !msg.includes('disk')) ||
+          (msg.includes('kuota') && !msg.includes('lokal')) ||
           msg.includes('rate_limit') ||
-          msg.includes('429') ||
+          (msg.includes('rate limit') && msg.includes('gemini')) ||
+          ((err.status === 429 || err.statusCode === 429) && !isYouTubeError) ||
           (msg.includes('gemini') && (msg.includes('limit') || msg.includes('exhausted') || msg.includes('too many requests')))
         );
 
