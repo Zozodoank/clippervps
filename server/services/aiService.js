@@ -1646,7 +1646,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         ],
         response_format: { type: 'json_object' },
         temperature: 0.2,
-        max_tokens: 1200,
+        max_tokens: 4096,
       });
 
       clearInterval(heartbeat);
