@@ -131,13 +131,14 @@ function getOpenRouterKeys(apiKeyOverride) {
 let currentOpenRouterKeyIndex = 0;
 
 export const defaultGeminiDirectModels = [
-  'gemini-3.5-flash-lite',
-  'gemini-flash-latest',
-  'gemini-3.1-flash-lite',
-  'gemini-3.5-flash',
   'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-3.5-flash-lite',
   'gemini-3.7-flash',
-  'gemini-3.8-flash'
+  'gemini-3.8-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-3.1-flash-lite',
 ];
 
 export function getDirectGeminiApiKey(apiKeyOverride) {
@@ -583,13 +584,14 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
   const candidateModels = [
-    'gemini-3.5-flash-lite',
-    'gemini-flash-latest',
-    'gemini-3.1-flash-lite',
-    'gemini-3.5-flash',
     'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-3.5-flash-lite',
     'gemini-3.7-flash',
-    'gemini-3.8-flash'
+    'gemini-3.8-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-3.1-flash-lite',
   ];
   let parsed = null;
   let activeGeminiModel = candidateModels[0];
@@ -1585,15 +1587,25 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
     });
   }
 
-  messageContent.push(
-    ...evalFrames.map((f) => ({
-      type: 'image_url',
-      image_url: {
-        url: f.base64,
-        detail: 'low',
-      },
-    }))
-  );
+  for (const f of evalFrames) {
+    let imgUrl = f.base64;
+    if (!imgUrl && f.filePath && fs.existsSync(f.filePath)) {
+      try {
+        const mime = f.filePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        imgUrl = `data:${mime};base64,${fs.readFileSync(f.filePath).toString('base64')}`;
+        f.base64 = imgUrl;
+      } catch {}
+    }
+    if (imgUrl && typeof imgUrl === 'string' && (imgUrl.startsWith('data:image/') || imgUrl.startsWith('http'))) {
+      messageContent.push({
+        type: 'image_url',
+        image_url: {
+          url: imgUrl,
+          detail: 'low',
+        },
+      });
+    }
+  }
 
   const startTimeMs = Date.now();
   const heartbeat = setInterval(() => {

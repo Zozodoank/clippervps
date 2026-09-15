@@ -515,8 +515,29 @@ export function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartia
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
   const aiResult = callAIGatekeeperMicroservice(frames, { timeoutSec: 4, onProgress });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
-    const cleanFrames = aiResult.allFrames.filter(f => f.status === 'clean');
-    const discardedFrames = aiResult.allFrames.filter(f => f.status !== 'clean');
+    const frameByPath = new Map(frames.map(f => [f.filePath, f]));
+    const cleanFrames = aiResult.allFrames
+      .filter(f => f.status === 'clean')
+      .map(f => {
+        const orig = frameByPath.get(f.filePath) || {};
+        let b64 = orig.base64 || f.base64;
+        if (!b64 && f.filePath && fs.existsSync(f.filePath)) {
+          const mime = f.filePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+          b64 = `data:${mime};base64,${fs.readFileSync(f.filePath).toString('base64')}`;
+        }
+        return {
+          ...orig,
+          ...f,
+          base64: b64,
+        };
+      });
+
+    const discardedFrames = aiResult.allFrames
+      .filter(f => f.status !== 'clean')
+      .map(f => ({
+        ...(frameByPath.get(f.filePath) || {}),
+        ...f,
+      }));
 
     const cleanRatio = cleanFrames.length / frames.length;
     const isEligible = (aiResult.eligible !== false) && (allowPartialClean
