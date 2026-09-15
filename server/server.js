@@ -275,6 +275,91 @@ function deletePersistedJob(jobId) {
 
 loadJobsFromDisk();
 
+const DEFAULT_DAILY_VIDEO_LIMIT = 20;
+
+export function getDailyOutputVideoLimit() {
+  const envVal = parseInt(process.env.DAILY_VIDEO_LIMIT, 10);
+  return (!isNaN(envVal) && envVal > 0) ? envVal : DEFAULT_DAILY_VIDEO_LIMIT;
+}
+
+/**
+ * Hitung jumlah video output unik yang berhasil diproduksi hari ini (kalender lokal).
+ * Mencegah pemblokiran IP YouTube/API dengan membatasi maksimal 20 video sehari.
+ */
+export function getDailyOutputVideoStats() {
+  const limit = getDailyOutputVideoLimit();
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const startOfDayMs = startOfDay.getTime();
+
+  const uniqueJobIdsToday = new Set();
+  const completedVideosToday = [];
+
+  // 1. Cek dari memory activeJobs (termasuk hasil load jobs.json)
+  for (const [jobId, job] of activeJobs.entries()) {
+    const isCompleted = job.stage === 'completed' || job.hasFinalVideo || (job.stage === 'stage1_completed' && job.hasSilentVideo);
+    if (!isCompleted) continue;
+
+    const timestampStr = job.completedAt || job.updatedAt || job.createdAt;
+    const jobTime = timestampStr ? new Date(timestampStr).getTime() : 0;
+
+    const filePath = job.finalLocalPath || job.silentLocalPath;
+    const fileExists = filePath && fs.existsSync(filePath);
+
+    if (fileExists && jobTime >= startOfDayMs) {
+      uniqueJobIdsToday.add(jobId);
+      completedVideosToday.push({
+        jobId,
+        productTitle: job.productTitle || jobId,
+        time: new Date(jobTime).toISOString(),
+        type: job.hasFinalVideo ? 'final' : 'silent',
+      });
+    }
+  }
+
+  // 2. Cross-check langsung ke file fisik di direktori output
+  try {
+    if (fs.existsSync(outputDir)) {
+      const files = fs.readdirSync(outputDir);
+      for (const file of files) {
+        if (!file.endsWith('.mp4')) continue;
+        const match = file.match(/^(?:final|silent)_clip_(.+)\.mp4$/);
+        if (match && match[1]) {
+          const jobId = match[1];
+          if (!uniqueJobIdsToday.has(jobId)) {
+            try {
+              const stat = fs.statSync(path.join(outputDir, file));
+              if (stat.mtimeMs >= startOfDayMs) {
+                uniqueJobIdsToday.add(jobId);
+                completedVideosToday.push({
+                  jobId,
+                  productTitle: jobId,
+                  time: stat.mtime.toISOString(),
+                  type: file.startsWith('final') ? 'final' : 'silent',
+                });
+              }
+            } catch {}
+          }
+        }
+      }
+    }
+  } catch {}
+
+  const count = uniqueJobIdsToday.size;
+  const remaining = Math.max(0, limit - count);
+  const isLimitReached = count >= limit;
+
+  return {
+    limit,
+    count,
+    remaining,
+    isLimitReached,
+    date: startOfDay.toLocaleDateString('sv'), // YYYY-MM-DD
+    resetAt: new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    videos: completedVideosToday,
+  };
+}
+
 /** Helper: get all YouTube video IDs from existing active & successfully completed jobs */
 function getAllUsedYouTubeVideoIds() {
   const used = new Set();
@@ -2253,6 +2338,14 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'Produk ditolak karena tergolong perabot besar / rak besar yang memenuhi frame. Niche disetel hanya untuk alat dapur praktis.' });
   }
 
+  const dailyStats = getDailyOutputVideoStats();
+  if (dailyStats.isLimitReached && !req.body.forceOverrideDailyLimit) {
+    return res.status(429).json({
+      error: `Batas kuota harian ${dailyStats.limit} video telah tercapai hari ini (${dailyStats.count}/${dailyStats.limit} video). Dibatasi untuk mencegah pemblokiran IP YouTube/AI. Silakan coba lagi besok.`,
+      dailyStats,
+    });
+  }
+
   const jobId = clientJobId || crypto.randomBytes(6).toString('hex');
   if (clientJobId && req.body.forceFreshVideo) {
     console.log(`[Job ${clientJobId}] Force-fresh generation requested: cleaning up old files...`);
@@ -2292,7 +2385,8 @@ app.post('/api/generate', async (req, res) => {
 // ─── Auto Mode State & Endpoints ─────────────────────────────────────────────
 
 function publicAutoRunState(run) {
-  if (!run) return { status: 'idle' };
+  const dailyStats = getDailyOutputVideoStats();
+  if (!run) return { status: 'idle', dailyStats };
   return {
     runId: run.runId,
     status: run.status,
@@ -2308,6 +2402,7 @@ function publicAutoRunState(run) {
     updatedAt: run.updatedAt,
     finishedAt: run.finishedAt || null,
     failures: run.failures.slice(-10),
+    dailyStats,
   };
 }
 
@@ -2339,6 +2434,21 @@ async function runAutoStage1Worker(run) {
     let quotaErrorMessage = '';
 
     while (run.status !== 'stopping' && run.status !== 'stopped') {
+      const dailyStats = getDailyOutputVideoStats();
+      if (dailyStats.isLimitReached) {
+        console.log(`[Auto] 🛑 Batas harian ${dailyStats.limit} video telah tercapai (${dailyStats.count}/${dailyStats.limit} video hari ini). Auto Mode dihentikan untuk mencegah pemblokiran IP.`);
+        updateAutoRun(run, {
+          status: 'completed',
+          message: `🛑 Batas harian ${dailyStats.limit} video telah tercapai (${dailyStats.count}/${dailyStats.limit} video hari ini). Auto Mode dihentikan untuk mencegah pemblokiran IP. Silakan lanjutkan besok.`,
+          progress: 100,
+          finishedAt: new Date().toISOString(),
+          currentJobId: null,
+          currentProductTitle: null,
+          dailyStats,
+        });
+        break;
+      }
+
       if (!isUnlimited && run.successfulJobs >= run.maxJobs) {
         break;
       }
@@ -2363,7 +2473,7 @@ async function runAutoStage1Worker(run) {
       if (!keyword) continue;
 
       const currentTargetIndex = run.successfulJobs + 1;
-      const targetLabel = isUnlimited ? `${run.successfulJobs} video (∞)` : `${currentTargetIndex}/${run.maxJobs}`;
+      const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${dailyStats.limit})`;
 
       updateAutoRun(run, {
         message: `[${targetLabel}] Mencari video di mesin telusur (YouTube & Bing) untuk: "${keyword}"...`,
@@ -2466,11 +2576,27 @@ async function runAutoStage1Worker(run) {
         run.successfulJobs++;
         jobSuccess = true;
         markKeywordAsUsed(keyword, { productTitle: finalItemTitle, jobId: autoJobId, source: 'auto_worker' });
-        const finishedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
+        
+        const dailyStatsAfter = getDailyOutputVideoStats();
+        const finishedDisplay = isUnlimited ? `Hari ini: ${dailyStatsAfter.count}/${dailyStatsAfter.limit} video` : `${run.successfulJobs}/${run.maxJobs}`;
         updateAutoRun(run, {
           message: `✅ [${finishedDisplay}] Selesai: "${finalItemTitle.slice(0, 35)}..."`,
           progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
         });
+
+        if (dailyStatsAfter.isLimitReached) {
+          console.log(`[Auto] 🛑 Batas kuota harian ${dailyStatsAfter.limit} video telah tercapai (${dailyStatsAfter.count}/${dailyStatsAfter.limit} video). Auto Mode dihentikan.`);
+          updateAutoRun(run, {
+            status: 'completed',
+            message: `🛑 Batas harian ${dailyStatsAfter.limit} video telah tercapai (${dailyStatsAfter.count}/${dailyStatsAfter.limit} video hari ini). Auto Mode dihentikan untuk mencegah pemblokiran IP. Silakan lanjutkan besok.`,
+            progress: 100,
+            finishedAt: new Date().toISOString(),
+            currentJobId: null,
+            currentProductTitle: null,
+            dailyStats: dailyStatsAfter,
+          });
+          break;
+        }
       } catch (err) {
         console.warn(`[Auto] Multi-video harvesting failed for ${keyword}:`, err.message);
         // Delete temporary files ONLY IF the job did NOT already save a media asset
@@ -2485,11 +2611,27 @@ async function runAutoStage1Worker(run) {
           run.successfulJobs++;
           jobSuccess = true;
           markKeywordAsUsed(keyword, { productTitle: savedItemTitle, jobId: autoJobId, source: 'auto_worker' });
-          const savedDisplay = isUnlimited ? `${run.successfulJobs} video (∞)` : `${run.successfulJobs}/${run.maxJobs}`;
+          
+          const dailyStatsAfterMedia = getDailyOutputVideoStats();
+          const savedDisplay = isUnlimited ? `Hari ini: ${dailyStatsAfterMedia.count}/${dailyStatsAfterMedia.limit} video` : `${run.successfulJobs}/${run.maxJobs}`;
           updateAutoRun(run, {
             message: `✅ [${savedDisplay}] Video 1080p tersimpan (Menunggu Voiceover): "${savedItemTitle.slice(0, 30)}..."`,
             progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
           });
+
+          if (dailyStatsAfterMedia.isLimitReached) {
+            console.log(`[Auto] 🛑 Batas kuota harian ${dailyStatsAfterMedia.limit} video telah tercapai (${dailyStatsAfterMedia.count}/${dailyStatsAfterMedia.limit} video). Auto Mode dihentikan.`);
+            updateAutoRun(run, {
+              status: 'completed',
+              message: `🛑 Batas harian ${dailyStatsAfterMedia.limit} video telah tercapai (${dailyStatsAfterMedia.count}/${dailyStatsAfterMedia.limit} video hari ini). Auto Mode dihentikan untuk mencegah pemblokiran IP. Silakan lanjutkan besok.`,
+              progress: 100,
+              finishedAt: new Date().toISOString(),
+              currentJobId: null,
+              currentProductTitle: null,
+              dailyStats: dailyStatsAfterMedia,
+            });
+            break;
+          }
         }
 
         run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
@@ -2618,11 +2760,28 @@ app.post('/api/auto/keywords/reset', (req, res) => {
   }
 });
 
+app.get('/api/daily-limit', (req, res) => {
+  try {
+    const stats = getDailyOutputVideoStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/auto/start', (req, res) => {
   reloadEnvironment();
   const latest = getLatestAutoRun();
   if (latest && latest.status === 'running') {
     return res.json({ run: publicAutoRunState(latest) });
+  }
+
+  const dailyStats = getDailyOutputVideoStats();
+  if (dailyStats.isLimitReached && !req.body.forceOverrideDailyLimit) {
+    return res.status(429).json({
+      error: `Batas kuota harian ${dailyStats.limit} video telah tercapai hari ini (${dailyStats.count}/${dailyStats.limit} video). Auto Mode dicegah untuk melindungi IP dari pemblokiran YouTube/AI. Silakan coba lagi besok.`,
+      dailyStats,
+    });
   }
 
   const { maxJobs = 'unlimited', options = {}, niche = 'kitchen_tools' } = req.body || {};

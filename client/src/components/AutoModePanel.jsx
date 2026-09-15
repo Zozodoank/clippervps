@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, Play, Square, Zap, ShieldCheck, Sparkles } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Loader2, Play, Square, Zap, ShieldCheck, Sparkles, Clock, ShieldAlert } from 'lucide-react';
 
 export default function AutoModePanel({ settings, onHistoryRefresh }) {
   const [run, setRun] = useState({ status: 'idle' });
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [keywordStats, setKeywordStats] = useState({ totalUsedKeywords: 0, totalUsedTitles: 0 });
+  const [dailyStats, setDailyStats] = useState({ limit: 20, count: 0, remaining: 20, isLimitReached: false });
   const eventSourceRef = useRef(null);
   const lastSuccessCountRef = useRef(0);
 
@@ -15,6 +16,15 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
   const skippedProducts = run.skippedProducts || 0;
   const maxJobs = run.maxJobs || 'unlimited';
   const isUnlimited = maxJobs === 'unlimited' || maxJobs === Infinity;
+
+  const fetchDailyStats = () => {
+    fetch('/api/daily-limit')
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (data) setDailyStats(data);
+      })
+      .catch((err) => console.warn('Could not fetch daily stats:', err.message));
+  };
 
   const fetchKeywordStats = () => {
     fetch('/api/auto/keywords/stats')
@@ -26,12 +36,14 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
   };
 
   useEffect(() => {
+    fetchDailyStats();
     fetchKeywordStats();
     fetch('/api/auto/status')
       .then((res) => res.ok ? res.json() : null)
       .then((data) => {
         if (data?.run) {
           setRun(data.run);
+          if (data.run.dailyStats) setDailyStats(data.run.dailyStats);
           lastSuccessCountRef.current = data.run.successfulJobs || 0;
           if (data.run.runId && (data.run.status === 'running' || data.run.status === 'stopping')) {
             connectProgress(data.run.runId);
@@ -55,16 +67,19 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
         const data = JSON.parse(event.data);
         if (!data.run) return;
         setRun(data.run);
+        if (data.run.dailyStats) setDailyStats(data.run.dailyStats);
 
         const nextSuccessCount = data.run.successfulJobs || 0;
         if (nextSuccessCount !== lastSuccessCountRef.current) {
           lastSuccessCountRef.current = nextSuccessCount;
           fetchKeywordStats();
+          fetchDailyStats();
           onHistoryRefresh?.();
         }
 
         if (['completed', 'stopped', 'error'].includes(data.run.status)) {
           fetchKeywordStats();
+          fetchDailyStats();
           onHistoryRefresh?.();
           sse.close();
         }
@@ -94,6 +109,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Gagal memulai Auto Mode.');
       setRun(data.run);
+      if (data.run?.dailyStats) setDailyStats(data.run.dailyStats);
       lastSuccessCountRef.current = data.run.successfulJobs || 0;
       connectProgress(data.run.runId);
     } catch (err) {
@@ -115,6 +131,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Gagal menghentikan Auto Mode.');
       setRun(data.run);
+      if (data.run?.dailyStats) setDailyStats(data.run.dailyStats);
     } catch (err) {
       setRun((prev) => ({ ...prev, status: 'error', message: err.message }));
     } finally {
@@ -134,16 +151,24 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Auto-Run Berkelanjutan: Mencari produk alat dapur Shopee & video YouTube faceless secara otomatis tanpa batas, stop otomatis hanya jika seluruh kuota model AI habis.
+            Auto-Run Berkelanjutan: Mencari produk alat dapur Shopee & video YouTube faceless secara otomatis dengan batas kuota anti-blokir IP (maks. 20 video/hari).
           </p>
           <div className="flex flex-wrap items-center gap-2 mt-2">
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium border ${
+              dailyStats.isLimitReached
+                ? 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+                : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+            }`}>
+              <Clock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Batas Anti-Blokir: <strong>{dailyStats.count}/{dailyStats.limit}</strong> video/hari</span>
+            </span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
               <span>Anti-Duplikasi: <strong>{keywordStats.totalUsedKeywords || 0}</strong> kata kunci terdata</span>
             </span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-medium bg-indigo-500/10 text-indigo-300 border border-indigo-500/30">
               <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-              <span>Mode Unlimited (Alat Dapur)</span>
+              <span>Mode Terarah (Alat Dapur)</span>
             </span>
           </div>
         </div>
@@ -152,11 +177,12 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
           <button
             type="button"
             onClick={handleStart}
-            disabled={isRunning || isStarting}
+            disabled={isRunning || isStarting || dailyStats.isLimitReached}
+            title={dailyStats.isLimitReached ? `Batas harian ${dailyStats.limit} video telah tercapai untuk mencegah pemblokiran IP.` : 'Mulai Auto Mode'}
             className="min-h-[56px] px-5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700 text-white font-black text-sm flex items-center justify-center gap-2 border border-emerald-300/30 shadow-lg shadow-emerald-900/20 transition-all"
           >
             {isStarting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
-            <span>Start Auto</span>
+            <span>{dailyStats.isLimitReached ? 'Limit Harian 20 Video' : 'Start Auto'}</span>
           </button>
 
           <button
