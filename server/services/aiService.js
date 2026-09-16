@@ -9,6 +9,7 @@ import { getMediaDurationSec } from './videoRenderer.js';
 import { saveToEnglishDictionary } from './dictionaryService.js';
 import { trackBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from './discoveryService.js';
+import { getNichePreset } from '../config/nichePresets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -350,10 +351,25 @@ export async function resolveImageBufferAndBase64(imageSource) {
 
 /**
  * Generates a dynamic, high-converting Indonesian affiliate video hook for the first 3 seconds.
- * Provides 8 distinct natural angles and completely avoids repetitive robotic phrasing or the slang "fix".
+ * Provides distinct natural angles for both Kitchen and Gadget/Smartphone niches and completely avoids repetitive robotic phrasing or the slang "fix".
  */
-export function getDynamicProductHookFallback(productName = '') {
+export function getDynamicProductHookFallback(productName = '', niche = 'kitchen_tools') {
   const cleanName = (productName || '').trim() || 'produk ini';
+  const preset = getNichePreset(niche);
+  if (preset.id === 'gadget_smartphone') {
+    const gadgetHooks = [
+      `Cari HP spek gahar harga ramah kantong? Kenalan dulu sama ${cleanName}!`,
+      `Layar AMOLED 120Hz semulus ini, performanya juara buat harian: ${cleanName}!`,
+      `Budget pas-pasan tapi pengen HP kamera jernih & gaming lancar? Cek ${cleanName}!`,
+      `HP sekeren ini harganya bikin kaget, worth it banget: ${cleanName}!`,
+      `Desain mewah, baterai awet, multitasking mulus: ${cleanName}!`,
+      `Jangan salah beli HP! Di kelas harganya, ${cleanName} ini juaranya!`,
+      `Kamera stabil hasil tajam, ini dia HP idaman: ${cleanName}!`,
+      `Upgrade HP tanpa boncos, fitur lengkap banget di ${cleanName}!`
+    ];
+    return gadgetHooks[Math.floor(Math.random() * gadgetHooks.length)];
+  }
+
   const hooks = [
     `Masih repot pakai cara lama yang bikin capek? Untung ada ${cleanName}!`,
     `Sering kesel pas beres-beres tapi hasilnya kurang maksimal? Coba deh pakai ${cleanName}!`,
@@ -366,6 +382,69 @@ export function getDynamicProductHookFallback(productName = '') {
   ];
   const randIdx = Math.floor(Math.random() * hooks.length);
   return hooks[randIdx];
+}
+
+/**
+ * Builds dynamic Acceptance & Rejection Criterion #1 tailored to the active niche.
+ */
+export function buildNicheProductCriterion(niche = 'kitchen_tools', coreNoun = '', effectiveTitle = '', isVideoFirstMode = false, effectiveDesc = '') {
+  const preset = getNichePreset(niche);
+  if (preset.id === 'gadget_smartphone') {
+    return `CRITERION 1: PRODUCT IDENTIFICATION & VALIDATION (SMARTPHONE & GADGET NICHE)
+- Target Gadget / Smartphone: "${coreNoun}" (Listing/Topic: "${effectiveTitle}")
+${effectiveDesc ? `- Description: "${effectiveDesc}"` : ''}
+- PURPOSE: Identify the physical smartphone or gadget demonstrated and verify it is suitable for a 9:16 vertical affiliate video ad.
+- ACCEPTANCE STANDARD:
+  * ACCEPT smartphone review B-roll, hands-on physical demonstrations, camera tests, gaming tests, and unboxing B-roll (cherry-pick active usage/chassis shots, discard cardboard packaging).
+  * In "detectedProduct", output the specific model name (e.g. "Infinix Note 40 Pro", "Poco X6 5G", "Samsung Galaxy A15 5G", "Redmi Note 13 Pro 5G").
+  * In "detectedBrand", output the brand (e.g. "Infinix", "Xiaomi", "Samsung", "Poco", "Realme", "Vivo", "Tecno").
+- REJECTION STANDARD:
+  * REJECT IF TALKING HEAD / PODCAST: REJECT if the video is pure talking-head presenter without hands-on close-up B-roll of the physical smartphone.
+  * REPAIR / SERVICE / TEARDOWN BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, fixing broken glass/LCD, replacing batteries, or soldering/disassembly (servis, bongkar, hp rusak, mati total, ganti lcd). Video must showcase a working pristine smartphone in action!
+  * BULKY APPLIANCES & VEHICLES BAN: REJECT if the video is about large appliances, TVs, monitors, refrigerators, furniture, cars, or motorcycles.
+  * REJECT if compilation/haul of multiple random non-gadget items.
+  * REJECT food, cooking recipes, fashion, or kitchen tools.`;
+  }
+
+  // Default: Kitchen tools
+  if (isVideoFirstMode) {
+    return `CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE)
+- Discovery Topic / Keyword: "${coreNoun}"
+- PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
+- ACCEPTANCE STANDARD:
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg dispenser, oil pot, sharpening stone/roll, vegetable washer basket, etc.) that fit in the central 9:16 vertical crop.
+  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
+  * In "detectedBrand", output any brand name visible on the physical body (or "none").
+- REJECTION STANDARD:
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing").
+  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone, Weber, smoker, BBQ).
+  * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
+  * REJECT if non-kitchen unrelated items.
+  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes or mukbang without focusing on a specific compact kitchen tool/gadget.
+  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting, or repair tutorial.
+  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit.`;
+  }
+
+  return `CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
+- Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
+${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
+- Does the item demonstrated in the video physically and functionally match this product category/tool?
+- ACCEPTANCE STANDARD:
+  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
+  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
+  * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
+- REJECTION STANDARD:
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
+  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan or knife/blade/sharpener.
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, or machinery fabrication.
+  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill.
+  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if large furniture, cabinet, or big rack.
+  * REJECT IMMEDIATELY if it is a multi-product haul/compilation video.
+  * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, or disassembling broken items.
+  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely cooking recipes without demonstrating a compact tool.
+  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if tutorial, DIY, or repair.
+  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if arbitrary combo pack or bundle.`;
 }
 
 /**
@@ -385,6 +464,7 @@ export async function analyzeYouTubeVideoWithGemini({
   introCutoffSec = 0,
   discardedFaceTimestamps = [],
   isVideoFirst = false,
+  niche = 'kitchen_tools',
   onProgress = () => { },
 }) {
   const geminiKey = getDirectGeminiApiKey(apiKey);
@@ -440,54 +520,7 @@ export async function analyzeYouTubeVideoWithGemini({
 Evaluate this YouTube video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
 ${faceBlacklistWarning}
 
-${isVideoFirstMode ? `
-CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE)
-- Discovery Topic / Keyword: "${coreNoun}"
-- PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
-- ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg dispenser, oil pot, sharpening stone/roll, vegetable washer basket, etc.) that fit in the central 9:16 vertical crop.
-  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
-  * In "detectedBrand", output any brand name visible on the physical body (or "none").
-- REJECTION STANDARD:
-  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
-  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
-  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
-  * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
-  * REJECT if non-kitchen unrelated items.
-  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
-  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
-  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
-` : `
-CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
-- Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
-${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
-${refImageInlineData ? `
-- ATTACHED REFERENCE PRODUCT PHOTO (OFFICIAL SHOPEE TARGET):
-  * You are provided with the official reference image of the target product.
-  * Carefully compare the physical product demonstrated in the YouTube video directly against this Reference Photo.
-  * The physical tool demonstrated MUST match the same physical mechanism, appearance, and function as shown in the reference photo.
-  * Minor variations in brand logo on chassis, color accent, or button styling are 100% ACCEPTABLE for affiliate product promotions.
-  * If the video shows a completely different product or category, reject immediately:
-    {"status": "reject", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan foto produk target"}
-` : `
-- Does the item demonstrated in the video physically and functionally match this product category/tool?
-- ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
-  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
-  * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
-`}
-- REJECTION STANDARD:
-  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
-  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan (cetakan es batu, cetakan kue, cetakan pastel, cetakan bakso, cetakan sushi, burger patty press, silicone mold) or knife/blade/sharpener (pisau dapur, pisau buah, pisau daging, cleaver, knife sharpener, talenan/cutting board) because visual shapes, styles, and mechanisms vary too drastically across manufacturers, making matching impossible.
-  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
-  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
-  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
-  * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
-  * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo, tutorial solder/baut). Affiliate product promotion requires showcasing a brand-new working product in action, NOT a repair tutorial!
-  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
-  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
-  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the target product or video shows an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
-`}
+${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
 - 9:16 CROP GEOMETRY:
@@ -678,7 +711,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
   const rawStatus = String(parsed.status || '').toLowerCase().trim();
   const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
-  const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct);
+  const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
   const isMatchFalse = isVideoFirstMode
     ? (isBulky || parsed.isUsableSourceVideo === false)
     : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky);
@@ -836,6 +869,7 @@ export async function analyzeVideoWithGeminiFileApi({
   allowFallbackClips = false,
   introCutoffSec = 0,
   isVideoFirst = false,
+  niche = 'kitchen_tools',
   onProgress = () => { },
 }) {
   const geminiKey = getDirectGeminiApiKey(apiKey);
@@ -922,44 +956,7 @@ export async function analyzeVideoWithGeminiFileApi({
     const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
 Evaluate this full video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
 
-${isVideoFirstMode ? `
-CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE)
-- Discovery Topic / Keyword: "${coreNoun}"
-- PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
-- ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg dispenser, oil pot, sharpening stone/roll, vegetable washer basket, etc.) that fit in the central 9:16 vertical crop.
-  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
-  * In "detectedBrand", output any brand name visible on the physical body (or "none").
-- REJECTION STANDARD:
-  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
-  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
-  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
-  * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
-  * REJECT if non-kitchen unrelated items.
-  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
-  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
-  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
-` : `
-CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
-- Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
-${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
-- Does the item demonstrated in the video physically and functionally match this product category/tool?
-- ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
-  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
-  * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
-- REJECTION STANDARD:
-  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
-  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan (cetakan es batu, cetakan kue, cetakan pastel, cetakan bakso, cetakan sushi, burger patty press, silicone mold) or knife/blade/sharpener (pisau dapur, pisau buah, pisau daging, cleaver, knife sharpener, talenan/cutting board) because visual shapes, styles, and mechanisms vary too drastically across manufacturers, making matching impossible.
-  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). The video MUST showcase authentic consumer hands-on use/testing in a home or kitchen setting, NOT how the product is fabricated in a factory!
-  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (such as Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor cooking gear) that overpowers or fills the tabletop frame!
-  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the demonstrated item is large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
-  * REJECT IMMEDIATELY if it is a multi-product haul/compilation video showing multiple random gadgets instead of demonstrating this specific product.
-  * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, disassembling, fixing broken items, or replacing spare parts (perbaikan, servis, barang rusak, bongkar mesin, ganti baterai/dinamo). Affiliate product promotion requires showcasing a clean working product in action!
-  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
-  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
-  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the target product or video shows an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
-`}
+${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
 - 9:16 CROP GEOMETRY:
@@ -1133,7 +1130,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
     const rawStatus = String(parsed.status || '').toLowerCase().trim();
     const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
-    const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct);
+    const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
     const isMatchFalse = isVideoFirstMode
       ? (isBulky || parsed.isUsableSourceVideo === false)
       : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky);
@@ -1302,6 +1299,7 @@ export async function selectHighlightWithAI({
   allowFallbackClips = false,
   introCutoffSec = 0,
   isVideoFirst = false,
+  niche = 'kitchen_tools',
   onProgress = () => { }
 }) {
   const reqProvider = (aiProvider || '').trim().toLowerCase();
@@ -1326,6 +1324,7 @@ export async function selectHighlightWithAI({
         totalDuration: videoMetadata?.duration || 600,
         introCutoffSec,
         isVideoFirst,
+        niche,
         onProgress,
       });
     }
@@ -1343,6 +1342,7 @@ export async function selectHighlightWithAI({
         allowFallbackClips,
         introCutoffSec,
         isVideoFirst,
+        niche,
         onProgress,
       });
     }
@@ -1369,6 +1369,7 @@ export async function selectHighlightWithAI({
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || videoMetadata?.title || '').trim() || coreNoun;
   const effectiveDesc = (productDescription || videoMetadata?.description || '').trim().slice(0, 500);
+  const preset = getNichePreset(niche);
 
   let resolvedRefImage = null;
   if (productImage) {
@@ -1401,45 +1402,10 @@ RULE 1: ABSOLUTE ZERO HARDCODED SPEECH SUBTITLES & ZERO BURNED-IN CAPTION BARS:
   * Real physical text, brand marks, buttons, or labels printed/embossed directly ON THE PHYSICAL PRODUCT BODY OR ITS PACKAGING (e.g. brand logo "Philips", "Joybos", "Midea", "Xiaomi", button markings "ON/OFF", "Power", "Speed 1 2", volume "500ml", "100°C", "Stainless Steel 304", or physical ingredient/specification labels) is 100% NATURAL AND FULLY ACCEPTABLE!
   * NEVER reject a video because of text or brand logos printed physically on the product itself!
 
-${isVideoFirstMode ? `
-RULE 2: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE):
-- Discovery Query Keyword / Topic: "${coreNoun}"
-- PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
-- ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
-  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
-  * In "detectedBrand", output any brand name visible on the physical body (or "none").
-- REJECTION STANDARD:
-  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
-  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan (cetakan es batu, cetakan kue, cetakan pastel, cetakan bakso, cetakan sushi, burger patty press, silicone mold) or knife/blade/sharpener (pisau dapur, pisau buah, pisau daging, cleaver, knife sharpener, talenan/cutting board) because visual shapes, styles, and mechanisms vary too drastically across manufacturers, making matching impossible.
-  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). Consumer hands-on demonstration required!
-  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor gear) that fills the frame!
-  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
-  * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
-  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
-  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
-  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
-` : `
-RULE 2: FUNCTIONAL & PHYSICAL PRODUCT MATCH VERIFICATION (STRICT COMPACT KITCHEN TOOLS NICHE):
-- Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
-- Compare the physical product demonstrated in the frames directly with the target product: "${coreNoun}".
-- ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
-  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
-  * Minor variations in brand logo on chassis, color accent, or button placement are 100% ACCEPTABLE.
-- REJECTION STANDARD:
-  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if the video shows a completely DIFFERENT product category, non-kitchen item, or random gadgets.
-  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan (cetakan es batu, cetakan kue, cetakan pastel, cetakan bakso, cetakan sushi, burger patty press, silicone mold) or knife/blade/sharpener (pisau dapur, pisau buah, pisau daging, cleaver, knife sharpener, talenan/cutting board) because visual shapes, styles, and mechanisms vary too drastically across manufacturers, making matching impossible.
-  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial workers ("pabrik", "proses pembuatan", "factory", "manufacturing"). Consumer hands-on demonstration required!
-  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone griddle, Weber smoker, commercial barbecue cart, or bulky outdoor gear) that fills the frame!
-  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if the video shows large furniture, large cabinet/wardrobe (lemari, kabinet, kitchen set), big rack/shelving unit (rak piring besar, rak susun besar, rak wastafel, standing rack), or large home appliance (kulkas, mesin cuci, meja makan) that fills, dominates, or overflows the 9:16 vertical frame!
-  * REJECT IMMEDIATELY if it is a compilation / haul video showing multiple random gadgets instead of demonstrating this single product.
-  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes, mukbang eating, street food tasting, or drink beverages without focusing on and demonstrating a specific compact kitchen tool/gadget/cookware.
-  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting project, homemade item, or repair tutorial rather than a clean commercial product demonstration.
-  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the target product or video shows an arbitrary combo pack, multi-item set, bundle, or multi-piece kit (e.g. "1 set pisau 6 pcs", "paket wadah bumbu isi 12", "bundling kombo alat"). Only single standalone distinct kitchen tools/gadgets are accepted because multi-item sets cannot be reliably matched to single Shopee product listings.
-`}
-- If rejected for wrong product or bulky furniture:
-  {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok, tergolong perabot/rak besar, atau produk set/bundle yang dilarang"}
+RULE 2: PRODUCT IDENTIFICATION & NICHE VALIDATION:
+${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
+- If rejected for wrong product, category mismatch, or bulky items:
+  {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok dengan niche ${preset.shortName} atau terlarang"}
 
 RULE 3: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP):
 - MANDATORY AFFILIATE STANDARD:
@@ -1602,15 +1568,8 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - Watermark/logo di pojok KIRI atau KANAN video (di luar area tengah 9:16) TETAP DITERIMA karena akan terpotong/tertutup pilar.
    - Hanya tolak jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE AREA 9:16 TENGAH: output {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Watermark masuk ke dalam frame 9:16."}
 5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
-   Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton menampilkan adegan gosok yang sama!
-   Petakan indeks frame ke dalam 7 peran "storyboard" berikut (selaras 100% dengan kategori dataset AI Frame Extractor):
-   - "clip1_full_product": Slot 1 (00:00-00:05) -> VISUAL PRODUK UTUH (Opening Hero Shot). Frame yang memperlihatkan fisik produk secara utuh/lengkap (misal di atas meja atau dipegang). Sesuai kategori dataset: [valid_full_product]. BUKAN sedang digosok atau di-zoom ekstrem!
-   - "clip2_feature": Slot 2 (00:05-00:10) -> DETAIL FITUR & SPEK. Frame close-up yang menonjolkan fitur/material/komponen fisik alat (misal: tekstur spons, jaring kawat, bahan stainless, pegangan, tombol, kelenturan). Sesuai kategori dataset: [valid_feature].
-   - "clip3_action_demo": Slot 3 (00:10-00:15) -> PERAGAAN #1 (AKSI PAKAI). Aksi penggunaan alat pertama kali mendemonstrasikan fungsi utamanya (misal: mulai menggosok noda/kotoran). Sesuai kategori dataset: [valid_action].
-   - "clip4_action_demo_diff": Slot 4 (00:15-00:20) -> PERAGAAN DENGAN VISUAL BERBEDA. Aksi peragaan dengan SUDUT KAMERA / ANGLE BERBEDA, atau pada permukaan/objek berbeda (misal: wajan vs kompor vs wastafel, atau angle samping vs angle atas). Sesuai kategori dataset: [valid_action] / [valid_comparison]. Jika tersedia beberapa video ("Video #1", "Video #2"), WAJIB pilih dari video BERBEDA! DILARANG sudut/adegan yang sama persis dengan Slot 3!
-   - "clip5_action_demo": Slot 5 (00:20-00:25) -> HASIL PERAGAAN / BUKTI BERSIH (dapat juga dinamai "clip5_result"). Aksi peragaan pembuktian atau hasil (misal: dibilas air bersih, busa melimpah, dilap, atau perbandingan kinclong). Sesuai kategori dataset: [valid_result].
-   - "clip6_full_product": Slot 6 (00:25-00:30) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh kembali (misal produk bersih ditaruh di meja atau dipegang) sebagai penutup yang meyakinkan penonton. Sesuai kategori dataset: [valid_full_product].
-   - "clip7_full_product": Slot 7 (00:30-00:35) -> WAJIB VISUAL PRODUK UTUH / DISPLAY CTA (dapat juga dinamai "clip7_display_cta"). Tampilan fisik produk utuh yang selaras dengan ajakan checkout di keranjang kuning/oranye pojok kiri bawah. Sesuai kategori dataset: [valid_display_cta] / [valid_full_product]. DILARANG diisi klip gosok-gosok yang sama!
+   Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
+   ${preset.storyboardInstructions}
 6. Multi-Video Candidate Harvesting:
    - Jika tersedia beberapa kandidat video ("Video #1", "Video #2", "Video #3"), sebarkan pilihan frame ke kandidat video yang berbeda agar video berganti sumber secara dinamis dan kaya visual!
 7. Output Format:
@@ -1703,7 +1662,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 
       const rawStatus = String(parsed.status || '').toLowerCase().trim();
       const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
-      const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct);
+      const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
       const isMatchFalse = isVideoFirstMode
         ? (isBulky || parsed.isUsableSourceVideo === false)
         : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky || parsed.isUsableSourceVideo === false);
@@ -1790,7 +1749,8 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         frames: evalFrames,
         totalDuration,
         clipSec,
-        introCutoffSec
+        introCutoffSec,
+        niche
       });
 
       // Fallback ke legacy loop jika build7SlotStoryboardClips kosong
@@ -2619,7 +2579,8 @@ export function build7SlotStoryboardClips({
   frames = [],
   totalDuration = 60,
   clipSec = 4.8,
-  introCutoffSec = 0
+  introCutoffSec = 0,
+  niche = 'kitchen_tools'
 }) {
   const sb = parsed?.storyboard || {};
   const selectedIndices = Array.isArray(parsed?.frames) ? parsed.frames : [];
@@ -2628,7 +2589,8 @@ export function build7SlotStoryboardClips({
   const validFrames = (frames || []).filter(f => f && (f.filePath || f.base64 || f.timestamp !== undefined));
   const totalFramesCount = validFrames.length;
 
-  const slotsConfig = [
+  const preset = getNichePreset(niche);
+  const slotsConfig = preset?.slotsConfig || [
     { slot: 1, key: 'clip1_full_product', fallbackKey: 'clip1', label: 'Visual Produk Utuh (Opening Hero)', role: 'full_product', datasetTag: 'valid_full_product' },
     { slot: 2, key: 'clip2_feature', fallbackKey: 'clip2', label: 'Fitur & Keunggulan Fisik', role: 'feature', datasetTag: 'valid_feature' },
     { slot: 3, key: 'clip3_action_demo', fallbackKey: 'clip3', label: 'Peragaan #1 (Aksi Produk)', role: 'action_demo', datasetTag: 'valid_action' },

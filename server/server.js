@@ -78,6 +78,7 @@ import {
   getUsedKeywordsStats,
   clearUsedKeywords
 } from './services/discoveryService.js';
+import { getAllNiches, getNichePreset } from './config/nichePresets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1001,8 +1002,10 @@ export async function runStage1Pipeline({
   const coreProductNoun = productInfo.coreProductNoun || productTitle || 'Produk Praktis';
   const cleanProductTitle = productInfo.cleanTitle || productTitle || '';
 
-  if (isBulkyOrUnsuitableProduct(productTitle) || isBulkyOrUnsuitableProduct(coreProductNoun) || isBulkyOrUnsuitableProduct(cleanProductTitle)) {
-    const rejectReason = `Niche dibatasi hanya untuk alat dapur praktis. Produk "${coreProductNoun || productTitle}" tergolong perabot besar / rak besar yang dilarang.`;
+  if (isBulkyOrUnsuitableProduct(productTitle, { niche: options.niche }) || isBulkyOrUnsuitableProduct(coreProductNoun, { niche: options.niche }) || isBulkyOrUnsuitableProduct(cleanProductTitle, { niche: options.niche })) {
+    const rejectReason = options.niche === 'gadget_smartphone'
+      ? `Niche dibatasi untuk smartphone & gadget. Produk "${coreProductNoun || productTitle}" tidak sesuai kriteria.`
+      : `Niche dibatasi hanya untuk alat dapur praktis. Produk "${coreProductNoun || productTitle}" tergolong perabot besar / rak besar yang dilarang.`;
     console.warn(`[Pipeline] ⛔ ${rejectReason}`);
     updateProgress({
       step: 'rejected_bulky',
@@ -1276,6 +1279,7 @@ export async function runStage1Pipeline({
           introCutoffSec: candidateIntroCutoff,
           discardedFaceTimestamps: localCheck.discardedFaceTimestamps || [],
           isVideoFirst: Boolean(options.isVideoFirst),
+          niche: options.niche || 'kitchen_tools',
           onProgress: updateProgress,
         });
 
@@ -1351,6 +1355,7 @@ export async function runStage1Pipeline({
         allowFallbackClips: !requireCleanGeminiPlan,
         introCutoffSec: candidateIntroCutoff,
         isVideoFirst: Boolean(options.isVideoFirst),
+        niche: options.niche || 'kitchen_tools',
         onProgress: updateProgress,
       });
 
@@ -1420,6 +1425,7 @@ export async function runStage1Pipeline({
           sceneDuration,
           allowFallbackClips: !requireCleanGeminiPlan,
           isVideoFirst: Boolean(options.isVideoFirst),
+          niche: options.niche || 'kitchen_tools',
           onProgress: updateProgress,
         });
         if (!highlight || !Array.isArray(highlight.clips) || highlight.clips.length === 0) {
@@ -1675,6 +1681,7 @@ export async function runStage1Pipeline({
         allowFallbackClips: !requireCleanGeminiPlan,
         introCutoffSec: 0,
         isVideoFirst: Boolean(options.isVideoFirst),
+        niche: options.niche || 'kitchen_tools',
         onProgress: updateProgress,
       });
 
@@ -2457,7 +2464,7 @@ async function runAutoStage1Worker(run) {
 
     const seenShopeeUrls = new Set();
     const usedYouTubeVideoIds = getAllUsedYouTubeVideoIds();
-    let keywordQueue = getAutoKeywords(200, { excludeUsed: true, shuffle: true });
+    let keywordQueue = getAutoKeywords(200, { niche: run.niche, excludeUsed: true, shuffle: true });
     let emptyKeywordRetryCount = 0;
     let quotaExhausted = false;
     let quotaErrorMessage = '';
@@ -2483,7 +2490,7 @@ async function runAutoStage1Worker(run) {
       }
 
       if (keywordQueue.length === 0) {
-        const freshKeywords = getAutoKeywords(200, { excludeUsed: true, shuffle: true });
+        const freshKeywords = getAutoKeywords(200, { niche: run.niche, excludeUsed: true, shuffle: true });
         if (freshKeywords && freshKeywords.length > 0) {
           keywordQueue = freshKeywords;
           emptyKeywordRetryCount = 0;
@@ -2575,6 +2582,7 @@ async function runAutoStage1Worker(run) {
           apiKey: undefined,
           options: {
             ...run.options,
+            niche: run.niche || 'kitchen_tools',
             aiProvider: run.options?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter'),
             autoSearchFallback: true,
             multiVideoHarvesting: true,
@@ -2813,6 +2821,14 @@ app.get('/api/daily-limit', (req, res) => {
   try {
     const stats = getDailyOutputVideoStats();
     res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/niches', (req, res) => {
+  try {
+    res.json({ niches: getAllNiches() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

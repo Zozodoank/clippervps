@@ -5,6 +5,7 @@ import fetch from 'node-fetch';
 import * as cheerio from 'cheerio';
 import https from 'https';
 import { searchYouTubeVideos, extractVideoId, buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from './downloader.js';
+import { getNichePreset, generateCombinatorialGadgetKeywords } from '../config/nichePresets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -564,9 +565,11 @@ export const BULKY_EXCLUDE_WORDS = [
   'silase'
 ];
 
-export function isBulkyOrUnsuitableProduct(text = '') {
+export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
   const normalized = normalizeText(text);
   if (!normalized) return false;
+
+  const isGadget = options?.niche === 'gadget_smartphone';
 
   // 1. Food or drink exclusion check
   if (isFoodOrBeverageProduct(normalized)) {
@@ -578,9 +581,22 @@ export function isBulkyOrUnsuitableProduct(text = '') {
     return true;
   }
 
-  // 1C. Factory / manufacturing / industrial process / bulky grills / agricultural machinery
+  // 1C. Factory / manufacturing / industrial process / agricultural machinery
   if (/\b(?:blackstone|weber|smoker|barbecue|bbq|pabrik|factory|manufacturing|industri|pembuatan|ternak|pakan|limbah|selep|mesin\s+pemipil|perontok|pemanen|traktor|chopper\s+ternak|chopper\s+rumput|cacah\s+rumput|silase|janggel)\b/i.test(normalized)) {
     return true;
+  }
+
+  if (isGadget) {
+    // Smartphone & Gadget specific exclusions:
+    // Exclude repair/service tutorials, broken screens, dead boards, teardown
+    if (/\b(?:servis|service|reparasi|repair|ganti\s+lcd|lcd\s+pecah|mati\s+total|matot|bongkar|disassembly|teardown|skematik|jalur|solder)\b/i.test(normalized)) {
+      return true;
+    }
+    // Exclude bulky non-gadgets: big appliances, vehicles, furniture
+    if (/\b(?:kulkas|mesin\s+cuci|televisi|\btv\b|ac\b|lemari|sofa|kasur|motor|mobil|sepeda|sepeda\s+listrik)\b/i.test(normalized)) {
+      return true;
+    }
+    return false;
   }
 
   // 1D. Disqualify sets, packs, bundles, multi-item packages (sulit dicocokkan dengan 1 video demo)
@@ -1220,10 +1236,13 @@ export function generateCombinatorialKitchenKeywords(limit = 1000, excludedSet =
 }
 
 /**
- * Returns a randomized, expansive array of 1000+ unique kitchen tool keywords.
+ * Returns a randomized, expansive array of keywords tailored to the active niche.
  * Automatically excludes any keywords or product titles that have already been generated/processed.
  */
-export function getAutoKeywords(limit = 1000, { excludeUsed = true, shuffle = true } = {}) {
+export function getAutoKeywords(limit = 1000, { niche = 'kitchen_tools', excludeUsed = true, shuffle = true } = {}) {
+  const preset = getNichePreset(niche);
+  const isGadget = preset.id === 'gadget_smartphone';
+
   const usedStore = loadUsedKeywords();
   const excludedSet = new Set();
 
@@ -1242,23 +1261,29 @@ export function getAutoKeywords(limit = 1000, { excludeUsed = true, shuffle = tr
 
   const resultSet = new Set();
 
-  // 1. First include any unused default curated keywords
-  for (const kw of DEFAULT_AUTO_KEYWORDS) {
+  // 1. First include any unused default curated keywords from the active niche preset
+  const curatedList = preset.defaultKeywords || DEFAULT_AUTO_KEYWORDS;
+  for (const kw of curatedList) {
     const norm = normalizeKeyword(kw);
-    if (!excludedSet.has(norm) && !isBulkyOrUnsuitableProduct(kw)) {
-      resultSet.add(kw);
-      if (resultSet.size >= limit) break;
+    if (!excludedSet.has(norm)) {
+      if (isGadget || !isBulkyOrUnsuitableProduct(kw)) {
+        resultSet.add(kw);
+        if (resultSet.size >= limit) break;
+      }
     }
   }
 
-  // 2. Dynamically synthesize remaining keywords from combinatorial kitchen matrix
+  // 2. Dynamically synthesize remaining keywords from combinatorial matrix
   if (resultSet.size < limit) {
     const needed = limit - resultSet.size;
     const combinedExcluded = new Set([...excludedSet]);
     for (const item of resultSet) {
       combinedExcluded.add(normalizeKeyword(item));
     }
-    const generated = generateCombinatorialKitchenKeywords(needed * 2, combinedExcluded);
+    const generated = isGadget
+      ? generateCombinatorialGadgetKeywords(needed * 2, combinedExcluded)
+      : generateCombinatorialKitchenKeywords(needed * 2, combinedExcluded);
+
     for (const g of generated) {
       resultSet.add(g);
       if (resultSet.size >= limit) break;
