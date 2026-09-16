@@ -87,7 +87,50 @@ export const NICHE_PRESETS = {
 - "clip5_action_demo": Slot 5 (00:20-00:25) -> HASIL PERAGAAN / BUKTI BERSIH ("clip5_result"). Aksi peragaan pembuktian atau hasil (misal: dibilas air bersih, busa melimpah, dilap, atau perbandingan kinclong). Sesuai kategori: [valid_result].
 - "clip6_full_product": Slot 6 (00:25-00:30) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh kembali (misal produk bersih ditaruh di meja atau dipegang) sebagai penutup yang meyakinkan penonton. Sesuai kategori: [valid_full_product].
 - "clip7_full_product": Slot 7 (00:30-00:35) -> WAJIB VISUAL PRODUK UTUH / DISPLAY CTA ("clip7_display_cta"). Tampilan fisik produk utuh yang selaras dengan ajakan checkout di keranjang kuning/oranye pojok kiri bawah. Sesuai kategori: [valid_display_cta] / [valid_full_product].`,
-    hookGuidelines: `Hook naskah pembuka 3 detik harus solutif dan relate dengan masalah repot di dapur, memasak praktis, atau membersihkan noda membandel (DILARANG pakai kata 'fix' / 'fiks'!).`,
+    hookGuidelines: `Hook naskah pembuka 3 detik harus solutif dan relate dengan kegiatan memasak, food prep, kerapian meja makan, atau masalah spesifik saat menyiapkan makanan (DILARANG menggunakan kata 'alat dapur' maupun 'Shopee', dan DILARANG pakai kata 'fix' / 'fiks'!).`,
+    curatedHooks: [
+      // 🍳 1. Tipe Solusi Masalah Memasak & Food Prep
+      "Emak-emak wajib nonton! Ini solusi biar area masak enggak berantakan lagi.",
+      "Capek banget tiap hari harus bersihin percikan minyak pas goreng? Sini berkumpul.",
+      "Bikin sarapan jadi 2x lebih cepat cuma modal barang receh yang satu ini.",
+      "Buat yang punya ruangan sempit, barang ini bener-bener penyelamat tempat banget!",
+      "Solusi cerdas buat yang malas potong-potong bahan masakan sampai nangis.",
+
+      // 🧼 2. Tipe Estetika & Kerapian Ruangan (Clean Vibes)
+      "Bikin area makan kelihatan mewah kayak di drama Korea, padahal modalnya gak sampai 50 ribu!",
+      "Nyesel baru tahu ada organizer se-aesthetic ini buat naruh bumbu-bumbu.",
+      "Suasana rumah minimalis idaman dimulai dari satu barang kecil yang serbaguna ini.",
+      "Transformasi meja masak yang berantakan jadi rapi instan cuma pakai ini.",
+      "Spill barang rahasia yang bikin tempat food prep estetik dan betah dipandang.",
+
+      // 💸 3. Tipe Racun Belanja & Worth It (FOMO)
+      "Jangan checkout barang lain sebelum kalian lihat fungsi benda ini!",
+      "Barang receh online tapi gunanya bener-bener di luar nalar pas dipakai.",
+      "Racun belanja minggu ini: fungsional banget dan wajib punya minimal satu di rumah.",
+      "Review jujur setelah sebulan pakai produk pemotong viral yang satu ini.",
+      "Gak nyangka barang semurah ini bisa awet dan sekokoh ini buat harian.",
+
+      // 🤫 4. Tipe Penasaran & Demo Visual (Faceless Friendly)
+      "Bisa tebak gak benda sekecil ini fungsinya buat apa?",
+      "Satu trik rahasia yang disembunyikin para ibu rumah tangga biar urusan masak cepat beres.",
+      "Kenapa barang ini selalu sold out dan dapet rating bintang 5 terus ya?",
+      "Tonton video ini sampai habis kalau mau tahu cara instan mengatasi minyak membandel.",
+      "Ada yang aneh dari benda ini, kelihatannya simpel tapi kok bisa se-efektif ini?",
+
+      // 📉 5. Tipe Perbandingan & Edukasi
+      "Mending beli yang versi ini daripada versi lama yang harganya selangit tapi fungsinya sama.",
+      "Battle kupas buah pakai cara viral vs manual, mana yang bikin kerjaan cepat beres?",
+      "Jangan ketipu sama ukurannya yang kecil, lihat dulu pas dipakai buat potong daging.",
+      "Ekspektasi vs Realita pas beli produk pembersih viral, ternyata...",
+      "Kelebihan dan kekurangan produk ini yang wajib kamu tahu sebelum menyesal beli.",
+
+      // ⏱️ 6. Tipe Urgensi & Dorongan Klik
+      "Cuma sisa beberapa unit lagi, diskon flash sale buat barang ini mau habis!",
+      "Uji coba langsung: beneran mempermudah food prep atau cuma gimmick iklan doang?",
+      "Buruan cek keranjang kuning sebelum harganya naik normal besok pagi.",
+      "Tantangan bikin cemilan praktis cuma pakai satu benda ini, kira-kira berhasil gak ya?",
+      "Borong ini sekarang sebelum stoknya hilang lagi dari pasaran!"
+    ],
     defaultKeywords: [
       // Top 35 High-Converting Viral Evergreen Kitchen Gadgets (Ribuan video faceless di YouTube/TikTok)
       'chopper manual tarik serbaguna viral',

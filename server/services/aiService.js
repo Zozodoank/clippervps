@@ -370,15 +370,23 @@ export function getDynamicProductHookFallback(productName = '', niche = 'kitchen
     return gadgetHooks[Math.floor(Math.random() * gadgetHooks.length)];
   }
 
+  // 30 Curated Dynamic Non-AI Hooks for Kitchen Tools (Tanpa kata "alat dapur" & tanpa kata "Shopee"):
+  if (preset.curatedHooks && preset.curatedHooks.length > 0) {
+    const randIdx = Math.floor(Math.random() * preset.curatedHooks.length);
+    return preset.curatedHooks[randIdx];
+  }
+
   const hooks = [
-    `Masih repot pakai cara lama yang bikin capek? Untung ada ${cleanName}!`,
-    `Sering kesel pas beres-beres tapi hasilnya kurang maksimal? Coba deh pakai ${cleanName}!`,
-    `Capek buang-buang waktu pakai alat biasa? Waktunya beralih ke ${cleanName}!`,
-    `Ternyata ada cara sepraktis ini, nyesel banget baru tahu ada ${cleanName}!`,
-    `Siapa di sini yang masih sering ribet? Sekarang ada ${cleanName} yang bikin praktis!`,
-    `Stop buang tenaga pakai cara jadul! ${cleanName} ini solusinya!`,
-    `Kirain bakal ribet, ternyata urusan ini langsung kelar pakai ${cleanName}!`,
-    `Pernah ngerasa ribet pas beres-beres? Cek ${cleanName} yang satu ini deh!`
+    `Emak-emak wajib nonton! Ini solusi biar area masak enggak berantakan lagi.`,
+    `Capek banget tiap hari harus bersihin percikan minyak pas goreng? Sini berkumpul.`,
+    `Bikin sarapan jadi 2x lebih cepat cuma modal barang receh yang satu ini.`,
+    `Buat yang punya ruangan sempit, barang ini bener-bener penyelamat tempat banget!`,
+    `Solusi cerdas buat yang malas potong-potong bahan masakan sampai nangis.`,
+    `Transformasi meja masak yang berantakan jadi rapi instan cuma pakai ini.`,
+    `Jangan checkout barang lain sebelum kalian lihat fungsi benda ini!`,
+    `Barang receh online tapi gunanya bener-bener di luar nalar pas dipakai.`,
+    `Bisa tebak gak benda sekecil ini fungsinya buat apa?`,
+    `Satu trik rahasia yang disembunyikin para ibu rumah tangga biar urusan masak cepat beres.`
   ];
   const randIdx = Math.floor(Math.random() * hooks.length);
   return hooks[randIdx];
@@ -1937,10 +1945,17 @@ CRITICAL 7-SLOT STORYBOARD FORMULA (${targetDuration}s Total Runtime):
 The video consists of 7 dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY 7 distinct spoken lines starting with these exact timestamps:
 
 1. [00:00] [excited] SLOT 1: THE DYNAMIC HOOK (00:00 - 00:05) -> ~7-9 kata santai
-   - MUST immediately grab viewer attention within the first 3-5 seconds with a relatable problem/question.
+   - MUST immediately grab viewer attention within the first 3-5 seconds.
    - DILARANG KERAS menggunakan kata "fix" atau "fiks" di hook maupun seluruh naskah!
    - DILARANG sapaan basi seperti "Stop scroll!", "Halo guys!", "Racun Shopee wajib punya!".
-   - Contoh: "Sering capek tiap meres jeruk tangan pegal dan licin?"
+   - DILARANG menggunakan kata "alat dapur" maupun kata "Shopee" di hook pembuka! Fokuskan ke kegiatan memasak, food prep, kerapian meja makan, atau masalah spesifik saat menyiapkan makanan.
+   - PILIH SALAH SATU DARI 6 SUDUT HOOK DINAMIS BERIKUT (Sesuaikan dengan karakter produk):
+     a) 🍳 Solusi Masalah Memasak & Food Prep: "Bikin sarapan jadi 2x lebih cepat cuma modal barang ini!" / "Capek bersihin percikan minyak pas goreng? Sini berkumpul." / "Solusi cerdas buat yang malas potong bahan masakan sampai nangis."
+     b) 🧼 Estetika & Kerapian Ruangan (Clean Vibes): "Transformasi meja masak yang berantakan jadi rapi instan cuma pakai ini." / "Nyesel baru tahu ada organizer se-aesthetic ini buat naruh bumbu." / "Spill barang rahasia yang bikin tempat food prep estetik dan betah dipandang."
+     c) 💸 Racun Belanja & Worth It (FOMO): "Barang receh online tapi gunanya bener-bener di luar nalar!" / "Jangan checkout barang lain sebelum kalian lihat fungsi benda ini!" / "Gak nyangka barang semurah ini bisa awet dan sekokoh ini buat harian."
+     d) 🤫 Penasaran & Demo Visual (Faceless): "Bisa tebak gak benda sekecil ini fungsinya buat apa?" / "Satu trik rahasia biar urusan masak cepat beres." / "Ada yang aneh dari benda ini, kelihatannya simpel tapi kok efektif banget?"
+     e) 📉 Perbandingan & Edukasi: "Mending beli yang versi ini daripada versi lama yang harganya selangit!" / "Battle kupas buah pakai cara viral vs manual, mana yang bikin kerjaan cepat beres?" / "Jangan ketipu sama ukurannya yang kecil, lihat dulu pas dipakai."
+     f) ⏱️ Urgensi & Dorongan Klik: "Uji coba langsung: beneran mempermudah food prep atau cuma gimmick iklan?" / "Buruan cek keranjang kuning sebelum harganya naik normal besok pagi!" / "Tantangan bikin cemilan praktis cuma pakai satu benda ini!"
 
 2. [00:05] [emphasis] SLOT 2: HERO SOLUTION & MATERIAL (00:05 - 00:10) -> ~7-9 kata santai
    - Introduce product using a short, concise spoken name (2-3 words, e.g. "alat pemeras jeruk ini", DILARANG menempelkan seluruh judul SEO yang panjang!).

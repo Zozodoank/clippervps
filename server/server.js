@@ -18,7 +18,8 @@ import {
   generateAdAdvisorScriptWithAI,
   detectPhoneticLexiconWithAI,
   formatEnrichedCaption,
-  formatSeconds
+  formatSeconds,
+  getDynamicProductHookFallback
 } from './services/aiService.js';
 import { generateSrtSubtitles } from './services/subtitleService.js';
 import { loadEnglishDictionary, saveToEnglishDictionary } from './services/dictionaryService.js';
@@ -1967,7 +1968,7 @@ export async function runStage1Pipeline({
       });
     } catch (scriptErr) {
       console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah Shopee...`);
-      const fallbackHook = highlight.productHook || `Sering repot pakai cara lama yang bikin capek?`;
+      const fallbackHook = highlight.productHook || getDynamicProductHookFallback(productTitle, options.niche || 'kitchen_tools');
       const fallbackVoiceScript = `[00:00] [excited] ${fallbackHook}
 [00:05] [emphasis] Untung ada alat praktis ini, bahannya kokoh dan awet banget!
 [00:10] [neutral] Pakainya super simpel, sekali tekan langsung beres tanpa tenaga ekstra.
