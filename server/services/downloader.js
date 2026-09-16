@@ -291,15 +291,33 @@ export const DIRTY_NEGATIVE_OPERATORS = [
 
 export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
-  // 1. Strip repair / broken item / disassembly / recipe / mukbang / cara / tutorial / DIY / factory / bulky grill / agricultural / bundle / western retail keywords that derail product discovery
+  const lower = baseQuery.toLowerCase();
+  const isMoldOrFoodTool = /cetakan|dumpling|pastel|tamagoyaki|baking|kue|bakso|pembuat|maker|chopper|parutan|slicer|peeler|cutter|pemotong|pengupas|pemeras|wajan|panci|dispenser|sealer/i.test(lower);
+
+  // 1. Bersihkan kata-kata sampah tanpa mematikan kata cara/tutorial jika mencari alat dapur
+  const stripRegex = isMoldOrFoodTool
+    ? /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|mukbang|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
+    : /\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
+
   let cleaned = String(baseQuery)
-    .replace(/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi, '')
+    .replace(stripRegex, '')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // 2. Append minimal negative operators if not already included
+  // 2. Pilih operator negatif yang relevan dan batasi maksimal 8-10 kata penting saja
+  const sensitiveFoodOperators = ['-cara', '-tutorial', '-resep', '-recipe', '-makanan', '-minuman', '-kuliner', '-jajanan', '-streetfood'];
+  const relevantOperators = DIRTY_NEGATIVE_OPERATORS.filter(op => {
+    if (isMoldOrFoodTool && sensitiveFoodOperators.includes(op)) {
+      return false; // Jangan blokir video peragaan alat dapur / cetakan
+    }
+    return true;
+  });
+
   const existingLower = cleaned.toLowerCase();
-  const toAdd = DIRTY_NEGATIVE_OPERATORS.filter(op => !existingLower.includes(op.toLowerCase()));
+  const toAdd = relevantOperators
+    .filter(op => !existingLower.includes(op.toLowerCase()))
+    .slice(0, 8); // Maksimal 8 operator agar query YouTube tidak tersumbat
+
   if (toAdd.length > 0) {
     cleaned = `${cleaned} ${toAdd.join(' ')}`;
   }

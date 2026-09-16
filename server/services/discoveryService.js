@@ -2232,11 +2232,15 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
-  // Disqualify broken / repair / disassembly / maintenance tutorials / DIY / set / pack / bundle / western retail (NOT actual single product demos)
-  if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total|amazon|walmart|target|bestbuy|homedepot)\b/i.test(titleText)) return false;
+  const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|unboxing|demo|pakai|menggunakan)\b/i.test(titleText);
+
+  // Disqualify broken / repair / disassembly / maintenance tutorials / DIY / set / pack / bundle / western retail
+  if (/\b(set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total|amazon|walmart|target|bestbuy|homedepot)\b/i.test(titleText)) return false;
+
+  // Jika bukan peragaan alat fisik, tolak kata cara/tutorial murni (reparasi/diy umum)
+  if (!isToolDemoTitle && /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
-    'cara', 'tutorial', 'diy', 'how to', 'do it yourself',
     // Western / US retail chain & Amazon exclusive haul filters (incompatible with Shopee)
     'amazon finds', 'amazon haul', 'amazon must haves', 'amazon favorites', 'found on amazon', 'bought on amazon',
     'walmart', 'target haul', 'best buy', 'home depot', 'dollar tree',
@@ -2246,10 +2250,10 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     'room tour', 'house tour', 'kitchen tour', 'keseharian irt', 'aktivitas pagi', 'kegiatan harian', 'beres rumah',
     'cara belanja', 'cara checkout', 'daftar akun', 'tutorial aplikasi', 'cara jualan', 'cara live',
     'shopee affiliate tutorial', 'aplikasi shopee',
-    // Exclude cooking recipes, food vlogs, and mukbangs (must be product demonstration, NOT food recipe!)
-    'resep', 'resep masakan', 'cara memasak', 'cooking recipe', 'baking recipe', 'food recipe',
-    'food vlog', 'kuliner', 'mukbang', 'asmr eating', 'masakan rumahan', 'menu masakan', 'dapur umami',
-    'cook with me', 'masak yuk', 'masak memasak', 'ide jualan makanan', 'resep kue',
+    // Exclude cooking recipes, food vlogs, and mukbangs (kecuali video peragaan alat cetakan/pemotong)
+    ...(isToolDemoTitle ? [] : ['resep', 'resep masakan', 'cara memasak', 'cooking recipe', 'baking recipe', 'food recipe']),
+    'food vlog', 'kuliner', 'mukbang', 'asmr eating', 'masakan rumahan', 'dapur umami',
+    'cook with me', 'masak yuk',
     // Creator/face-centric and person-focused videos
     'muka', 'wajah', 'facecam', 'webcam', 'selfie', 'grwm', 'get ready with me',
     'try on haul', 'try on', 'outfit', 'ootd', 'skincare routine', 'makeup tutorial',

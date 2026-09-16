@@ -1575,16 +1575,17 @@ export async function runStage1Pipeline({
 
       console.log(`[Job ${jobId}] Menemukan ${candidatePool.length} kandidat video YouTube. Memulai Multi-Video Stream & Harvesting (stream 3-5 video, target klip 30-35s)...`);
 
-      // Ambil hingga 12 kandidat dan stream 3 sampai 5 video dengan frame bersih
-      const candidatesToProcess = candidatePool.slice(0, 12);
+      // Ambil hingga 6 kandidat (cukup 2 video terbaik untuk variasi multi-angle Reels/Shorts)
+      const candidatesToProcess = candidatePool.slice(0, 6);
       const candidateResults = [];
       const downloadedCandidatesMap = new Map();
       let totalCleanCount = 0;
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
-        // Berhenti jika sudah mengumpulkan 3 sampai 5 video dengan frame bersih
-        if (candidateResults.length >= 3 && (totalCleanCount >= 25 || candidateResults.length >= 5)) {
-          console.log(`[Job ${jobId}] ✅ Target streaming 3-5 video terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video). Lanjut ke AI Vision.`);
+        // Early Exit Cerdas: Berhenti jika sudah mengumpulkan 2 video dengan minimal 16 frame bersih,
+        // ATAU sudah mencapai 3 video. Menjamin variasi adegan Facebook Reels tanpa streaming berlama-lama.
+        if ((candidateResults.length >= 2 && totalCleanCount >= 16) || candidateResults.length >= 3) {
+          console.log(`[Job ${jobId}] ✅ Target streaming multi-video terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video). Cepat, hemat kuota & variasi tinggi, lanjut ke AI Vision!`);
           break;
         }
 
