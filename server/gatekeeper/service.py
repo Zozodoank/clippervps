@@ -98,10 +98,12 @@ class FaceGatekeeper:
         if self.backend == "none":
             print("  [FaceGatekeeper] ⚠️ Mode fallback aktif.")
 
-    def detect(self, image_bgr):
+    def detect(self, image_bgr, niche="kitchen_tools"):
         h, w = image_bgr.shape[:2]
         if h < 30 or w < 30:
             return False, 0.0, None, "Dimensi frame terlalu kecil"
+
+        total_frame_area = float(h * w)
 
         # Wajah manusia presenter/vlogger di latar belakang / sudut dapur (min 24px).
         min_face_px = max(24, int(min(h, w) * 0.03))
@@ -124,11 +126,16 @@ class FaceGatekeeper:
                             bw = int(bbox.width)
                             bh = int(bbox.height)
                             if bh >= min_face_px and bw >= min_face_px:
+                                face_area = float(bw * bh)
+                                area_ratio = face_area / total_frame_area
+                                # Khusus niche smartphone: tolerir pejalan kaki / subjek kamera jauh (< 6% luas frame)
+                                if niche == "gadget_smartphone" and area_ratio < 0.06:
+                                    continue
                                 if score > best_score:
                                     best_score = score
                                     best_box = [bx, by, bw, bh]
                     if best_box:
-                        return True, float(best_score), best_box, f"Wajah manusia terdeteksi (confidence: {best_score * 100:.1f}%)"
+                        return True, float(best_score), best_box, f"Wajah vlogger/presenter terdeteksi (confidence: {best_score * 100:.1f}%)"
             except Exception:
                 pass
 
@@ -144,7 +151,12 @@ class FaceGatekeeper:
                         if score >= 0.50:
                             bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
                             if bh >= min_face_px and bw >= min_face_px:
-                                return True, score, [bx, by, bw, bh], f"Wajah manusia terdeteksi (YuNet {score * 100:.1f}%)"
+                                face_area = float(bw * bh)
+                                area_ratio = face_area / total_frame_area
+                                # Khusus niche smartphone: tolerir pejalan kaki / subjek kamera jauh (< 6% luas frame)
+                                if niche == "gadget_smartphone" and area_ratio < 0.06:
+                                    continue
+                                return True, score, [bx, by, bw, bh], f"Wajah vlogger/presenter terdeteksi (YuNet {score * 100:.1f}%)"
             except Exception:
                 pass
 
@@ -182,7 +194,7 @@ class TextGatekeeper:
             self.backend = "gradient_fallback"
             print("  [TextGatekeeper] ℹ️ Menggunakan fallback Sobel horizontal edge text density.")
 
-    def detect(self, crop_bgr):
+    def detect(self, crop_bgr, niche="kitchen_tools"):
         h, w = crop_bgr.shape[:2]
         crop_area = float(h * w)
         if crop_area < 100:
@@ -208,6 +220,9 @@ class TextGatekeeper:
                             return True, 0.12, 0.15, f"Banner promosi / kartu teks statis terdeteksi di frame 9:16 ({bw}x{bh}px)"
         except Exception:
             pass
+
+        max_bottom = self.max_bottom_coverage * (1.5 if niche == "gadget_smartphone" else 1.0)
+        max_total = self.max_total_coverage * (1.4 if niche == "gadget_smartphone" else 1.0)
 
         # ── Jalur 1: DBNet PP-OCRv4 ONNX Inference (Real-time sub-10ms) ──
         if self.ort_session:
@@ -242,9 +257,9 @@ class TextGatekeeper:
                 bottom_zone_pixels = float((target_h - bottom_cut) * target_w)
                 bottom_cov = bottom_text_pixels / bottom_zone_pixels if bottom_zone_pixels > 0 else 0.0
 
-                if bottom_cov >= self.max_bottom_coverage:
+                if bottom_cov >= max_bottom:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)"
-                if total_cov >= self.max_total_coverage:
+                if total_cov >= max_total:
                     return True, total_cov, bottom_cov, f"Teks promosi dominan menutupi frame (coverage {total_cov * 100:.1f}%)"
 
                 return False, total_cov, bottom_cov, "Teks minimal / bersih"
@@ -265,9 +280,12 @@ class TextGatekeeper:
         bottom_zone_area = float((h - bottom_y) * w)
         bottom_cov = float(cv2.countNonZero(bottom_roi)) / bottom_zone_area if bottom_zone_area > 0 else 0.0
 
-        if bottom_cov >= 0.08:
+        sobel_bottom_thresh = 0.12 if niche == "gadget_smartphone" else 0.08
+        sobel_total_thresh = 0.10 if niche == "gadget_smartphone" else 0.07
+
+        if bottom_cov >= sobel_bottom_thresh:
             return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (densitas {bottom_cov * 100:.1f}%)"
-        if total_cov >= 0.07:
+        if total_cov >= sobel_total_thresh:
             return True, total_cov, bottom_cov, f"Densitas teks/grafis dominan ({total_cov * 100:.1f}%)"
 
         return False, total_cov, bottom_cov, "Teks dalam batas wajar"
@@ -406,7 +424,7 @@ class FrameGatekeeper:
         x_start = (w - target_w) // 2
         return image[:, x_start:x_start + target_w]
 
-    def process_single_frame(self, file_path, timestamp=0.0):
+    def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools"):
         if not os.path.exists(file_path):
             return {
                 "filePath": file_path,
@@ -429,7 +447,7 @@ class FrameGatekeeper:
         crop = self.crop_9_16(img)
 
         # ── TAHAP 1A: Face Detection pada Crop 9:16 (Area Tengah Fokus Klip) ──
-        has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = self.face_gate.detect(crop)
+        has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = self.face_gate.detect(crop, niche=niche)
         if has_face_crop:
             return {
                 "filePath": file_path,
@@ -443,7 +461,7 @@ class FrameGatekeeper:
 
         # ── TAHAP 1B: Face Detection pada Full 16:9 Frame (Presenter di Sisi Kiri / Kanan Video) ──
         # Mencegah vlogger/presenter yang berdiri di pinggir layar lolos ke Gemini Vision
-        has_face_full, face_conf_full, face_box_full, face_reason_full = self.face_gate.detect(img)
+        has_face_full, face_conf_full, face_box_full, face_reason_full = self.face_gate.detect(img, niche=niche)
         if has_face_full:
             return {
                 "filePath": file_path,
@@ -456,7 +474,7 @@ class FrameGatekeeper:
             }
 
         # ── TAHAP 2: Text Detection ──
-        has_text, total_cov, bottom_cov, text_reason = self.text_gate.detect(crop)
+        has_text, total_cov, bottom_cov, text_reason = self.text_gate.detect(crop, niche=niche)
         if has_text:
             return {
                 "filePath": file_path,
@@ -491,7 +509,7 @@ class FrameGatekeeper:
             "bottomCoverage": round(bottom_cov, 3)
         }
 
-    def process_batch(self, frame_items):
+    def process_batch(self, frame_items, niche="kitchen_tools"):
         results = []
         clean_frames = []
         discarded_frames = []
@@ -520,13 +538,17 @@ class FrameGatekeeper:
         for idx, item in enumerate(frame_items):
             path = item.get("filePath") if isinstance(item, dict) else str(item)
             ts = item.get("timestamp", 0.0) if isinstance(item, dict) else 0.0
-            verdict = self.process_single_frame(path, ts)
+            verdict = self.process_single_frame(path, ts, niche=niche)
 
-            # Jika frame terdeteksi statis diam di badan video, buang frame tersebut
+            # Jika frame terdeteksi statis diam di badan video:
             if idx in static_indices and ts > 3.0 and verdict["status"] == "clean":
-                verdict["status"] = "discarded"
-                verdict["stage"] = "static_frame"
-                verdict["reason"] = "Frame foto statis diam tanpa gerakan fisik peragaan"
+                if niche == "gadget_smartphone":
+                    # Di smartphone, sample foto jepretan kamera (still photo / portrait) diperbolehkan!
+                    verdict["isCameraStill"] = True
+                else:
+                    verdict["status"] = "discarded"
+                    verdict["stage"] = "static_frame"
+                    verdict["reason"] = "Frame foto statis diam tanpa gerakan fisik peragaan"
 
             results.append(verdict)
 
@@ -546,9 +568,12 @@ class FrameGatekeeper:
                 intro_cutoff_sec = max(intro_cutoff_sec, results[1].get("timestamp", 5.0))
 
         # Eligible if at least 4 clean frames and clean frames represent >= 35% of video
-        # AND not a static slideshow (static transitions < 35% and static_transitions < 3)
+        # Di smartphone, peragaan foto kamera still diperbolehkan sehingga static_ratio diberi kelonggaran
         static_ratio = float(static_transitions) / max(1, len(frame_items) - 1)
-        is_static_slideshow = (static_transitions >= 3) or (static_ratio >= 0.35)
+        if niche == "gadget_smartphone":
+            is_static_slideshow = (static_transitions >= 7) or (static_ratio >= 0.65)
+        else:
+            is_static_slideshow = (static_transitions >= 3) or (static_ratio >= 0.35)
 
         eligible = (not is_static_slideshow) and len(clean_frames) >= 4 and (len(clean_frames) / max(1, len(frame_items)) >= 0.35)
 
@@ -628,12 +653,13 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 raw_body = self.rfile.read(length).decode("utf-8")
                 payload = json.loads(raw_body)
                 frames = payload.get("frames", [])
+                niche = payload.get("niche", "kitchen_tools")
 
                 if not frames:
                     self._send_json(400, {"error": "Array 'frames' kosong atau tidak ditemukan"})
                     return
 
-                res = GATEKEEPER.process_batch(frames)
+                res = GATEKEEPER.process_batch(frames, niche=niche)
                 self._send_json(200, res)
             except Exception as err:
                 self._send_json(500, {"error": str(err)})

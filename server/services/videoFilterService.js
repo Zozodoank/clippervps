@@ -482,12 +482,13 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
-export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 20, onProgress = () => {} } = {}) {
+export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 20, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
   try {
     const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
     if (validFrames.length === 0) return null;
 
     const payload = JSON.stringify({
+      niche,
       frames: validFrames.map(f => ({
         filePath: f.filePath,
         timestamp: f.timestamp || 0
@@ -525,13 +526,13 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 20, on
  * Tahap 2: DBNet Text Detection (membuang subtitle terbakar & promo overlay).
  * Tahap 3: MobileNetV3 (membuang bumper foto statis & kartun/animasi).
  */
-export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {} } = {}) {
+export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
     return { eligible: false, cleanFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
   }
 
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
-  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 20, onProgress });
+  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 20, onProgress, niche });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
     const cleanFrames = aiResult.allFrames

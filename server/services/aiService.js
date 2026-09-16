@@ -458,6 +458,43 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
 }
 
 /**
+ * Builds dynamic Criterion #4 (Face, Talking-Head & Motion/Still-Photo Rules) tailored to the active niche.
+ */
+export function buildFaceAndMotionCriterion(niche = 'kitchen_tools', clipSec = 4.8) {
+  const preset = getNichePreset(niche);
+  if (preset.id === 'gadget_smartphone') {
+    return `CRITERION 4: VLOGGER TALKING-HEAD BAN WITH SMART CAMERA TEST & STILL PHOTO ALLOWANCE (SMARTPHONE NICHE)
+- MANDATORY SHORT-FORM VIDEO STANDARD:
+  * This is an automated smartphone showcase video. The core focus MUST be physical B-roll: hands holding the device, bezel, back cover, 120Hz scrolling, gaming FPS, and camera samples.
+  * STRICT BAN ON VLOGGER TALKING-HEAD IN STUDIO:
+    DILARANG KERAS memilih klip presenter/vlogger berbicara menghadap kamera di studio (talking-head intro/outro/talking scenes).
+  * CRITICAL CAMERA REVIEW EXCEPTION (MANDATORY):
+    Reviewers frequently test the smartphone camera outdoors (street 4K video stabilization, landscape, portrait photo samples).
+    During these camera test samples, distant people, pedestrians walking on the street, or portrait photo subjects ARE 100% PERMITTED AND VALUABLE!
+    DO NOT reject camera test clips because humans/pedestrians are visible in the camera sample!
+  * CAMERA SAMPLE STILL PHOTO (KEN BURNS) ALLOWANCE:
+    High-resolution still photos (sample jepretan kamera 2-3 detik seperti foto malam, landscape, atau bokeh portrait) ARE 100% PERMITTED as camera demonstration clips! The video renderer will automatically apply smooth subtle zoom to still photos.
+  * REJECT ONLY IF:
+    The video is purely a vlogger talking to the camera without hands-on phone B-roll, or lacks at least 6 distinct smartphone physical B-roll clips.
+  * In rejection output, set reason to: "Menampilkan vlogger talking-head studio tanpa B-roll fisik HP yang cukup"`;
+  }
+
+  return `CRITERION 4: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP)
+- MANDATORY AFFILIATE STANDARD:
+  * This is an automated affiliate product video advertisement. It MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
+  * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
+    DILARANG KERAS menampilkan wajah, kepala, rambut, mata, mulut, dagu, leher, atau tubuh/torso manusia di dalam frame 9:16 pada detik-detik klip yang dipilih, BAHKAN UNTUK 0.5 DETIK SEKALI PUN!
+  * HANYA pilih timestamps ketika kamera menyorot CLOSE-UP produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
+- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) BAN:
+  * DILARANG KERAS memilih frame atau klip yang berupa foto/gambar diam (slideshow katalog) dengan efek zoom perlahan (Ken Burns effect)!
+  * Klip WAJIB memiliki gerakan fisik dinamis dan nyata (tangan mengoperasikan produk, bahan terpotong/terkupas, cairan mengalir, tombol ditekan, motor berputar).
+- REJECT IMMEDIATELY (status: 'reject') IF:
+  * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
+  * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
+  * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"`;
+}
+
+/**
  * Stage 1 Jalur 1: Analyzes a public YouTube video directly via Google Gemini API using native video streaming (fileUri).
  * Zero download on local server, zero FFmpeg frame extraction, zero base64 payload.
  */
@@ -569,19 +606,7 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO AN
   * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
 - ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable.
 
-CRITERION 4: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP)
-- MANDATORY AFFILIATE STANDARD:
-  * This is an automated affiliate product video advertisement. It MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
-  * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
-    DILARANG KERAS menampilkan wajah, kepala, rambut, mata, mulut, dagu, leher, atau tubuh/torso manusia di dalam frame 9:16 pada detik-detik klip yang dipilih, BAHKAN UNTUK 0.5 DETIK SEKALI PUN!
-  * HANYA pilih timestamps ketika kamera menyorot CLOSE-UP produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
-- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) BAN:
-  * DILARANG KERAS memilih frame atau klip yang berupa foto/gambar diam (slideshow katalog) dengan efek zoom perlahan (Ken Burns effect)!
-  * Klip WAJIB memiliki gerakan fisik dinamis dan nyata (tangan mengoperasikan produk, bahan terpotong/terkupas, cairan mengalir, tombol ditekan, motor berputar).
-- REJECT IMMEDIATELY (status: 'reject') IF:
-  * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
-  * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
-  * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"
+${buildFaceAndMotionCriterion(niche, clipSec)}
 
 CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
@@ -1425,22 +1450,7 @@ ${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, 
 - If rejected for wrong product, category mismatch, or bulky items:
   {"status": "reject", "detectedProduct": "<nama produk yang tampak>", "isExactProductMatch": false, "reason": "Produk di video (<nama produk>) tidak cocok dengan niche ${preset.shortName} atau terlarang"}
 
-RULE 3: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP):
-- MANDATORY AFFILIATE STANDARD:
-  * Every single selected frame index in "frames" MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
-  * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
-    DILARANG KERAS ada wajah, kepala, rambut, mata, mulut, leher, atau tubuh/torso manusia terlihat pada frame yang dipilih, BAHKAN SEKILAS!
-  * HANYA pilih indeks frame yang menyorot close-up produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
-- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) STRICT BAN:
-  * DILARANG KERAS memilih frame yang berupa foto katalog statis atau slideshow foto dengan efek zoom lambat (Ken Burns effect)! Video WAJIB rekaman kamera fisik bergerak nyata dengan tangan manusia beroperasi aktif.
-  * Jika video terdeteksi kumpulan foto statis/slideshow diam, TOLAK LANGSUNG (status: 'reject', reason: 'Video berupa slideshow foto statis / gambar diam (wajib video rekaman fisik bergerak nyata)').
-- DYNAMIC SCENE CUTS MANDATE (GANTI ADEGAN TIAP ~5 DETIK):
-  * Video affiliate pendek membutuhkan variasi potongan adegan yang berganti aksi/sudut pandang setiap 4 sampai 5 detik.
-  * HANYA pilih frame yang mewakili fase penggunaan produk yang berbeda (misal: penampakan fisik alat -> memasukkan bahan -> menekan/memotong/mengoperasikan -> hasil nyata produk -> membersihkan/menyimpan). Dilarang memilih frame diam berulang dari 1 sudut unmoving yang sama!
-- REJECT IMMEDIATELY (status: 'reject') IF:
-  * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
-  * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action frames.
-  * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"
+${buildFaceAndMotionCriterion(niche, clipSec)}
 
 RULE 3B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES):
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:

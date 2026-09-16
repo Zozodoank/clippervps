@@ -1240,6 +1240,7 @@ export async function runStage1Pipeline({
       const localCheck = await inspectFramesLocally(sampled, {
         aspectRatio: options.aspectRatio || '9:16',
         onProgress: updateProgress,
+        niche: options.niche || jobMeta.niche || 'kitchen_tools'
       });
 
       if (!localCheck.eligible) {
