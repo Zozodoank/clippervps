@@ -1,0 +1,72 @@
+[
+  {
+    "filename": "raw_auto_9cb1ba841a_t00000.jpg",
+    "timestamp_sec": 0.0,
+    "label": "valid_real",
+    "split": "val",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00009.jpg",
+    "timestamp_sec": 0.98,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00019.jpg",
+    "timestamp_sec": 1.97,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00029.jpg",
+    "timestamp_sec": 2.95,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00039.jpg",
+    "timestamp_sec": 3.94,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00049.jpg",
+    "timestamp_sec": 4.92,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00059.jpg",
+    "timestamp_sec": 5.91,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00068.jpg",
+    "timestamp_sec": 6.89,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00078.jpg",
+    "timestamp_sec": 7.87,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  },
+  {
+    "filename": "raw_auto_9cb1ba841a_t00088.jpg",
+    "timestamp_sec": 8.86,
+    "label": "valid_real",
+    "split": "train",
+    "reason": "Peragaan produk fisik nyata alami"
+  }
+]

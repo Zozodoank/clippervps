@@ -1603,14 +1603,14 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - Hanya tolak jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE AREA 9:16 TENGAH: output {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Watermark masuk ke dalam frame 9:16."}
 5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
    Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton menampilkan adegan gosok yang sama!
-   Petakan indeks frame ke dalam 7 peran "storyboard" berikut:
-   - "clip1_full_product": Slot 1 (00:00-00:05) -> VISUAL PRODUK UTUH (Establishing Shot). Frame yang memperlihatkan fisik produk secara utuh/lengkap (misal di atas meja, dipegang, atau baru dibuka). BUKAN sedang digosok atau di-zoom ekstrem!
-   - "clip2_feature": Slot 2 (00:05-00:10) -> FITUR PRODUK. Frame close-up yang menonjolkan fitur/material/komponen fisik alat (misal: tekstur spons, jaring kawat, bahan stainless, pegangan, tombol, ketebalan).
-   - "clip3_action_demo": Slot 3 (00:10-00:15) -> PERAGAAN #1. Aksi penggunaan alat pertama kali mendemonstrasikan fungsinya (misal: mulai menggosok noda/kotoran).
-   - "clip4_action_demo_diff": Slot 4 (00:15-00:20) -> PERAGAAN DENGAN VISUAL BERBEDA. Aksi peragaan dengan SUDUT KAMERA / ANGLE BERBEDA, atau pada permukaan/objek berbeda (misal: wajan vs kompor vs wastafel, atau angle samping vs angle atas). Jika tersedia beberapa video ("Video #1", "Video #2"), WAJIB pilih dari video BERBEDA! DILARANG sudut/adegan yang sama persis dengan Slot 3!
-   - "clip5_action_demo": Slot 5 (00:20-00:25) -> PERAGAAN #3 / HASIL BUKTI. Aksi peragaan lanjutan atau hasil (misal: dibilas air bersih, busa melimpah, dilap, atau perbandingan kinclong).
-   - "clip6_full_product": Slot 6 (00:25-00:30) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh kembali (misal produk bersih ditaruh di meja atau dipegang) sebagai penutup yang meyakinkan penonton.
-   - "clip7_full_product": Slot 7 (00:30-00:35) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh yang selaras dengan ajakan checkout di keranjang kuning/oranye pojok kiri bawah. DILARANG diisi klip gosok-gosok yang sama!
+   Petakan indeks frame ke dalam 7 peran "storyboard" berikut (selaras 100% dengan kategori dataset AI Frame Extractor):
+   - "clip1_full_product": Slot 1 (00:00-00:05) -> VISUAL PRODUK UTUH (Opening Hero Shot). Frame yang memperlihatkan fisik produk secara utuh/lengkap (misal di atas meja atau dipegang). Sesuai kategori dataset: [valid_full_product]. BUKAN sedang digosok atau di-zoom ekstrem!
+   - "clip2_feature": Slot 2 (00:05-00:10) -> DETAIL FITUR & SPEK. Frame close-up yang menonjolkan fitur/material/komponen fisik alat (misal: tekstur spons, jaring kawat, bahan stainless, pegangan, tombol, kelenturan). Sesuai kategori dataset: [valid_feature].
+   - "clip3_action_demo": Slot 3 (00:10-00:15) -> PERAGAAN #1 (AKSI PAKAI). Aksi penggunaan alat pertama kali mendemonstrasikan fungsi utamanya (misal: mulai menggosok noda/kotoran). Sesuai kategori dataset: [valid_action].
+   - "clip4_action_demo_diff": Slot 4 (00:15-00:20) -> PERAGAAN DENGAN VISUAL BERBEDA. Aksi peragaan dengan SUDUT KAMERA / ANGLE BERBEDA, atau pada permukaan/objek berbeda (misal: wajan vs kompor vs wastafel, atau angle samping vs angle atas). Sesuai kategori dataset: [valid_action] / [valid_comparison]. Jika tersedia beberapa video ("Video #1", "Video #2"), WAJIB pilih dari video BERBEDA! DILARANG sudut/adegan yang sama persis dengan Slot 3!
+   - "clip5_action_demo": Slot 5 (00:20-00:25) -> HASIL PERAGAAN / BUKTI BERSIH (dapat juga dinamai "clip5_result"). Aksi peragaan pembuktian atau hasil (misal: dibilas air bersih, busa melimpah, dilap, atau perbandingan kinclong). Sesuai kategori dataset: [valid_result].
+   - "clip6_full_product": Slot 6 (00:25-00:30) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh kembali (misal produk bersih ditaruh di meja atau dipegang) sebagai penutup yang meyakinkan penonton. Sesuai kategori dataset: [valid_full_product].
+   - "clip7_full_product": Slot 7 (00:30-00:35) -> WAJIB VISUAL PRODUK UTUH / DISPLAY CTA (dapat juga dinamai "clip7_display_cta"). Tampilan fisik produk utuh yang selaras dengan ajakan checkout di keranjang kuning/oranye pojok kiri bawah. Sesuai kategori dataset: [valid_display_cta] / [valid_full_product]. DILARANG diisi klip gosok-gosok yang sama!
 6. Multi-Video Candidate Harvesting:
    - Jika tersedia beberapa kandidat video ("Video #1", "Video #2", "Video #3"), sebarkan pilihan frame ke kandidat video yang berbeda agar video berganti sumber secara dinamis dan kaya visual!
 7. Output Format:
@@ -2629,13 +2629,13 @@ export function build7SlotStoryboardClips({
   const totalFramesCount = validFrames.length;
 
   const slotsConfig = [
-    { slot: 1, key: 'clip1_full_product', label: 'Visual Produk Utuh (Opening Hero)', role: 'full_product' },
-    { slot: 2, key: 'clip2_feature', label: 'Fitur & Keunggulan Fisik', role: 'feature' },
-    { slot: 3, key: 'clip3_action_demo', label: 'Peragaan #1 (Aksi Produk)', role: 'action_demo' },
-    { slot: 4, key: 'clip4_action_demo_diff', label: 'Peragaan #2 (Visual Berbeda / Angle Lain)', role: 'action_demo_diff' },
-    { slot: 5, key: 'clip5_action_demo', label: 'Peragaan #3 (Hasil / Bukti Nyata)', role: 'action_demo' },
-    { slot: 6, key: 'clip6_full_product', label: 'WAJIB Visual Produk Utuh (Penutup)', role: 'full_product' },
-    { slot: 7, key: 'clip7_full_product', label: 'WAJIB Visual Produk Utuh (Call to Action)', role: 'full_product' }
+    { slot: 1, key: 'clip1_full_product', fallbackKey: 'clip1', label: 'Visual Produk Utuh (Opening Hero)', role: 'full_product', datasetTag: 'valid_full_product' },
+    { slot: 2, key: 'clip2_feature', fallbackKey: 'clip2', label: 'Fitur & Keunggulan Fisik', role: 'feature', datasetTag: 'valid_feature' },
+    { slot: 3, key: 'clip3_action_demo', fallbackKey: 'clip3', label: 'Peragaan #1 (Aksi Produk)', role: 'action_demo', datasetTag: 'valid_action' },
+    { slot: 4, key: 'clip4_action_demo_diff', fallbackKey: 'clip4_action_demo', label: 'Peragaan #2 (Visual Berbeda / Angle Lain)', role: 'action_demo_diff', datasetTag: 'valid_action' },
+    { slot: 5, key: 'clip5_action_demo', fallbackKey: 'clip5_result', label: 'Peragaan #3 (Hasil / Bukti Nyata)', role: 'action_demo', datasetTag: 'valid_result' },
+    { slot: 6, key: 'clip6_full_product', fallbackKey: 'clip6', label: 'WAJIB Visual Produk Utuh (Penutup)', role: 'full_product', datasetTag: 'valid_full_product' },
+    { slot: 7, key: 'clip7_full_product', fallbackKey: 'clip7_display_cta', label: 'WAJIB Visual Produk Utuh (Call to Action)', role: 'full_product', datasetTag: 'valid_display_cta' }
   ];
 
   const storyboardClips = [];
@@ -2650,10 +2650,14 @@ export function build7SlotStoryboardClips({
     const config = slotsConfig[i];
     let chosenIdx = null;
 
-    if (sb[config.key]) {
-      const parsedIdx = parseInt(sb[config.key], 10);
-      if (!isNaN(parsedIdx) && parsedIdx >= 1 && parsedIdx <= totalFramesCount) {
-        chosenIdx = parsedIdx;
+    const candidateKeys = [config.key, config.fallbackKey].filter(Boolean);
+    for (const k of candidateKeys) {
+      if (sb[k] !== undefined && sb[k] !== null) {
+        const parsedIdx = parseInt(sb[k], 10);
+        if (!isNaN(parsedIdx) && parsedIdx >= 1 && parsedIdx <= totalFramesCount) {
+          chosenIdx = parsedIdx;
+          break;
+        }
       }
     }
 
@@ -2802,7 +2806,8 @@ export function build7SlotStoryboardClips({
       candidate: frameObj?.candidate || null,
       storyboardSlot: config.slot,
       storyboardRole: config.role,
-      reason: `${config.label} [Slot #${config.slot}]`,
+      datasetTag: config.datasetTag,
+      reason: `${config.label} [Slot #${config.slot} | ${config.datasetTag}]`,
       isCleanAffiliateShot: true,
       hasProductBrand: Boolean(parsed?.hasProductBrand),
       reframe: {
@@ -2915,6 +2920,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       candidate: rawClip?.candidate || null,
       storyboardSlot: rawClip?.storyboardSlot,
       storyboardRole: rawClip?.storyboardRole,
+      datasetTag: rawClip?.datasetTag,
       reason: (rawClip?.reason || 'Clean full-product affiliate shot.').toString().slice(0, 180),
       hasProductBrand: clipHasBrand,
       allowHflip: clipAllowHflip,
