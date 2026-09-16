@@ -379,43 +379,32 @@ export function isHighVariationOrHardToMatchProduct(text = '') {
   const normalized = normalizeText(text);
   if (!normalized) return false;
 
-  // 1. Cetakan / Mold variations (selalu hindari cetakan karena bentuk/motif ribuan ragam dan sulit dicari video persamaannya)
-  if (/\b(?:cetakan|pencetak|mould?s?|patty\s+press|ice\s+tray)\b/i.test(normalized)) {
-    return true;
-  }
-  // Standalone word 'cetak' (misal 'cetak pastel', 'cetak kue', 'cetak es')
-  if (/\bcetak\b/i.test(normalized)) {
-    return true;
-  }
-
-  // 2. Pisau / Knife / Cleaver / Sharpener variations
-  // Pengecualian: jangan tolak jika itu chopper atau blender utuh (misal: "chopper 3 mata pisau")
-  const isAppliance = /\b(?:chopper|blender|food\s+processor)\b/i.test(normalized);
-  if (!isAppliance) {
-    if (/\b(?:pisau|knives|knife|cleaver|santoku|golok)\b/i.test(normalized)) {
-      return true;
-    }
-  } else {
-    // Jika blender/chopper tapi hanya menjual suku cadang mata pisau
+  // Izinkan alat dapur viral mekanik & praktis (dumpling maker, tamagoyaki pan, waffle maker, asahan pisau roll, gunting SK5, peeler, chopper)
+  const isViralMechanicGadget = /\b(?:dumpling|pastel|tamagoyaki|waffle|takoyaki|roll\s+sharpener|batu\s+asah|asahan|sk5|chopper|slicer|peeler|garlic\s+press|sealer)\b/i.test(normalized);
+  if (isViralMechanicGadget) {
+    // Tetap tolak jika hanya menjual sparepart / suku cadang mata pisau saja
     if (/\b(?:sparepart|cadangan|pengganti|mata\s+pisau\s+saja)\b/i.test(normalized)) {
       return true;
     }
+    return false;
   }
 
-  // Pengasah pisau & batu asah
-  if (/\b(?:pengasah|asahan|asah)\s*(?:pisau|gunting|batu)?\b/i.test(normalized)) {
-    return true;
-  }
-  if (/\b(?:batu\s+asah(?:an)?|whetstone|knife\s+sharpener)\b/i.test(normalized)) {
-    return true;
-  }
-
-  // 3. Talenan / Cutting board
-  if (/\b(?:talenan|cutting\s+board|chopping\s+board)\b/i.test(normalized)) {
+  // 1. Cetakan kue motif kecil / silikon coklat polos tanpa mekanisme
+  if (/\b(?:cetakan\s+coklat|cetakan\s+es\s+batu|cetakan\s+kue\s+kering|cetakan\s+puding|silicone\s+mold\s+cake)\b/i.test(normalized)) {
     return true;
   }
 
-  // 4. Periksa kecocokan daftar kata
+  // 2. Pisau biasa / pisau daging tanpa alat mekanis (kecuali alat iris / slicer mekanis)
+  if (/\b(?:pisau\s+dapur|pisau\s+buah|pisau\s+chef|santoku|golok\s+daging)\b/i.test(normalized) && !/\b(?:slicer|peeler|chopper|roll|asahan)\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 3. Talenan polos tanpa fungsi multifungsi
+  if (/\b(?:talenan\s+kayu|talenan\s+plastik|chopping\s+board)\b/i.test(normalized) && !/\b(?:multifungsi|drain|baskom|lipat)\b/i.test(normalized)) {
+    return true;
+  }
+
+  // 4. Periksa kecocokan daftar kata komoditas polos (piring polos, cangkir polos, serbet)
   if (HIGH_VARIATION_EXCLUDE_WORDS.some((word) => normalized.includes(word))) {
     return true;
   }

@@ -411,16 +411,18 @@ ${effectiveDesc ? `- Description: "${effectiveDesc}"` : ''}
     return `CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE)
 - Discovery Topic / Keyword: "${coreNoun}"
 - PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
-- ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, knife, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg dispenser, oil pot, sharpening stone/roll, vegetable washer basket, etc.) that fit in the central 9:16 vertical crop.
-  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Mini Tarik Manual", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer").
+- VIDEO-FIRST REVERSE DISCOVERY RULE (MANDATORY):
+  * IN VIDEO-FIRST MODE, THE VIDEO DEFINES THE PRODUCT!
+  * If the video demonstrates ANY compact, useful tabletop or handheld kitchen tool/gadget with clean hands-on action (e.g. food choppers, mandoline slicers, peelers, garlic presses, dumpling/waffle/egg molds, rolling knife sharpeners, scissors, oil pots, dispensers, graters, mini sealers, etc.), ALWAYS ACCEPT THE VIDEO (status: 'accept', isExactProductMatch: true).
+  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Manual Tarik Serbaguna", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer", "Garlic Press Rocker Stainless", "Alat Pembuat Dumpling Pastel").
   * In "detectedBrand", output any brand name visible on the physical body (or "none").
+  * DO NOT REJECT merely because the detected product differs from the initial search keyword. The backend will automatically link the detected product to Shopee!
 - REJECTION STANDARD:
   * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
   * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing").
   * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone, Weber, smoker, BBQ).
   * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
-  * REJECT if non-kitchen unrelated items.
+  * REJECT if non-kitchen unrelated items (pakaian, kosmetik, sepatu, mainan).
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes or mukbang without focusing on a specific compact kitchen tool/gadget.
   * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting, or repair tutorial.
   * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit.`;
@@ -430,16 +432,16 @@ ${effectiveDesc ? `- Description: "${effectiveDesc}"` : ''}
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
 - Does the item demonstrated in the video physically and functionally match this product category/tool?
-- ACCEPTANCE STANDARD:
-  * STRICT KITCHEN NICHE: ACCEPT compact tabletop, handheld, or portable mechanical kitchen tools/gadgets (e.g. electric mini pot/cooker, garlic chopper, scissors, mandoline slicer, peeler, silicone spatula, small kitchen container, mini blender, egg roll drawer, can opener, etc.) that comfortably fit in the central 9:16 vertical crop.
-  * ACCEPT white-label, OEM, or brand-equivalent affiliate products that share the same physical form, mechanism, and function.
-  * Minor variations in brand logo on chassis, color accent, or button/knob styling are 100% ACCEPTABLE for affiliate product promotions.
+- ACCEPTANCE STANDARD & WHITE-LABEL OEM TOLERANCE (CRITICAL MANDATE):
+  * Products in the kitchen tools niche are generic OEM / white-label commodities sold across Shopee under dozens of brand names, colors, and minor styling variations.
+  * FUNCTIONAL FAMILY MATCH IS SUFFICIENT: If the tool demonstrated performs the same primary function as "${coreNoun}" (e.g. manual pull chopper vs rotary chopper, mandoline slicer with different blade variations, fruit peeler with different handle color, garlic press rocker vs squeeze press, dumpling maker, kitchen scissors SK5, roll knife sharpener, oil pot), ACCEPT IT (status: 'accept', isExactProductMatch: true).
+  * ZERO REJECTION FOR COSMETIC/OEM DIFFERENCES: NEVER reject a video because of color (e.g. green vs grey vs red vs white), handle contour, absence/presence of printed brand logos, or minor material styling variations.
+  * KITCHEN MOLDS, SCISSORS, PEELERS & SHARPENERS ARE 100% WELCOME: Dumpling molds (cetakan pastel/dumpling), tamagoyaki pans, rolling knife sharpeners, and kitchen scissors SK5 are core viral kitchen products and are FULLY ACCEPTED!
 - REJECTION STANDARD:
-  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget.
-  * HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN: REJECT IMMEDIATELY (status: 'reject') if the product is any kind of mold/cetakan or knife/blade/sharpener.
-  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, or machinery fabrication.
+  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it is a completely DIFFERENT product category, non-kitchen item, or random household gadget (pakaian, kosmetik, sepatu, hp).
   * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill.
-  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if large furniture, cabinet, or big rack.
+  * BULKY / FRAME-FILLING FURNITURE & BIG RACKS BAN: REJECT IMMEDIATELY if large furniture, cabinet, or big standing rack.
+  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, or machinery fabrication.
   * REJECT IMMEDIATELY if it is a multi-product haul/compilation video.
   * REPAIR / SERVICE / DISASSEMBLY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, or disassembling broken items.
   * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely cooking recipes without demonstrating a compact tool.
@@ -839,6 +841,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   });
 
   return {
+    detectedProduct: (parsed.detectedProduct || '').trim() || productTitle,
     startTime: clips[0].startTime,
     endTime: clips[clips.length - 1].endTime,
     startSeconds: clips[0].startSeconds,
@@ -1256,6 +1259,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     });
 
     return {
+      detectedProduct: (parsed.detectedProduct || '').trim() || productTitle,
       startTime: clips[0].startTime,
       endTime: clips[clips.length - 1].endTime,
       startSeconds: clips[0].startSeconds,
@@ -1814,6 +1818,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       });
 
       return {
+        detectedProduct: (parsed.detectedProduct || '').trim() || productTitle,
         startTime: clips[0].startTime,
         endTime: clips[clips.length - 1].endTime,
         startSeconds: clips[0].startSeconds,

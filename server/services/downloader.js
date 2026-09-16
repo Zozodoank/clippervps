@@ -264,8 +264,9 @@ export const DIRTY_NEGATIVE_OPERATORS = [
   '-ternak',
   '-pakan',
   '-limbah',
-  '-chopper',
-  '-choper',
+  '-"chopper pakan"',
+  '-"chopper rumput"',
+  '-"mesin chopper"',
   '-selep',
   '-perontok',
   '-pemanen',
@@ -292,7 +293,7 @@ export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
   // 1. Strip repair / broken item / disassembly / recipe / mukbang / cara / tutorial / DIY / factory / bulky grill / agricultural / bundle / western retail keywords that derail product discovery
   let cleaned = String(baseQuery)
-    .replace(/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper|choper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi, '')
+    .replace(/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 

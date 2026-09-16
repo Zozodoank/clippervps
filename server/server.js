@@ -2038,8 +2038,11 @@ export async function runStage1Pipeline({
 
     // ─── TAHAP OTOMATIS: Auto-Match Shopee Link, Voiceover TTS & Subtitle Burning ───
     let effectiveShopeeLink = shopeeLink || '';
-    const detectedItemName = highlight.detectedProduct || productTitle || videoMeta?.title || '';
-    if (!effectiveShopeeLink || effectiveShopeeLink.includes('localhost')) {
+    const detectedItemName = (highlight.detectedProduct || '').trim() || productTitle || videoMeta?.title || '';
+    if (options.isVideoFirst && highlight.detectedProduct) {
+      effectiveShopeeLink = buildShopeeSearchUrl(highlight.detectedProduct, highlight.detectedBrand);
+      console.log(`[Job ${jobId}] 🎯 [Video-First] Link Shopee diperbarui sesuai produk nyata di video: "${highlight.detectedProduct}" -> ${effectiveShopeeLink}`);
+    } else if (!effectiveShopeeLink || effectiveShopeeLink.includes('localhost')) {
       effectiveShopeeLink = buildShopeeSearchUrl(detectedItemName, highlight.detectedBrand);
       console.log(`[Job ${jobId}] ✅ Link Shopee pencarian akurat (anti-captcha): ${effectiveShopeeLink}`);
     }
@@ -2609,7 +2612,7 @@ async function runAutoStage1Worker(run) {
           },
         });
 
-        const finalItemTitle = completedResult?.productTitle || currentCandidateTitle;
+        const finalItemTitle = (completedResult?.detectedProduct || '').trim() || completedResult?.productTitle || currentCandidateTitle;
         run.successfulJobs++;
         jobSuccess = true;
         markKeywordAsUsed(keyword, { productTitle: finalItemTitle, jobId: autoJobId, source: 'auto_worker' });
