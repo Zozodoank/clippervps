@@ -1449,11 +1449,8 @@ export async function runStage1Pipeline({
     }
 
     // Evaluasi video YouTube awal jika belum disetujui dari cache
-    const preferMultiVideo = Boolean(
-      options.multiVideoHarvesting ||
-      !currentYoutubeUrl ||
-      (Array.isArray(targetCandidates) && targetCandidates.length > 0)
-    );
+    // Multi-Video Harvesting: WAJIB default TRUE untuk affiliate faceless (multi-source clipper profesional)
+    const preferMultiVideo = options.singleVideoOnly === true ? false : true;
 
     if (!approved && currentYoutubeUrl && !preferMultiVideo) {
       try {
@@ -1582,10 +1579,9 @@ export async function runStage1Pipeline({
       let totalCleanCount = 0;
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
-        // Early Exit Cerdas: Berhenti jika sudah mengumpulkan 2 video dengan minimal 16 frame bersih,
-        // ATAU sudah mencapai 3 video. Menjamin variasi adegan Facebook Reels tanpa streaming berlama-lama.
-        if ((candidateResults.length >= 2 && totalCleanCount >= 16) || candidateResults.length >= 3) {
-          console.log(`[Job ${jobId}] ✅ Target streaming multi-video terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video). Cepat, hemat kuota & variasi tinggi, lanjut ke AI Vision!`);
+        // Multi-Video Target: Kumpulkan minimal 3-4 video kandidat dengan frame bersih untuk variasi visual clipper profesional
+        if ((candidateResults.length >= 4 && totalCleanCount >= 20) || candidateResults.length >= 5) {
+          console.log(`[Job ${jobId}] ✅ Target streaming multi-video profesional terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video kandidat). Cepat, kaya variasi adegan, lanjut ke AI Vision!`);
           break;
         }
 
@@ -1743,16 +1739,23 @@ export async function runStage1Pipeline({
         hl.clips = validDownloadedClips;
         console.log(`[Job ${jobId}] 🎯 Menggunakan video 1080p yang telah terunduh (${hl.clips.length} cuplikan awal). Klip dari kandidat yang gagal diunduh disingkirkan.`);
       } else if (validDownloadedClips.length < 2 && neededIndices.length > downloadedCandidatesMap.size) {
-        // Klip dari video yang terunduh tidak cukup memenuhi frame (< 2 klip) dan kandidat lain gagal/diblokir
         console.warn(`[Job ${jobId}] ⛔ Video 1080p yang terunduh tidak cukup memenuhi kebutuhan frame (${validDownloadedClips.length} klip).`);
         throw lastDlError || new Error('Video 1080p yang terunduh tidak mencukupi kebutuhan frame dan YouTube membatasi pengunduhan kandidat lainnya.');
       }
 
       // Petakan videoPath 1080p ke masing-masing klip yang terpilih
-      const fallbackVPath = [...downloadedCandidatesMap.values()][0];
       hl.clips = hl.clips.map(c => {
         const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
-        const vPath = downloadedCandidatesMap.get(candIdx) || fallbackVPath;
+        let vPath = downloadedCandidatesMap.get(candIdx);
+        if (!vPath) {
+          const altCand = [...downloadedCandidatesMap.entries()][0];
+          console.warn(`[Job ${jobId}] ⚠️ Video kandidat #${candIdx + 1} tidak tersedia di 1080p. Mengalihkan ke kandidat #${altCand ? altCand[0] + 1 : 1}...`);
+          return {
+            ...c,
+            candidateIndex: altCand ? altCand[0] : candIdx,
+            videoPath: altCand ? altCand[1] : null,
+          };
+        }
         return {
           ...c,
           videoPath: vPath,
@@ -1776,6 +1779,7 @@ export async function runStage1Pipeline({
               duration: sceneDuration,
               startTime: formatSeconds(newStart),
               endTime: formatSeconds(newStart + sceneDuration),
+              storyboardSlot: hl.clips.length + 1,
               reason: `${base.reason} (Dynamic Scene Cut #${expRound})`,
             });
           }
@@ -1898,9 +1902,43 @@ export async function runStage1Pipeline({
 
       if (discardedDirtyClips.length > 0) {
         console.log(`[ClipAudit] Berhasil membuang ${discardedDirtyClips.length} klip kotor (teks overlay/wajah/bumper). Tersisa ${cleanAuditedClips.length} klip bersih.`);
+
+        // 1. Pastikan Slot 1 (Visual Produk Utuh) tetap ada!
+        const hasSlot1 = cleanAuditedClips.some(c => c.storyboardSlot === 1);
+        if (!hasSlot1 && cleanAuditedClips.length > 0) {
+          console.warn(`[ClipAudit] ⚠️ Slot 1 (Hero Produk Utuh) terbuang pada audit. Memulihkan Slot 1 dari klip pertama bersih...`);
+          cleanAuditedClips[0].storyboardSlot = 1;
+          cleanAuditedClips[0].storyboardRole = 'full_product';
+        }
+
+        // 2. Replenish durasi jika klip bersih tersisa < 6 atau durasi < 28s
         if (cleanAuditedClips.length >= 3) {
           highlight.clips = cleanAuditedClips;
-          highlight.duration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || 3.3), 0);
+          const currentDuration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+          if (cleanAuditedClips.length < 6 || currentDuration < 28.0) {
+            console.log(`[ClipAudit] ℹ️ Klip bersih pasca-audit berjumlah ${cleanAuditedClips.length} (${currentDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai minimal 6-7 klip (30-35s)...`);
+            const baseClips = [...cleanAuditedClips];
+            let expRound = 1;
+            while (cleanAuditedClips.length < 7 && expRound <= 4) {
+              for (const base of baseClips) {
+                if (cleanAuditedClips.length >= 7) break;
+                const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
+                cleanAuditedClips.push({
+                  ...base,
+                  startSeconds: newStart,
+                  endSeconds: newStart + sceneDuration,
+                  duration: sceneDuration,
+                  startTime: formatSeconds(newStart),
+                  endTime: formatSeconds(newStart + sceneDuration),
+                  storyboardSlot: cleanAuditedClips.length + 1,
+                  reason: `${base.reason} (Safe Clean Re-stride #${expRound})`,
+                });
+              }
+              expRound++;
+            }
+          }
+          highlight.clips = cleanAuditedClips;
+          highlight.duration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
         } else {
           console.warn(`[ClipAudit] Klip bersih tersisa terlalu sedikit (${cleanAuditedClips.length}). Menolak video untuk mencari kandidat lain...`);
           const auditErr = new Error('Video ditolak pada audit pasca-download: klip terpilih terdeteksi mengandung teks overlay promosi, bumper statis, atau wajah manusia.');

@@ -1600,11 +1600,21 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - Hanya tolak jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE AREA 9:16 TENGAH: output {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Watermark masuk ke dalam frame 9:16."}
 5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
    Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
+   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / unboxing rapi / penampakan fisik produk). DILARANG KERAS frame sedang digosok, diperas, dipotong, atau aksi ekstrem di Slot 1!
    ${preset.storyboardInstructions}
-6. Multi-Video Candidate Harvesting:
-   - Jika tersedia beberapa kandidat video ("Video #1", "Video #2", "Video #3"), sebarkan pilihan frame ke kandidat video yang berbeda agar video berganti sumber secara dinamis dan kaya visual!
+6. MANDATORY MULTI-VIDEO CANDIDATE HARVESTING (WAJIB DARI BEBERAPA VIDEO BERBEDA):
+   - Jika frame berasal dari beberapa video kandidat berbeda ("Video #1", "Video #2", "Video #3", dst.), PILIHAN FRAME PADA 7 ADENGAN HARUS DISEBARKAN KE MINIMAL 2 SAMPAI 4 VIDEO KANDIDAT BERBEDA!
+   - DILARANG KERAS MENGAMBIL SEMUA 7 ADENGAN DARI SATU VIDEO SAJA jika terdapat kandidat lain!
+   - Contoh penyebaran wajib:
+     * Slot 1 (Visual Produk Utuh): Video #1 (atau kandidat dengan hero shot terbaik)
+     * Slot 2 (Fitur/Detail): Video #2 (atau Video #1)
+     * Slot 3 (Aksi Peragaan Awal): Video #2
+     * Slot 4 (Aksi Sudut/Bahan Berbeda): Video #3 (WAJIB video berbeda dari Slot 3!)
+     * Slot 5 (Hasil / Bukti Nyata): Video #3 atau Video #4
+     * Slot 6 (Visual Produk Utuh Penutup): Video #4 atau Video #1
+     * Slot 7 (Display CTA): Video #1 atau Video #2
 7. Output Format:
-   - Isi objek "storyboard" dengan 7 indeks frame di atas.
+   - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
    - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
    - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "storyboard": {"clip1_full_product": N1, "clip2_feature": N2, "clip3_action_demo": N3, "clip4_action_demo_diff": N4, "clip5_action_demo": N5, "clip6_full_product": N6, "clip7_full_product": N7}, "frames": [N1, N2, N3, N4, N5, N6, N7], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
 
@@ -2652,6 +2662,13 @@ export function build7SlotStoryboardClips({
     return validFrames[idx - 1];
   };
 
+  // Kumpulkan index kandidat yang tersedia di pool frame
+  const candIndices = [...new Set(validFrames.map(f => f.candidateIndex !== undefined ? f.candidateIndex : 0))];
+  const framesByCand = new Map();
+  for (const cIdx of candIndices) {
+    framesByCand.set(cIdx, validFrames.filter(f => (f.candidateIndex !== undefined ? f.candidateIndex : 0) === cIdx));
+  }
+
   const rawSlotIndices = [];
   for (let i = 0; i < slotsConfig.length; i++) {
     const config = slotsConfig[i];
@@ -2660,7 +2677,11 @@ export function build7SlotStoryboardClips({
     const candidateKeys = [config.key, config.fallbackKey].filter(Boolean);
     for (const k of candidateKeys) {
       if (sb[k] !== undefined && sb[k] !== null) {
-        const parsedIdx = parseInt(sb[k], 10);
+        let rawVal = sb[k];
+        if (rawVal && typeof rawVal === 'object') {
+          rawVal = rawVal.frameIndex ?? rawVal.frame ?? rawVal.index;
+        }
+        const parsedIdx = parseInt(rawVal, 10);
         if (!isNaN(parsedIdx) && parsedIdx >= 1 && parsedIdx <= totalFramesCount) {
           chosenIdx = parsedIdx;
           break;
@@ -2669,7 +2690,11 @@ export function build7SlotStoryboardClips({
     }
 
     if (!chosenIdx && selectedIndices[i]) {
-      const parsedIdx = parseInt(selectedIndices[i], 10);
+      let rawVal = selectedIndices[i];
+      if (rawVal && typeof rawVal === 'object') {
+        rawVal = rawVal.frameIndex ?? rawVal.frame ?? rawVal.index;
+      }
+      const parsedIdx = parseInt(rawVal, 10);
       if (!isNaN(parsedIdx) && parsedIdx >= 1 && parsedIdx <= totalFramesCount) {
         chosenIdx = parsedIdx;
       }
@@ -2690,46 +2715,58 @@ export function build7SlotStoryboardClips({
     }
 
     if (config.slot === 1) {
-      // Slot 1: Must be full product hero shot (early clean frame, index 2-6)
-      if (!frameObj) {
-        const earlyCandidateIdx = Math.min(totalFramesCount, Math.max(2, Math.floor(totalFramesCount * 0.15)));
-        frameObj = getFrameByIdx(earlyCandidateIdx) || validFrames[0];
+      // ── SLOT 1: WAJIB VISUAL PRODUK UTUH (Opening Hero Shot) ──
+      // Dilarang peragaan aksi (menggosok, memotong, memeras) di Slot 1!
+      const isCleanHeroCandidate = (f) => {
+        if (!f) return false;
+        const tag = f.datasetTag || f.category || '';
+        return tag === 'valid_full_product' || tag === 'valid_display_cta' || ((f.timestamp || 0) <= 12.0 && tag !== 'valid_action');
+      };
+
+      if (!frameObj || !isCleanHeroCandidate(frameObj)) {
+        // Cari frame produk utuh terbaik dari kandidat pertama atau kandidat mana pun
+        const heroFromPool = validFrames.find(f => isCleanHeroCandidate(f));
+        if (heroFromPool) {
+          frameObj = heroFromPool;
+        } else {
+          // Fallback: ambil frame awal paling bersih (detik 1-8)
+          const earlyFrame = validFrames.find(f => (f.timestamp || 0) >= 1.0 && (f.timestamp || 0) <= 8.0) || validFrames[0];
+          frameObj = earlyFrame;
+        }
       }
     } else if (config.slot === 2) {
-      // Slot 2: Feature close-up (typically slightly after hero shot)
+      // Slot 2: Feature close-up
       if (!frameObj) {
         const featCandidateIdx = Math.min(totalFramesCount, Math.max(3, Math.floor(totalFramesCount * 0.28)));
         frameObj = getFrameByIdx(featCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 2)];
       }
     } else if (config.slot === 3) {
-      // Slot 3: Action demo 1 (first demonstration action)
+      // Slot 3: Action demo 1
       if (!frameObj) {
         const demoCandidateIdx = Math.min(totalFramesCount, Math.max(4, Math.floor(totalFramesCount * 0.42)));
         frameObj = getFrameByIdx(demoCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 4)];
       }
     } else if (config.slot === 4) {
-      // Slot 4: Action demo 2 with DIFFERENT visual / angle / object / candidate video
+      // Slot 4: Action demo 2 WAJIB DENGAN VISUAL / ANGLE BERBEDA (Prioritaskan Beda Video Kandidat!)
       const prevActionCandIdx = storyboardClips[2]?.candidateIndex;
       const prevActionTs = storyboardClips[2]?.startSeconds || 0;
-      const isDiff = frameObj && (
-        (frameObj.candidateIndex !== undefined && frameObj.candidateIndex !== prevActionCandIdx) ||
-        Math.abs((frameObj.timestamp || 0) - prevActionTs) >= 10.0
-      );
 
-      if (!isDiff) {
-        // Prioritize picking from another video candidate if multi-candidate is available
-        const diffCandFrame = validFrames.find(f => f.candidateIndex !== undefined && f.candidateIndex !== prevActionCandIdx);
-        if (diffCandFrame) {
-          frameObj = diffCandFrame;
+      // Jika multi-kandidat tersedia, paksakan frame dari kandidat video yang berbeda dari Slot 3
+      if (candIndices.length > 1) {
+        const diffCandPool = validFrames.filter(f => (f.candidateIndex !== undefined ? f.candidateIndex : 0) !== prevActionCandIdx);
+        if (diffCandPool.length > 0) {
+          // Pilih frame aksi di kandidat lain
+          frameObj = diffCandPool.find(f => (f.timestamp || 0) >= 5.0) || diffCandPool[0];
+        }
+      }
+
+      if (!frameObj) {
+        const distantFrame = validFrames.find(f => Math.abs((f.timestamp || 0) - prevActionTs) >= 20.0);
+        if (distantFrame) {
+          frameObj = distantFrame;
         } else {
-          // From same video: ensure at least 20s distance from Slot 3
-          const distantFrame = validFrames.find(f => Math.abs((f.timestamp || 0) - prevActionTs) >= 20.0);
-          if (distantFrame) {
-            frameObj = distantFrame;
-          } else if (!frameObj) {
-            const midCandidateIdx = Math.min(totalFramesCount, Math.max(5, Math.floor(totalFramesCount * 0.60)));
-            frameObj = getFrameByIdx(midCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 6)];
-          }
+          const midCandidateIdx = Math.min(totalFramesCount, Math.max(5, Math.floor(totalFramesCount * 0.60)));
+          frameObj = getFrameByIdx(midCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 6)];
         }
       }
     } else if (config.slot === 5) {
@@ -2745,7 +2782,6 @@ export function build7SlotStoryboardClips({
         if (lateCleanHero && config.slot === 6) {
           frameObj = lateCleanHero;
         } else if (slot1Clip) {
-          // Reprise the full-product hero shot from Slot 1
           frameObj = {
             candidateIndex: slot1Clip.candidateIndex,
             candidateTitle: slot1Clip.candidateTitle,
@@ -2771,8 +2807,7 @@ export function build7SlotStoryboardClips({
       startSec = minSafeStart;
     }
 
-    // Jika slot 2 sampai 5 bertabrakan (< 2.0s) dengan klip sebelumnya di kandidat yang sama,
-    // sebarkan secara proporsional di sepanjang durasi video
+    // Jika slot 2 sampai 5 bertabrakan (< 2.0s) dengan klip sebelumnya di kandidat yang sama, sebarkan
     if (config.slot >= 2 && config.slot <= 5) {
       const collides = storyboardClips.some(sc =>
         sc.candidateIndex === candIdx && Math.abs(sc.startSeconds - startSec) < 2.0
@@ -2807,9 +2842,9 @@ export function build7SlotStoryboardClips({
       startTime: formatSeconds(startSec),
       endTime: formatSeconds(endSec),
       candidateIndex: candIdx,
-      candidateTitle: frameObj?.candidateTitle || '',
-      candidateUrl: frameObj?.candidateUrl || '',
-      videoId: frameObj?.videoId || '',
+      candidateTitle: frameObj?.candidateTitle || frameObj?.candidate?.title || '',
+      candidateUrl: frameObj?.candidateUrl || frameObj?.candidate?.url || '',
+      videoId: frameObj?.videoId || frameObj?.candidate?.id || '',
       candidate: frameObj?.candidate || null,
       storyboardSlot: config.slot,
       storyboardRole: config.role,
@@ -2826,6 +2861,52 @@ export function build7SlotStoryboardClips({
 
     if (config.slot === 1) slot1Clip = clipObj;
     storyboardClips.push(clipObj);
+  }
+
+  // ── HARD CONSTRAINT MULTI-SOURCE: WAJIB MENYEBARKAN ADENGAN KE BEBERAPA KANDIDAT ──
+  if (candIndices.length >= 2) {
+    const usedCands = new Set(storyboardClips.map(c => c.candidateIndex));
+    const targetDistinctCands = Math.min(candIndices.length, 3);
+
+    if (usedCands.size < targetDistinctCands) {
+      console.log(`[build7SlotStoryboardClips] ⚠️ AI hanya memilih dari ${usedCands.size} video kandidat. Memaksa multi-source constraint agar tersebar ke minimal ${targetDistinctCands} video kandidat...`);
+
+      const unusedCands = candIndices.filter(ci => !usedCands.has(ci));
+      // Reassign Slot 4 (Aksi beda) & Slot 2/5 ke kandidat yang belum terpakai
+      const candidateReassignSlots = [4, 2, 5, 3];
+
+      for (const slotNum of candidateReassignSlots) {
+        if (unusedCands.length === 0) break;
+        const targetCand = unusedCands.shift();
+        const candFrames = framesByCand.get(targetCand) || [];
+        if (candFrames.length === 0) continue;
+
+        const slotClipIdx = storyboardClips.findIndex(c => c.storyboardSlot === slotNum);
+        if (slotClipIdx !== -1) {
+          const replacementFrame = candFrames.find(f => (f.timestamp || 0) >= 3.0) || candFrames[0];
+          const replCandDuration = replacementFrame?.candidate?.duration || totalDuration;
+          const replTs = replacementFrame.timestamp || (replCandDuration * 0.3);
+          const rStart = Math.max(0, Math.min(replCandDuration - clipSec, Math.round(replTs * 10) / 10));
+          const rEnd = Math.round((rStart + clipSec) * 10) / 10;
+
+          storyboardClips[slotClipIdx] = {
+            ...storyboardClips[slotClipIdx],
+            candidateIndex: targetCand,
+            candidateTitle: replacementFrame?.candidateTitle || replacementFrame?.candidate?.title || '',
+            candidateUrl: replacementFrame?.candidateUrl || replacementFrame?.candidate?.url || '',
+            videoId: replacementFrame?.videoId || replacementFrame?.candidate?.id || '',
+            candidate: replacementFrame?.candidate || null,
+            startSeconds: rStart,
+            endSeconds: rEnd,
+            startTime: formatSeconds(rStart),
+            endTime: formatSeconds(rEnd),
+            reason: `${storyboardClips[slotClipIdx].reason} [Multi-Source Rebalance: Video #${targetCand + 1}]`,
+          };
+          usedCands.add(targetCand);
+        }
+      }
+      console.log(`[build7SlotStoryboardClips] ✅ Multi-source constraint berhasil diterapkan: ${usedCands.size} video kandidat aktif digunakan pada 7 slot.`);
+    }
   }
 
   return storyboardClips;

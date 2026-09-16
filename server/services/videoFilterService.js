@@ -961,9 +961,13 @@ export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30
 
   // 1. Ambil porsi berimbang dari masing-masing kandidat
   for (const item of valid) {
-    const cand = item.candidate;
+    const cand = item.candidate || {};
     const idx = item.candidateIndex;
     const frames = item.cleanFrames;
+
+    const candTitle = cand.title || '';
+    const candUrl = cand.url || '';
+    const vidId = cand.id || candUrl || '';
 
     if (frames.length <= perCand) {
       for (const f of frames) {
@@ -971,6 +975,9 @@ export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30
           ...f,
           candidateIndex: idx,
           candidate: cand,
+          candidateTitle: candTitle,
+          candidateUrl: candUrl,
+          videoId: vidId,
           displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
         });
       }
@@ -983,6 +990,9 @@ export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30
           ...f,
           candidateIndex: idx,
           candidate: cand,
+          candidateTitle: candTitle,
+          candidateUrl: candUrl,
+          videoId: vidId,
           displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
         });
       }
@@ -992,14 +1002,21 @@ export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30
   // 2. Jika total belum mencapai maxTotalFrames, isi sisa kuota dari kandidat yang memiliki banyak frame bersih
   if (pooled.length < maxTotalFrames) {
     for (const item of valid) {
-      const cand = item.candidate;
+      const cand = item.candidate || {};
       const idx = item.candidateIndex;
+      const candTitle = cand.title || '';
+      const candUrl = cand.url || '';
+      const vidId = cand.id || candUrl || '';
+
       for (const f of item.cleanFrames) {
         if (!pooled.some(p => p.filePath === f.filePath)) {
           pooled.push({
             ...f,
             candidateIndex: idx,
             candidate: cand,
+            candidateTitle: candTitle,
+            candidateUrl: candUrl,
+            videoId: vidId,
             displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
           });
           if (pooled.length >= maxTotalFrames) break;

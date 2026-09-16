@@ -79,11 +79,11 @@ export const NICHE_PRESETS = {
         description: 'Produk ditata jelas di frame tengah selaras dengan ajakan checkout keranjang kuning.'
       }
     ],
-    storyboardInstructions: `Petakan indeks frame ke dalam 7 peran "storyboard" berikut:
-- "clip1_full_product": Slot 1 (00:00-00:05) -> VISUAL PRODUK UTUH (Opening Hero Shot). Frame yang memperlihatkan fisik produk secara utuh/lengkap di atas meja atau dipegang. Sesuai kategori: [valid_full_product]. BUKAN sedang digosok atau di-zoom ekstrem!
+    storyboardInstructions: `Petakan indeks frame ke dalam 7 peran "storyboard" berikut (WAJIB MULTI-SOURCE: sebarkan ke 2-4 video kandidat berbeda jika tersedia, DILARANG hanya 1 video!):
+- "clip1_full_product": Slot 1 (00:00-00:05) -> WAJIB VISUAL PRODUK UTUH (Opening Hero Shot). Frame yang memperlihatkan fisik produk secara utuh/lengkap di atas meja atau dipegang. Sesuai kategori: [valid_full_product]. DILARANG KERAS sedang digosok, diperas, dipotong, atau aksi ekstrem di Slot 1!
 - "clip2_feature": Slot 2 (00:05-00:10) -> DETAIL FITUR & SPEK. Frame close-up yang menonjolkan fitur/material/komponen fisik alat (tekstur spons, jaring kawat, bahan stainless, pegangan, tombol). Sesuai kategori: [valid_feature].
 - "clip3_action_demo": Slot 3 (00:10-00:15) -> PERAGAAN #1 (AKSI PAKAI). Aksi penggunaan alat pertama kali mendemonstrasikan fungsinya (misal: mulai menggosok noda/kotoran, memotong bahan). Sesuai kategori: [valid_action].
-- "clip4_action_demo_diff": Slot 4 (00:15-00:20) -> PERAGAAN DENGAN VISUAL BERBEDA. Aksi peragaan dengan SUDUT KAMERA / ANGLE BERBEDA, atau pada permukaan/objek berbeda (misal wajan vs wastafel, angle samping vs angle atas). Wajib beda sudut dari Slot 3!
+- "clip4_action_demo_diff": Slot 4 (00:15-00:20) -> PERAGAAN DENGAN VISUAL BERBEDA (WAJIB KANDIDAT VIDEO BERBEDA). Aksi peragaan dengan SUDUT KAMERA / ANGLE BERBEDA dari kandidat video lain. Wajib beda video/sudut dari Slot 3!
 - "clip5_action_demo": Slot 5 (00:20-00:25) -> HASIL PERAGAAN / BUKTI BERSIH ("clip5_result"). Aksi peragaan pembuktian atau hasil (misal: dibilas air bersih, busa melimpah, dilap, atau perbandingan kinclong). Sesuai kategori: [valid_result].
 - "clip6_full_product": Slot 6 (00:25-00:30) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh kembali (misal produk bersih ditaruh di meja atau dipegang) sebagai penutup yang meyakinkan penonton. Sesuai kategori: [valid_full_product].
 - "clip7_full_product": Slot 7 (00:30-00:35) -> WAJIB VISUAL PRODUK UTUH / DISPLAY CTA ("clip7_display_cta"). Tampilan fisik produk utuh yang selaras dengan ajakan checkout di keranjang kuning/oranye pojok kiri bawah. Sesuai kategori: [valid_display_cta] / [valid_full_product].`,
