@@ -1908,54 +1908,57 @@ export async function generateAdAdvisorScriptWithAI({
   // For a 30-35s video, target speech duration is ~targetDuration - 1.5s (leaving 1-2s clean hold for the yellow basket CTA).
   // Target ~72-80 words (~7-8 words per ~3.3s scene, ~480-550 characters total).
   // This ensures the voiceover comfortably fills the entire 30-35s runtime without lagging or finishing prematurely!
-  const targetSpeechSec = Math.max(28, targetDuration - 1.5);
-  const targetWords = Math.round(targetSpeechSec * 2.35);
-  const minWords = Math.round(targetSpeechSec * 2.15);
-  const maxWords = Math.round(targetSpeechSec * 2.55);
+  // Target duration calculation:
+  // For a ~30-35s video (7 clips @ ~4.8s = ~33.6s), natural Indonesian conversational speech runs at ~2.3 words/second.
+  // We strictly enforce 70 - 85 words across 7 scene lines (~10-12 words per line) so the speech comfortably spans the entire video without premature cutoffs!
+  const targetSpeechSec = Math.max(30, targetDuration - 1.2);
+  const targetWords = Math.round(targetSpeechSec * 2.35); // ~75 words
+  const minWords = Math.max(70, Math.round(targetSpeechSec * 2.15)); // >= 70 words
+  const maxWords = Math.max(85, Math.round(targetSpeechSec * 2.55)); // <= 90 words
 
   const systemPrompt = `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
 
-Use the proven SHOPEE FYP 4-BEAT FORMULA engineered to break past the initial 200-views testing pool through high watch-time completion rate and maximum Keranjang Kuning conversions:
+Use the proven 7-SLOT SHOPEE AFFILIATE STORYBOARD FORMULA engineered to fill the entire ${targetDuration}s runtime with active speech and drive maximum Keranjang Kuning conversions:
 
-CRITICAL 4-BEAT SHOPEE FYP FORMULA:
-1. [00:00] BEAT 1: THE 3-SECOND DYNAMIC HOOK (00:00 - 00:03)
-   - MUST immediately grab viewer attention within the first 3 seconds (~5-7 punchy words).
-   - DILARANG KERAS menggunakan kata "fix" atau "fiks" di hook maupun seluruh naskah! Gunakan bahasa Indonesia natural, bervariasi, dan luwes.
-   - DILARANG KERAS menggunakan sapaan basi seperti: "Stop scroll!", "Halo guys!", "Siapa disini yang...", "Racun Shopee wajib punya!", atau pembukaan yang bertele-tele!
-   - PILIH SECARA FLEKSIBEL SALAH SATU DARI 5 SUDUT HOOK DINAMIS BERIKUT (Sesuaikan dengan karakter produk):
-     a) Pain Point / Frustrasi Cara Lama:
-        Contoh: "Capek banget kalau tiap kali [kegiatan] selalu [masalah/pegal/berantakan]!" atau "Masih jaman repot [kebiasaan lama] yang bikin waktu kebuang?"
-     b) Pertanyaan Relatable Masalah Sehari-hari:
-        Contoh: "Sering kesel gak sih tiap kali masak minyaknya nyiprat ke mana-mana?" atau "Pernah ngerasa ribet banget pas mau bersihin sudut sempit?"
-     c) Momen Penemuan / Revelation:
-        Contoh: "Ternyata ada cara sepraktis ini buat [kegiatan], nyesel baru tahu!" atau "Kirain ribet, ternyata urusan ini bisa kelar dalam hitungan detik!"
-     d) Visual Action / Hasil Memuaskan:
-        Contoh: "Lihat deh, sekali usap kotoran tebal langsung rontok bersih kinclong!" atau "Cuma modal alat seringkas ini, ruangan langsung rapi seketika!"
-     e) Anti-Rugi / Peringatan:
-        Contoh: "Stop buang-buang tenaga pakai cara jadul yang hasilnya gak maksimal!" atau "Jangan biarkan alat biasa bikin kerjaan rumah makin numpuk!"
+CRITICAL 7-SLOT STORYBOARD FORMULA (${targetDuration}s Total Runtime):
+The video consists of 7 dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY 7 distinct spoken lines starting with these exact timestamps:
 
-2. BEAT 2: HERO SOLUTION & VALUE INTRODUCTION (00:03 - 00:08)
-   - Introduce the product as the hero solution that immediately eliminates the pain point.
-   - Audiences buy "solutions", not just static items.
-   - Contoh: "Untung sekarang ada ${effectiveTitle} ini, sekali usap langsung beres tanpa ribet!"
+1. [00:00] [excited] SLOT 1: THE DYNAMIC HOOK (00:00 - 00:05) -> ~10-12 kata
+   - MUST immediately grab viewer attention within the first 3-5 seconds.
+   - DILARANG KERAS menggunakan kata "fix" atau "fiks" di hook maupun seluruh naskah!
+   - DILARANG sapaan basi seperti "Stop scroll!", "Halo guys!", "Racun Shopee wajib punya!".
+   - Contoh: "Capek banget kalau tiap kali urusan dapur selalu ribet dan makan banyak waktu!"
 
-3. BEAT 3: SATISFYING VISUAL DEMONSTRATION & CORE BENEFITS (00:08 - 00:24)
-   - Describe the satisfying visual proof seen in the video frames across multiple actions: rich foam (busa melimpah), cleaning hard-to-reach crevices (menjangkau sela-sela), smooth effortless cutting, hands protected from scratches/cuts (tangan aman gak lecet), bahan tebal awet, mudah dibersihkan.
-   - Satisfying demonstrations keep viewers glued to the screen (high completion watch-time).
+2. [00:05] [emphasis] SLOT 2: HERO SOLUTION & MATERIAL (00:05 - 00:10) -> ~10-12 kata
+   - Introduce ${effectiveTitle}, emphasize premium build quality and ergonomic design.
+   - Contoh: "Untung sekarang ada ${effectiveTitle} ini, bahannya kokoh, tebal, dan praktis banget!"
 
-4. BEAT 4: PRICE PSYCHOLOGY & SHOPEE KERANJANG POJOK KIRI BAWAH CTA (00:24 - ${formatSeconds(targetDuration)})
-   - Voiceover MUST state the price appeal: "Harganya murah meriah banget, ramah di kantong!"
+3. [00:10] [neutral] SLOT 3: PERAGAAN AKSI AWAL (00:10 - 00:15) -> ~10-12 kata
+   - Describe the effortless initial hands-on demonstration.
+   - Contoh: "Tinggal dipakai seperti ini, mekanismenya super halus dan langsung bekerja tanpa tenaga ekstra."
+
+4. [00:15] [emphasis] SLOT 4: SUDUT LAIN & KEMUDAHAN FITUR (00:15 - 00:20) -> ~10-12 kata
+   - Highlight the versatility, multi-angle ease, or unique mechanism.
+   - Contoh: "Mau dipakai dari sudut mana pun tetap nyaman dan bikin semua pekerjaan beres jauh lebih cepat."
+
+5. [00:20] [excited] SLOT 5: BUKTI HASIL NYATA & KEPUASAN (00:20 - 00:25) -> ~10-12 kata
+   - Describe the satisfying result shown on screen (clean cuts, spotless shine, perfect outcome).
+   - Contoh: "Lihat hasilnya, benar-benar rapi, memuaskan, dan membersihkannya pun gampang tinggal dibilas air!"
+
+6. [00:25] [emphasis] SLOT 6: VALUE FOR MONEY & PROMO HEMAT (00:25 - 00:30) -> ~10-12 kata
+   - Voiceover MUST state the price appeal:
+   - "Kualitas sebagus ini harganya murah meriah banget, ramah di kantong dan gak bikin boros!"
+
+7. [00:30] [excited] SLOT 7: SHOPEE KERANJANG POJOK KIRI BAWAH CTA (00:30 - ${formatSeconds(targetDuration)}) -> ~10-12 kata
    - Direct viewers with urgent FOMO to the Shopee Keranjang Kuning at the bottom-left corner:
-     "Yuk buruan amankan promo dan gratis ongkir, langsung checkout di keranjang pojok kiri bawah sekarang juga!"
-   - The Shopee algorithm prioritizes clicks on the yellow shopping bag icon at the bottom-left. Calling out "keranjang pojok kiri bawah" is essential for conversion!
+   - "Yuk buruan amankan promo gratis ongkir, langsung checkout di keranjang pojok kiri bawah sekarang juga!"
 
-CRITICAL DURATION & WORD-COUNT TIMING RULES:
-- The final video duration is EXACTLY ${targetDuration} seconds (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
-- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, ~7-8 punchy conversational words per ~${effectiveSceneSec.toFixed(1)}s scene).
-- NASKAH WAJIB CUKUP PANJANG UNTUK MENGISI PENUH DURASI ${targetDuration} DETIK (${minWords} - ${maxWords} KATA)! Jangan membuat naskah terlalu pendek (< ${minWords} kata) karena suara narator akan selesai terlalu cepat sebelum video selesai.
-- Jaga agar setiap kalimat mengalir santai, jelas, berenergi, dan to-the-point (~7-8 kata per adegan).
+CRITICAL TIMING & LENGTH RULE (MANDATORY):
+- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, ~10-12 words per line across all 7 scenes).
+- DILARANG KERAS MEMBUAT NASKAH TERLALU PENDEK (< ${minWords} KATA) ATAU HANYA 3-4 KALIMAT! Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai detik [00:30] agar suara TIDAK berhenti sebelum video selesai.
+- Jaga agar setiap kalimat mengalir santai, jelas, berenergi, dan to-the-point.
 
 1. 'sampleContext':
    - 'productName': Explicit product name.

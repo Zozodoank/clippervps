@@ -377,10 +377,12 @@ export function generateAssSubtitlesFromWordBoundaries({ wordBoundaries, totalDu
   }
 
   // 4. Pin the final CTA subtitle right until the end of the video (safeTotalDuration).
-  // Ensures the high-converting Call To Action remains on screen with zero empty void at the end!
+  // 4. Pin the final CTA subtitle until the end of the spoken audio / video safely.
+  // Keep the CTA visible for a natural reading window (up to 4.5s max), bounded by safeTotalDuration!
   if (phrases.length > 0) {
     const lastPhrase = phrases[phrases.length - 1];
-    lastPhrase.endSec = Math.max(lastPhrase.endSec, safeTotalDuration);
+    const boundedEnd = Math.min(safeTotalDuration, +(lastPhrase.startSec + 4.5).toFixed(3));
+    lastPhrase.endSec = Math.max(lastPhrase.endSec, boundedEnd);
   }
 
   // 5. Ensure all phrases have strictly valid timestamps (startSec < endSec)
@@ -473,9 +475,10 @@ export function scaleAssSubtitles(assFilePath, scaleFactor, targetVideoDuration 
       let startSec = +(parseAssTimeToSeconds(firstParts[1]) * scaleFactor).toFixed(3);
       let endSec = +(parseAssTimeToSeconds(firstParts[2]) * scaleFactor).toFixed(3);
 
-      // Pin the final CTA subtitle to targetVideoDuration if provided
+      // Pin the final CTA subtitle safely (up to 4.5s max, bounded by targetVideoDuration)
       if (idx === lastDialogueIdx && targetVideoDuration && targetVideoDuration > 0) {
-        endSec = Math.max(endSec, targetVideoDuration);
+        const boundedEnd = Math.min(targetVideoDuration, +(startSec + 4.5).toFixed(3));
+        endSec = Math.max(endSec, boundedEnd);
       }
 
       if (endSec <= startSec) {

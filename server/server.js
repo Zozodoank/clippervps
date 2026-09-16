@@ -1967,14 +1967,14 @@ export async function runStage1Pipeline({
       });
     } catch (scriptErr) {
       console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah Shopee...`);
-      const fallbackHook = highlight.productHook || `Masih repot pakai cara lama yang bikin capek? Untung ada ${productTitle || 'produk ini'}!`;
-      const fallbackVoiceScript = `[00:00] ${fallbackHook}
-[00:04] Desainnya modern, praktis, dan bikin semua urusan jadi jauh lebih gampang.
-[00:08] Sekali pakai langsung terasa bedanya, sangat hemat tenaga dan waktu.
-[00:13] Bahannya berkualitas premium, tebal, kuat, dan nyaman digenggam.
-[00:18] Sangat multifungsi dan cocok banget untuk kebutuhan sehari-hari di rumah.
-[00:23] Harganya murah meriah banget, ramah di kantong dan gak bikin boros!
-[00:28] Yuk buruan amankan promo gratis ongkir, langsung checkout di keranjang pojok kiri bawah sekarang juga!`;
+      const fallbackHook = highlight.productHook || `Masih repot pakai cara lama yang bikin capek? Untung sekarang ada ${productTitle || 'alat praktis ini'}!`;
+      const fallbackVoiceScript = `[00:00] [excited] ${fallbackHook}
+[00:05] [emphasis] Desainnya sangat modern, material tebal kokoh, dan bikin urusan rumah jadi jauh lebih gampang.
+[00:10] [neutral] Cara pakainya super simpel, tinggal digunakan seperti ini langsung bekerja maksimal tanpa repot.
+[00:15] [emphasis] Mau dipakai dari sudut mana pun tetap nyaman dan bikin pekerjaan beres jauh lebih cepat.
+[00:20] [excited] Lihat hasilnya, benar-benar rapi, memuaskan, dan membersihkannya pun gampang tinggal dibilas air!
+[00:25] [emphasis] Kualitas sebagus ini harganya murah meriah banget, ramah di kantong dan gak bikin boros!
+[00:30] [excited] Yuk buruan amankan promo gratis ongkir, langsung checkout di keranjang pojok kiri bawah sekarang juga!`;
 
       scriptData = {
         sampleContext: {

@@ -172,7 +172,22 @@ export async function mergeVoiceoverAndBurnSubtitles({
 
   const rawVideoDur = await getMediaDurationSec(silentVideoPath, ffmpegPath) || Number(targetDurationSec) || 33;
   const audioDuration = await getMediaDurationSec(voiceoverAudioPath, ffmpegPath);
-  const videoDuration = Math.max(rawVideoDur, audioDuration ? audioDuration + 0.3 : 30.0);
+
+  // Natural video duration alignment:
+  // 1. If audio is longer than raw video: loop video to cover audio (+0.4s buffer)
+  // 2. If audio finishes significantly earlier than raw video (> 1.8s gap):
+  //    trim the video to audioDuration + 1.2s so the video concludes energetically right after
+  //    the spoken CTA, eliminating awkward dead silence!
+  // 3. Otherwise, use rawVideoDur.
+  let videoDuration = rawVideoDur;
+  if (audioDuration && audioDuration > 0) {
+    if (audioDuration > rawVideoDur) {
+      videoDuration = +(audioDuration + 0.4).toFixed(3);
+    } else if (rawVideoDur - audioDuration > 1.8) {
+      videoDuration = Math.min(rawVideoDur, +(audioDuration + 1.2).toFixed(3));
+    }
+  }
+  videoDuration = Math.max(15.0, videoDuration);
 
   // Speed-up voiceover ONLY slightly (max 1.10x) if audio duration exceeds video duration
   // Speech must sound natural, clear, and unhurried at ~1.0x normal speed.
