@@ -365,8 +365,8 @@ export async function generateVoiceoverEdgeTTS({
 
     const words = [];
     const { audioStream, metadataStream } = tts.toStream(fullSpokenText, {
-      rate: '+8%',
-      pitch: '+4Hz',
+      rate: '+0%',
+      pitch: '+0Hz',
       volume: '+0%',
     });
 
@@ -430,12 +430,12 @@ export async function generateVoiceoverEdgeTTS({
 
         const isCta = scene.idx === scenes.length - 1;
         const prosody = (scene.emotion === 'excited' || isCta)
-          ? { rate: '+10%', pitch: '+5Hz' }
+          ? { rate: '+1%', pitch: '+1Hz' }
           : scene.emotion === 'emphasis'
-          ? { rate: '+7%', pitch: '+4Hz' }
+          ? { rate: '+0%', pitch: '+1Hz' }
           : scene.emotion === 'soft'
-          ? { rate: '+5%', pitch: '+2Hz' }
-          : { rate: '+8%', pitch: '+4Hz' };
+          ? { rate: '-2%', pitch: '+0Hz' }
+          : { rate: '+0%', pitch: '+0Hz' };
 
         const words = [];
         const { audioStream, metadataStream } = tts.toStream(scene.spokenText, prosody);
@@ -580,7 +580,7 @@ export async function generateVoiceoverEdgeTTS({
       wordBoundaryEnabled: true,
     });
     const words = [];
-    const { audioStream, metadataStream } = tts.toStream(fullSpokenText, { rate: '+8%', pitch: '+4Hz' });
+    const { audioStream, metadataStream } = tts.toStream(fullSpokenText, { rate: '+0%', pitch: '+0Hz' });
     metadataStream.on('data', (d) => {
       try {
         const json = JSON.parse(d.toString());
@@ -824,15 +824,15 @@ export async function generateVoiceoverGeminiTTS({
   let audioFilterArgs = [];
   let appliedTempo = 1.0;
 
-  // Duration synchronization: If targetDurationSec is specified, ensure speech fits video duration cleanly!
+  // Duration synchronization: Keep voiceover speaking rate 100% natural, calm, and unhurried.
+  // Strictly cap any tempo adjustment to at most 1.03x (imperceptible). Never force 1.2x - 1.4x chipmunk speed!
   if (targetDurationSec && Number(targetDurationSec) > 0) {
     const targetDur = Number(targetDurationSec);
-    // Voiceover should ideally finish slightly before the video clip ends (~0.6s buffer)
-    const maxTargetAudioDur = Math.max(5, targetDur - 0.6);
+    const maxTargetAudioDur = Math.max(5, targetDur - 0.5);
     if (rawDuration > maxTargetAudioDur) {
-      appliedTempo = Math.min(1.4, +(rawDuration / maxTargetAudioDur).toFixed(4));
-      if (appliedTempo > 1.02) {
-        log(`Menyesuaikan tempo suara Gemini (${rawDuration}s -> ~${maxTargetAudioDur.toFixed(1)}s, speed: ${appliedTempo}x) agar sesuai durasi video (${targetDur.toFixed(1)}s)...`);
+      appliedTempo = Math.min(1.03, +(rawDuration / maxTargetAudioDur).toFixed(4));
+      if (appliedTempo > 1.01) {
+        log(`Menyesuaikan tempo suara Gemini secara santai dan natural (${rawDuration}s, speed: ${appliedTempo}x)...`);
         audioFilterArgs = ['-filter:a', `atempo=${appliedTempo.toFixed(4)}`];
       }
     }

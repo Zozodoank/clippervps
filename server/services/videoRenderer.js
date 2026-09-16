@@ -189,12 +189,9 @@ export async function mergeVoiceoverAndBurnSubtitles({
   }
   videoDuration = Math.max(15.0, videoDuration);
 
-  // Speed-up voiceover ONLY slightly (max 1.10x) if audio duration exceeds video duration
-  // Speech must sound natural, clear, and unhurried at ~1.0x normal speed.
+  // Keep voiceover at 100% natural conversational tempo (1.0x normal speed).
+  // Video duration already dynamically extends/loops to cover audio duration seamlessly.
   let atempoFactor = 1.0;
-  if (audioDuration && rawVideoDur && audioDuration > rawVideoDur + 0.3) {
-    atempoFactor = Math.min(1.10, Math.max(1.0, audioDuration / rawVideoDur));
-  }
 
   // If audio is sped up via atempo, rescale ASS subtitle timestamps to match 100%
   // and keep the final CTA subtitle pinned to the exact video duration!

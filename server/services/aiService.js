@@ -533,6 +533,9 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOL
 - STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME:
   * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
   * Setiap watermark atau logo yang masuk ke dalam frame 9:16 wajib DITOLAK karena tidak bisa terpotong.
+  * PERINGATAN KERAS WATERMARK ABU-ABU / TRANSPARAN / SAMAR:
+    Perhatikan dengan sangat teliti setiap watermark semi-transparan, watermark abu-abu muda, logo rumah/bangunan/karakter, atau teks merek kreator/studio (seperti logo channel samar, teks abu-abu di sudut atas atau tengah frame).
+    JIKA WATERMARK ABU-ABU/SAMAR INI TERLIHAT DI DALAM AREA FRAME PERAGAAN (tidak terpotong habis di luar layar), VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Mengandung watermark abu-abu/logo samar di dalam frame."}
 - PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
   * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
@@ -970,6 +973,9 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOL
 - STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME:
   * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
   * Setiap watermark atau logo yang masuk ke dalam frame 9:16 wajib DITOLAK karena tidak bisa terpotong.
+  * PERINGATAN KERAS WATERMARK ABU-ABU / TRANSPARAN / SAMAR:
+    Perhatikan dengan sangat teliti setiap watermark semi-transparan, watermark abu-abu muda, logo rumah/bangunan/karakter, atau teks merek kreator/studio (seperti logo channel samar, teks abu-abu di sudut atas atau tengah frame).
+    JIKA WATERMARK ABU-ABU/SAMAR INI TERLIHAT DI DALAM AREA FRAME PERAGAAN (tidak terpotong habis di luar layar), VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Mengandung watermark abu-abu/logo samar di dalam frame."}
 - PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
   * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
@@ -1453,6 +1459,9 @@ RULE 5: WATERMARKS, SOCIAL MEDIA LOGOS & CHANNEL IDENTITIES (9:16 CROP TOLERANCE
 - STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME:
   * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
   * Setiap watermark atau logo yang masuk ke dalam frame 9:16 wajib DITOLAK karena tidak bisa terpotong.
+  * PERINGATAN KERAS WATERMARK ABU-ABU / TRANSPARAN / SAMAR:
+    Perhatikan dengan sangat teliti setiap watermark semi-transparan, watermark abu-abu muda, logo rumah/bangunan/karakter, atau teks merek kreator/studio (seperti logo channel samar, teks abu-abu di sudut atas atau tengah frame).
+    JIKA WATERMARK ABU-ABU/SAMAR INI TERLIHAT DI DALAM AREA FRAME PERAGAAN (tidak terpotong habis di luar layar), VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Mengandung watermark abu-abu/logo samar di dalam frame."}
 - PHYSICAL PRODUCT BRANDING IS FULLY ACCEPTABLE:
   * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
@@ -1909,56 +1918,59 @@ export async function generateAdAdvisorScriptWithAI({
   // Target ~72-80 words (~7-8 words per ~3.3s scene, ~480-550 characters total).
   // This ensures the voiceover comfortably fills the entire 30-35s runtime without lagging or finishing prematurely!
   // Target duration calculation:
-  // For a ~30-35s video (7 clips @ ~4.8s = ~33.6s), natural Indonesian conversational speech runs at ~2.3 words/second.
-  // We strictly enforce 70 - 85 words across 7 scene lines (~10-12 words per line) so the speech comfortably spans the entire video without premature cutoffs!
-  const targetSpeechSec = Math.max(30, targetDuration - 1.2);
-  const targetWords = Math.round(targetSpeechSec * 2.35); // ~75 words
-  const minWords = Math.max(70, Math.round(targetSpeechSec * 2.15)); // >= 70 words
-  const maxWords = Math.max(85, Math.round(targetSpeechSec * 2.55)); // <= 90 words
+  // Natural Indonesian conversational speech at a relaxed, crystal-clear pace runs at ~1.8 - 2.0 words/second.
+  // For a ~30-35s video (7 clips @ ~4.8s = ~33.6s), target speech duration is ~28s.
+  // We strictly enforce 55 - 65 words across 7 scene lines (~7-9 words per line) so the speech sounds
+  // completely relaxed, natural, clear, and unhurried without ANY fast-forwarding or rushed speech!
+  const targetSpeechSec = Math.max(26, targetDuration - 3.5);
+  const targetWords = Math.round(targetSpeechSec * 1.95); // ~55-60 words
+  const minWords = Math.max(50, Math.round(targetSpeechSec * 1.8)); // >= 50 words
+  const maxWords = Math.max(65, Math.round(targetSpeechSec * 2.1)); // <= 65 words
 
   const systemPrompt = `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
 
-Use the proven 7-SLOT SHOPEE AFFILIATE STORYBOARD FORMULA engineered to fill the entire ${targetDuration}s runtime with active speech and drive maximum Keranjang Kuning conversions:
+Use the proven 7-SLOT SHOPEE AFFILIATE STORYBOARD FORMULA engineered to fill the ${targetDuration}s runtime with calm, engaging, unhurried conversational speech and drive maximum Keranjang Kuning conversions:
 
 CRITICAL 7-SLOT STORYBOARD FORMULA (${targetDuration}s Total Runtime):
 The video consists of 7 dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY 7 distinct spoken lines starting with these exact timestamps:
 
-1. [00:00] [excited] SLOT 1: THE DYNAMIC HOOK (00:00 - 00:05) -> ~10-12 kata
-   - MUST immediately grab viewer attention within the first 3-5 seconds.
+1. [00:00] [excited] SLOT 1: THE DYNAMIC HOOK (00:00 - 00:05) -> ~7-9 kata santai
+   - MUST immediately grab viewer attention within the first 3-5 seconds with a relatable problem/question.
    - DILARANG KERAS menggunakan kata "fix" atau "fiks" di hook maupun seluruh naskah!
    - DILARANG sapaan basi seperti "Stop scroll!", "Halo guys!", "Racun Shopee wajib punya!".
-   - Contoh: "Capek banget kalau tiap kali urusan dapur selalu ribet dan makan banyak waktu!"
+   - Contoh: "Sering capek tiap meres jeruk tangan pegal dan licin?"
 
-2. [00:05] [emphasis] SLOT 2: HERO SOLUTION & MATERIAL (00:05 - 00:10) -> ~10-12 kata
-   - Introduce ${effectiveTitle}, emphasize premium build quality and ergonomic design.
-   - Contoh: "Untung sekarang ada ${effectiveTitle} ini, bahannya kokoh, tebal, dan praktis banget!"
+2. [00:05] [emphasis] SLOT 2: HERO SOLUTION & MATERIAL (00:05 - 00:10) -> ~7-9 kata santai
+   - Introduce product using a short, concise spoken name (2-3 words, e.g. "alat pemeras jeruk ini", DILARANG menempelkan seluruh judul SEO yang panjang!).
+   - Contoh: "Untung ada pemeras manual ini, bahannya kokoh dan praktis!"
 
-3. [00:10] [neutral] SLOT 3: PERAGAAN AKSI AWAL (00:10 - 00:15) -> ~10-12 kata
+3. [00:10] [neutral] SLOT 3: PERAGAAN AKSI AWAL (00:10 - 00:15) -> ~7-9 kata santai
    - Describe the effortless initial hands-on demonstration.
-   - Contoh: "Tinggal dipakai seperti ini, mekanismenya super halus dan langsung bekerja tanpa tenaga ekstra."
+   - Contoh: "Tinggal masukkan buahnya, tekan ringan sarinya langsung keluar tuntas."
 
-4. [00:15] [emphasis] SLOT 4: SUDUT LAIN & KEMUDAHAN FITUR (00:15 - 00:20) -> ~10-12 kata
-   - Highlight the versatility, multi-angle ease, or unique mechanism.
-   - Contoh: "Mau dipakai dari sudut mana pun tetap nyaman dan bikin semua pekerjaan beres jauh lebih cepat."
+4. [00:15] [emphasis] SLOT 4: SUDUT LAIN & KEMUDAHAN FITUR (00:15 - 00:20) -> ~7-9 kata santai
+   - Highlight the versatility, multi-angle ease, or ergonomic handle.
+   - Contoh: "Gagangnya ergonomis anti selip, sangat nyaman dipakai setiap hari."
 
-5. [00:20] [excited] SLOT 5: BUKTI HASIL NYATA & KEPUASAN (00:20 - 00:25) -> ~10-12 kata
-   - Describe the satisfying result shown on screen (clean cuts, spotless shine, perfect outcome).
-   - Contoh: "Lihat hasilnya, benar-benar rapi, memuaskan, dan membersihkannya pun gampang tinggal dibilas air!"
+5. [00:20] [excited] SLOT 5: BUKTI HASIL NYATA & KEPUASAN (00:20 - 00:25) -> ~7-9 kata santai
+   - Describe the satisfying result shown on screen (clean cuts, spotless shine, pure juice).
+   - Contoh: "Hasil perasannya jernih maksimal tanpa biji, bersihinnya super mudah."
 
-6. [00:25] [emphasis] SLOT 6: VALUE FOR MONEY & PROMO HEMAT (00:25 - 00:30) -> ~10-12 kata
+6. [00:25] [emphasis] SLOT 6: VALUE FOR MONEY & PROMO HEMAT (00:25 - 00:30) -> ~7-9 kata santai
    - Voiceover MUST state the price appeal:
-   - "Kualitas sebagus ini harganya murah meriah banget, ramah di kantong dan gak bikin boros!"
+   - "Kualitas premium harganya murah meriah, hemat gak bikin boros!"
 
-7. [00:30] [excited] SLOT 7: SHOPEE KERANJANG POJOK KIRI BAWAH CTA (00:30 - ${formatSeconds(targetDuration)}) -> ~10-12 kata
+7. [00:30] [excited] SLOT 7: SHOPEE KERANJANG POJOK KIRI BAWAH CTA (00:30 - ${formatSeconds(targetDuration)}) -> ~7-9 kata santai
    - Direct viewers with urgent FOMO to the Shopee Keranjang Kuning at the bottom-left corner:
-   - "Yuk buruan amankan promo gratis ongkir, langsung checkout di keranjang pojok kiri bawah sekarang juga!"
+   - "Yuk buruan checkout di keranjang pojok kiri bawah sekarang!"
 
-CRITICAL TIMING & LENGTH RULE (MANDATORY):
-- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, ~10-12 words per line across all 7 scenes).
-- DILARANG KERAS MEMBUAT NASKAH TERLALU PENDEK (< ${minWords} KATA) ATAU HANYA 3-4 KALIMAT! Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai detik [00:30] agar suara TIDAK berhenti sebelum video selesai.
-- Jaga agar setiap kalimat mengalir santai, jelas, berenergi, dan to-the-point.
+CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
+- TEMPO BICARA WAJIB SANTAI, JELAS, DAN TIDAK TERBURU-BURU!
+- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, ~7-9 words per line across all 7 scenes).
+- DILARANG menempelkan judul panjang SEO ke dalam naskah. Gunakan nama pendek produk (2-3 kata).
+- Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai detik [00:30] dengan tempo santai, rileks, dan artikulasi jelas.
 
 1. 'sampleContext':
    - 'productName': Explicit product name.

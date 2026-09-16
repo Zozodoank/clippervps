@@ -1,0 +1,94 @@
+[
+  {
+    "filename": "clip_b8813736f0_wm_t005.jpg",
+    "original_filename": "f_005.jpg",
+    "video_source": "final_clip_auto_b8813736f0.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=T5-KDoOJqXw",
+    "product_name": "Alat Pemeras Jeruk Manual",
+    "timestamp_sec": 5,
+    "time_formatted": "00:05",
+    "label": "rejected",
+    "category": "reject_watermark",
+    "category_label": "🏷️ Reject: Watermark / Logo Sosmed",
+    "split": "train",
+    "reason": "Watermark abu-abu / logo samar transparan (ikon rumah & teks STARIKA) di pojok kiri atas frame peragaan produk.",
+    "watermark_details": {
+      "type": "gray_transparent_logo",
+      "text": "STARIKA",
+      "position": "top_left",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_b8813736f0"
+  },
+  {
+    "filename": "clip_b8813736f0_wm_t010.jpg",
+    "original_filename": "f_010.jpg",
+    "video_source": "final_clip_auto_b8813736f0.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=T5-KDoOJqXw",
+    "product_name": "Alat Pemeras Jeruk Manual",
+    "timestamp_sec": 10,
+    "time_formatted": "00:10",
+    "label": "rejected",
+    "category": "reject_watermark",
+    "category_label": "🏷️ Reject: Watermark / Logo Sosmed",
+    "split": "train",
+    "reason": "Watermark abu-abu / logo samar transparan (ikon rumah & teks STARIKA) di pojok kiri atas frame peragaan produk.",
+    "watermark_details": {
+      "type": "gray_transparent_logo",
+      "text": "STARIKA",
+      "position": "top_left",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_b8813736f0"
+  },
+  {
+    "filename": "clip_b8813736f0_wm_t018.jpg",
+    "original_filename": "f_018.jpg",
+    "video_source": "final_clip_auto_b8813736f0.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=T5-KDoOJqXw",
+    "product_name": "Alat Pemeras Jeruk Manual",
+    "timestamp_sec": 18,
+    "time_formatted": "00:18",
+    "label": "rejected",
+    "category": "reject_watermark",
+    "category_label": "🏷️ Reject: Watermark / Logo Sosmed",
+    "split": "train",
+    "reason": "Watermark abu-abu / logo samar transparan (ikon rumah & teks STARIKA) di pojok kiri atas frame peragaan produk.",
+    "watermark_details": {
+      "type": "gray_transparent_logo",
+      "text": "STARIKA",
+      "position": "top_left",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_b8813736f0"
+  },
+  {
+    "filename": "clip_b8813736f0_wm_t025.jpg",
+    "original_filename": "f_025.jpg",
+    "video_source": "final_clip_auto_b8813736f0.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=T5-KDoOJqXw",
+    "product_name": "Alat Pemeras Jeruk Manual",
+    "timestamp_sec": 25,
+    "time_formatted": "00:25",
+    "label": "rejected",
+    "category": "reject_watermark",
+    "category_label": "🏷️ Reject: Watermark / Logo Sosmed",
+    "split": "val",
+    "reason": "Watermark abu-abu / logo samar transparan (ikon rumah & teks STARIKA) di pojok kiri atas frame peragaan produk.",
+    "watermark_details": {
+      "type": "gray_transparent_logo",
+      "text": "STARIKA",
+      "position": "top_left",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_b8813736f0"
+  }
+]
