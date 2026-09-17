@@ -2770,7 +2770,9 @@ export function isTitleMatchingProduct(candidateTitle, productWords = [], extraM
   const combinedText = `${normTitle} ${normDesc} ${normTags}`;
 
   // Cross-category exclusion for non-kitchen / automotive / clothing / personal vlog / recipes / food / drinks
-  const isGadget = extraMeta?.niche === 'gadget_smartphone';
+  const isGadget = extraMeta?.niche === 'gadget_smartphone' ||
+    /\b(hp|smartphone|ponsel|handphone|poco|redmi|infinix|samsung|galaxy|xiaomi|realme|tecno|vivo|oppo|iqoo)\b/i.test(candidateTitle || '') ||
+    (Array.isArray(productWords) && productWords.some(w => /\b(hp|smartphone|ponsel|poco|redmi|infinix|samsung|galaxy|xiaomi|realme|tecno|vivo|oppo|iqoo)\b/i.test(w)));
   const crossCategoryRegex = isGadget
     ? /\b(?:las|pagar|bengkel|servis hp|servis motor|knalpot|mobil|motor|sepeda|manga|anime|vlog|skincare|makeup|gamis|hijab|outfit|resep|recipe|mukbang|kuliner|jajanan|street food|makanan viral|minuman viral|boba milk tea|camilan)\b/i
     : /\b(?:las|pagar|bengkel|servis hp|servis motor|knalpot|mobil|motor|sepeda|gameplay|game|manga|anime|vlog|skincare|makeup|gamis|hijab|outfit|resep|recipe|mukbang|kuliner|jajanan|street food|makanan viral|minuman viral|boba milk tea|camilan)\b/i;

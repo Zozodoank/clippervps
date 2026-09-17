@@ -362,6 +362,7 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
       description: metadata.description,
       tags: metadata.tags,
       isVisualSearch: Boolean(options.isVisualSearch),
+      niche: options.niche,
     });
 
     if (!crossCategoryPass) {
