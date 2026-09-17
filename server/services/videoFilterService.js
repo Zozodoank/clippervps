@@ -382,7 +382,7 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     if (!crossCategoryPass) {
       return {
         eligible: false,
-        reason: `Judul / deskripsi video YouTube ("${metadata.title}") terindikasi kategori silang yang dilarang (otomotif/skincare/anime/vlog).`
+        reason: `Judul / deskripsi video YouTube ("${metadata.title}") tidak sesuai produk atau terindikasi kategori lain yang dilarang.`
       };
     }
   }

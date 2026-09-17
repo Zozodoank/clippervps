@@ -110,10 +110,7 @@ export async function renderSilentAntiDetectionVideo({
         '-an', // Strictly NO AUDIO
         '-c:v', 'libx264',
         '-preset', 'fast',
-        '-crf', '18',
-        '-b:v', '8000k',
-        '-maxrate', '12000k',
-        '-bufsize', '16000k',
+        '-crf', '20',
         '-pix_fmt', 'yuv420p',
         '-t', totalSilentDuration.toFixed(3),
         '-movflags', '+faststart',
@@ -124,7 +121,7 @@ export async function renderSilentAntiDetectionVideo({
       const proc = spawn(ffmpegPath, args);
       let stderr = '';
 
-      const timeoutMs = Math.max(240000, Math.ceil(totalSilentDuration * 15000)); // Minimum 4 minutes or 15s/second of video
+      const timeoutMs = Math.max(360000, Math.ceil(totalSilentDuration * 20000)); // Minimum 6 minutes or 20s/second of video
       const timer = setTimeout(() => {
         try {
           console.error(`[VideoRenderer Silent] ⚠️ FFmpeg silent render timed out after ${Math.round(timeoutMs / 1000)}s! Terminating process...`);

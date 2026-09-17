@@ -2800,6 +2800,12 @@ export function isTitleMatchingProduct(candidateTitle, productWords = [], extraM
     'shears': 'gunting',
     'scale': 'timbangan',
     'juicer': 'pemeras',
+    'ladle': 'sendok kuah centong sop sup',
+    'skimmer': 'saringan tirisan',
+    'turner': 'spatula sutil',
+    'whisk': 'pengocok telur',
+    'tongs': 'capitan makanan',
+    'grater': 'parutan',
   };
 
   let enrichedCombined = combinedText;
