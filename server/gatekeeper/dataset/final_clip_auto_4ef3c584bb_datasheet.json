@@ -1,0 +1,94 @@
+[
+  {
+    "filename": "clip_4ef3c584bb_rot_t002.jpg",
+    "original_filename": "frame_002.jpg",
+    "video_source": "final_clip_auto_4ef3c584bb.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=EqqqVls3nHA",
+    "product_name": "Botol Minyak Kuas Silikon",
+    "timestamp_sec": 2,
+    "time_formatted": "00:02",
+    "label": "rejected",
+    "category": "reject_orientation",
+    "category_label": "🔄 Reject: Orientasi Miring / Rotate 90 Derajat (Sideways / Misaligned)",
+    "split": "train",
+    "reason": "Sudut rekaman kamera miring 90 derajat (sideways / tilted 90°). Wajan teflon dan dinding dapur berdiri tegak lurus secara vertikal di sisi frame, mengganggu visual penonton.",
+    "orientation_details": {
+      "type": "sideways_90deg_rotation",
+      "detected_aspect": "flipped_gravity",
+      "visual_defect": "frying pan and kitchen surface rotated sideways by 90 degrees",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_4ef3c584bb"
+  },
+  {
+    "filename": "clip_4ef3c584bb_rot_t004.jpg",
+    "original_filename": "frame_004.jpg",
+    "video_source": "final_clip_auto_4ef3c584bb.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=EqqqVls3nHA",
+    "product_name": "Botol Minyak Kuas Silikon",
+    "timestamp_sec": 4,
+    "time_formatted": "00:04",
+    "label": "rejected",
+    "category": "reject_orientation",
+    "category_label": "🔄 Reject: Orientasi Miring / Rotate 90 Derajat (Sideways / Misaligned)",
+    "split": "train",
+    "reason": "Sudut rekaman kamera miring 90 derajat (sideways / tilted 90°). Wajan teflon dan dinding dapur berdiri tegak lurus secara vertikal di sisi frame, mengganggu visual penonton.",
+    "orientation_details": {
+      "type": "sideways_90deg_rotation",
+      "detected_aspect": "flipped_gravity",
+      "visual_defect": "frying pan and kitchen surface rotated sideways by 90 degrees",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_4ef3c584bb"
+  },
+  {
+    "filename": "clip_4ef3c584bb_rot_t006.jpg",
+    "original_filename": "frame_006.jpg",
+    "video_source": "final_clip_auto_4ef3c584bb.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=EqqqVls3nHA",
+    "product_name": "Botol Minyak Kuas Silikon",
+    "timestamp_sec": 6,
+    "time_formatted": "00:06",
+    "label": "rejected",
+    "category": "reject_orientation",
+    "category_label": "🔄 Reject: Orientasi Miring / Rotate 90 Derajat (Sideways / Misaligned)",
+    "split": "train",
+    "reason": "Sudut rekaman kamera miring 90 derajat (sideways / tilted 90°). Wajan teflon dan dinding dapur berdiri tegak lurus secara vertikal di sisi frame, mengganggu visual penonton.",
+    "orientation_details": {
+      "type": "sideways_90deg_rotation",
+      "detected_aspect": "flipped_gravity",
+      "visual_defect": "frying pan and kitchen surface rotated sideways by 90 degrees",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_4ef3c584bb"
+  },
+  {
+    "filename": "clip_4ef3c584bb_rot_t008.jpg",
+    "original_filename": "frame_008.jpg",
+    "video_source": "final_clip_auto_4ef3c584bb.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=EqqqVls3nHA",
+    "product_name": "Botol Minyak Kuas Silikon",
+    "timestamp_sec": 8,
+    "time_formatted": "00:08",
+    "label": "rejected",
+    "category": "reject_orientation",
+    "category_label": "🔄 Reject: Orientasi Miring / Rotate 90 Derajat (Sideways / Misaligned)",
+    "split": "val",
+    "reason": "Sudut rekaman kamera miring 90 derajat (sideways / tilted 90°). Wajan teflon dan dinding dapur berdiri tegak lurus secara vertikal di sisi frame, mengganggu visual penonton.",
+    "orientation_details": {
+      "type": "sideways_90deg_rotation",
+      "detected_aspect": "flipped_gravity",
+      "visual_defect": "frying pan and kitchen surface rotated sideways by 90 degrees",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_4ef3c584bb"
+  }
+]

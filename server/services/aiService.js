@@ -618,6 +618,14 @@ CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DI
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh isi video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
 
+CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO TOLERANCE FOR ROTATED / SIDEWAYS 90° FOOTAGE
+- ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FOOTAGE (MIRING / ROTATE 90 DERAJAT):
+  * DILARANG KERAS MEMILIH CUPLIKAN DENGAN ORIENTASI KAMERA MIRING / TERPUTAR 90 DERAJAT (SIDEWAYS ORIENTATION)!
+  * Inspect the visual orientation carefully:
+    - Permukaan meja kerja, kompor, wajan, talenan, atau lantai dapur HARUS berada pada posisi horizontal yang wajar/normal (gravitasi bumi normal).
+    - JIKA SUDUT PENGAMBILAN GAMBAR TERPUTAR 90 DERAJAT (misal: wajan/kompor berdiri vertikal di sisi samping layar, dinding dapur miring tegak lurus 90°, atau tangan berorientasi menyamping tidak wajar): DILARANG KERAS MEMASUKKAN TIMESTAMPS INI!
+  * Jika video secara keseluruhan direkam/diupload miring 90 derajat tanpa rotasi normal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring/rotate 90 derajat (sideways footage)."}.
+
 CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
 - Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions for a full 30 to 35 second video ad.
 - Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
@@ -1058,6 +1066,14 @@ CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DI
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh isi video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
 
+CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO TOLERANCE FOR ROTATED / SIDEWAYS 90° FOOTAGE
+- ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FOOTAGE (MIRING / ROTATE 90 DERAJAT):
+  * DILARANG KERAS MEMILIH CUPLIKAN DENGAN ORIENTASI KAMERA MIRING / TERPUTAR 90 DERAJAT (SIDEWAYS ORIENTATION)!
+  * Inspect the visual orientation carefully:
+    - Permukaan meja kerja, kompor, wajan, talenan, atau lantai dapur HARUS berada pada posisi horizontal yang wajar/normal (gravitasi bumi normal).
+    - JIKA SUDUT PENGAMBILAN GAMBAR TERPUTAR 90 DERAJAT (misal: wajan/kompor berdiri vertikal di sisi samping layar, dinding dapur miring tegak lurus 90°, atau tangan berorientasi menyamping tidak wajar): DILARANG KERAS MEMASUKKAN TIMESTAMPS INI!
+  * Jika video secara keseluruhan direkam/diupload miring 90 derajat tanpa rotasi normal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring/rotate 90 derajat (sideways footage)."}.
+
 CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
 - Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions for a full 30 to 35 second video ad.
 - Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
@@ -1467,6 +1483,12 @@ RULE 4: REAL AUTHENTIC PHYSICAL FOOTAGE (NO AI/CGI SLOP, NO TALKING HEADS):
 - REJECT if pure talking-head / vlog without direct hands-on product demonstration.
 - REJECT if pure parcel unboxing / bubble wrap without active product demonstration.
 - REJECT if video is about repairing, fixing, servicing, replacing parts, or disassembling broken items (perbaikan, servis, barang rusak, ganti sparepart, bongkar mesin).
+
+RULE 4B: NORMAL CAMERA ORIENTATION & NO ROTATED/SIDEWAYS FOOTAGE:
+- ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FRAMES (MIRING / ROTATE 90 DERAJAT):
+  * DILARANG KERAS memilih frame dengan orientasi kamera miring / terputar 90 derajat (sideways orientation).
+  * Permukaan meja, wajan, kompor, atau lantai harus berada pada orientasi horizontal normal (gravitasi normal).
+  * Jika video secara keseluruhan terputar/miring 90 derajat: REJECT with reason "Orientasi kamera miring/rotate 90 derajat (sideways footage)".
 
 RULE 5: WATERMARKS, SOCIAL MEDIA LOGOS & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE):
 - 9:16 CROP GEOMETRY:
