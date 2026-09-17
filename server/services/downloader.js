@@ -131,7 +131,7 @@ function getYtDlpArgs(clientSpoof = null) {
   if (proxyArgs.length) args.push(...proxyArgs);
 
   // Standard Chrome desktop User-Agent to mimic browser / IDM
-  if (clientSpoof && clientSpoof.startsWith('android')) {
+  if (clientSpoof && (clientSpoof.startsWith('android') || clientSpoof.includes('mweb'))) {
     args.push('--user-agent', 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36');
   } else {
     args.push('--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36');
@@ -798,6 +798,7 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   // Fallbacks use web and web_safari desktop clients. We avoid mobile profiles (android, ios) which trigger SABR 403.
   const clientProfiles = [
     'default',
+    'mweb',
     'web',
     'web_safari',
   ];
@@ -947,6 +948,8 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     lowerErr.includes('sign in to confirm') ||
     lowerErr.includes('automated queries') ||
     lowerErr.includes('too many requests') ||
+    lowerErr.includes('only images are available') ||
+    (lowerErr.includes('requested format is not available') && lowerErr.includes('images')) ||
     (lowerErr.includes('http error 429') || lowerErr.includes('status: 429'));
 
   if (isBotOrIpBlock) {

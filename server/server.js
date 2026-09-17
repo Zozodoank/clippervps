@@ -1732,6 +1732,45 @@ export async function runStage1Pipeline({
         }
       }
 
+      // Jika candidate yang dipilih AI ada yang gagal diunduh sehingga kandidat HD < 2,
+      // coba unduh kandidat cadangan dari candidateResults yang sudah lolos filter visual!
+      if (downloadedCandidatesMap.size < 2) {
+        console.warn(`[Job ${jobId}] ⚠️ Kandidat HD terunduh kurang dari 2 (${downloadedCandidatesMap.size}). Mencoba kandidat cadangan dari pool yang lolos filter visual...`);
+        const fallbackCandidates = candidateResults.filter(c => !neededIndices.includes(c.candidateIndex));
+        for (const altCand of fallbackCandidates) {
+          if (downloadedCandidatesMap.size >= 2) break;
+          const altIdx = altCand.candidateIndex;
+          const candObj = altCand.candidate;
+          if (!candObj?.url) continue;
+
+          try {
+            console.log(`[Job ${jobId}] 🔄 Mencoba mengunduh HD kandidat cadangan #${altIdx + 1}: ${candObj.title}...`);
+            const altDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
+              quality: '1080p',
+              prefix: `raw_cand_${altIdx}`,
+            });
+            if (altDl?.filePath && fs.existsSync(altDl.filePath)) {
+              downloadedCandidatesMap.set(altIdx, altDl.filePath);
+              console.log(`[Job ${jobId}] ✅ Kandidat cadangan #${altIdx + 1} berhasil diunduh HD (${altDl.filePath}).`);
+
+              // Remap klip yang video-nya gagal diunduh ke kandidat cadangan ini
+              const failedIndices = neededIndices.filter(idx => !downloadedCandidatesMap.has(idx));
+              if (failedIndices.length > 0) {
+                const targetFailedIdx = failedIndices[0];
+                hl.clips = hl.clips.map(c => {
+                  if (c.candidateIndex === targetFailedIdx) {
+                    return { ...c, candidateIndex: altIdx, videoPath: altDl.filePath };
+                  }
+                  return c;
+                });
+              }
+            }
+          } catch (altErr) {
+            console.warn(`[Job ${jobId}] ⚠️ Kandidat cadangan #${altIdx + 1} gagal diunduh: ${altErr.message}`);
+          }
+        }
+      }
+
       // Jika seluruh kandidat gagal diunduh (termasuk jika diblokir YouTube)
       if (downloadedCandidatesMap.size === 0) {
         throw lastDlError || new Error('Gagal mengunduh video 1080p Full HD dari seluruh kandidat terpilih.');

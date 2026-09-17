@@ -115,10 +115,16 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
   });
 
   const duration = Number(metaResult.duration) || 60;
+  const formats = Array.isArray(metaResult.formats) ? metaResult.formats : [];
+  const maxAvailableHeight = Math.max(
+    Number(metaResult.height) || 0,
+    ...formats.map(f => Number(f.height) || 0)
+  );
   const metadata = {
     id: metaResult.id,
     title: metaResult.title || 'YouTube Video',
     duration,
+    maxHeight: maxAvailableHeight,
     description: (metaResult.description || '').slice(0, 1000),
     channel: metaResult.uploader || metaResult.channel || '',
     tags: Array.isArray(metaResult.tags) ? metaResult.tags : [],
@@ -186,6 +192,14 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
   if (duration > 900) {
     return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Maksimal durasi video 15 menit.` };
+  }
+
+  // 1B. Resolusi Maksimal Video Sumber (Wajib minimal HD 720p/1080p ke atas)
+  if (metadata.maxHeight && metadata.maxHeight < 720) {
+    return {
+      eligible: false,
+      reason: `Resolusi maksimal video YouTube (${metadata.maxHeight}p) di bawah standar minimal HD 720p/1080p. Video berkualitas rendah buram tidak dapat digunakan.`
+    };
   }
 
   const titleLower = (metadata.title || '').toLowerCase();
