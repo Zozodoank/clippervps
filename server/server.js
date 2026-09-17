@@ -364,17 +364,54 @@ export function getDailyOutputVideoStats() {
   };
 }
 
-/** Helper: get all YouTube video IDs from existing active & successfully completed jobs */
+/** Helper: get all YouTube video IDs from existing active & successfully completed jobs across all multi-video harvesting clips */
 function getAllUsedYouTubeVideoIds() {
   const used = new Set();
   for (const job of activeJobs.values()) {
     // Only exclude video if the job actually SUCCEEDED or is currently processing
-    if (job.youtubeUrl && (job.stage === 'completed' || job.stage === 'awaiting_voiceover' || job.stage === 'running')) {
-      const vid = extractVideoId(job.youtubeUrl);
-      if (vid) used.add(vid);
+    if (job.stage === 'completed' || job.stage === 'awaiting_voiceover' || job.stage === 'running') {
+      if (job.youtubeUrl) {
+        const vid = extractVideoId(job.youtubeUrl);
+        if (vid) used.add(vid);
+      }
+      // Multi-video harvesting: capture all candidate video IDs used in the storyboard clips!
+      if (Array.isArray(job.highlight?.clips)) {
+        for (const clip of job.highlight.clips) {
+          const cvid = clip.videoId || extractVideoId(clip.candidateUrl) || clip.candidate?.id;
+          if (cvid) used.add(cvid);
+        }
+      }
+      // Also capture all accepted candidates from candidateResults
+      if (Array.isArray(job.candidateResults)) {
+        for (const c of job.candidateResults) {
+          const cvid = c.id || extractVideoId(c.url);
+          if (cvid) used.add(cvid);
+        }
+      }
     }
   }
   return used;
+}
+
+/** Helper: get all core product nouns generated today to ensure 100% product diversity in Auto Mode */
+function getAllUsedProductNounsToday() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const usedProducts = new Set();
+  for (const job of activeJobs.values()) {
+    if (job.stage === 'completed' || job.stage === 'awaiting_voiceover' || job.stage === 'running') {
+      const jobDate = (job.createdAt || job.updatedAt || '').slice(0, 10);
+      if (jobDate === todayStr || !job.createdAt) {
+        const noun = (job.coreProductNoun || '').toLowerCase().trim();
+        if (noun) usedProducts.add(noun);
+        const prodTitle = (job.productTitle || job.cleanProductTitle || '').toLowerCase().trim();
+        if (prodTitle) {
+          const info = extractCoreProductInfo(prodTitle);
+          if (info.coreProductNoun) usedProducts.add(info.coreProductNoun.toLowerCase().trim());
+        }
+      }
+    }
+  }
+  return usedProducts;
 }
 
 function isVideoFilePath(p) {
@@ -2617,6 +2654,16 @@ async function runAutoStage1Worker(run) {
 
       const keyword = keywordQueue.shift();
       if (!keyword) continue;
+
+      // ── DEDUPLIKASI PRODUK HARIAN ──
+      // Hindari membuat video produk sejenis berulang kali pada hari yang sama (misal 2x atau 3x crepes maker)
+      const keywordCoreInfo = extractCoreProductInfo(keyword);
+      const coreNoun = (keywordCoreInfo.coreProductNoun || '').toLowerCase().trim();
+      const usedNouns = getAllUsedProductNounsToday();
+      if (coreNoun && usedNouns.has(coreNoun)) {
+        console.log(`[Auto] Skip "${keyword}": Produk dasar sejenis ("${coreNoun}") sudah pernah dibuat hari ini.`);
+        continue;
+      }
 
       const currentTargetIndex = run.successfulJobs + 1;
       const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${dailyStats.limit})`;

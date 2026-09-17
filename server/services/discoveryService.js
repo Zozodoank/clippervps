@@ -754,6 +754,29 @@ export function markKeywordAsUsed(keyword, meta = {}) {
         jobId: meta.jobId || null
       };
     }
+    const coreNoun = extractCoreProductInfo(meta.productTitle)?.coreProductNoun;
+    if (coreNoun) {
+      const normNoun = normalizeKeyword(coreNoun);
+      if (normNoun) {
+        store.productTitles[normNoun] = {
+          usedAt: Date.now(),
+          dateStr: new Date().toISOString(),
+          jobId: meta.jobId || null
+        };
+      }
+    }
+  }
+  const kwCoreNoun = extractCoreProductInfo(keyword)?.coreProductNoun;
+  if (kwCoreNoun) {
+    const normKwNoun = normalizeKeyword(kwCoreNoun);
+    if (normKwNoun) {
+      store.keywords[normKwNoun] = {
+        usedAt: Date.now(),
+        dateStr: new Date().toISOString(),
+        jobId: meta.jobId || null,
+        source: 'core_noun'
+      };
+    }
   }
   store.lastUpdated = new Date().toISOString();
   saveUsedKeywords(store);
@@ -768,6 +791,14 @@ export function isKeywordUsed(keyword) {
   const store = loadUsedKeywords();
   if (store.keywords && store.keywords[norm]) return true;
   if (store.productTitles && store.productTitles[norm]) return true;
+  const coreNoun = extractCoreProductInfo(keyword)?.coreProductNoun;
+  if (coreNoun) {
+    const normNoun = normalizeKeyword(coreNoun);
+    if (normNoun) {
+      if (store.keywords && store.keywords[normNoun]) return true;
+      if (store.productTitles && store.productTitles[normNoun]) return true;
+    }
+  }
   return false;
 }
 
@@ -1249,14 +1280,17 @@ export function getAutoKeywords(limit = 1000, { niche = 'kitchen_tools', exclude
   }
 
   const resultSet = new Set();
+  const seenBatchNouns = new Set();
 
   // 1. First include any unused default curated keywords from the active niche preset
   const curatedList = preset.defaultKeywords || DEFAULT_AUTO_KEYWORDS;
   for (const kw of curatedList) {
     const norm = normalizeKeyword(kw);
-    if (!excludedSet.has(norm)) {
+    const coreNoun = normalizeKeyword(extractCoreProductInfo(kw)?.coreProductNoun || '');
+    if (!excludedSet.has(norm) && (!coreNoun || (!excludedSet.has(coreNoun) && !seenBatchNouns.has(coreNoun)))) {
       if (isGadget || !isBulkyOrUnsuitableProduct(kw)) {
         resultSet.add(kw);
+        if (coreNoun) seenBatchNouns.add(coreNoun);
         if (resultSet.size >= limit) break;
       }
     }
@@ -1265,17 +1299,23 @@ export function getAutoKeywords(limit = 1000, { niche = 'kitchen_tools', exclude
   // 2. Dynamically synthesize remaining keywords from combinatorial matrix
   if (resultSet.size < limit) {
     const needed = limit - resultSet.size;
-    const combinedExcluded = new Set([...excludedSet]);
+    const combinedExcluded = new Set([...excludedSet, ...seenBatchNouns]);
     for (const item of resultSet) {
       combinedExcluded.add(normalizeKeyword(item));
+      const cn = normalizeKeyword(extractCoreProductInfo(item)?.coreProductNoun || '');
+      if (cn) combinedExcluded.add(cn);
     }
     const generated = isGadget
       ? generateCombinatorialGadgetKeywords(needed * 2, combinedExcluded)
       : generateCombinatorialKitchenKeywords(needed * 2, combinedExcluded);
 
     for (const g of generated) {
-      resultSet.add(g);
-      if (resultSet.size >= limit) break;
+      const gNoun = normalizeKeyword(extractCoreProductInfo(g)?.coreProductNoun || '');
+      if (!gNoun || !seenBatchNouns.has(gNoun)) {
+        resultSet.add(g);
+        if (gNoun) seenBatchNouns.add(gNoun);
+        if (resultSet.size >= limit) break;
+      }
     }
   }
 
