@@ -373,8 +373,28 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
         '-q:v', '3',
         outputPath
       ]);
-      proc.on('close', () => resolve());
-      proc.on('error', () => resolve());
+      let finished = false;
+      const timer = setTimeout(() => {
+        if (!finished) {
+          finished = true;
+          try { proc.kill('SIGKILL'); } catch {}
+          resolve();
+        }
+      }, 15000);
+      proc.on('close', () => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+      proc.on('error', () => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timer);
+          resolve();
+        }
+      });
     });
 
     const e = p.then(() => executing.splice(executing.indexOf(e), 1));
@@ -411,8 +431,28 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
           '-q:v', '3',
           outputPath
         ]);
-        proc.on('close', () => resolve());
-        proc.on('error', () => resolve());
+        let finished = false;
+        const timer = setTimeout(() => {
+          if (!finished) {
+            finished = true;
+            try { proc.kill('SIGKILL'); } catch {}
+            resolve();
+          }
+        }, 15000);
+        proc.on('close', () => {
+          if (!finished) {
+            finished = true;
+            clearTimeout(timer);
+            resolve();
+          }
+        });
+        proc.on('error', () => {
+          if (!finished) {
+            finished = true;
+            clearTimeout(timer);
+            resolve();
+          }
+        });
       });
     }
     frameFiles = fs.readdirSync(outputDir)

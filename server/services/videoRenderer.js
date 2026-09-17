@@ -102,44 +102,57 @@ export async function renderSilentAntiDetectionVideo({
         filterChains.push(`${selectedClips.map((_, index) => `[v${index}]`).join('')}concat=n=${selectedClips.length}:v=1:a=0[outv]`);
       }
 
+      const totalSilentDuration = selectedClips.reduce((sum, c) => sum + (Number(c.duration) || 4.8), 0);
+
       args.push(
         '-filter_complex', filterChains.join(';'),
         '-map', '[outv]',
         '-an', // Strictly NO AUDIO
         '-c:v', 'libx264',
-      '-preset', 'fast',
-      '-crf', '18',
-      '-b:v', '8000k',
-      '-maxrate', '12000k',
-      '-bufsize', '16000k',
-      '-pix_fmt', 'yuv420p',
-      '-movflags', '+faststart',
-      outputVideo
-    );
+        '-preset', 'fast',
+        '-crf', '18',
+        '-b:v', '8000k',
+        '-maxrate', '12000k',
+        '-bufsize', '16000k',
+        '-pix_fmt', 'yuv420p',
+        '-t', totalSilentDuration.toFixed(3),
+        '-movflags', '+faststart',
+        outputVideo
+      );
 
-    console.log(`[VideoRenderer Silent] Spawning FFmpeg:\n${ffmpegPath} ${args.join(' ')}`);
-    const proc = spawn(ffmpegPath, args);
-    let stderr = '';
+      console.log(`[VideoRenderer Silent] Spawning FFmpeg:\n${ffmpegPath} ${args.join(' ')}`);
+      const proc = spawn(ffmpegPath, args);
+      let stderr = '';
 
-    proc.stderr.on('data', (d) => stderr += d.toString());
+      const timeoutMs = Math.max(240000, Math.ceil(totalSilentDuration * 15000)); // Minimum 4 minutes or 15s/second of video
+      const timer = setTimeout(() => {
+        try {
+          console.error(`[VideoRenderer Silent] ⚠️ FFmpeg silent render timed out after ${Math.round(timeoutMs / 1000)}s! Terminating process...`);
+          proc.kill('SIGKILL');
+        } catch {}
+      }, timeoutMs);
 
-    proc.on('close', (code) => {
-      if (code === 0 && fs.existsSync(outputVideo)) {
-        onProgress({
-          step: 'render_silent',
-          message: 'Silent 9:16 video rendered successfully!',
-          progress: 70
-        });
-        resolve({ outputPath: outputVideo });
-      } else {
-        console.error(`[VideoRenderer Silent] Error:\n${stderr}`);
-        reject(new Error(`FFmpeg silent render failed with code ${code}: ${stderr.slice(-300)}`));
-      }
-    });
+      proc.stderr.on('data', (d) => stderr += d.toString());
 
-    proc.on('error', (err) => {
-      reject(new Error(`Failed to spawn FFmpeg for silent render: ${err.message}`));
-    });
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        if (code === 0 && fs.existsSync(outputVideo)) {
+          onProgress({
+            step: 'render_silent',
+            message: 'Silent 9:16 video rendered successfully!',
+            progress: 70
+          });
+          resolve({ outputPath: outputVideo });
+        } else {
+          console.error(`[VideoRenderer Silent] Error:\n${stderr}`);
+          reject(new Error(`FFmpeg silent render failed with code ${code}: ${stderr.slice(-300)}`));
+        }
+      });
+
+      proc.on('error', (err) => {
+        clearTimeout(timer);
+        reject(new Error(`Failed to spawn FFmpeg for silent render: ${err.message}`));
+      });
     } catch (err) {
       reject(err);
     }
@@ -259,14 +272,28 @@ export async function mergeVoiceoverAndBurnSubtitles({
 
     const proc = spawn(ffmpegPath, args);
     let stderr = '';
+
+    const timeoutMs = Math.max(240000, Math.ceil(videoDuration * 15000));
+    const timer = setTimeout(() => {
+      try {
+        console.error(`[VideoRenderer Final] ⚠️ FFmpeg final merge timed out after ${Math.round(timeoutMs / 1000)}s! Terminating process...`);
+        proc.kill('SIGKILL');
+      } catch {}
+    }, timeoutMs);
+
     proc.stderr.on('data', d => stderr += d.toString());
     proc.on('close', code => {
+      clearTimeout(timer);
       if (code === 0 && fs.existsSync(outputVideoPath)) {
         onProgress({ step: 'merge_final', message: 'Final video rendered successfully!', progress: 100 });
         resolve({ finalPath: outputVideoPath });
       } else {
         reject(new Error(`Final merge failed: ${stderr.slice(-300)}`));
       }
+    });
+    proc.on('error', err => {
+      clearTimeout(timer);
+      reject(new Error(`Failed to spawn FFmpeg for final merge: ${err.message}`));
     });
   });
 }
@@ -566,13 +593,27 @@ function mergeAudioOnlyFallback({
 
   const proc = spawn(ffmpegPath, args);
   let stderr = '';
+
+  const timeoutMs = Math.max(240000, Math.ceil(videoDuration * 15000));
+  const timer = setTimeout(() => {
+    try {
+      console.error(`[VideoRenderer Fallback] ⚠️ FFmpeg fallback merge timed out after ${Math.round(timeoutMs / 1000)}s! Terminating process...`);
+      proc.kill('SIGKILL');
+    } catch {}
+  }, timeoutMs);
+
   proc.stderr.on('data', d => stderr += d.toString());
   proc.on('close', code => {
+    clearTimeout(timer);
     if (code === 0 && fs.existsSync(outputVideoPath)) {
       onProgress({ step: 'merge_final', message: 'Final video merged successfully (fallback mode).', progress: 100 });
       resolve({ finalPath: outputVideoPath });
     } else {
       reject(new Error(`Final fallback merge failed: ${stderr.slice(-300)}`));
     }
+  });
+  proc.on('error', err => {
+    clearTimeout(timer);
+    reject(new Error(`Failed to spawn FFmpeg for fallback merge: ${err.message}`));
   });
 }
