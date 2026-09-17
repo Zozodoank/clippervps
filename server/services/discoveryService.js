@@ -2769,8 +2769,11 @@ export function isTitleMatchingProduct(candidateTitle, productWords = [], extraM
     : '';
   const combinedText = `${normTitle} ${normDesc} ${normTags}`;
 
-  // Cross-category exclusion for non-kitchen / automotive / phone / clothing / personal vlog / recipes / food / drinks
-  const crossCategoryRegex = /\b(?:las|pagar|bengkel|servis hp|servis motor|knalpot|mobil|motor|sepeda|gameplay|game|manga|anime|vlog|skincare|makeup|gamis|hijab|outfit|resep|recipe|mukbang|kuliner|jajanan|street food|makanan viral|minuman viral|boba milk tea|camilan)\b/i;
+  // Cross-category exclusion for non-kitchen / automotive / clothing / personal vlog / recipes / food / drinks
+  const isGadget = extraMeta?.niche === 'gadget_smartphone';
+  const crossCategoryRegex = isGadget
+    ? /\b(?:las|pagar|bengkel|servis hp|servis motor|knalpot|mobil|motor|sepeda|manga|anime|vlog|skincare|makeup|gamis|hijab|outfit|resep|recipe|mukbang|kuliner|jajanan|street food|makanan viral|minuman viral|boba milk tea|camilan)\b/i
+    : /\b(?:las|pagar|bengkel|servis hp|servis motor|knalpot|mobil|motor|sepeda|gameplay|game|manga|anime|vlog|skincare|makeup|gamis|hijab|outfit|resep|recipe|mukbang|kuliner|jajanan|street food|makanan viral|minuman viral|boba milk tea|camilan)\b/i;
   if (crossCategoryRegex.test(normTitle)) {
     return false;
   }

@@ -177,6 +177,8 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Metadata video kosong atau tidak tersedia.' };
   }
 
+  const isGadget = options.niche === 'gadget_smartphone';
+
   // 1. Durasi Video (Wajib antara 35 detik s/d 15 menit)
   const duration = Number(metadata.duration) || 0;
   if (duration > 0 && duration < 35) {
@@ -202,28 +204,43 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Terdeteksi indikasi teks subtitle bawaan pada judul/deskripsi/tags.' };
   }
 
-  // 2B. Filter Kata Kunci Terlarang (cara / tutorial / DIY / unboxing / perbaikan / penggantian / rusak / service / ganti)
-  const bannedKeywordRegex = /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
+  // 2B. Filter Kata Kunci Terlarang pada Judul Video
+  // Khusus gadget_smartphone: IZINKAN unboxing (sumber B-roll utama fisik HP), hanya tolak perbaikan/rusak/matot/bypass.
+  const bannedKeywordRegex = isGadget
+    ? /\b(cara|tutorial|diy|how\s+to|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti lcd|ganti baterai|repair|reparasi|bongkar mesin|mati total|matot|bypass|bootloop)\b/i
+    : /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
+
   if (bannedKeywordRegex.test(titleLower)) {
-    return { eligible: false, reason: 'Terdeteksi kata kunci terlarang (cara / tutorial / DIY / unboxing / perbaikan / penggantian / rusak / service / ganti) pada judul video.' };
+    return { eligible: false, reason: `Terdeteksi kata kunci terlarang (${isGadget ? 'perbaikan / servis / mati total / bypass' : 'cara / tutorial / DIY / unboxing / perbaikan / servis'}) pada judul video.` };
   }
 
   // 2C. Filter Konten Perbaikan / Servis / Barang Rusak pada Deskripsi
-  const repairDescRegex = /\b(perbaikan|penggantian|pergantian|mengganti|rusak|kerusakan|service|servis|reparasi|bongkar mesin|mati total)\b/i;
+  const repairDescRegex = /\b(perbaikan|penggantian|pergantian|mengganti|rusak|kerusakan|service|servis|reparasi|bongkar mesin|mati total|matot|ganti lcd)\b/i;
   if (repairDescRegex.test(descLower.slice(0, 500))) {
     return { eligible: false, reason: 'Terdeteksi indikasi konten perbaikan / servis / penggantian alat rusak pada deskripsi video.' };
   }
 
-  // 2D. Filter Resep Makanan, Kuliner, Mukbang & Minuman Tanpa Review Alat
-  const foodRecipeRegex = /\b(resep|recipe|mukbang|kuliner|jajanan|street food|food review|drink review|asmr makan|asmr eat|resep masakan|menu buka puasa|menu sahur|boba milk tea|minuman kekinian|olahan makanan)\b/i;
-  if (foodRecipeRegex.test(titleLower)) {
-    return { eligible: false, reason: 'Judul video mengindikasikan konten resep makanan, kuliner, mukbang, atau review minuman (bukan demonstrasi produk alat dapur).' };
+  // 2D. Filter Resep Makanan, Kuliner, Mukbang & Minuman Tanpa Review Alat (Khusus Kitchen Tools)
+  if (!isGadget) {
+    const foodRecipeRegex = /\b(resep|recipe|mukbang|kuliner|jajanan|street food|food review|drink review|asmr makan|asmr eat|resep masakan|menu buka puasa|menu sahur|boba milk tea|minuman kekinian|olahan makanan)\b/i;
+    if (foodRecipeRegex.test(titleLower)) {
+      return { eligible: false, reason: 'Judul video mengindikasikan konten resep makanan, kuliner, mukbang, atau review minuman (bukan demonstrasi produk alat dapur).' };
+    }
   }
 
   // 2E. Filter Produk Set, Multi-Pack, Bundle, dan Kombo
   const bundleSetRegex = /\b(1\s*set|satu\s*set|1\s*paket|1\s*pack|bundle|bundling|kombo|combo|isi\s*\d+|isi\s+banyak|\d+\s*pcs|lusin|renteng|grosir|multipack)\b/i;
   if (bundleSetRegex.test(titleLower)) {
     return { eligible: false, reason: 'Judul video mengindikasikan produk set/bundle/multi-pack/kombo (sulit dicocokkan dengan link shopee tunggal).' };
+  }
+
+  // 2F. Khusus Gadget/Smartphone: Filter Aksesoris (Casing / Tempered Glass / Skin jika target adalah smartphone)
+  if (isGadget && productTitle) {
+    const isTargetAccessory = /\b(case|casing|softcase|hardcase|tempered glass|hydrogel|skin|charger|kabel|headset|earphone|tws|holder)\b/i.test(productTitle);
+    const isVideoAccessory = /\b(casing|case|softcase|hardcase|tempered glass|hydrogel|skin hp|anti gores)\b/i.test(titleLower);
+    if (!isTargetAccessory && isVideoAccessory && !/\b(unboxing|review|spesifikasi|tes gaming|kamera)\b/i.test(titleLower.replace(/\b(case|casing|tempered glass)\b/gi, ''))) {
+      return { eligible: false, reason: 'Judul video mengindikasikan aksesoris pelindung HP (casing/tempered glass), bukan unit smartphone target.' };
+    }
   }
 
   // 3. Filter Iklan & Sponsor Komersial
@@ -236,23 +253,40 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
 
   // 4. Filter Wajah Manusia / Vlog / Format yang dilarang
-  const faceAndVlogKeywords = [
-    'vlog', 'daily vlog', 'a day in my life', 'podcast', 'reaction',
-    'facecam', 'webcam', 'selfie', 'muka', 'wajah', 'grwm', 'get ready with me',
-    'try on haul', 'try on', 'outfit', 'ootd', 'mukbang', 'skincare routine',
-    'makeup tutorial', 'gameplay', 'live stream',
-    'pengalaman pribadi', 'kulitku', 'mukaku', 'wajahku',
-    'curhat', 'keseharianku', 'kenalan', 'ngobrol', 'bincang', 'q&a', 'storytime',
-    'halo guys', 'halo teman', 'halo semuanya', 'sama aku', 'bareng aku',
-    'unbox with me', 'talking head', 'vlogger', 'blogger',
-    'haul with me', 'watch me'
-  ];
+  // Untuk gadget_smartphone: IZINKAN kata 'gameplay' pada judul (Slot 4 benchmark performa gaming).
+  const faceAndVlogKeywords = isGadget
+    ? [
+        'vlog', 'daily vlog', 'a day in my life', 'podcast', 'reaction',
+        'facecam', 'webcam', 'selfie', 'muka', 'wajah', 'grwm', 'get ready with me',
+        'try on haul', 'try on', 'outfit', 'ootd', 'mukbang', 'skincare routine',
+        'makeup tutorial', 'live stream',
+        'pengalaman pribadi', 'kulitku', 'mukaku', 'wajahku',
+        'curhat', 'keseharianku', 'kenalan', 'ngobrol', 'bincang', 'q&a', 'storytime',
+        'talking head', 'vlogger', 'blogger',
+        'haul with me', 'watch me'
+      ]
+    : [
+        'vlog', 'daily vlog', 'a day in my life', 'podcast', 'reaction',
+        'facecam', 'webcam', 'selfie', 'muka', 'wajah', 'grwm', 'get ready with me',
+        'try on haul', 'try on', 'outfit', 'ootd', 'mukbang', 'skincare routine',
+        'makeup tutorial', 'gameplay', 'live stream',
+        'pengalaman pribadi', 'kulitku', 'mukaku', 'wajahku',
+        'curhat', 'keseharianku', 'kenalan', 'ngobrol', 'bincang', 'q&a', 'storytime',
+        'halo guys', 'halo teman', 'halo semuanya', 'sama aku', 'bareng aku',
+        'unbox with me', 'talking head', 'vlogger', 'blogger',
+        'haul with me', 'watch me'
+      ];
+
   // Honorific/persona standalone words must use word boundaries (\b) so "memasang", "memasak", "kemasan" don't falsely match "mas"
   const personaRegex = /\b(mas|mbak|abang|bunda|mamah|teteh|kakak|host|creator)\b/i;
 
   const descPreview = descLower.slice(0, 500);
-  const isFaceTitle = faceAndVlogKeywords.some(kw => titleLower.includes(kw)) || personaRegex.test(titleLower);
-  const isFaceDesc = faceAndVlogKeywords.some(kw => descPreview.includes(kw)) || personaRegex.test(descPreview);
+  const isFaceTitle = faceAndVlogKeywords.some(kw => titleLower.includes(kw)) || (!isGadget && personaRegex.test(titleLower));
+  // Pada niche smartphone, evaluasi visual (MediaPipe/YuNet) yang memfilter wajah di video.
+  // Jangan tolak deskripsi tech reviewer hanya karena sapaan santai ("Halo guys", "Instagram Mas David").
+  const isFaceDesc = isGadget
+    ? /\b(daily vlog|podcast|facecam|live stream|a day in my life)\b/i.test(descPreview)
+    : (faceAndVlogKeywords.some(kw => descPreview.includes(kw)) || personaRegex.test(descPreview));
 
   if (isFaceTitle || isFaceDesc) {
     return { eligible: false, reason: 'Format video terindikasi berpusat pada wajah / vlogger / persona manusia.' };
@@ -282,42 +316,43 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     const coreNounLower = (prodInfo.coreProductNoun || '').toLowerCase();
     const targetTitleLower = productTitle.toLowerCase();
 
-    // Deteksi benturan jenis produk dapur yang tidak kompatibel
-    // Misal: target adalah toples / wadah bumbu, tetapi video adalah panci, wajan, piring, atau pisau
-    const isTargetStorage = /\b(toples|stoples|wadah|tempat bumbu|kotak bumbu|botol bumbu|organizer|dispenser beras|jar|canister)\b/i.test(targetTitleLower) || /\b(toples|wadah)\b/i.test(coreNounLower);
-    const isCandCookwareOrTableware = /\b(panci|wajan|kuali|frypan|saucepan|katel|vicenza|fiorenza|prasmanan|piring|mangkok|cangkir|teko)\b/i.test(titleLower);
-    if (isTargetStorage && isCandCookwareOrTableware) {
-      return {
-        eligible: false,
-        reason: `Benturan produk: Target adalah wadah/toples penyimpanan ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat masak/makan ("${metadata.title}").`
-      };
-    }
+    // Deteksi benturan jenis produk dapur yang tidak kompatibel (Hanya untuk kitchen_tools)
+    if (!isGadget) {
+      const isTargetStorage = /\b(toples|stoples|wadah|tempat bumbu|kotak bumbu|botol bumbu|organizer|dispenser beras|jar|canister)\b/i.test(targetTitleLower) || /\b(toples|wadah)\b/i.test(coreNounLower);
+      const isCandCookwareOrTableware = /\b(panci|wajan|kuali|frypan|saucepan|katel|vicenza|fiorenza|prasmanan|piring|mangkok|cangkir|teko)\b/i.test(titleLower);
+      if (isTargetStorage && isCandCookwareOrTableware) {
+        return {
+          eligible: false,
+          reason: `Benturan produk: Target adalah wadah/toples penyimpanan ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat masak/makan ("${metadata.title}").`
+        };
+      }
 
-    const isTargetCookware = /\b(wajan|panci|kuali|frypan|saucepan|katel|penggorengan)\b/i.test(targetTitleLower);
-    const isCandStorageOrKnife = /\b(toples|stoples|tempat bumbu|wadah bumbu|rak bumbu|pisau|gunting|parutan|chopper)\b/i.test(titleLower);
-    if (isTargetCookware && isCandStorageOrKnife) {
-      return {
-        eligible: false,
-        reason: `Benturan produk: Target adalah wajan/panci masak ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah wadah/alat lain ("${metadata.title}").`
-      };
-    }
+      const isTargetCookware = /\b(wajan|panci|kuali|frypan|saucepan|katel|penggorengan)\b/i.test(targetTitleLower);
+      const isCandStorageOrKnife = /\b(toples|stoples|tempat bumbu|wadah bumbu|rak bumbu|pisau|gunting|parutan|chopper)\b/i.test(titleLower);
+      if (isTargetCookware && isCandStorageOrKnife) {
+        return {
+          eligible: false,
+          reason: `Benturan produk: Target adalah wajan/panci masak ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah wadah/alat lain ("${metadata.title}").`
+        };
+      }
 
-    const isTargetChopper = /\b(chopper|blender|food processor|pelumat|penggiling daging)\b/i.test(targetTitleLower);
-    const isCandUnrelatedTool = /\b(wajan|panci|toples|rak|spons|piring|mangkok|botol minyak)\b/i.test(titleLower);
-    if (isTargetChopper && isCandUnrelatedTool) {
-      return {
-        eligible: false,
-        reason: `Benturan produk: Target adalah chopper/blender ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat lain ("${metadata.title}").`
-      };
-    }
+      const isTargetChopper = /\b(chopper|blender|food processor|pelumat|penggiling daging)\b/i.test(targetTitleLower);
+      const isCandUnrelatedTool = /\b(wajan|panci|toples|rak|spons|piring|mangkok|botol minyak)\b/i.test(titleLower);
+      if (isTargetChopper && isCandUnrelatedTool) {
+        return {
+          eligible: false,
+          reason: `Benturan produk: Target adalah chopper/blender ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat lain ("${metadata.title}").`
+        };
+      }
 
-    const isTargetOilDispenser = /\b(botol minyak|oil dispenser|oil spray|botol kecap)\b/i.test(targetTitleLower);
-    const isCandOilMismatch = /\b(wajan|panci|piring|mangkok|rak gantung|pisau)\b/i.test(titleLower) && !/\b(minyak|oil|kuas)\b/i.test(titleLower);
-    if (isTargetOilDispenser && isCandOilMismatch) {
-      return {
-        eligible: false,
-        reason: `Benturan produk: Target adalah botol/dispenser minyak ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat masak/makan ("${metadata.title}").`
-      };
+      const isTargetOilDispenser = /\b(botol minyak|oil dispenser|oil spray|botol kecap)\b/i.test(targetTitleLower);
+      const isCandOilMismatch = /\b(wajan|panci|piring|mangkok|rak gantung|pisau)\b/i.test(titleLower) && !/\b(minyak|oil|kuas)\b/i.test(titleLower);
+      if (isTargetOilDispenser && isCandOilMismatch) {
+        return {
+          eligible: false,
+          reason: `Benturan produk: Target adalah botol/dispenser minyak ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat masak/makan ("${metadata.title}").`
+        };
+      }
     }
 
     const coreWords = prodInfo.multilingualWords || prodInfo.coreWords || [];

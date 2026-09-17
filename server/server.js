@@ -2015,12 +2015,22 @@ export async function runStage1Pipeline({
         productHook: highlight.productHook,
         segmentDuration: actualSilentDuration,
         sceneDuration,
+        niche: options.niche || 'kitchen_tools',
         onProgress: updateProgress,
       });
     } catch (scriptErr) {
-      console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah Shopee...`);
+      const isGadget = (options.niche === 'gadget_smartphone');
+      console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah ${isGadget ? 'Smartphone Shorts' : 'Shopee'}...`);
       const fallbackHook = highlight.productHook || getDynamicProductHookFallback(productTitle, options.niche || 'kitchen_tools');
-      const fallbackVoiceScript = `[00:00] [excited] ${fallbackHook}
+      const fallbackVoiceScript = isGadget
+        ? `[00:00] [excited] ${fallbackHook}
+[00:05] [emphasis] Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam.
+[00:10] [neutral] Layar AMOLED seratus dua puluh Hertz bikin scrolling sosmed super mulus.
+[00:15] [emphasis] Chipset kencang dipadu RAM delapan giga, gaming lancar tanpa hambatan.
+[00:20] [excited] Hasil jepretan kamera dan rekaman videonya jernih, tajam serta stabil.
+[00:25] [emphasis] Baterai awet seharian penuh didukung teknologi pengisian daya super cepat.
+[00:30] [excited] Di kisaran harga dua jutaan, menurut kalian worth it gak? Komen di bawah ya!`
+        : `[00:00] [excited] ${fallbackHook}
 [00:05] [emphasis] Untung ada alat praktis ini, bahannya kokoh dan awet banget!
 [00:10] [neutral] Pakainya super simpel, sekali tekan langsung beres tanpa tenaga ekstra.
 [00:15] [emphasis] Desainnya ergonomis anti selip, sangat nyaman dipakai setiap hari.
@@ -2030,18 +2040,18 @@ export async function runStage1Pipeline({
 
       scriptData = {
         sampleContext: {
-          productName: productTitle || videoMeta?.title || 'Produk Pilihan',
+          productName: productTitle || videoMeta?.title || (isGadget ? 'Smartphone Pilihan' : 'Produk Pilihan'),
           videoDuration: `${Math.round(actualSilentDuration)} detik`,
-          targetAudience: 'Pengguna harian dan pembeli Shopee',
-          coreProblem: 'Cara konvensional yang merepotkan dan memakan waktu',
-          keyFeatures: ['Praktis & Ringkas', 'Kualitas Teruji', 'Mudah Digunakan'],
-          buyingTrigger: 'Harga murah meriah dan solusi instan',
+          targetAudience: isGadget ? 'Pencari smartphone, tech enthusiast, dan penonton YouTube Shorts' : 'Pengguna harian dan pembeli Shopee',
+          coreProblem: isGadget ? 'HP lama lemot, kamera buram, dan baterai boros' : 'Cara konvensional yang merepotkan dan memakan waktu',
+          keyFeatures: isGadget ? ['Layar AMOLED 120Hz', 'Chipset Kencang & RAM Lega', 'Kamera Jernih 4K'] : ['Praktis & Ringkas', 'Kualitas Teruji', 'Mudah Digunakan'],
+          buyingTrigger: isGadget ? 'Spek gahar di harga terjangkau' : 'Harga murah meriah dan solusi instan',
         },
         scenes: [
           {
             sceneNumber: 1,
             timeRange: '00:00 - 00:04',
-            visualDescription: 'Demonstrasi pembuka produk',
+            visualDescription: isGadget ? 'Tampilan bodi belakang dan modul kamera smartphone' : 'Demonstrasi pembuka produk',
             voiceover: fallbackHook,
             adAdvisorNotes: 'Hook visual pembuka',
           },
@@ -2903,7 +2913,13 @@ app.get('/api/niches', (req, res) => {
 app.post('/api/auto/start', (req, res) => {
   reloadEnvironment();
   const latest = getLatestAutoRun();
-  if (latest && latest.status === 'running') {
+  if (latest && (latest.status === 'running' || latest.status === 'starting')) {
+    if (req.body?.niche && latest.niche && latest.niche !== req.body.niche) {
+      return res.status(400).json({
+        error: `Auto Mode sedang aktif berjalan dengan niche "${latest.niche}". Hentikan terlebih dahulu sebelum beralih ke niche "${req.body.niche}".`,
+        run: publicAutoRunState(latest),
+      });
+    }
     return res.json({ run: publicAutoRunState(latest) });
   }
 

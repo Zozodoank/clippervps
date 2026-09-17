@@ -1945,38 +1945,89 @@ export async function generateAdAdvisorScriptWithAI({
   productHook,
   segmentDuration = 33,
   sceneDuration = 3.3,
+  niche = 'kitchen_tools',
   onProgress = () => { }
 }) {
   let activeConfig = getAiClientConfig({ apiKeyOverride: apiKey, aiProvider });
   let { client, models: modelFallbackList, provider } = activeConfig;
   let activeModel = modelFallbackList[0];
 
+  const isGadget = (niche === 'gadget_smartphone');
+
   onProgress({
     step: 'gpt_scripting',
-    message: `Analyzing trimmed video frames with ${provider} (${activeModel}) for Shopee FYP Kotak Scene & Naskah...`,
+    message: `Analyzing trimmed video frames with ${provider} (${activeModel}) for ${isGadget ? 'YouTube Shorts Smartphone Review' : 'Shopee FYP'} Kotak Scene & Naskah...`,
     progress: 75
   });
 
-  const effectiveTitle = (productTitle || '').trim() || videoMetadata?.title || 'Produk Viral Shopee';
+  const effectiveTitle = (productTitle || '').trim() || videoMetadata?.title || (isGadget ? 'Smartphone Flagship & Mid-Range' : 'Produk Viral Shopee');
   const effectiveDesc = truncateProductDescription(productDescription, 900);
   const targetDuration = Math.max(30, Math.min(45, Math.round(Number(segmentDuration) || 33)));
   const effectiveSceneSec = Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
   const sceneCount = Math.max(7, Math.min(12, Math.round(targetDuration / effectiveSceneSec)));
-  // Natural Indonesian commercial speaking rate in Edge-TTS & Gemini TTS: ~2.3 - 2.5 words per second (~140 - 150 WPM).
-  // For a 30-35s video, target speech duration is ~targetDuration - 1.5s (leaving 1-2s clean hold for the yellow basket CTA).
-  // Target ~72-80 words (~7-8 words per ~3.3s scene, ~480-550 characters total).
-  // This ensures the voiceover comfortably fills the entire 30-35s runtime without lagging or finishing prematurely!
-  // Target duration calculation:
-  // Natural Indonesian conversational speech at a relaxed, crystal-clear pace runs at ~1.8 - 2.0 words/second.
-  // For a ~30-35s video (7 clips @ ~4.8s = ~33.6s), target speech duration is ~28s.
-  // We strictly enforce 55 - 65 words across 7 scene lines (~7-9 words per line) so the speech sounds
-  // completely relaxed, natural, clear, and unhurried without ANY fast-forwarding or rushed speech!
   const targetSpeechSec = Math.max(26, targetDuration - 3.5);
   const targetWords = Math.round(targetSpeechSec * 1.95); // ~55-60 words
   const minWords = Math.max(50, Math.round(targetSpeechSec * 1.8)); // >= 50 words
   const maxWords = Math.max(65, Math.round(targetSpeechSec * 2.1)); // <= 65 words
 
-  const systemPrompt = `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
+  const systemPrompt = isGadget
+    ? `You are a Senior Tech Reviewer and Creative Director specializing in Indonesian YouTube Shorts and TikTok smartphone reviews (Faceless B-roll tech content).
+
+You will receive the Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
+
+Use the proven 7-SLOT SMARTPHONE REVIEW STORYBOARD FORMULA engineered for high retention and engagement on YouTube Shorts without sounding like a hard-sell telemarketer:
+
+CRITICAL 7-SLOT SMARTPHONE STORYBOARD FORMULA (${targetDuration}s Total Runtime):
+The video consists of 7 dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY 7 distinct spoken lines starting with these exact timestamps:
+
+1. [00:00] [excited] SLOT 1: THE DYNAMIC HOOK (00:00 - 00:05) -> ~7-9 kata santai
+   - MUST immediately grab viewer attention within the first 3-5 seconds.
+   - DILARANG KERAS menggunakan kata "fix" atau "fiks"!
+   - DILARANG kata "alat dapur", "Shopee", "keranjang kuning"!
+   - Hook memancing rasa penasaran penonton YouTube Shorts mengenai keunggulan bodi, layar 120Hz mulus, performa kencang anti lag, atau value for money smartphone.
+   - Contoh: "Capek pakai HP yang gampang patah-patah pas scrolling? Smartphone ini mulusnya kebangetan!" / "HP harga terjangkau tapi pas dipakai gaming rasanya kayak pakai HP belasan juta!" / "Siapa sangka HP di kelas harga segini bisa ngasilin rekaman video 4K yang stabil begini?"
+
+2. [00:05] [emphasis] SLOT 2: HERO DESAIN BODI & BUILD QUALITY (00:05 - 00:10) -> ~7-9 kata santai
+   - Sorot desain bodi belakang mewah, finishing elegan tahan sidik jari, dan frame kokoh yang nyaman digenggam.
+   - Contoh: "Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam."
+
+3. [00:10] [neutral] SLOT 3: LAYAR AMOLED 120HZ & NAVIGASI UI (00:10 - 00:15) -> ~7-9 kata santai
+   - Sensasi scrolling sosmed super mulus 120Hz dan transisi menu responsif tanpa patah-patah.
+   - Contoh: "Layar AMOLED seratus dua puluh Hertz bikin scrolling sosmed super mulus."
+
+4. [00:15] [emphasis] SLOT 4: PERFORMA CHIPSET & MULTITASKING (00:15 - 00:20) -> ~7-9 kata santai
+   - Performa kencang, RAM 8GB, storage lega 256/512GB, dan gaming lancar anti lag (DILARANG istilah GPU rumit).
+   - Contoh: "Chipset kencang dipadu RAM delapan giga, gaming lancar tanpa hambatan."
+
+5. [00:20] [excited] SLOT 5: UJI KAMERA JERNIH & FOTO TAJAM (00:20 - 00:25) -> ~7-9 kata santai
+   - Kualitas rekaman video 4K stabil dan hasil jepretan foto malam/outdoor yang detail dan natural.
+   - Contoh: "Hasil jepretan kamera dan rekaman videonya jernih, tajam serta stabil."
+
+6. [00:25] [emphasis] SLOT 6: BATERAI AWET & FAST CHARGING (00:25 - 00:30) -> ~7-9 kata santai
+   - Daya tahan baterai seharian untuk mobilitas tinggi dan pengisian daya kilat.
+   - Contoh: "Baterai awet seharian penuh didukung teknologi pengisian daya super cepat."
+
+7. [00:30] [excited] SLOT 7: SOFT CTA: KISARAN HARGA & LEMPAR DISKUSI PENONTON (00:30 - ${formatSeconds(targetDuration)}) -> ~7-9 kata santai
+   - Sebutkan perkiraan kisaran harga pasar (Rupiah atau konversi Yuan) serta pancingan interaksi penonton di kolom komentar:
+   - DILARANG KERAS kata-kata jualan: "Shopee", "keranjang kuning", "checkout sekarang", "murah meriah", "link di bio"!
+   - Contoh: "Di kisaran harga dua jutaan, menurut kalian worth it gak? Komen di bawah ya!" / "Harganya ada di kisaran tiga jutaan, kalian tertarik beli gak nih? Tulis di komentar ya!"
+
+CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
+- TEMPO BICARA WAJIB SANTAI, JELAS, DAN TIDAK TERBURU-BURU!
+- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, ~7-9 words per line across all 7 scenes).
+- DILARANG menempelkan judul panjang SEO ke dalam naskah. Gunakan nama pendek produk (2-3 kata).
+- Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai detik [00:30] dengan tempo santai, rileks, dan artikulasi jelas.
+
+STRICT RULES FOR VOICE OVER:
+- NEVER mention unboxing cardboard boxes, bubble wrap, or plastic packaging. Focus 100% on phone aesthetics, UI, camera, performance, and battery.
+- Write in natural, engaging conversational Indonesian.
+- DILARANG KERAS menggunakan kata "kece" dan "kangen".
+- HINDARI KATA SLANG "ng" (nggak, ngasih, ngeliat, dll) - gunakan kata baku.
+- DILARANG menyebut nama medsos lain.
+- DILARANG mengatakan "link di bio", "keranjang kuning", "checkout", atau ajakan beli langsung! Ini adalah Soft CTA murni untuk YouTube Shorts review.
+
+Output MUST be strictly valid JSON matching the requested schema.`
+    : `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
 
@@ -2064,9 +2115,6 @@ STRICT RULES FOR VOICE OVER:
 - DILARANG mengatakan "link di bio" - WAJIB gunakan "keranjang pojok kiri bawah" atau "produk di bawah".
 - Ejaan baku tanpa aksen é/è.
 
-4. 'aiStudioPrompt':
-   - Plain text block formatted for Google AI Studio TTS Playground (Scene, Sample Context, Speaker 1 with timestamps and emotion tags).
-
 5. 'caption':
    - High-converting, full-length Social Media Affiliate Caption for Instagram Reels, TikTok, and Shopee Video.
    - It MUST contain the following 5 structured sections separated by double newlines:
@@ -2074,12 +2122,7 @@ STRICT RULES FOR VOICE OVER:
      2) Problem-Solution & product intro (1-2 compelling sentences explaining why this product is a game changer).
      3) Key advantages / benefits (3-4 bullet points using '✅', e.g. "Keunggulan Utama:\n✅ Sekali tekan busa melimpah\n✅ Desain 2-in-1 hemat tempat...").
      4) Urgency & Call to Action (CTA): "Buruan checkout sekarang mumpung lagi diskon spesial & gratis ongkir! 🔥\n\n🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!"
-     5) Hashtags: 10-15 viral, affiliate, and niche-relevant hashtags (e.g. #racunshopee #shopeehaul #spillracun #racuntiktok #racunbelanja #reelsviral #affiliateindonesia #barangunik #fyp + specific category tags).
-   - STRICT RULES FOR CAPTION:
-     * DILARANG KERAS HANYA MENULISKAN 1 KALIMAT HOOK SAJA! Caption WAJIB lengkap, panjang, dan berbobot.
-     * DILARANG menyertakan link URL/Shopee/tautan web apa pun di dalam caption teks.
-     * DILARANG menggunakan karakter China/Mandarin/Hanzi (100% Bahasa Indonesia).
-     * DILARANG menuliskan ajakan "cek komentar pertama".
+     5) Hashtags: 10-15 viral, affiliate, and niche-relevant hashtags.
 
 6. 'lexicon_to_replace' (Deteksi Istilah / Kata Bahasa Inggris Otomatis):
    - Deteksi SEMUA kata, merk, atau istilah bahasa Inggris yang ada di naskah voiceover maupun judul/deskripsi produk (misal: 'steak', 'juicy', 'online', 'chopper', 'mini chopper', 'food chopper', 'stainless steel', 'air fryer', 'food grade', 'rechargeable', 'wireless', 'magic', 'brush', 'sponge', 'cleaner', 'fry pan', dll).
@@ -2091,7 +2134,7 @@ Output MUST be strictly valid JSON matching the requested schema.`;
   const userPrompt = `=== INFORMASI PRODUK UTAMA ===
 Judul / Nama Produk: "${effectiveTitle}"
 ${effectiveDesc ? `Deskripsi & Spesifikasi Produk: "${effectiveDesc}"` : 'Deskripsi: (Analisis dari visual frame video)'}
-Visual Hook: "${productHook || 'Racun Viral Wajib Punya!'}"
+Visual Hook: "${productHook || (isGadget ? 'Smartphone Kencang Desain Mewah!' : 'Racun Viral Wajib Punya!')}"
 Durasi Video Potongan: ${targetDuration} detik (Wajib naskah dengan panjang ${minWords} - ${maxWords} kata, target ideal: ~${targetWords} kata)
 
 Visual Frames of the concatenated 5-second AI-selected product clips (${trimmedFrames.length} frames):
@@ -2101,22 +2144,22 @@ Gunakan informasi judul dan deskripsi produk di atas agar naskah sangat relevan 
 Buat Kotak Scene, Sample Context, Naskah Voiceover Ad Advisor, dan AI Studio prompt.
 
 PENTING - ATURAN DURASI, TIMESTAMP & TEMPO NASKAH:
-1. Pada bagian 'Sample Context' (baik di JSON maupun di prompt AI Studio), WAJIB sertakan durasi voice over: "Durasi voice over ${targetDuration} detik. Iklan affiliate viral...".
+1. Pada bagian 'Sample Context' (baik di JSON maupun di prompt AI Studio), WAJIB sertakan durasi voice over: "Durasi voice over ${targetDuration} detik. ${isGadget ? 'Review smartphone YouTube Shorts' : 'Iklan affiliate viral'}...".
 2. Naskah voiceover HARUS pas ${minWords} s/d ${maxWords} kata (sekitar 7-8 kata tiap scene ~${effectiveSceneSec.toFixed(1)}s) agar mengisi penuh durasi video tanpa terputus atau hening di akhir!
 3. Setiap baris naskah voiceover dan prompt AI Studio WAJIB diawali penanda waktu video yang merata, misal: [00:00], [00:03], [00:07], [00:11], [00:15], [00:19], [00:23], [00:27], [00:30], dst.
 4. JANGAN gunakan nama karakter suara khusus (cukup gunakan header "Speaker 1").
 5. DILARANG KERAS menggunakan kata "kece"! Gunakan kata seperti keren, elegan, praktis, atau bagus.
 6. DILARANG KERAS menggunakan kata "kangen" dan HINDARI kata gaul berawalan "ng" (seperti: nggak, ngasih, ngeliat, ngerasain, ngapain, dll). Gunakan bahasa Indonesia baku (tidak, memberi, melihat, dll).
 7. KATA "keju" DAN "beres" WAJIB DITULIS PERSIS: "keju" dan "beres" (keju=keju, beres=beres) tanpa tanda kecil atau aksen di atas huruf e.
-8. DILARANG KERAS menyebutkan nama platform media sosial atau marketplace apa pun (seperti Shopee, TikTok, Instagram, YouTube, Facebook, Reels, medsos, dll) di naskah voiceover maupun Kotak Scene!
-9. JANGAN PERNAH gunakan kata "link di bio" di dalam naskah voiceover. Selalu gunakan ajakan seperti "Cek produk di bawah sekarang", "Klik produk di bawah", atau "Checkout produk di bawah sebelum kehabisan".
+8. DILARANG KERAS menyebutkan nama marketplace atau platform (Shopee, TikTok, Instagram, dll) di dalam naskah voiceover!
+${isGadget ? `9. UNTUK SMARTPHONE: WAJIB gunakan Soft CTA di penutup naskah: Sebutkan kisaran harga dan pancing komentar penonton (contoh: "Di kisaran harga dua jutaan, menurut kalian worth it gak? Komen di bawah ya!"). DILARANG kata "checkout", "keranjang kuning", atau "link di bio"!` : `9. JANGAN PERNAH gunakan kata "link di bio" di dalam naskah voiceover. Selalu gunakan ajakan seperti "Cek produk di bawah sekarang", "Klik produk di bawah", atau "Checkout produk di bawah sebelum kehabisan".`}
 10. PADA BAGIAN 'CAPTION' (WAJIB LENGKAP 5 STRUKTUR, DILARANG CUMA 1 KALIMAT):
-    Susun caption lengkap profesional yang siap copy-paste langsung ke Instagram Reels / TikTok / Shopee Video:
-    - Bagian 1: Headline Hook & Emojis pemancing perhatian (masalah/pertanyaan relate).
-    - Bagian 2: Solusi & penjelasan produk mengapa wajib punya (1-2 kalimat menarik).
-    - Bagian 3: Keunggulan Utama (3-4 bullet points dengan tanda '✅').
-    - Bagian 4: Urgensi & CTA jelas ("Buruan checkout mumpung diskon!", "🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!").
-    - Bagian 5: 10-15 hashtag viral relevan (#racunshopee #shopeehaul #spillracun #reelsviral #affiliateindonesia #barangunik dll).
+    Susun caption lengkap profesional yang siap copy-paste langsung:
+    - Bagian 1: Headline Hook & Emojis pemancing perhatian.
+    - Bagian 2: Solusi & penjelasan produk mengapa layak dibeli / dipertimbangkan.
+    - Bagian 3: Keunggulan Utama / Spesifikasi Kunci (3-4 bullet points dengan tanda '✅').
+    - Bagian 4: Urgensi & CTA (${isGadget ? 'Pancingan diskusi: "Menurut kalian worth it gak? Tulis di komentar ya!"' : 'Ajakan checkout keranjang kuning'}).
+    - Bagian 5: 10-15 hashtag viral relevan (${isGadget ? '#reviewhp #smartphoneterbaru #gadgetindonesia #hp2jutaan #hpmurah #shorts #techreview' : '#racunshopee #shopeehaul #spillracun #reelsviral #affiliateindonesia'}).
     - DILARANG KERAS menuliskan URL/link web, karakter China (Mandarin/Hanzi), dan DILARANG hanya membuat 1 kalimat pendek!
 11. Gunakan ejaan bahasa Indonesia baku yang wajar (misal: keren, elegan, praktis, keju, beres) tanpa menambahkan tanda aksen é atau è.
 12. WAJIB 100% Bahasa Indonesia: DILARANG KERAS menyertakan tulisan/karakter China (Mandarin/Hanzi) di seluruh output (naskah, visual, scene, caption, prompt).
@@ -2126,10 +2169,10 @@ Return strict JSON in this format:
   "sampleContext": {
     "productName": "${effectiveTitle}",
     "videoDuration": "${targetDuration} detik",
-    "targetAudience": "Target audiens",
-    "coreProblem": "Masalah utama",
-    "keyFeatures": ["Fitur 1", "Fitur 2", "Fitur 3"],
-    "buyingTrigger": "Alasan psikologis beli"
+    "targetAudience": "${isGadget ? 'Pencari smartphone, tech enthusiast, dan penonton YouTube Shorts' : 'Target audiens'}",
+    "coreProblem": "${isGadget ? 'HP lama lemot, kamera buram, dan baterai boros' : 'Masalah utama'}",
+    "keyFeatures": [${isGadget ? '"Layar AMOLED 120Hz", "Chipset Kencang & RAM Lega", "Kamera Jernih 4K"' : '"Fitur 1", "Fitur 2", "Fitur 3"'}],
+    "buyingTrigger": "${isGadget ? 'Spek gahar di harga terjangkau' : 'Alasan psikologis beli'}"
   },
   "scenes": [
     {
@@ -2140,9 +2183,9 @@ Return strict JSON in this format:
       "adAdvisorNotes": "Tips sutradara (SFX / Text Overlay)"
     }
   ],
-  "voiceoverScript": "[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!",
-  "aiStudioPrompt": "Scene\\nStudio dapur modern...\\n\\nSample Context\\nDurasi voice over 30 detik. Iklan affiliate viral...\\n\\nSpeaker 1\\n[00:00] [intrigue] Masih repot...\\n[00:05] [excited] Kenalin...\\n[00:30] [excited] Cek produk di bawah sekarang!",
-  "caption": "🔥 Masih repot pakai cara lama yang bikin boros & berantakan? 🧼✨\\n\\nKenalin solusinya! Produk ini bikin pekerjaan harian kamu jadi 2x lebih cepat, praktis, dan hasilnya jauh lebih rapi maksimal 😍\\n\\nKeunggulan Utama:\\n✅ Desain praktis, inovatif, dan mudah digunakan\\n✅ Kualitas bahan premium, awet, dan tahan lama\\n✅ Hemat waktu, tenaga, dan bikin lebih efisien\\n✅ Bikin ruangan jadi lebih bersih, rapi, dan estetik\\n\\nBuruan checkout sekarang mumpung lagi diskon spesial & gratis ongkir! 🔥\\n\\n🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!\\n\\n#racunshopee #shopeehaul #spillracun #racuntiktok #racunbelanja #reelsviral #affiliateindonesia #barangunik #perabotandapur #dapurminimalis #fyp",
+  "voiceoverScript": "${isGadget ? '[00:00] Cari HP spek kencang harga ramah kantong?\\n[00:05] Bodi belakangnya mewah dan bezel layarnya tipis...\\n[00:30] Di kisaran harga dua jutaan, worth it gak? Komen di bawah!' : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
+  "aiStudioPrompt": "Scene\\nStudio rekaman energik...\\n\\nSample Context\\nDurasi voice over ${targetDuration} detik...\\n\\nSpeaker 1\\n[00:00] [excited] Hook pembuka...",
+  "caption": "${isGadget ? '⚡ Smartphone 2 Jutaan Rasa Belasan Juta?! Layar 120Hz & Kamera Stabil! 📱✨\\n\\nKombinasi spek juara dan harga ramah kantong! Buat kalian yang butuh HP kencang anti lemot buat harian, smartphone ini wajib masuk wishlist 😍\\n\\nKeunggulan Utama:\\n✅ Layar AMOLED 120Hz super mulus\\n✅ Chipset kencang dipadu RAM lega\\n✅ Kamera jernih dengan rekaman stabil\\n✅ Baterai badak seharian + fast charging\\n\\nMenurut kalian di kisaran harga segini worth it gak? Coba tulis pendapat kalian di kolom komentar ya! 👇🔥\\n\\n#reviewhp #smartphoneterbaru #gadgetindonesia #hpmurah #hp2jutaan #rekomendasihp #shorts #techreview' : '🔥 Masih repot pakai cara lama yang bikin boros & berantakan? 🧼✨\\n\\nKenalin solusinya! Produk ini bikin pekerjaan harian kamu jadi 2x lebih cepat, praktis, dan hasilnya jauh lebih rapi maksimal 😍\\n\\nKeunggulan Utama:\\n✅ Desain praktis, inovatif, dan mudah digunakan\\n✅ Kualitas bahan premium, awet, dan tahan lama\\n✅ Hemat waktu, tenaga, dan bikin lebih efisien\\n✅ Bikin ruangan jadi lebih bersih, rapi, dan estetik\\n\\nBuruan checkout sekarang mumpung lagi diskon spesial & gratis ongkir! 🔥\\n\\n🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!\\n\\n#racunshopee #shopeehaul #spillracun #racuntiktok #racunbelanja #reelsviral #affiliateindonesia #barangunik #perabotandapur #dapurminimalis #fyp'}",
   "lexicon_to_replace": {
     "istilah_inggris": "pelafalan_fonetik_indonesia"
   }
@@ -2251,8 +2294,16 @@ Return strict JSON in this format:
     voiceoverScript = scenes.map(s => `[${s.timeRange ? s.timeRange.split(' - ')[0] : '00:00'}] ${s.voiceover}`).join('\n');
   }
   if (!voiceoverScript) {
-    const dynamicHook = productHook || getDynamicProductHookFallback(effectiveTitle);
-    voiceoverScript = `[00:00] [excited] ${dynamicHook}
+    const dynamicHook = productHook || getDynamicProductHookFallback(effectiveTitle, niche);
+    voiceoverScript = isGadget
+      ? `[00:00] [excited] ${dynamicHook}
+[00:05] [emphasis] Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam.
+[00:10] [neutral] Layar AMOLED seratus dua puluh Hertz bikin scrolling sosmed super mulus.
+[00:15] [emphasis] Chipset kencang dipadu RAM delapan giga, gaming lancar tanpa hambatan.
+[00:20] [excited] Hasil jepretan kamera dan rekaman videonya jernih, tajam serta stabil.
+[00:25] [emphasis] Baterai awet seharian penuh didukung teknologi pengisian daya super cepat.
+[00:30] [excited] Di kisaran harga dua jutaan, menurut kalian worth it gak? Komen di bawah ya!`
+      : `[00:00] [excited] ${dynamicHook}
 [00:03] [emphasis] Untung sekarang ada ${effectiveTitle} ini yang bikin praktis.
 [00:07] [soft] Busa melimpah, kotoran tebal langsung rontok seketika.
 [00:11] [emphasis] Menjangkau sela-sela sempit bersih tuntas tanpa baret.

@@ -88,7 +88,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
         if (data?.run) {
           setRun(data.run);
           if (data.run.dailyStats) setDailyStats(data.run.dailyStats);
-          if (data.run.niche) {
+          if (data.run.niche && (data.run.status === 'running' || data.run.status === 'stopping')) {
             setSelectedNiche(data.run.niche);
             try {
               localStorage.setItem('clipper_niche', data.run.niche);
