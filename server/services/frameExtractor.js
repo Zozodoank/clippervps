@@ -14,6 +14,7 @@ import { getFFmpegPath } from './binaryChecker.js';
 export async function extractFrames(videoPath, framesDir, onProgress = () => {}, {
   sampleIntervalSec = 1,
   maxSampleFrames = 30,
+  duration = null,
 } = {}) {
   if (!fs.existsSync(framesDir)) {
     fs.mkdirSync(framesDir, { recursive: true });

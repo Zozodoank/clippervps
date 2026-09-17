@@ -1,9 +1,32 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { applyTalingPhonetics } from './phoneticData.js';
 import { getFFmpegPath } from './binaryChecker.js';
+
+export function runFfmpegAsync(args, timeoutMs = 60000) {
+  return new Promise((resolve, reject) => {
+    const ffmpegPath = getFFmpegPath();
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      reject(new Error(`FFmpeg timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg exited with code ${code}: ${stderr.slice(-300)}`));
+    });
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
 import { applyEnglishLexicon, restoreStandardText } from './dictionaryService.js';
 import { trackBandwidth } from './bandwidthTracker.js';
 
@@ -513,7 +536,7 @@ export async function generateVoiceoverEdgeTTS({
 
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
-      filterInputs.push('-i', `"${p.partPath}"`);
+      filterInputs.push('-i', p.partPath);
 
       let startSec = cursor;
       // If targetSec was explicitly specified and fits naturally, align without creating huge dead silence (> 0.9s)
@@ -544,9 +567,16 @@ export async function generateVoiceoverEdgeTTS({
     }
 
     const mixFilter = `${filterDelays.join(';')};${filterLabels.join('')}amix=inputs=${parts.length}:dropout_transition=0:normalize=0[aout]`;
-    const cmd = `"${ffmpeg}" -y ${filterInputs.join(' ')} -filter_complex "${mixFilter}" -map "[aout]" -c:a libmp3lame "${outputPath}"`;
+    const ffmpegArgs = [
+      '-y',
+      ...filterInputs,
+      '-filter_complex', mixFilter,
+      '-map', '[aout]',
+      '-c:a', 'libmp3lame',
+      outputPath,
+    ];
 
-    execSync(cmd, { stdio: 'pipe' });
+    await runFfmpegAsync(ffmpegArgs, 90000);
 
     parts.forEach((p) => {
       if (fs.existsSync(p.partPath)) fs.unlinkSync(p.partPath);
@@ -847,11 +877,17 @@ export async function generateVoiceoverGeminiTTS({
 
   try {
     const inputArgs = isWav
-      ? `-i "${tempAudioPath}"`
-      : `-f s16le -ar 24000 -ac 1 -i "${tempAudioPath}"`;
-    const filterArgStr = audioFilterArgs.length > 0 ? audioFilterArgs.join(' ') : '';
-    const cmd = `"${ffmpeg}" -y ${inputArgs} ${filterArgStr} -c:a libmp3lame -b:a 128k "${outputPath}"`;
-    execSync(cmd, { stdio: 'pipe' });
+      ? ['-i', tempAudioPath]
+      : ['-f', 's16le', '-ar', '24000', '-ac', '1', '-i', tempAudioPath];
+    const ffmpegArgs = [
+      '-y',
+      ...inputArgs,
+      ...audioFilterArgs,
+      '-c:a', 'libmp3lame',
+      '-b:a', '128k',
+      outputPath,
+    ];
+    await runFfmpegAsync(ffmpegArgs, 60000);
   } finally {
     if (fs.existsSync(tempAudioPath)) {
       try { fs.unlinkSync(tempAudioPath); } catch {}

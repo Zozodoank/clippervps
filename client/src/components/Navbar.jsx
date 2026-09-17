@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Video, Sparkles, Settings, Cpu, ShieldCheck, FolderOpen, Loader2, RotateCw, AlertTriangle, CheckCircle2, Wifi } from 'lucide-react';
+import { Video, Sparkles, Settings, Cpu, ShieldCheck, FolderOpen, Loader2, RotateCw, AlertTriangle, CheckCircle2, Wifi, KeyRound } from 'lucide-react';
 import BandwidthModal from './BandwidthModal';
+import AuthTokenModal from './AuthTokenModal';
 
 export default function Navbar({ onOpenSettings, engineStatus }) {
   const [openingFolder, setOpeningFolder] = useState(false);
@@ -11,6 +12,7 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
   const [restartStatusText, setRestartStatusText] = useState('');
   const [restartError, setRestartError] = useState(null);
   const [showBandwidthModal, setShowBandwidthModal] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [bandwidthStats, setBandwidthStats] = useState(engineStatus?.bandwidthStats || null);
 
   const fetchBandwidthStats = async () => {
@@ -182,6 +184,16 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
               <span className="hidden sm:inline">Restart Server</span>
             </button>
 
+            {/* Token Auth Button */}
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 text-amber-300 text-xs font-semibold transition-all hover:scale-[1.02] active:scale-[0.98]"
+              title="Kelola API Access Token untuk proteksi Cloudflare Tunnel"
+            >
+              <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">Token Auth</span>
+            </button>
+
             {/* AI Model Badge */}
             <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700/60 text-xs">
                 <>
@@ -328,6 +340,11 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
         stats={bandwidthStats}
         onRefresh={fetchBandwidthStats}
         onReset={handleResetBandwidth}
+      />
+      {/* API Token Auth Modal */}
+      <AuthTokenModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
       />
     </>
   );

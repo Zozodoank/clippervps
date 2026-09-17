@@ -8,7 +8,7 @@ import crypto from 'crypto';
 import multer from 'multer';
 import { exec, spawn, execSync } from 'child_process';
 
-import { checkSystemDependencies } from './services/binaryChecker.js';
+import { checkSystemDependencies, getFFmpegPath } from './services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from './services/downloader.js';
 import { extractFrames } from './services/frameExtractor.js';
 import {
@@ -193,6 +193,72 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
+// Optional Token Authentication for Cloudflare Tunnel / Public Exposure
+const configuredApiToken = (process.env.API_ACCESS_TOKEN || '').trim();
+if (!configuredApiToken) {
+  console.log('[Auth] ℹ️ API_ACCESS_TOKEN is not set. All endpoints are open (backward-compatible).');
+} else {
+  console.log('[Auth] 🔒 API_ACCESS_TOKEN is configured. Sensitive endpoints are protected.');
+}
+
+function tokenAuthMiddleware(req, res, next) {
+  const token = (process.env.API_ACCESS_TOKEN || '').trim();
+  if (!token) return next();
+
+  const reqPath = req.path || '';
+
+  // Allow open endpoints: health, daily-limit, niches, and media files
+  if (
+    reqPath === '/api/health' ||
+    reqPath === '/api/daily-limit' ||
+    reqPath === '/api/niches' ||
+    reqPath.startsWith('/api/video/') ||
+    reqPath.startsWith('/api/audio/') ||
+    reqPath.startsWith('/api/download/') ||
+    reqPath.startsWith('/api/video-player-file')
+  ) {
+    return next();
+  }
+
+  // Only check /api/ routes; allow static frontend files
+  if (!reqPath.startsWith('/api/')) {
+    return next();
+  }
+
+  // Extract token from header or query param
+  let reqToken = req.headers['x-api-token'];
+  if (!reqToken && req.headers['authorization']) {
+    const authHeader = req.headers['authorization'];
+    if (authHeader.startsWith('Bearer ')) {
+      reqToken = authHeader.slice(7).trim();
+    }
+  }
+  if (!reqToken && req.query && req.query.api_token) {
+    reqToken = String(req.query.api_token).trim();
+  }
+
+  if (!reqToken) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized: Missing API access token. Provide x-api-token header or ?api_token query param.',
+    });
+  }
+
+  // Constant-time token comparison
+  const expectedBuf = Buffer.from(token);
+  const actualBuf = Buffer.from(String(reqToken));
+  if (expectedBuf.length !== actualBuf.length || !crypto.timingSafeEqual(expectedBuf, actualBuf)) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized: Invalid API access token.',
+    });
+  }
+
+  next();
+}
+
+app.use(tokenAuthMiddleware);
+
 function isValidHttpUrl(value) {
   try {
     const parsed = new URL(value);
@@ -212,6 +278,34 @@ function resolveOutputVideoPath(filename) {
   return resolved.startsWith(outputRoot) ? resolved : null;
 }
 
+function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const ffmpegPath = getFFmpegPath();
+    const proc = spawn(ffmpegPath, [
+      '-y',
+      '-ss', String(timestampSec),
+      '-i', videoPath,
+      '-vframes', '1',
+      '-q:v', '2',
+      outputPath,
+    ], { stdio: 'ignore' });
+
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      resolve(false);
+    }, timeoutMs);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 && fs.existsSync(outputPath));
+    });
+    proc.on('error', () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
 // ─── Persistent Job Store ────────────────────────────────────────────────────
 
 /** In-memory stores */
@@ -219,6 +313,23 @@ const activeJobs = new Map();
 const jobProgress = new Map();
 const autoRuns = new Map();
 const autoRetryRuns = new Map();
+
+/** Sanitizes a job object so sensitive user API keys are never written to disk */
+function sanitizeJobForDisk(job) {
+  if (!job || typeof job !== 'object') return job;
+  const clone = { ...job };
+  delete clone.geminiApiKey;
+  delete clone.apiKey;
+  delete clone.openRouterApiKey;
+  return clone;
+}
+
+/** Atomically writes JSON to disk to avoid 0-byte corruptions on crash/restart */
+function atomicWriteJsonSync(filePath, data) {
+  const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, filePath);
+}
 
 /** Load jobs from disk into memory without losing history */
 function loadJobsFromDisk() {
@@ -228,6 +339,12 @@ function loadJobsFromDisk() {
       const obj = JSON.parse(raw);
       let modified = false;
       for (const [jobId, jobData] of Object.entries(obj)) {
+        if (jobData.geminiApiKey || jobData.apiKey || jobData.openRouterApiKey) {
+          delete jobData.geminiApiKey;
+          delete jobData.apiKey;
+          delete jobData.openRouterApiKey;
+          modified = true;
+        }
         // Jangan hapus job apapun agar riwayat history pengguna tidak hilang!
         // Jika status masih 'running' saat server start, ubah menjadi 'stopped'
         if (jobData.stage === 'running') {
@@ -238,7 +355,7 @@ function loadJobsFromDisk() {
         activeJobs.set(jobId, jobData);
       }
       if (modified) {
-        fs.writeFileSync(jobsFilePath, JSON.stringify(obj, null, 2), 'utf-8');
+        atomicWriteJsonSync(jobsFilePath, obj);
       }
       console.log(`[Jobs] Loaded ${activeJobs.size} persisted job(s) from disk.`);
     }
@@ -254,11 +371,12 @@ function persistJob(jobId, jobData) {
     if (fs.existsSync(jobsFilePath)) {
       existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
     }
+    const cleanJob = sanitizeJobForDisk(jobData);
     existing[jobId] = {
-      ...jobData,
+      ...cleanJob,
       updatedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(jobsFilePath, JSON.stringify(existing, null, 2), 'utf-8');
+    atomicWriteJsonSync(jobsFilePath, existing);
   } catch (err) {
     console.warn(`[Jobs] Could not persist job ${jobId}:`, err.message);
   }
@@ -270,7 +388,7 @@ function deletePersistedJob(jobId) {
     if (fs.existsSync(jobsFilePath)) {
       const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
       delete existing[jobId];
-      fs.writeFileSync(jobsFilePath, JSON.stringify(existing, null, 2), 'utf-8');
+      atomicWriteJsonSync(jobsFilePath, existing);
     }
   } catch (err) {
     console.warn(`[Jobs] Could not delete job ${jobId} from disk:`, err.message);
@@ -278,6 +396,34 @@ function deletePersistedJob(jobId) {
 }
 
 loadJobsFromDisk();
+
+// Periodic in-memory cleanup to prevent PM2 memory leaks (Poin 10)
+setInterval(() => {
+  const now = Date.now();
+  // 1. Bersihkan jobProgress untuk job yang sudah selesai >30 menit
+  for (const [jobId, p] of jobProgress.entries()) {
+    if (p.status === 'completed' || p.status === 'error' || p.status === 'awaiting_voiceover') {
+      const ts = p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+      if (now - ts > 30 * 60 * 1000) {
+        jobProgress.delete(jobId);
+      }
+    }
+  }
+  // 2. Batasi riwayat autoRuns & autoRetryRuns maksimal 20 data terakhir
+  const pruneMap = (m) => {
+    const terminalKeys = [];
+    for (const [k, run] of m.entries()) {
+      if (run.status === 'stopped' || run.status === 'completed' || run.status === 'error') {
+        terminalKeys.push(k);
+      }
+    }
+    if (terminalKeys.length > 20) {
+      terminalKeys.slice(0, terminalKeys.length - 20).forEach((k) => m.delete(k));
+    }
+  };
+  pruneMap(autoRuns);
+  pruneMap(autoRetryRuns);
+}, 10 * 60 * 1000);
 
 const DEFAULT_DAILY_VIDEO_LIMIT = 20;
 
@@ -989,20 +1135,30 @@ app.get('/api/progress/:jobId', (req, res) => {
   const current = jobProgress.get(jobId) || { step: 'init', message: 'Initializing...', progress: 0 };
   sendProgress(current);
 
+  // SSE Heartbeat ping every 15s to keep Cloudflare Tunnel connections alive (Poin 11)
+  const pingInterval = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {}
+  }, 15000);
+
+  const cleanupSSE = () => {
+    clearInterval(interval);
+    clearInterval(pingInterval);
+  };
+
   const interval = setInterval(() => {
     const latest = jobProgress.get(jobId);
     if (latest) {
       sendProgress(latest);
       if (latest.status === 'completed' || latest.status === 'error' || latest.status === 'awaiting_voiceover') {
-        clearInterval(interval);
+        cleanupSSE();
         res.end();
       }
     }
   }, 500);
 
-  req.on('close', () => {
-    clearInterval(interval);
-  });
+  req.on('close', cleanupSSE);
 });
 
 // ─── Stage 1 Pipeline Engine ─────────────────────────────────────────────────
@@ -1956,11 +2112,11 @@ export async function runStage1Pipeline({
         const f1Path = path.join(auditFramesDir, `clip_${cIdx}_t1.jpg`);
         const f2Path = path.join(auditFramesDir, `clip_${cIdx}_t2.jpg`);
 
-        const ffmpegBin = 'ffmpeg';
-        try {
-          execSync(`"${ffmpegBin}" -y -ss ${t1} -i "${clipVid}" -vframes 1 -q:v 2 "${f1Path}"`, { stdio: 'ignore', timeout: 3000 });
-          execSync(`"${ffmpegBin}" -y -ss ${t2} -i "${clipVid}" -vframes 1 -q:v 2 "${f2Path}"`, { stdio: 'ignore', timeout: 3000 });
-        } catch {}
+        // Async non-blocking frame extraction using dynamic getFFmpegPath() (Poin 7)
+        await Promise.all([
+          extractSingleFrameAsync(clipVid, t1, f1Path),
+          extractSingleFrameAsync(clipVid, t2, f2Path),
+        ]);
 
         const testFrames = [
           { filePath: f1Path, timestamp: t1 },
@@ -3746,14 +3902,14 @@ app.post('/api/restart', async (req, res) => {
           job.message = 'Dihentikan karena server di-restart.';
         }
       }
-      // Simpan perubahan status ke jobs.json agar riwayat tersimpan permanen
+      // Simpan perubahan status ke jobs.json secara atomik & bersih dari secret
       if (fs.existsSync(jobsFilePath)) {
         try {
           const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
           for (const [jobId, job] of activeJobs.entries()) {
-            existing[jobId] = job;
+            existing[jobId] = sanitizeJobForDisk(job);
           }
-          fs.writeFileSync(jobsFilePath, JSON.stringify(existing, null, 2), 'utf-8');
+          atomicWriteJsonSync(jobsFilePath, existing);
         } catch {}
       }
     }

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, Play, Square, Zap, ShieldCheck, Sparkles, Clock, Layers } from 'lucide-react';
+import { withAuthQuery } from '../utils/auth.js';
 
 const DEFAULT_NICHES = [
   {
@@ -109,7 +110,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
 
   const connectProgress = (runId) => {
     if (eventSourceRef.current) eventSourceRef.current.close();
-    const sse = new EventSource(`/api/auto/progress/${runId}`);
+    const sse = new EventSource(withAuthQuery(`/api/auto/progress/${runId}`));
     eventSourceRef.current = sse;
 
     sse.onmessage = (event) => {
