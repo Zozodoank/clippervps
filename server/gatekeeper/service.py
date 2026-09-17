@@ -274,12 +274,10 @@ class TextGatekeeper:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)"
                 if total_cov >= max_total:
                     return True, total_cov, bottom_cov, f"Teks promosi dominan menutupi frame (coverage {total_cov * 100:.1f}%)"
-
-                return False, total_cov, bottom_cov, "Teks minimal / bersih"
             except Exception as e:
                 pass
 
-        # ── Jalur 2: Fast Sobel Horizontal Gradient Fallback ──
+        # ── Jalur 2: Fast Sobel Horizontal Gradient Check (Complementary / Fallback) ──
         gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
         grad_x = cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3)
         abs_grad_x = cv2.convertScaleAbs(grad_x)
@@ -304,7 +302,7 @@ class TextGatekeeper:
         bottom_zone_area = float((h - bottom_y) * w)
         bottom_cov = float(cv2.countNonZero(bottom_roi)) / bottom_zone_area if bottom_zone_area > 0 else 0.0
 
-        sobel_bottom_thresh = 0.12 if niche == "gadget_smartphone" else 0.08
+        sobel_bottom_thresh = 0.08 if niche == "gadget_smartphone" else 0.06
         sobel_total_thresh = 0.10 if niche == "gadget_smartphone" else 0.07
 
         if left_top_cov >= 0.035 or top_cov >= 0.040:
@@ -435,15 +433,16 @@ class SceneGatekeeper:
 # ─────────────────────────────────────────────────────────────────────────────
 def detect_pillarbox(image_bgr):
     """
-    Mendeteksi video vertikal yang di-pillarbox (memiliki strip hitam pekat di sisi kiri dan kanan).
-    Video 9:16 yang valid tidak boleh memiliki pilar hitam vertikal > 16% total lebar frame.
+    Mendeteksi video vertikal yang di-pillarbox (strip hitam di sisi kiri dan kanan)
+    atau di-letterbox (strip hitam di atas dan bawah).
+    Video 9:16 yang valid tidak boleh memiliki pilar/bar hitam vertikal/horizontal.
     """
     h, w = image_bgr.shape[:2]
     if w < 50 or h < 50:
         return False, 0.0, "Dimensi terlalu kecil"
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     col_means = np.mean(gray, axis=0)
-    black_thresh = 22.0
+    black_thresh = 28.0
 
     left_black = 0
     while left_black < w and col_means[left_black] < black_thresh:
@@ -459,6 +458,19 @@ def detect_pillarbox(image_bgr):
 
     if total_pillar >= 0.16 and (left_pct >= 0.07 or right_pct >= 0.07):
         return True, total_pillar, f"Pillarbox hitam di sisi samping ({total_pillar * 100:.1f}% frame)"
+
+    # Letterbox check (top/bottom horizontal bars)
+    row_means = np.mean(gray, axis=1)
+    top_black = 0
+    while top_black < h and row_means[top_black] < black_thresh:
+        top_black += 1
+    bottom_black = 0
+    while bottom_black < h and row_means[h - 1 - bottom_black] < black_thresh:
+        bottom_black += 1
+    total_letterbox = (top_black + bottom_black) / float(h)
+    if total_letterbox >= 0.18:
+        return True, total_letterbox, f"Letterbox hitam di atas/bawah ({total_letterbox * 100:.1f}% frame)"
+
     return False, 0.0, "Tanpa pillarbox"
 
 
