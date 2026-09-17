@@ -1549,8 +1549,8 @@ export async function runStage1Pipeline({
         }
       }
 
-      // 2. Multi-Engine Keyword Search jika belum mencapai target minimal 6 kandidat
-      while (searchIteration < 3 && candidatePool.length < 6) {
+      // 2. Multi-Engine Keyword Search jika belum mencapai target minimal 10 kandidat
+      while (searchIteration < 3 && candidatePool.length < 10) {
         const fresh = await discoverYouTubeCandidatesForProduct({
           productTitle,
           productDescription,
@@ -1575,16 +1575,16 @@ export async function runStage1Pipeline({
 
       console.log(`[Job ${jobId}] Menemukan ${candidatePool.length} kandidat video YouTube. Memulai Multi-Video Stream & Harvesting (stream 3-5 video, target klip 30-35s)...`);
 
-      // Ambil hingga 6 kandidat (cukup 2 video terbaik untuk variasi multi-angle Reels/Shorts)
-      const candidatesToProcess = candidatePool.slice(0, 6);
+      // Ambil hingga 12 kandidat untuk memastikan cukup video yang mereview produk yang sama persis
+      const candidatesToProcess = candidatePool.slice(0, 12);
       const candidateResults = [];
       const downloadedCandidatesMap = new Map();
       let totalCleanCount = 0;
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
-        // Multi-Video Target: Kumpulkan minimal 3-4 video kandidat dengan frame bersih untuk variasi visual clipper profesional
-        if ((candidateResults.length >= 4 && totalCleanCount >= 20) || candidateResults.length >= 5) {
-          console.log(`[Job ${jobId}] ✅ Target streaming multi-video profesional terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video kandidat). Cepat, kaya variasi adegan, lanjut ke AI Vision!`);
+        // Multi-Video Target: Kumpulkan minimal 3 video kandidat dengan frame bersih untuk variasi visual
+        if ((candidateResults.length >= 3 && totalCleanCount >= 18) || candidateResults.length >= 5) {
+          console.log(`[Job ${jobId}] ✅ Target streaming multi-video terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video kandidat). Cepat, kaya variasi adegan, lanjut ke AI Vision!`);
           break;
         }
 
@@ -1652,6 +1652,10 @@ export async function runStage1Pipeline({
         }
       }
 
+      if (candidateResults.length < 2) {
+        throw new Error(`Hanya ditemukan ${candidateResults.length} video kandidat yang cocok untuk "${productTitle}". Standar affiliate mewajibkan variasi dari minimal 2-3 video sumber yang mereview produk yang sama persis.`);
+      }
+
       // Kumpulkan frame bersih gabungan dari seluruh kandidat (maksimal 30 frame pilihan)
       const pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 });
       console.log(`[Job ${jobId}] 🎯 Pool Multi-Kandidat Terbentuk: ${pooledFrames.length} frame bersih gabungan dari ${candidateResults.length} video kandidat.`);
@@ -1693,7 +1697,10 @@ export async function runStage1Pipeline({
 
       // Targeted Download: Unduh 1080p HANYA untuk kandidat yang klipnya terpilih oleh AI!
       const neededIndices = [...new Set(hl.clips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0))];
-      console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh 1080p Full HD hanya untuk video-video ini...`);
+      if (neededIndices.length < 2) {
+        throw new Error(`Klip terpilih hanya berasal dari 1 video sumber (${neededIndices.length} sumber). Iklan affiliate wajib memiliki variasi dari minimal 2-3 video sumber berbeda yang produknya sama persis.`);
+      }
+      console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari ${neededIndices.length} video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh 1080p Full HD hanya untuk video-video ini...`);
 
       let lastDlError = null;
       for (const candIdx of neededIndices) {
@@ -1735,15 +1742,16 @@ export async function runStage1Pipeline({
         const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
         return downloadedCandidatesMap.has(candIdx);
       });
+      const validDownloadedCandidates = new Set(validDownloadedClips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0));
 
-      // Jika ada kandidat lain yang gagal/diblokir tapi kita SUDAH memiliki minimal 2 klip 1080p yang terunduh:
-      // Kita lanjutkan dan lakukan retry/ekspansi frame menggunakan video 1080p yang sudah ada
-      if (validDownloadedClips.length >= 2) {
+      if (validDownloadedCandidates.size < 2) {
+        console.warn(`[Job ${jobId}] ⛔ Video 1080p yang terunduh hanya mencakup ${validDownloadedCandidates.size} video sumber.`);
+        throw lastDlError || new Error(`Video 1080p yang berhasil diunduh hanya mencakup ${validDownloadedCandidates.size} video sumber. Dibutuhkan minimal 2-3 video sumber berbeda untuk variasi visual.`);
+      }
+
+      if (validDownloadedClips.length >= 4) {
         hl.clips = validDownloadedClips;
-        console.log(`[Job ${jobId}] 🎯 Menggunakan video 1080p yang telah terunduh (${hl.clips.length} cuplikan awal). Klip dari kandidat yang gagal diunduh disingkirkan.`);
-      } else if (validDownloadedClips.length < 2 && neededIndices.length > downloadedCandidatesMap.size) {
-        console.warn(`[Job ${jobId}] ⛔ Video 1080p yang terunduh tidak cukup memenuhi kebutuhan frame (${validDownloadedClips.length} klip).`);
-        throw lastDlError || new Error('Video 1080p yang terunduh tidak mencukupi kebutuhan frame dan YouTube membatasi pengunduhan kandidat lainnya.');
+        console.log(`[Job ${jobId}] 🎯 Menggunakan video 1080p yang telah terunduh (${hl.clips.length} cuplikan dari ${validDownloadedCandidates.size} video sumber).`);
       }
 
       // Petakan videoPath 1080p ke masing-masing klip yang terpilih

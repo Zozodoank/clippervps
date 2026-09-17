@@ -1624,13 +1624,16 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
    - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / unboxing rapi / penampakan fisik produk). DILARANG KERAS frame sedang digosok, diperas, dipotong, atau aksi ekstrem di Slot 1!
    ${preset.storyboardInstructions}
-6. MANDATORY 100% PRODUCT VISUAL CONSISTENCY (WAJIB PRODUK/MODEL YANG SAMA PERSIS SEPANJANG IKLAN):
-   - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh 7 adegan yang dipilih (Slot 1 sampai Slot 7) WAJIB menampakkan PRODUK FISIK YANG SAMA (model, bentuk, material, dan fungsi identik dengan produk target: "${coreNoun}").
-   - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! (Contoh TERLARANG: Slot 1 toples kaca, Slot 2 panci masak, Slot 3 piring; atau Slot 1 wadah bumbu 4 sekat, Slot 2 toples putar, Slot 3 botol minyak). Setiap potongan klip yang menampilkan produk berbeda akan merusak iklan dan membuat penonton bingung!
-   - ATURAN PENGGUNAAN MULTI-VIDEO:
-     * Jika di antara kandidat terdapat beberapa video yang mendemonstrasikan MODEL PRODUK YANG SAMA PERSIS (misal dua video berbeda mereview wadah bumbu 4 sekat yang sama), Anda SANGAT DIANJURKAN mengkombinasikan adegan dari video-video tersebut untuk variasi sudut pandang kamera (multi-angle).
-     * TETAPI JIKA kandidat lain menampilkan MODEL/JENIS PRODUK YANG BERBEDA dari produk utama, AI DILARANG KERAS MEMILIH FRAME DARI KANDIDAT TERSEBUT!
-     * JIKA HANYA ADA 1 VIDEO KANDIDAT YANG PRODUKNYA COCOK DAN IDENTIK DENGAN PRODUK TARGET: AMBIL SELURUH 7 ADENGAN DARI 1 VIDEO TERSEBUT! Pilihlah 7 potongan adegan yang bervariasi dari video tersebut (hero shot produk, peragaan tangan, aksi pemakaian, fitur detail, hasil akhir). JANGAN PERNAH mencampur produk berbeda hanya demi memenuhi kuota multi-video!
+6. MANDATORY MULTI-SOURCE DIVERSITY (MINIMAL 2-3 VIDEO SUMBER) & 100% PRODUCT VISUAL CONSISTENCY:
+   - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh 7 adegan yang dipilih (Slot 1 sampai Slot 7) WAJIB menampakkan MODEL PRODUK FISIK YANG SAMA PERSIS (model, bentuk, material, dan fungsi identik dengan produk target: "${coreNoun}").
+   - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! (Contoh TERLARANG: Slot 1 toples kaca, Slot 2 panci masak, Slot 3 piring; atau Slot 1 wadah bumbu 4 sekat, Slot 2 toples putar, Slot 3 botol minyak).
+   - MANDAT MULTI-SOURCE DIVERSITY (MINIMAL 2 HINGGA 3 VIDEO SUMBER BERBEDA):
+     * Video affiliate yang dinamis dan berkinerja tinggi WAJIB mengkombinasikan adegan dari MINIMAL 2 HINGGA 3 VIDEO SUMBER BERBEDA yang mereview MODEL PRODUK YANG SAMA PERSIS.
+     * DILARANG KERAS MENGAMBIL SELURUH 7 SLOT HANYA DARI 1 VIDEO TUNGGAL (karena kurang variasi sudut pandang kamera, latar, dan pencahayaan)!
+     * Distribusikan ke-7 slot adegan ke minimal 2 sampai 3 video kandidat yang produk fisiknya sama persis (misal: Slot 1, 3, 6 dari Video Kandidat A; Slot 2, 4 dari Video Kandidat B; Slot 5, 7 dari Video Kandidat C).
+     * JIKA DI ANTARA KANDIDAT KURANG DARI 2 VIDEO YANG MENAMPILKAN PRODUK YANG SAMA PERSIS (misal hanya 1 video yang produknya cocok, sedangkan kandidat lain adalah produk berbeda atau tidak relevan):
+       AI WAJIB MENOLAK (REJECT) dengan format:
+       {"status": "reject", "reason": "Kurang variasi multi-sumber: Hanya ditemukan 1 video sumber yang cocok. Iklan wajib memiliki variasi dari minimal 2-3 video sumber dengan produk fisik yang sama persis."}
 7. Output Format:
    - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
    - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
