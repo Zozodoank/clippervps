@@ -1624,17 +1624,13 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
    - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / unboxing rapi / penampakan fisik produk). DILARANG KERAS frame sedang digosok, diperas, dipotong, atau aksi ekstrem di Slot 1!
    ${preset.storyboardInstructions}
-6. MANDATORY MULTI-VIDEO CANDIDATE HARVESTING (WAJIB DARI BEBERAPA VIDEO BERBEDA):
-   - Jika frame berasal dari beberapa video kandidat berbeda ("Video #1", "Video #2", "Video #3", dst.), PILIHAN FRAME PADA 7 ADENGAN HARUS DISEBARKAN KE MINIMAL 2 SAMPAI 4 VIDEO KANDIDAT BERBEDA!
-   - DILARANG KERAS MENGAMBIL SEMUA 7 ADENGAN DARI SATU VIDEO SAJA jika terdapat kandidat lain!
-   - Contoh penyebaran wajib:
-     * Slot 1 (Visual Produk Utuh): Video #1 (atau kandidat dengan hero shot terbaik)
-     * Slot 2 (Fitur/Detail): Video #2 (atau Video #1)
-     * Slot 3 (Aksi Peragaan Awal): Video #2
-     * Slot 4 (Aksi Sudut/Bahan Berbeda): Video #3 (WAJIB video berbeda dari Slot 3!)
-     * Slot 5 (Hasil / Bukti Nyata): Video #3 atau Video #4
-     * Slot 6 (Visual Produk Utuh Penutup): Video #4 atau Video #1
-     * Slot 7 (Display CTA): Video #1 atau Video #2
+6. MANDATORY 100% PRODUCT VISUAL CONSISTENCY (WAJIB PRODUK/MODEL YANG SAMA PERSIS SEPANJANG IKLAN):
+   - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh 7 adegan yang dipilih (Slot 1 sampai Slot 7) WAJIB menampakkan PRODUK FISIK YANG SAMA (model, bentuk, material, dan fungsi identik dengan produk target: "${coreNoun}").
+   - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! (Contoh TERLARANG: Slot 1 toples kaca, Slot 2 panci masak, Slot 3 piring; atau Slot 1 wadah bumbu 4 sekat, Slot 2 toples putar, Slot 3 botol minyak). Setiap potongan klip yang menampilkan produk berbeda akan merusak iklan dan membuat penonton bingung!
+   - ATURAN PENGGUNAAN MULTI-VIDEO:
+     * Jika di antara kandidat terdapat beberapa video yang mendemonstrasikan MODEL PRODUK YANG SAMA PERSIS (misal dua video berbeda mereview wadah bumbu 4 sekat yang sama), Anda SANGAT DIANJURKAN mengkombinasikan adegan dari video-video tersebut untuk variasi sudut pandang kamera (multi-angle).
+     * TETAPI JIKA kandidat lain menampilkan MODEL/JENIS PRODUK YANG BERBEDA dari produk utama, AI DILARANG KERAS MEMILIH FRAME DARI KANDIDAT TERSEBUT!
+     * JIKA HANYA ADA 1 VIDEO KANDIDAT YANG PRODUKNYA COCOK DAN IDENTIK DENGAN PRODUK TARGET: AMBIL SELURUH 7 ADENGAN DARI 1 VIDEO TERSEBUT! Pilihlah 7 potongan adegan yang bervariasi dari video tersebut (hero shot produk, peragaan tangan, aksi pemakaian, fitur detail, hasil akhir). JANGAN PERNAH mencampur produk berbeda hanya demi memenuhi kuota multi-video!
 7. Output Format:
    - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
    - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
@@ -2769,21 +2765,13 @@ export function build7SlotStoryboardClips({
         frameObj = getFrameByIdx(demoCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 4)];
       }
     } else if (config.slot === 4) {
-      // Slot 4: Action demo 2 WAJIB DENGAN VISUAL / ANGLE BERBEDA (Prioritaskan Beda Video Kandidat!)
-      const prevActionCandIdx = storyboardClips[2]?.candidateIndex;
-      const prevActionTs = storyboardClips[2]?.startSeconds || 0;
-
-      // Jika multi-kandidat tersedia, paksakan frame dari kandidat video yang berbeda dari Slot 3
-      if (candIndices.length > 1) {
-        const diffCandPool = validFrames.filter(f => (f.candidateIndex !== undefined ? f.candidateIndex : 0) !== prevActionCandIdx);
-        if (diffCandPool.length > 0) {
-          // Pilih frame aksi di kandidat lain
-          frameObj = diffCandPool.find(f => (f.timestamp || 0) >= 5.0) || diffCandPool[0];
-        }
-      }
-
+      // Slot 4: Action demo 2 dengan visual / angle berbeda
       if (!frameObj) {
-        const distantFrame = validFrames.find(f => Math.abs((f.timestamp || 0) - prevActionTs) >= 20.0);
+        const prevActionTs = storyboardClips[2]?.startSeconds || 0;
+        const prevCandIdx = storyboardClips[2]?.candidateIndex;
+        // Prioritaskan frame dengan timestamp berjarak signifikan dari kandidat yang sama
+        const distantFrame = validFrames.find(f => (f.candidateIndex === prevCandIdx || f.candidateIndex === undefined) && Math.abs((f.timestamp || 0) - prevActionTs) >= 15.0)
+          || validFrames.find(f => Math.abs((f.timestamp || 0) - prevActionTs) >= 15.0);
         if (distantFrame) {
           frameObj = distantFrame;
         } else {
@@ -2883,52 +2871,6 @@ export function build7SlotStoryboardClips({
 
     if (config.slot === 1) slot1Clip = clipObj;
     storyboardClips.push(clipObj);
-  }
-
-  // ── HARD CONSTRAINT MULTI-SOURCE: WAJIB MENYEBARKAN ADENGAN KE BEBERAPA KANDIDAT ──
-  if (candIndices.length >= 2) {
-    const usedCands = new Set(storyboardClips.map(c => c.candidateIndex));
-    const targetDistinctCands = Math.min(candIndices.length, 3);
-
-    if (usedCands.size < targetDistinctCands) {
-      console.log(`[build7SlotStoryboardClips] ⚠️ AI hanya memilih dari ${usedCands.size} video kandidat. Memaksa multi-source constraint agar tersebar ke minimal ${targetDistinctCands} video kandidat...`);
-
-      const unusedCands = candIndices.filter(ci => !usedCands.has(ci));
-      // Reassign Slot 4 (Aksi beda) & Slot 2/5 ke kandidat yang belum terpakai
-      const candidateReassignSlots = [4, 2, 5, 3];
-
-      for (const slotNum of candidateReassignSlots) {
-        if (unusedCands.length === 0) break;
-        const targetCand = unusedCands.shift();
-        const candFrames = framesByCand.get(targetCand) || [];
-        if (candFrames.length === 0) continue;
-
-        const slotClipIdx = storyboardClips.findIndex(c => c.storyboardSlot === slotNum);
-        if (slotClipIdx !== -1) {
-          const replacementFrame = candFrames.find(f => (f.timestamp || 0) >= 3.0) || candFrames[0];
-          const replCandDuration = replacementFrame?.candidate?.duration || totalDuration;
-          const replTs = replacementFrame.timestamp || (replCandDuration * 0.3);
-          const rStart = Math.max(0, Math.min(replCandDuration - clipSec, Math.round(replTs * 10) / 10));
-          const rEnd = Math.round((rStart + clipSec) * 10) / 10;
-
-          storyboardClips[slotClipIdx] = {
-            ...storyboardClips[slotClipIdx],
-            candidateIndex: targetCand,
-            candidateTitle: replacementFrame?.candidateTitle || replacementFrame?.candidate?.title || '',
-            candidateUrl: replacementFrame?.candidateUrl || replacementFrame?.candidate?.url || '',
-            videoId: replacementFrame?.videoId || replacementFrame?.candidate?.id || '',
-            candidate: replacementFrame?.candidate || null,
-            startSeconds: rStart,
-            endSeconds: rEnd,
-            startTime: formatSeconds(rStart),
-            endTime: formatSeconds(rEnd),
-            reason: `${storyboardClips[slotClipIdx].reason} [Multi-Source Rebalance: Video #${targetCand + 1}]`,
-          };
-          usedCands.add(targetCand);
-        }
-      }
-      console.log(`[build7SlotStoryboardClips] ✅ Multi-source constraint berhasil diterapkan: ${usedCands.size} video kandidat aktif digunakan pada 7 slot.`);
-    }
   }
 
   return storyboardClips;

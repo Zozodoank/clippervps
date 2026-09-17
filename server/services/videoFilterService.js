@@ -276,18 +276,57 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: 'Video terindikasi animasi, kartun, atau buatan AI.' };
   }
 
-  // 7. Kesesuaian Kategori Produk Target (Cross-Category Exclusion)
-  // Per instruksi pengguna: Pencocokan fisik produk spesifik di-handle AI Vision agar lebih stabil.
-  // Backend HANYA memblokir kategori non-dapur terlarang (otomotif, motor, mobil, las, skincare, gameplay, anime, vlog).
+  // 7. Kesesuaian Kategori Produk Target & Konflik Produk Berbeda
   if (productTitle && productTitle.trim()) {
     const prodInfo = extractCoreProductInfo(productTitle, metadata.description || '');
+    const coreNounLower = (prodInfo.coreProductNoun || '').toLowerCase();
+    const targetTitleLower = productTitle.toLowerCase();
+
+    // Deteksi benturan jenis produk dapur yang tidak kompatibel
+    // Misal: target adalah toples / wadah bumbu, tetapi video adalah panci, wajan, piring, atau pisau
+    const isTargetStorage = /\b(toples|stoples|wadah|tempat bumbu|kotak bumbu|botol bumbu|organizer|dispenser beras|jar|canister)\b/i.test(targetTitleLower) || /\b(toples|wadah)\b/i.test(coreNounLower);
+    const isCandCookwareOrTableware = /\b(panci|wajan|kuali|frypan|saucepan|katel|vicenza|fiorenza|prasmanan|piring|mangkok|cangkir|teko)\b/i.test(titleLower);
+    if (isTargetStorage && isCandCookwareOrTableware) {
+      return {
+        eligible: false,
+        reason: `Benturan produk: Target adalah wadah/toples penyimpanan ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat masak/makan ("${metadata.title}").`
+      };
+    }
+
+    const isTargetCookware = /\b(wajan|panci|kuali|frypan|saucepan|katel|penggorengan)\b/i.test(targetTitleLower);
+    const isCandStorageOrKnife = /\b(toples|stoples|tempat bumbu|wadah bumbu|rak bumbu|pisau|gunting|parutan|chopper)\b/i.test(titleLower);
+    if (isTargetCookware && isCandStorageOrKnife) {
+      return {
+        eligible: false,
+        reason: `Benturan produk: Target adalah wajan/panci masak ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah wadah/alat lain ("${metadata.title}").`
+      };
+    }
+
+    const isTargetChopper = /\b(chopper|blender|food processor|pelumat|penggiling daging)\b/i.test(targetTitleLower);
+    const isCandUnrelatedTool = /\b(wajan|panci|toples|rak|spons|piring|mangkok|botol minyak)\b/i.test(titleLower);
+    if (isTargetChopper && isCandUnrelatedTool) {
+      return {
+        eligible: false,
+        reason: `Benturan produk: Target adalah chopper/blender ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat lain ("${metadata.title}").`
+      };
+    }
+
+    const isTargetOilDispenser = /\b(botol minyak|oil dispenser|oil spray|botol kecap)\b/i.test(targetTitleLower);
+    const isCandOilMismatch = /\b(wajan|panci|piring|mangkok|rak gantung|pisau)\b/i.test(titleLower) && !/\b(minyak|oil|kuas)\b/i.test(titleLower);
+    if (isTargetOilDispenser && isCandOilMismatch) {
+      return {
+        eligible: false,
+        reason: `Benturan produk: Target adalah botol/dispenser minyak ("${prodInfo.coreProductNoun}"), tetapi video YouTube adalah alat masak/makan ("${metadata.title}").`
+      };
+    }
+
     const coreWords = prodInfo.multilingualWords || prodInfo.coreWords || [];
 
     // Cek pengecualian kategori silang non-dapur terlarang
     const crossCategoryPass = isTitleMatchingProduct(metadata.title, coreWords, {
       description: metadata.description,
       tags: metadata.tags,
-      isVisualSearch: true, // Delegasikan verifikasi fisik produk detail ke AI Vision
+      isVisualSearch: Boolean(options.isVisualSearch),
     });
 
     if (!crossCategoryPass) {

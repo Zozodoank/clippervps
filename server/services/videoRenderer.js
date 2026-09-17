@@ -305,7 +305,7 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
   const validModes = ['stage_80', 'square_stage', 'fit_canvas', 'vertical_crop'];
   const renderMode = validModes.includes(rawMode) ? rawMode : 'stage_80';
   const preFlip = clipHflip ? 'hflip,' : '';
-  const finish = `setsar=1,setpts=${ptsFactor}*PTS,eq=contrast=1.05:saturation=1.05:brightness=0.01,unsharp=5:5:0.8:5:5:0.0`;
+  const finish = `setsar=1,setpts=${ptsFactor}*(PTS-STARTPTS),eq=contrast=1.05:saturation=1.05:brightness=0.01,unsharp=5:5:0.8:5:5:0.0`;
 
   // 1. Explicit Full 9:16 Crop (Tanpa Blur) - only if user specifically requested 'vertical_crop'
   if (renderMode === 'vertical_crop') {
