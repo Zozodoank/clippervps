@@ -698,11 +698,20 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper menolak video: ${aiResult.reason} (${cleanFrames.length}/${frames.length} frame bersih).`);
     }
 
+    const discardedFaceTimestamps = discardedFrames
+      .filter(f => f.stage === 'face' || f.reason?.includes('Wajah') || f.reason?.includes('presenter'))
+      .map(f => f.timestamp);
+    const discardedViolationTimestamps = discardedFrames
+      .filter(f => f.timestamp !== undefined)
+      .map(f => f.timestamp);
+
     return {
       eligible: isEligible,
       cleanFrames,
       discardedFrames,
       reason: aiResult.reason,
+      discardedFaceTimestamps,
+      discardedViolationTimestamps,
       hasOpeningIntro: Boolean(aiResult.hasOpeningIntro),
       introCutoffSec: aiResult.introCutoffSec || 0.0,
       gatekeeperBackend: 'ai_gatekeeper_v1'
@@ -1032,7 +1041,8 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     discardedFrames,
     cleanFrameCount: cleanFrames.length,
     discardedFrameCount: discardedFrames.length,
-    discardedFaceTimestamps: discardedFrames.filter(f => f.reason === 'face').map(f => f.timestamp),
+    discardedFaceTimestamps: discardedFrames.filter(f => f.stage === 'face' || f.reason === 'face' || f.reason?.includes('Wajah')).map(f => f.timestamp),
+    discardedViolationTimestamps: discardedFrames.filter(f => f.timestamp !== undefined).map(f => f.timestamp),
     hasOpeningIntro: openingBumperCount > 0,
     introCutoffSec: openingBumperCount > 0 ? 5.0 : 0,
     hasOccasionalFace: humanFaceSkinCount > 0,
@@ -1048,8 +1058,8 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
  * Memfilter frame visual dari 1 kandidat secara granular per frame:
  * Membuang hanya frame berwajah / intro / corrupt, mempertahankan frame bersih peragaan produk.
  */
-export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null } = {}) {
-  const result = await inspectFramesLocally(frames, { allowPartialClean: true });
+export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null, niche = 'kitchen_tools' } = {}) {
+  const result = await inspectFramesLocally(frames, { allowPartialClean: true, niche });
   if (!result.eligible && result.reason && result.reason.includes('kosong / rusak')) {
     return { candidateIndex, candidate, cleanFrames: [], eligible: false, reason: result.reason };
   }

@@ -250,6 +250,17 @@ class TextGatekeeper:
                 total_text_pixels = int(np.count_nonzero(text_mask))
                 total_cov = total_text_pixels / float(target_h * target_w)
 
+                # Top 35% zone (detects top overlay, "da di deskripsi", promo banners, channel watermarks)
+                top_cut = int(target_h * 0.35)
+                top_mask = text_mask[:top_cut, :]
+                top_text_pixels = int(np.count_nonzero(top_mask))
+                top_zone_pixels = float(top_cut * target_w)
+                top_cov = top_text_pixels / top_zone_pixels if top_zone_pixels > 0 else 0.0
+
+                # Top-left and top-right corner zone (60% width)
+                top_left_mask = text_mask[:top_cut, :int(target_w * 0.60)]
+                top_left_cov = int(np.count_nonzero(top_left_mask)) / float(top_cut * int(target_w * 0.60)) if top_zone_pixels > 0 else 0.0
+
                 # Bottom 35% zone
                 bottom_cut = int(target_h * 0.65)
                 bottom_mask = text_mask[bottom_cut:, :]
@@ -257,6 +268,8 @@ class TextGatekeeper:
                 bottom_zone_pixels = float((target_h - bottom_cut) * target_w)
                 bottom_cov = bottom_text_pixels / bottom_zone_pixels if bottom_zone_pixels > 0 else 0.0
 
+                if top_cov >= 0.025 or top_left_cov >= 0.022:
+                    return True, total_cov, bottom_cov, f"Teks overlay / promo kreator di area atas (coverage {top_cov * 100:.1f}%)"
                 if bottom_cov >= max_bottom:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)"
                 if total_cov >= max_total:
@@ -276,6 +289,17 @@ class TextGatekeeper:
         connected = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
 
         total_cov = float(cv2.countNonZero(connected)) / crop_area
+
+        # Top 35% zone fallback
+        top_y = int(h * 0.35)
+        top_roi = connected[:top_y, :]
+        top_zone_area = float(top_y * w)
+        top_cov = float(cv2.countNonZero(top_roi)) / top_zone_area if top_zone_area > 0 else 0.0
+
+        left_top_roi = connected[:top_y, :int(w * 0.60)]
+        left_top_area = float(top_y * int(w * 0.60))
+        left_top_cov = float(cv2.countNonZero(left_top_roi)) / left_top_area if left_top_area > 0 else 0.0
+
         bottom_roi = connected[bottom_y:, :]
         bottom_zone_area = float((h - bottom_y) * w)
         bottom_cov = float(cv2.countNonZero(bottom_roi)) / bottom_zone_area if bottom_zone_area > 0 else 0.0
@@ -283,6 +307,8 @@ class TextGatekeeper:
         sobel_bottom_thresh = 0.12 if niche == "gadget_smartphone" else 0.08
         sobel_total_thresh = 0.10 if niche == "gadget_smartphone" else 0.07
 
+        if left_top_cov >= 0.035 or top_cov >= 0.040:
+            return True, total_cov, bottom_cov, f"Teks overlay / watermark di area atas (densitas {top_cov * 100:.1f}%)"
         if bottom_cov >= sobel_bottom_thresh:
             return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (densitas {bottom_cov * 100:.1f}%)"
         if total_cov >= sobel_total_thresh:
@@ -407,6 +433,55 @@ class SceneGatekeeper:
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. ORCHESTRATOR PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
+def detect_pillarbox(image_bgr):
+    """
+    Mendeteksi video vertikal yang di-pillarbox (memiliki strip hitam pekat di sisi kiri dan kanan).
+    Video 9:16 yang valid tidak boleh memiliki pilar hitam vertikal > 16% total lebar frame.
+    """
+    h, w = image_bgr.shape[:2]
+    if w < 50 or h < 50:
+        return False, 0.0, "Dimensi terlalu kecil"
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    col_means = np.mean(gray, axis=0)
+    black_thresh = 22.0
+
+    left_black = 0
+    while left_black < w and col_means[left_black] < black_thresh:
+        left_black += 1
+
+    right_black = 0
+    while right_black < w and col_means[w - 1 - right_black] < black_thresh:
+        right_black += 1
+
+    left_pct = left_black / float(w)
+    right_pct = right_black / float(w)
+    total_pillar = left_pct + right_pct
+
+    if total_pillar >= 0.16 and (left_pct >= 0.07 or right_pct >= 0.07):
+        return True, total_pillar, f"Pillarbox hitam di sisi samping ({total_pillar * 100:.1f}% frame)"
+    return False, 0.0, "Tanpa pillarbox"
+
+
+def detect_paper_manual(image_bgr):
+    """
+    Mendeteksi kertas buku panduan manual / kartu garansi / unboxing document:
+    Kertas putih cerah (val > 150), sangat desaturasi (sat < 45), dan memiliki densitas garis teks paragraf tinggi (edge_cov > 0.022).
+    """
+    h, w = image_bgr.shape[:2]
+    if h < 60 or w < 60:
+        return False, "Dimensi terlalu kecil"
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    sat_mean = float(np.mean(hsv[:, :, 1]))
+    val_mean = float(np.mean(hsv[:, :, 2]))
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    edge_cov = float(np.count_nonzero(edges)) / float(h * w)
+
+    if val_mean > 150 and sat_mean < 45 and edge_cov > 0.022:
+        return True, f"Buku panduan / dokumen kertas manual terdeteksi (val={val_mean:.0f}, sat={sat_mean:.0f}, edges={edge_cov*100:.1f}%)"
+    return False, "Bukan dokumen kertas"
+
+
 class FrameGatekeeper:
     def __init__(self):
         print("\n🚀 [AI Gatekeeper] Memuat pipeline pra-pemrosesan di CPU...")
@@ -444,7 +519,30 @@ class FrameGatekeeper:
                 "reason": "Format gambar corrupt / gagal dibaca cv2"
             }
 
+        # ── TAHAP 0: Pemeriksaan Pillarbox / Black Bars pada Full Frame ──
+        has_pb, pb_ratio, pb_reason = detect_pillarbox(img)
+        if has_pb:
+            return {
+                "filePath": file_path,
+                "timestamp": timestamp,
+                "status": "discarded",
+                "stage": "orientation",
+                "reason": pb_reason,
+                "pillarboxRatio": round(pb_ratio, 3)
+            }
+
         crop = self.crop_9_16(img)
+
+        # ── TAHAP 0B: Pemeriksaan Buku Panduan / Dokumen Kertas Manual ──
+        has_manual, manual_reason = detect_paper_manual(crop)
+        if has_manual:
+            return {
+                "filePath": file_path,
+                "timestamp": timestamp,
+                "status": "discarded",
+                "stage": "unboxing_manual",
+                "reason": manual_reason
+            }
 
         # ── TAHAP 1A: Face Detection pada Crop 9:16 (Area Tengah Fokus Klip) ──
         has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = self.face_gate.detect(crop, niche=niche)
@@ -504,7 +602,7 @@ class FrameGatekeeper:
             "timestamp": timestamp,
             "status": "clean",
             "stage": "passed",
-            "reason": "Lolos 3 tahap filter (Faceless, Bebas Teks, Adegan Natural)",
+            "reason": "Lolos seluruh filter (Faceless, Tanpa Pillarbox, Bebas Teks, Adegan Natural)",
             "totalCoverage": round(total_cov, 3),
             "bottomCoverage": round(bottom_cov, 3)
         }
@@ -542,13 +640,9 @@ class FrameGatekeeper:
 
             # Jika frame terdeteksi statis diam di badan video:
             if idx in static_indices and ts > 3.0 and verdict["status"] == "clean":
-                if niche == "gadget_smartphone":
-                    # Di smartphone, sample foto jepretan kamera (still photo / portrait) diperbolehkan!
-                    verdict["isCameraStill"] = True
-                else:
-                    verdict["status"] = "discarded"
-                    verdict["stage"] = "static_frame"
-                    verdict["reason"] = "Frame foto statis diam tanpa gerakan fisik peragaan"
+                verdict["status"] = "discarded"
+                verdict["stage"] = "static_frame"
+                verdict["reason"] = "Frame foto statis diam tanpa gerakan fisik peragaan"
 
             results.append(verdict)
 
@@ -562,18 +656,14 @@ class FrameGatekeeper:
 
         # Check for opening intro cutoff
         intro_cutoff_sec = 0.0
-        if len(results) >= 2 and results[0]["status"] == "discarded" and results[0]["stage"] in ("text", "scene", "static_frame"):
+        if len(results) >= 2 and results[0]["status"] == "discarded" and results[0]["stage"] in ("text", "scene", "static_frame", "unboxing_manual", "orientation"):
             intro_cutoff_sec = max(3.0, results[0].get("timestamp", 3.0))
-            if results[1]["status"] == "discarded" and results[1]["stage"] in ("text", "scene", "static_frame"):
+            if results[1]["status"] == "discarded" and results[1]["stage"] in ("text", "scene", "static_frame", "unboxing_manual", "orientation"):
                 intro_cutoff_sec = max(intro_cutoff_sec, results[1].get("timestamp", 5.0))
 
         # Eligible if at least 4 clean frames and clean frames represent >= 35% of video
-        # Di smartphone, peragaan foto kamera still diperbolehkan sehingga static_ratio diberi kelonggaran
         static_ratio = float(static_transitions) / max(1, len(frame_items) - 1)
-        if niche == "gadget_smartphone":
-            is_static_slideshow = (static_transitions >= 7) or (static_ratio >= 0.65)
-        else:
-            is_static_slideshow = (static_transitions >= 3) or (static_ratio >= 0.35)
+        is_static_slideshow = (static_transitions >= 3) or (static_ratio >= 0.35)
 
         eligible = (not is_static_slideshow) and len(clean_frames) >= 4 and (len(clean_frames) / max(1, len(frame_items)) >= 0.35)
 
@@ -583,9 +673,15 @@ class FrameGatekeeper:
             text_discards = sum(1 for d in discarded_frames if d["stage"] == "text")
             scene_discards = sum(1 for d in discarded_frames if d["stage"] == "scene")
             static_discards = sum(1 for d in discarded_frames if d["stage"] == "static_frame")
+            orient_discards = sum(1 for d in discarded_frames if d["stage"] == "orientation")
+            manual_discards = sum(1 for d in discarded_frames if d["stage"] == "unboxing_manual")
 
             if is_static_slideshow or static_discards >= 3:
                 summary_reason = f"Ditolak AI Gatekeeper: Video terdeteksi berupa slideshow foto statis / gambar diam ({static_transitions} transisi beku). Wajib video dengan gerakan fisik nyata."
+            elif orient_discards >= 2:
+                summary_reason = f"Ditolak AI Gatekeeper: {orient_discards} frame terdeteksi pillarbox hitam / orientasi abnormal."
+            elif manual_discards >= 2:
+                summary_reason = f"Ditolak AI Gatekeeper: {manual_discards} frame berupa dokumen buku panduan manual / unboxing."
             elif face_discards >= 3:
                 summary_reason = f"Ditolak AI Gatekeeper: Terdeteksi {face_discards} frame menampilkan wajah manusia."
             elif text_discards >= 4:

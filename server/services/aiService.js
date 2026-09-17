@@ -404,10 +404,15 @@ export function buildNicheProductCriterion(niche = 'kitchen_tools', coreNoun = '
 ${effectiveDesc ? `- Description: "${effectiveDesc}"` : ''}
 - PURPOSE: Identify the physical smartphone or gadget demonstrated and verify it is suitable for a 9:16 vertical affiliate video ad.
 - ACCEPTANCE STANDARD:
-  * ACCEPT smartphone review B-roll, hands-on physical demonstrations, camera tests, gaming tests, and unboxing B-roll (cherry-pick active usage/chassis shots, discard cardboard packaging).
+  * ACCEPT smartphone review B-roll, hands-on physical demonstrations, screen 120Hz smooth scrolling, gaming tests in hands, and unboxing B-roll (cherry-pick active usage/chassis shots, discard cardboard packaging and paper manuals).
+  * CRITICAL MANDATE - 100% PHYSICAL SMARTPHONE HARDWARE VISIBILITY:
+    Every selected clip/frame MUST show the physical smartphone hardware unit itself (hands holding the device, bezel, back cover, camera bump, or screen actively touched by fingers).
   * In "detectedProduct", output the specific model name (e.g. "Infinix Note 40 Pro", "Poco X6 5G", "Samsung Galaxy A15 5G", "Redmi Note 13 Pro 5G").
   * In "detectedBrand", output the brand (e.g. "Infinix", "Xiaomi", "Samsung", "Poco", "Realme", "Vivo", "Tecno").
 - REJECTION STANDARD:
+  * ZERO SCENERY / OUTDOOR PHOTO B-ROLL BAN: REJECT IMMEDIATELY if the video or clips display random outdoor scenery, night cityscapes, skyscrapers, trees, roads, or sample camera shots where the physical smartphone unit is ABSENT! A smartphone affiliate ad must showcase the actual physical smartphone hardware, not random scenery photos!
+  * PILLARBOX & BLACK BARS BAN: REJECT IMMEDIATELY if the video has vertical black bars (pillarbox) on the left and right sides.
+  * ROTATED / SIDEWAYS 90° FOOTAGE BAN: REJECT IMMEDIATELY if the video or gameplay is rotated sideways 90 degrees.
   * REJECT IF TALKING HEAD / PODCAST: REJECT if the video is pure talking-head presenter without hands-on close-up B-roll of the physical smartphone.
   * REPAIR / SERVICE / TEARDOWN BAN: REJECT IMMEDIATELY (status: 'reject') if the video is about repairing, servicing, fixing broken glass/LCD, replacing batteries, or soldering/disassembly (servis, bongkar, hp rusak, mati total, ganti lcd). Video must showcase a working pristine smartphone in action!
   * BULKY APPLIANCES & VEHICLES BAN: REJECT if the video is about large appliances, TVs, monitors, refrigerators, furniture, cars, or motorcycles.
@@ -464,19 +469,17 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
 export function buildFaceAndMotionCriterion(niche = 'kitchen_tools', clipSec = 4.8) {
   const preset = getNichePreset(niche);
   if (preset.id === 'gadget_smartphone') {
-    return `CRITERION 4: VLOGGER TALKING-HEAD BAN WITH SMART CAMERA TEST & STILL PHOTO ALLOWANCE (SMARTPHONE NICHE)
+    return `CRITERION 4: VLOGGER TALKING-HEAD BAN & PHYSICAL HARDWARE FOCUS (SMARTPHONE NICHE)
 - MANDATORY SHORT-FORM VIDEO STANDARD:
-  * This is an automated smartphone showcase video. The core focus MUST be physical B-roll: hands holding the device, bezel, back cover, 120Hz scrolling, gaming FPS, and camera samples.
+  * This is an automated smartphone showcase video. The core focus MUST be physical hardware B-roll: hands holding the device, bezel, back cover, 120Hz scrolling, physical gaming in hands.
   * STRICT BAN ON VLOGGER TALKING-HEAD IN STUDIO:
     DILARANG KERAS memilih klip presenter/vlogger berbicara menghadap kamera di studio (talking-head intro/outro/talking scenes).
-  * CRITICAL CAMERA REVIEW EXCEPTION (MANDATORY):
-    Reviewers frequently test the smartphone camera outdoors (street 4K video stabilization, landscape, portrait photo samples).
-    During these camera test samples, distant people, pedestrians walking on the street, or portrait photo subjects ARE 100% PERMITTED AND VALUABLE!
-    DO NOT reject camera test clips because humans/pedestrians are visible in the camera sample!
-  * CAMERA SAMPLE STILL PHOTO (KEN BURNS) ALLOWANCE:
-    High-resolution still photos (sample jepretan kamera 2-3 detik seperti foto malam, landscape, atau bokeh portrait) ARE 100% PERMITTED as camera demonstration clips! The video renderer will automatically apply smooth subtle zoom to still photos.
+  * ZERO TOLERANCE FOR SCENERY OR RANDOM B-ROLL WITHOUT THE SMARTPHONE:
+    DILARANG KERAS memilih foto/video pemandangan alam, gedung/kota malam, langit, jalan raya, atau sample foto kamera yang HANYA menampilkan objek pemandangan tanpa fisik smartphone di tangan! Setiap cuplikan WAJIB menampakkan unit smartphone fisik yang sedang dipegang atau dioperasikan tangan.
+  * SLIDESHOW BAN:
+    DILARANG KERAS memilih frame atau klip yang berupa foto diam (slideshow statis)! Klip wajib memiliki gerakan fisik nyata (tangan memegang, memutar bodi HP, scrolling layar, swipe jari, tombol ditekan).
   * REJECT ONLY IF:
-    The video is purely a vlogger talking to the camera without hands-on phone B-roll, or lacks at least 6 distinct smartphone physical B-roll clips.
+    The video is purely a vlogger talking to the camera without hands-on phone B-roll, or lacks at least 6 distinct smartphone physical hardware B-roll clips.
   * In rejection output, set reason to: "Menampilkan vlogger talking-head studio tanpa B-roll fisik HP yang cukup"`;
   }
 
@@ -511,6 +514,7 @@ export async function analyzeYouTubeVideoWithGemini({
   totalDuration = 600,
   introCutoffSec = 0,
   discardedFaceTimestamps = [],
+  discardedViolationTimestamps = [],
   isVideoFirst = false,
   niche = 'kitchen_tools',
   onProgress = () => { },
@@ -559,23 +563,27 @@ export async function analyzeYouTubeVideoWithGemini({
     progress: 46,
   });
 
-  const faceBlacklistWarning = (Array.isArray(discardedFaceTimestamps) && discardedFaceTimestamps.length > 0)
-    ? `\nCRITICAL BLACKLIST (DETEKSI WAJAH/PRESENTER LOKAL): Frame visual pada detik [${discardedFaceTimestamps.map(t => Math.round(t)).join(', ')}s] terdeteksi menampakkan wajah/manusia. DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
+  const allViolationTimestamps = Array.from(new Set([
+    ...(Array.isArray(discardedFaceTimestamps) ? discardedFaceTimestamps : []),
+    ...(Array.isArray(discardedViolationTimestamps) ? discardedViolationTimestamps : [])
+  ])).map(t => Math.round(t)).sort((a, b) => a - b);
+
+  const violationBlacklistWarning = allViolationTimestamps.length > 0
+    ? `\nCRITICAL BLACKLIST (DETEKSI AI LOKAL: WAJAH, TEKS OVERLAY, PILLARBOX, DOKUMEN MANUAL): Frame visual pada detik [${allViolationTimestamps.join(', ')}s] terdeteksi melanggar aturan kualitas (wajah presenter / teks overlay / unboxing manual / pillarbox). DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
     : '';
 
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
 Evaluate this YouTube video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
-${faceBlacklistWarning}
+${violationBlacklistWarning}
 
 ${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
 
-CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
-- 9:16 CROP GEOMETRY:
-  * Both 'clipper' (9:16 vertical) and 'YTCLIPER' (16:9 with background color pillars) crop the central 9:16 vertical frame (the middle ~45-50% width of the horizontal video).
-  * The outer left margins (0-20% from left edge) and outer right margins (80-100% from right edge) are COMPLETELY CROPPED OUT or covered by background pillars!
-- PERIPHERAL CORNER WATERMARK / LOGO TOLERANCE (100% ACCEPTABLE):
-  * Jika ada watermark, logo media sosial (TikTok/Douyin/YouTube), atau nama channel di pojok KIRI atau KANAN video (di luar frame 9:16 tengah): TETAP DITERIMA! JANGAN DITOLAK! Karena bagian kiri dan kanan ini akan terpotong bersih atau tertutup background.
+CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP GEOMETRY RULE)
+- 9:16 CROP GEOMETRY MANDATE (HORIZONTAL 16:9 vs VERTICAL 9:16 SOURCE VIDEOS):
+  * HORIZONTAL 16:9 VIDEOS: The backend crops the central 9:16 vertical frame (~45-50% width). Outer left margins (0-20%) and outer right margins (80-100%) are completely cropped out. Peripheral corner watermarks in the far corners are safely cut off.
+  * VERTICAL 9:16 VIDEOS (SHORTS / REELS / TIKTOK): ZERO HORIZONTAL CROPPING OCCURS! The full 100% width and all four corners remain completely visible in the final output!
+    THEREFORE: In vertical videos, ANY watermark, channel handle, or creator text overlay anywhere in the frame (including corners and margins) CANNOT be cropped out and MUST BE REJECTED IMMEDIATELY!
 - STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME:
   * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
   * Setiap watermark atau logo yang masuk ke dalam frame 9:16 wajib DITOLAK karena tidak bisa terpotong.
@@ -587,49 +595,47 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOL
 
 CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
 - The backend generates and burns its own clean, animated subtitles.
-- 9:16 CROP TOLERANCE MANDATE FOR ANIMATED GRAPHICS & OVERLAYS (CRITICAL):
-  * SAMA SEPERTI ATURAN LOGO/WATERMARK PADA CRITERION 2: Bagian video yang akan dipakai hanyalah area tengah vertikal rasio 9:16. Area sayap kiri (0-25%) dan sayap kanan (75-100%) AKAN TERPOTONG HABIS (CROPPED OUT) atau tertutup pilar background!
-  * JIKA ADA GRAFIS ANIMASI, STIKER KARTUN, EMOJI, BANNER SUBSCRIBE, ATAU OVERLAY DI SAYAP KIRI ATAU KANAN (DI LUAR FRAME 9:16 TENGAH): 100% DITERIMA (status: 'accept')! JANGAN PERNAH MENOLAK VIDEO KARENA GRAFIS DI LUAR FRAME 9:16!
-  * GRAFIS ANIMASI AKAN TERTOLAK HANYA JIKA ADA DI FRAME 9:16 TENGAH:
-    TOLAK HANYA JIKA grafis animasi overlay, stiker kartun, emoji, atau elemen grafis buatan MASUK ATAU MENETAP DI DALAM FRAME 9:16 TENGAH dan menutupi peragaan produk fisik secara terus-menerus.
-  * TRANSIENT ANIMATION / TRANSITION TOLERANCE (CRITICAL MANDATE):
-    - Jika grafis animasi, stiker, atau efek transisi pop-up HANYA MUNCUL SEKILAS 1-2 DETIK di dalam frame 9:16: JANGAN TOLAK VIDEONYA! Video TETAP DITERIMA (status: 'accept').
-    - AI WAJIB MEMBUANG DETIK TERSEBUT dengan cara HANYA memilih timestamps klip yang bersih dari animasi.
+- CREATOR PROMOTIONAL TEXT & OVERLAY BAN (CRITICAL FOR VERTICAL VIDEOS):
+  * DILARANG KERAS teks ajakan promosi kreator seperti "da di deskripsi", "link di bio", "klik keranjang kuning", "cek bio", "baca deskripsi", "follow", atau running caption!
+  * Pada video vertikal 9:16, teks overlay di pojok kiri atas/bawah TIDAK AKAN TERPOTONG dan wajib langsung DITOLAK!
+- STATIC TEXT BANNERS & COLORED BACKGROUND CARDS BAN:
+  * DILARANG KERAS jika ada banner teks statis, kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan tulisan di dalamnya), lower-third card, atau label promosi digital yang menempel di dalam frame 9:16 tengah!
 - OPENING INTRO BUMPER / TITLE CARD TOLERANCE (CRITICAL MANDATE):
   * JIKA VIDEO MEMILIKI KARTU INTRO / BUMPER PEMBUKA / LOGO CHANNEL ANIMASI DI DETIK 0 SAMPAI DETIK 5: JANGAN DITOLAK!
   * Video TETAP DITERIMA (status: 'accept') asalkan bagian peragaan produk setelahnya bersih dan faceless.
   * GEMINI WAJIB MEMBUANG INTRO TERSEBUT dengan cara: HANYA memilih timestamps klip yang dimulai SETELAH INTRO SELESAI (misal: mulai detik >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
 - REJECT ONLY IF:
-  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS BAN: DILARANG KERAS jika ada banner teks statis, kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan tulisan di dalamnya), lower-third card, atau label promosi digital yang menempel di dalam frame 9:16 tengah!
+  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS: Ada banner teks statis, kartu persegi berlatar warna, atau kartu promo.
   * Kartu bumper foto / slide diam mendominasi isi tengah video (video berupa kumpulan foto/slideshow statis).
   * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
   * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
-- ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable.
+- ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable. Paper manuals, brochures, and packaging labels are NOT exempt!
 
 ${buildFaceAndMotionCriterion(niche, clipSec)}
 
 CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
-  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, mengeluarkan barang dari kotak, atau memperlihatkan kelengkapan aksesoris/buku manual di awal video): JANGAN TOLAK VIDEONYA! Video TETAP DITERIMA (status: 'accept').
+  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, mengeluarkan barang dari kotak): Video TETAP DITERIMA (status: 'accept').
 - MANDAT PEMBUANGAN PROSES UNBOXING:
-  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN, ATAU BUSA PACKAGING!
-  * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing atau menyorot kotak kardus/kemasan!
-  * HANYA pilih timestamps ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, membersihkan, hasil nyata penggunaan produk).
+  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, KARTU GARANSI, ATAU BUSA PACKAGING!
+  * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing, buku panduan manual kertas, atau menyorot kotak kardus/kemasan!
+  * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
 - TOLAK (status: 'reject') HANYA JIKA:
-  * 100% seluruh isi video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
+  * 100% seluruh isi video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun demonstrasi fungsi fisik produk.
 
-CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO TOLERANCE FOR ROTATED / SIDEWAYS 90° FOOTAGE
+CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOOTAGE
 - ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FOOTAGE (MIRING / ROTATE 90 DERAJAT):
   * DILARANG KERAS MEMILIH CUPLIKAN DENGAN ORIENTASI KAMERA MIRING / TERPUTAR 90 DERAJAT (SIDEWAYS ORIENTATION)!
-  * Inspect the visual orientation carefully:
-    - Permukaan meja kerja, kompor, wajan, talenan, atau lantai dapur HARUS berada pada posisi horizontal yang wajar/normal (gravitasi bumi normal).
-    - JIKA SUDUT PENGAMBILAN GAMBAR TERPUTAR 90 DERAJAT (misal: wajan/kompor berdiri vertikal di sisi samping layar, dinding dapur miring tegak lurus 90°, atau tangan berorientasi menyamping tidak wajar): DILARANG KERAS MEMASUKKAN TIMESTAMPS INI!
-  * Jika video secara keseluruhan direkam/diupload miring 90 derajat tanpa rotasi normal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring/rotate 90 derajat (sideways footage)."}.
+  * Permukaan meja kerja, kompor, wajan, talenan, atau tangan memegang HP HARUS berada pada posisi horizontal/vertikal normal (gravitasi bumi normal).
+- ZERO TOLERANCE FOR PILLARBOX & VERTICAL BLACK BARS:
+  * DILARANG KERAS video yang memiliki pilar / garis hitam vertikal tebal di sisi kiri dan kanan (pillarbox narrow slit)! Video harus mengisi penuh frame secara proporsional.
+- Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
 CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
 - Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions for a full 30 to 35 second video ad.
 - Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
+- If the video does NOT contain at least 10 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
 - If the video does NOT contain at least 10 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
 
 Output valid JSON ONLY with this exact format:
@@ -839,9 +845,9 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     for (const rawTs of rawTimestamps) {
       const sec = typeof rawTs === 'number' ? rawTs : parseTimeToSeconds(rawTs);
       if (isNaN(sec) || sec < 0 || sec > totalDuration) continue;
-      // Filter out timestamps colliding with locally detected face frames (+- 3.0s)
-      if (Array.isArray(discardedFaceTimestamps) && discardedFaceTimestamps.some(ft => Math.abs(ft - sec) < 3.0)) {
-        console.log(`[Gemini YouTube Stream] Discarding timestamp ${sec}s because it collides with detected face frame`);
+      // Filter out timestamps colliding with locally detected violation frames (+- 3.0s)
+      if (allViolationTimestamps.length > 0 && allViolationTimestamps.some(vt => Math.abs(vt - sec) < 3.0)) {
+        console.log(`[Gemini YouTube Stream] Discarding timestamp ${sec}s because it collides with detected violation frame (+-3s)`);
         continue;
       }
       const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
@@ -1006,12 +1012,11 @@ Evaluate this full video carefully against the following 5 MANDATORY ACCEPTANCE 
 
 ${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
 
-CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE)
-- 9:16 CROP GEOMETRY:
-  * Both 'clipper' (9:16 vertical) and 'YTCLIPER' (16:9 with background color pillars) crop the central 9:16 vertical frame (the middle ~45-50% width of the horizontal video).
-  * The outer left margins (0-20% from left edge) and outer right margins (80-100% from right edge) are COMPLETELY CROPPED OUT or covered by background pillars!
-- PERIPHERAL CORNER WATERMARK / LOGO TOLERANCE (100% ACCEPTABLE):
-  * Jika ada watermark, logo media sosial (TikTok/Douyin/YouTube), atau nama channel di pojok KIRI atau KANAN video (di luar frame 9:16 tengah): TETAP DITERIMA! JANGAN DITOLAK! Karena bagian kiri dan kanan ini akan terpotong bersih atau tertutup background.
+CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP GEOMETRY RULE)
+- 9:16 CROP GEOMETRY MANDATE (HORIZONTAL 16:9 vs VERTICAL 9:16 SOURCE VIDEOS):
+  * HORIZONTAL 16:9 VIDEOS: The backend crops the central 9:16 vertical frame (~45-50% width). Outer left margins (0-20%) and outer right margins (80-100%) are completely cropped out. Peripheral corner watermarks in the far corners are safely cut off.
+  * VERTICAL 9:16 VIDEOS (SHORTS / REELS / TIKTOK): ZERO HORIZONTAL CROPPING OCCURS! The full 100% width and all four corners remain completely visible in the final output!
+    THEREFORE: In vertical videos, ANY watermark, channel handle, or creator text overlay anywhere in the frame (including corners and margins) CANNOT be cropped out and MUST BE REJECTED IMMEDIATELY!
 - STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME:
   * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
   * Setiap watermark atau logo yang masuk ke dalam frame 9:16 wajib DITOLAK karena tidak bisa terpotong.
@@ -1023,57 +1028,42 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP TOL
 
 CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
 - The backend generates and burns its own clean, animated subtitles.
-- 9:16 CROP TOLERANCE MANDATE FOR ANIMATED GRAPHICS & OVERLAYS (CRITICAL):
-  * SAMA SEPERTI ATURAN LOGO/WATERMARK PADA CRITERION 2: Bagian video yang akan dipakai hanyalah area tengah vertikal rasio 9:16. Area sayap kiri (0-25%) dan sayap kanan (75-100%) AKAN TERPOTONG HABIS (CROPPED OUT) atau tertutup pilar background!
-  * JIKA ADA GRAFIS ANIMASI, STIKER KARTUN, EMOJI, BANNER SUBSCRIBE, ATAU OVERLAY DI SAYAP KIRI ATAU KANAN (DI LUAR FRAME 9:16 TENGAH): 100% DITERIMA (status: 'accept')! JANGAN PERNAH MENOLAK VIDEO KARENA GRAFIS DI LUAR FRAME 9:16!
-  * GRAFIS ANIMASI AKAN TERTOLAK HANYA JIKA ADA DI FRAME 9:16 TENGAH:
-    TOLAK HANYA JIKA grafis animasi overlay, stiker kartun, emoji, atau elemen grafis buatan MASUK ATAU MENETAP DI DALAM FRAME 9:16 TENGAH dan menutupi peragaan produk fisik secara terus-menerus.
-  * TRANSIENT ANIMATION / TRANSITION TOLERANCE (CRITICAL MANDATE):
-    - Jika grafis animasi, stiker, atau efek transisi pop-up HANYA MUNCUL SEKILAS 1-2 DETIK di dalam frame 9:16: JANGAN TOLAK VIDEONYA! Video TETAP DITERIMA (status: 'accept').
-    - AI WAJIB MEMBUANG DETIK TERSEBUT dengan cara HANYA memilih timestamps klip yang bersih dari animasi.
+- CREATOR PROMOTIONAL TEXT & OVERLAY BAN (CRITICAL FOR VERTICAL VIDEOS):
+  * DILARANG KERAS teks ajakan promosi kreator seperti "da di deskripsi", "link di bio", "klik keranjang kuning", "cek bio", "baca deskripsi", "follow", atau running caption!
+  * Pada video vertikal 9:16, teks overlay di pojok kiri atas/bawah TIDAK AKAN TERPOTONG dan wajib langsung DITOLAK!
+- STATIC TEXT BANNERS & COLORED BACKGROUND CARDS BAN:
+  * DILARANG KERAS jika ada banner teks statis, kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan tulisan di dalamnya), lower-third card, atau label promosi digital yang menempel di dalam frame 9:16 tengah!
 - OPENING INTRO BUMPER / TITLE CARD TOLERANCE (CRITICAL MANDATE):
   * JIKA VIDEO MEMILIKI KARTU INTRO / BUMPER PEMBUKA / LOGO CHANNEL ANIMASI DI DETIK 0 SAMPAI DETIK 5: JANGAN DITOLAK!
   * Video TETAP DITERIMA (status: 'accept') asalkan bagian peragaan produk setelahnya bersih dan faceless.
   * GEMINI WAJIB MEMBUANG INTRO TERSEBUT dengan cara: HANYA memilih timestamps klip yang dimulai SETELAH INTRO SELESAI (misal: mulai detik >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
 - REJECT ONLY IF:
-  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS BAN: DILARANG KERAS jika ada banner teks statis, kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan tulisan di dalamnya), lower-third card, atau label promosi digital yang menempel di dalam frame 9:16 tengah!
+  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS: Ada banner teks statis, kartu persegi berlatar warna, atau kartu promo.
   * Kartu bumper foto / slide diam mendominasi isi tengah video (video berupa kumpulan foto/slideshow statis).
   * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
   * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
-- Physical text/button markings printed/embossed directly on the physical product body ("Power", "ON/OFF", "500ml") are 100% ACCEPTABLE.
+- ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable. Paper manuals, brochures, and packaging labels are NOT exempt!
 
-CRITERION 4: ZERO FACES & ZERO HUMANS (STRICT 100% FACELESS HANDS-ONLY TABLETOP CLOSE-UP)
-- MANDATORY AFFILIATE STANDARD:
-  * This is an automated affiliate product video advertisement. It MUST be 100% faceless hands-on product demonstration on a tabletop or countertop (hands/fingers operating the tool close-up).
-  * ZERO TOLERANCE FOR FACES, HEADS, OR HUMAN BODIES:
-    DILARANG KERAS menampilkan wajah, kepala, rambut, mata, mulut, dagu, leher, atau tubuh/torso manusia di dalam frame 9:16 pada detik-detik klip yang dipilih, BAHKAN UNTUK 0.5 DETIK SEKALI PUN!
-  * HANYA pilih timestamps ketika kamera menyorot CLOSE-UP produk fisik yang sedang dioperasikan oleh jari/tangan di atas meja atau alas kerja.
-- SLIDESHOW & DIGITAL ZOOM (KEN BURNS) BAN:
-  * DILARANG KERAS memilih frame atau klip yang berupa foto/gambar diam (slideshow katalog) dengan efek zoom perlahan (Ken Burns effect)!
-  * Klip WAJIB memiliki gerakan fisik dinamis dan nyata (tangan mengoperasikan produk, bahan terpotong/terkupas, cairan mengalir, tombol ditekan, motor berputar).
-- REJECT IMMEDIATELY (status: 'reject') IF:
-  * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
-  * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
-  * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"
+${buildFaceAndMotionCriterion(niche, clipSec)}
 
 CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
-  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, mengeluarkan barang dari kotak, atau memperlihatkan kelengkapan aksesoris/buku manual di awal video): JANGAN TOLAK VIDEONYA! Video TETAP DITERIMA (status: 'accept').
+  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, mengeluarkan barang dari kotak): Video TETAP DITERIMA (status: 'accept').
 - MANDAT PEMBUANGAN PROSES UNBOXING:
-  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN, ATAU BUSA PACKAGING!
-  * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing atau menyorot kotak kardus/kemasan!
-  * HANYA pilih timestamps ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, membersihkan, hasil nyata penggunaan produk).
+  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, KARTU GARANSI, ATAU BUSA PACKAGING!
+  * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing, buku panduan manual kertas, atau menyorot kotak kardus/kemasan!
+  * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
 - TOLAK (status: 'reject') HANYA JIKA:
-  * 100% seluruh isi video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
+  * 100% seluruh isi video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun demonstrasi fungsi fisik produk.
 
-CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO TOLERANCE FOR ROTATED / SIDEWAYS 90° FOOTAGE
+CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOOTAGE
 - ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FOOTAGE (MIRING / ROTATE 90 DERAJAT):
   * DILARANG KERAS MEMILIH CUPLIKAN DENGAN ORIENTASI KAMERA MIRING / TERPUTAR 90 DERAJAT (SIDEWAYS ORIENTATION)!
-  * Inspect the visual orientation carefully:
-    - Permukaan meja kerja, kompor, wajan, talenan, atau lantai dapur HARUS berada pada posisi horizontal yang wajar/normal (gravitasi bumi normal).
-    - JIKA SUDUT PENGAMBILAN GAMBAR TERPUTAR 90 DERAJAT (misal: wajan/kompor berdiri vertikal di sisi samping layar, dinding dapur miring tegak lurus 90°, atau tangan berorientasi menyamping tidak wajar): DILARANG KERAS MEMASUKKAN TIMESTAMPS INI!
-  * Jika video secara keseluruhan direkam/diupload miring 90 derajat tanpa rotasi normal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring/rotate 90 derajat (sideways footage)."}.
+  * Permukaan meja kerja, kompor, wajan, talenan, atau tangan memegang HP HARUS berada pada posisi horizontal/vertikal normal (gravitasi bumi normal).
+- ZERO TOLERANCE FOR PILLARBOX & VERTICAL BLACK BARS:
+  * DILARANG KERAS video yang memiliki pilar / garis hitam vertikal tebal di sisi kiri dan kanan (pillarbox narrow slit)! Video harus mengisi penuh frame secara proporsional.
+- Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
 CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
 - Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions for a full 30 to 35 second video ad.
@@ -1459,8 +1449,9 @@ RULE 1: ABSOLUTE ZERO HARDCODED SPEECH SUBTITLES & ZERO BURNED-IN CAPTION BARS:
   * AI WAJIB MEMBUANG INTRO TERSEBUT: HANYA pilih frame yang dimulai SETELAH INTRO SELESAI (misal: frame dengan timestamp >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
   * Frame kartu bumper intro pembuka TIDAK BOLEH dimasukkan ke dalam daftar "frames"!
 - CRITICAL EXCEPTION (PHYSICAL PRODUCT TEXT IS 100% PERMITTED):
-  * Real physical text, brand marks, buttons, or labels printed/embossed directly ON THE PHYSICAL PRODUCT BODY OR ITS PACKAGING (e.g. brand logo "Philips", "Joybos", "Midea", "Xiaomi", button markings "ON/OFF", "Power", "Speed 1 2", volume "500ml", "100°C", "Stainless Steel 304", or physical ingredient/specification labels) is 100% NATURAL AND FULLY ACCEPTABLE!
-  * NEVER reject a video because of text or brand logos printed physically on the product itself!
+  * Real physical text, brand marks, buttons, or embossed markings directly ON THE PHYSICAL PRODUCT APPLIANCE CHASSIS ITSELF (e.g. brand logo "Philips", "Joybos", "Midea", "Xiaomi", button markings "ON/OFF", "Power", "Speed 1 2", volume "500ml", "100°C", "Stainless Steel 304") is 100% NATURAL AND FULLY ACCEPTABLE!
+  * STRICT BAN ON PAPER MANUALS & PACKAGING TEXT: Paper instruction manuals, warranty cards, cardboard packaging text, shipping labels, and leaflets are STRICTLY FORBIDDEN! Do NOT select frames displaying paper documents or cardboard packaging text!
+  * NEVER reject a video because of text or brand logos printed physically on the product body itself!
 
 RULE 2: PRODUCT IDENTIFICATION & NICHE VALIDATION:
 ${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
@@ -1471,13 +1462,13 @@ ${buildFaceAndMotionCriterion(niche, clipSec)}
 
 RULE 3B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES):
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
-  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, unboxing paket, mengeluarkan barang dari kotak, atau memeriksa buku panduan/aksesori di dalam kotak): JANGAN DITOLAK! Video TETAP DITERIMA (status: 'accept').
-- MANDAT PEMBUANGAN FRAME UNBOXING:
-  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA FRAME YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN, ATAU BUSA PACKAGING!
-  * Frame proses unboxing/kemasan DILARANG KERAS dimasukkan ke dalam daftar "frames" terpilih atau dijadikan klip!
-  * HANYA pilih indeks frame ("frames") ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, membersihkan, hasil nyata produk).
+  * Jika video memiliki proses unboxing di awal (membuka kardus, merobek bubble wrap/plastik, unboxing paket): Video TETAP DITERIMA (status: 'accept').
+- MANDAT PEMBUANGAN FRAME UNBOXING & MANUAL KERTAS:
+  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA FRAME YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, ATAU BUSA PACKAGING!
+  * Frame proses unboxing, buku panduan kertas, atau kemasan kardus DILARANG KERAS dimasukkan ke dalam daftar "frames" terpilih!
+  * HANYA pilih indeks frame ("frames") ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA di luar kemasan (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
 - TOLAK (status: 'reject') HANYA JIKA:
-  * 100% seluruh video HANYA unboxing paket tanpa ada sedikit pun peragaan cara kerja/demonstrasi fungsi fisik produk.
+  * 100% seluruh video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun peragaan cara kerja fisik produk.
 
 RULE 4: REAL AUTHENTIC PHYSICAL FOOTAGE (NO AI/CGI SLOP, NO TALKING HEADS):
 - REJECT if AI-generated / synthetic / CGI / 3D animated / cartoon video.
@@ -1485,18 +1476,19 @@ RULE 4: REAL AUTHENTIC PHYSICAL FOOTAGE (NO AI/CGI SLOP, NO TALKING HEADS):
 - REJECT if pure parcel unboxing / bubble wrap without active product demonstration.
 - REJECT if video is about repairing, fixing, servicing, replacing parts, or disassembling broken items (perbaikan, servis, barang rusak, ganti sparepart, bongkar mesin).
 
-RULE 4B: NORMAL CAMERA ORIENTATION & NO ROTATED/SIDEWAYS FOOTAGE:
+RULE 4B: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / NO ROTATED FOOTAGE:
 - ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FRAMES (MIRING / ROTATE 90 DERAJAT):
   * DILARANG KERAS memilih frame dengan orientasi kamera miring / terputar 90 derajat (sideways orientation).
-  * Permukaan meja, wajan, kompor, atau lantai harus berada pada orientasi horizontal normal (gravitasi normal).
-  * Jika video secara keseluruhan terputar/miring 90 derajat: REJECT with reason "Orientasi kamera miring/rotate 90 derajat (sideways footage)".
+  * Permukaan meja, wajan, kompor, atau tangan memegang HP harus berada pada orientasi horizontal/vertikal normal (gravitasi normal).
+- ZERO TOLERANCE FOR PILLARBOX & BLACK BARS:
+  * DILARANG KERAS video yang memiliki pilar hitam vertikal tebal di sisi samping (pillarbox)! Video harus memenuhi frame secara proporsional.
+  * Jika video secara keseluruhan terputar/miring 90 derajat atau ber-pillarbox hitam: REJECT with reason "Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam di sisi samping".
 
-RULE 5: WATERMARKS, SOCIAL MEDIA LOGOS & CHANNEL IDENTITIES (9:16 CROP TOLERANCE RULE):
-- 9:16 CROP GEOMETRY:
-  * Both 'clipper' (9:16 vertical) and 'YTCLIPER' (16:9 with background color pillars) crop the central 9:16 vertical frame (the middle ~45-50% width of the horizontal video).
-  * Outer margins (far left 0-20% and far right 80-100%) are completely cropped out or covered by background pillars!
-- PERIPHERAL CORNER WATERMARK / LOGO TOLERANCE (100% ACCEPTABLE):
-  * Jika ada watermark, logo media sosial (TikTok/Douyin/YouTube), atau nama channel di pojok KIRI atau KANAN video (di luar frame 9:16 tengah): TETAP DITERIMA! JANGAN DITOLAK! Karena bagian kiri dan kanan ini akan terpotong bersih atau tertutup background.
+RULE 5: WATERMARKS, SOCIAL MEDIA LOGOS & CHANNEL IDENTITIES (9:16 CROP GEOMETRY RULE):
+- 9:16 CROP GEOMETRY MANDATE (HORIZONTAL 16:9 vs VERTICAL 9:16 SOURCE VIDEOS):
+  * HORIZONTAL 16:9 VIDEOS: The backend crops the central 9:16 vertical frame (~45-50% width). Outer margins (far left 0-20% and far right 80-100%) are completely cropped out or covered by background pillars!
+  * VERTICAL 9:16 VIDEOS (SHORTS / REELS / TIKTOK): ZERO HORIZONTAL CROPPING OCCURS! The full 100% width and all four corners remain completely visible in the final output!
+    THEREFORE: In vertical videos, ANY watermark, channel handle, or creator text overlay anywhere in the frame (including corners and margins) CANNOT be cropped out and MUST BE REJECTED IMMEDIATELY!
 - STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME:
   * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
   * Setiap watermark atau logo yang masuk ke dalam frame 9:16 wajib DITOLAK karena tidak bisa terpotong.

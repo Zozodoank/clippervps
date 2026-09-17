@@ -1320,8 +1320,9 @@ export async function runStage1Pipeline({
           totalDuration: meta.duration,
           introCutoffSec: candidateIntroCutoff,
           discardedFaceTimestamps: localCheck.discardedFaceTimestamps || [],
+          discardedViolationTimestamps: localCheck.discardedViolationTimestamps || [],
           isVideoFirst: Boolean(options.isVideoFirst),
-          niche: options.niche || 'kitchen_tools',
+          niche: options.niche || jobMeta?.niche || 'kitchen_tools',
           onProgress: updateProgress,
         });
 
