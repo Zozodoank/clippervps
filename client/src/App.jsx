@@ -11,6 +11,7 @@ import JobHistoryPanel from './components/JobHistoryPanel';
 import AutoModePanel from './components/AutoModePanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Sparkles, Clapperboard } from 'lucide-react';
+import { withApiToken } from './utils/api.js';
 
 export default function App() {
   const [formData, setFormData] = useState(() => ({
@@ -18,7 +19,6 @@ export default function App() {
     shopeeLink: '',
     productTitle: '',
     productDescription: '',
-    model: 'gpt-4o-mini',
   }));
 
   const [settings, setSettings] = useState({
@@ -82,6 +82,8 @@ export default function App() {
 
   // Core pipeline runner (used by fresh runs, retries, and history resumes)
   const runGeneratePipeline = async (overrideJobId = null, overrideFormData = null) => {
+    // Retry = menjalankan ulang pipeline pada jobId yang sudah ada
+    const isRetrying = Boolean(overrideJobId);
     const currentForm = overrideFormData || lastFormDataRef.current || formData;
     const jobId = overrideJobId || Math.random().toString(36).substring(2, 10);
     lastJobIdRef.current = jobId;
@@ -103,7 +105,7 @@ export default function App() {
 
     if (eventSourceRef.current) eventSourceRef.current.close();
 
-    const sse = new EventSource(`/api/progress/${jobId}`);
+    const sse = new EventSource(withApiToken(`/api/progress/${jobId}`));
     eventSourceRef.current = sse;
 
     sse.onmessage = (event) => {
@@ -229,7 +231,7 @@ export default function App() {
       });
 
       if (eventSourceRef.current) eventSourceRef.current.close();
-      const sse = new EventSource(`/api/progress/${job.jobId}`);
+      const sse = new EventSource(withApiToken(`/api/progress/${job.jobId}`));
       eventSourceRef.current = sse;
 
       sse.onmessage = (event) => {
@@ -365,7 +367,7 @@ export default function App() {
 
     if (eventSourceRef.current) eventSourceRef.current.close();
 
-    const sse = new EventSource(`/api/progress/${job.jobId}`);
+    const sse = new EventSource(withApiToken(`/api/progress/${job.jobId}`));
     eventSourceRef.current = sse;
 
     sse.onmessage = (event) => {

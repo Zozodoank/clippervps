@@ -6,9 +6,10 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import multer from 'multer';
-import { exec, spawn, execSync } from 'child_process';
+import { exec, execFile, spawn } from 'child_process';
 
-import { checkSystemDependencies } from './services/binaryChecker.js';
+import { checkSystemDependencies, getFFmpegPath } from './services/binaryChecker.js';
+import { requireApiToken, buildCorsOptions, isSafeExternalUrl } from './middleware/security.js';
 import { downloadYouTubeVideo, extractVideoId } from './services/downloader.js';
 import { extractFrames } from './services/frameExtractor.js';
 import {
@@ -189,7 +190,7 @@ const upload = multer({
   },
 });
 
-app.use(cors());
+app.use(cors(buildCorsOptions()));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
@@ -235,10 +236,17 @@ function loadJobsFromDisk() {
           jobData.message = 'Proses dihentikan karena server di-restart.';
           modified = true;
         }
+        // Buang API key plaintext warisan dari jobs.json lama (anti-bocor)
+        for (const secretKey of SECRET_JOB_KEYS) {
+          if (secretKey in jobData) {
+            delete jobData[secretKey];
+            modified = true;
+          }
+        }
         activeJobs.set(jobId, jobData);
       }
       if (modified) {
-        fs.writeFileSync(jobsFilePath, JSON.stringify(obj, null, 2), 'utf-8');
+        writeJobsFileAtomic(obj);
       }
       console.log(`[Jobs] Loaded ${activeJobs.size} persisted job(s) from disk.`);
     }
@@ -247,7 +255,30 @@ function loadJobsFromDisk() {
   }
 }
 
-/** Save a single job entry to disk */
+const SECRET_JOB_KEYS = ['geminiApiKey', 'apiKey', 'openRouterApiKey', 'openrouterApiKey'];
+
+/**
+ * Buang field rahasia (API key user) dari salinan job sebelum ditulis ke disk.
+ * API key plaintext di jobs.json berisiko bocor saat file di-backup/dibagikan.
+ * Key tetap tersimpan di memory untuk kebutuhan runtime job aktif.
+ */
+function scrubJobSecrets(jobData) {
+  const copy = { ...jobData };
+  for (const key of SECRET_JOB_KEYS) delete copy[key];
+  return copy;
+}
+
+/**
+ * Tulis jobs.json secara atomik (tmp + rename) agar crash / mati listrik di
+ * tengah penulisan tidak merusak seluruh riwayat job pengguna.
+ */
+function writeJobsFileAtomic(obj) {
+  const tmpPath = `${jobsFilePath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(obj, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, jobsFilePath);
+}
+
+/** Save a single job entry to disk (atomic + secret-scrubbed) */
 function persistJob(jobId, jobData) {
   try {
     let existing = {};
@@ -255,10 +286,10 @@ function persistJob(jobId, jobData) {
       existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
     }
     existing[jobId] = {
-      ...jobData,
+      ...scrubJobSecrets(jobData),
       updatedAt: new Date().toISOString(),
     };
-    fs.writeFileSync(jobsFilePath, JSON.stringify(existing, null, 2), 'utf-8');
+    writeJobsFileAtomic(existing);
   } catch (err) {
     console.warn(`[Jobs] Could not persist job ${jobId}:`, err.message);
   }
@@ -270,7 +301,7 @@ function deletePersistedJob(jobId) {
     if (fs.existsSync(jobsFilePath)) {
       const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
       delete existing[jobId];
-      fs.writeFileSync(jobsFilePath, JSON.stringify(existing, null, 2), 'utf-8');
+      writeJobsFileAtomic(existing);
     }
   } catch (err) {
     console.warn(`[Jobs] Could not delete job ${jobId} from disk:`, err.message);
@@ -512,7 +543,7 @@ app.all('/api/extract-product', (req, res) => {
   res.json({ success: true, ...info });
 });
 
-app.get('/api/jobs', (req, res) => {
+app.get('/api/jobs', requireApiToken, (req, res) => {
   const jobs = [];
   for (const [jobId, job] of activeJobs.entries()) {
     const silentPath = job.silentLocalPath || path.join(outputDir, `silent_clip_${jobId}.mp4`);
@@ -563,7 +594,7 @@ app.get('/api/jobs', (req, res) => {
 });
 
 // 3. Delete a specific job
-app.delete('/api/jobs/:jobId', (req, res) => {
+app.delete('/api/jobs/:jobId', requireApiToken, (req, res) => {
   const { jobId } = req.params;
   deleteJobFiles(jobId, outputDir, tempDir);
   activeJobs.delete(jobId);
@@ -575,12 +606,15 @@ function updateJobProgress(jobId, data) {
   const payload = typeof data === 'string'
     ? { step: 'processing', message: data, progress: 50, jobId, status: 'running' }
     : { status: 'running', ...data, jobId };
+  if (payload.status === 'completed' || payload.status === 'error' || payload.status === 'awaiting_voiceover' || payload.status === 'stopped') {
+    payload.terminalAt = Date.now();
+  }
   jobProgress.set(jobId, payload);
   console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message || ''}`);
 }
 
 // 3b. Retry / Regenerate an existing completed or failed job with fresh 1080p video & voiceover
-app.post('/api/jobs/:jobId/retry', async (req, res) => {
+app.post('/api/jobs/:jobId/retry', requireApiToken, async (req, res) => {
   reloadEnvironment();
   const { jobId } = req.params;
   const { forceNewCandidate = true } = req.body || {};
@@ -910,7 +944,7 @@ async function runAutoRetryWorker(jobId, run) {
   }
 }
 
-app.post('/api/jobs/:jobId/auto-retry/start', async (req, res) => {
+app.post('/api/jobs/:jobId/auto-retry/start', requireApiToken, async (req, res) => {
   reloadEnvironment();
   const { jobId } = req.params;
   const job = activeJobs.get(jobId);
@@ -954,7 +988,7 @@ app.post('/api/jobs/:jobId/auto-retry/start', async (req, res) => {
   res.json({ success: true, jobId, autoRetry: publicAutoRetryState(run) });
 });
 
-app.post('/api/jobs/:jobId/auto-retry/stop', (req, res) => {
+app.post('/api/jobs/:jobId/auto-retry/stop', requireApiToken, (req, res) => {
   const { jobId } = req.params;
   const run = autoRetryRuns.get(jobId);
   if (run && run.status === 'running') {
@@ -967,14 +1001,14 @@ app.post('/api/jobs/:jobId/auto-retry/stop', (req, res) => {
   res.json({ success: true, autoRetry: publicAutoRetryState(run) });
 });
 
-app.get('/api/jobs/:jobId/auto-retry/status', (req, res) => {
+app.get('/api/jobs/:jobId/auto-retry/status', requireApiToken, (req, res) => {
   const { jobId } = req.params;
   const run = autoRetryRuns.get(jobId);
   res.json({ autoRetry: publicAutoRetryState(run) });
 });
 
 // 4. SSE endpoint for live job progress streaming
-app.get('/api/progress/:jobId', (req, res) => {
+app.get('/api/progress/:jobId', requireApiToken, (req, res) => {
   const { jobId } = req.params;
 
   res.setHeader('Content-Type', 'text/event-stream');
@@ -984,6 +1018,10 @@ app.get('/api/progress/:jobId', (req, res) => {
 
   const sendProgress = (data) => {
     res.write(`data: ${JSON.stringify(data)}\n\n`);
+    // Tandai waktu status terminal agar sweeper bisa membersihkan memory
+    if (data && (data.status === 'completed' || data.status === 'error' || data.status === 'awaiting_voiceover')) {
+      data.terminalAt = Date.now();
+    }
   };
 
   const current = jobProgress.get(jobId) || { step: 'init', message: 'Initializing...', progress: 0 };
@@ -1000,10 +1038,40 @@ app.get('/api/progress/:jobId', (req, res) => {
     }
   }, 500);
 
+  // Heartbeat berkala agar proxy/tunnel tidak memutus koneksi SSE yang idle
+  const heartbeat = setInterval(() => {
+    try { res.write(': ping\n\n'); } catch {}
+  }, 15000);
+
   req.on('close', () => {
     clearInterval(interval);
+    clearInterval(heartbeat);
   });
 });
+
+// ─── Helper: ekstraksi 1 frame audit secara async (tidak memblokir event loop) ─
+function extractAuditFrameAsync(videoPath, timeSec, outputPath) {
+  return new Promise((resolve) => {
+    try {
+      const ffmpegBin = getFFmpegPath();
+      const proc = spawn(ffmpegBin, [
+        '-y',
+        '-ss', String(timeSec),
+        '-i', videoPath,
+        '-vframes', '1',
+        '-q:v', '2',
+        outputPath,
+      ]);
+      const timer = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch {}
+      }, 5000);
+      proc.on('error', () => { clearTimeout(timer); resolve(false); });
+      proc.on('close', (code) => { clearTimeout(timer); resolve(code === 0); });
+    } catch {
+      resolve(false);
+    }
+  });
+}
 
 // ─── Stage 1 Pipeline Engine ─────────────────────────────────────────────────
 
@@ -1032,6 +1100,9 @@ export async function runStage1Pipeline({
     const payload = typeof data === 'string'
       ? { step: 'processing', message: data, progress: 50, jobId }
       : { ...data, jobId };
+    if (payload.status === 'completed' || payload.status === 'error' || payload.status === 'awaiting_voiceover' || payload.status === 'stopped') {
+      payload.terminalAt = Date.now();
+    }
     jobProgress.set(jobId, payload);
     console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message}`);
   });
@@ -1056,6 +1127,10 @@ export async function runStage1Pipeline({
   }
 
   let effectiveProductImage = options.productImage || extraJobMeta?.productImage || '';
+  if (effectiveProductImage && !isSafeExternalUrl(effectiveProductImage)) {
+    console.warn('[Pipeline] ⚠️ URL gambar produk ditolak (bukan http/https publik yang valid), diabaikan.');
+    effectiveProductImage = '';
+  }
   if (!effectiveProductImage && shopeeLink && isShopeeProductUrl(shopeeLink)) {
     try {
       const shopeeMeta = await fetchShopeePageMeta(shopeeLink);
@@ -1955,11 +2030,14 @@ export async function runStage1Pipeline({
         const f1Path = path.join(auditFramesDir, `clip_${cIdx}_t1.jpg`);
         const f2Path = path.join(auditFramesDir, `clip_${cIdx}_t2.jpg`);
 
-        const ffmpegBin = 'ffmpeg';
-        try {
-          execSync(`"${ffmpegBin}" -y -ss ${t1} -i "${clipVid}" -vframes 1 -q:v 2 "${f1Path}"`, { stdio: 'ignore', timeout: 3000 });
-          execSync(`"${ffmpegBin}" -y -ss ${t2} -i "${clipVid}" -vframes 1 -q:v 2 "${f2Path}"`, { stdio: 'ignore', timeout: 3000 });
-        } catch {}
+        // Async & tidak memblokir event loop; pakai path FFmpeg dari binaryChecker
+        // (sebelumnya: execSync dengan biner hardcoded 'ffmpeg' → server macet
+        //  hingga 6 detik per klip dan gagal total bila ffmpeg tidak di PATH).
+        const [ok1, ok2] = await Promise.all([
+          extractAuditFrameAsync(clipVid, t1, f1Path),
+          extractAuditFrameAsync(clipVid, t2, f2Path),
+        ]);
+        if (!ok1 && !ok2) { /* kedua frame gagal diekstrak; lanjut tanpa audit frame */ }
 
         const testFrames = [
           { filePath: f1Path, timestamp: t1 },
@@ -2487,7 +2565,7 @@ export async function runStage1Pipeline({
 }
 
 // 5. Manual STAGE 1 Endpoint
-app.post('/api/generate', async (req, res) => {
+app.post('/api/generate', requireApiToken, async (req, res) => {
   reloadEnvironment();
   const {
     youtubeUrl,
@@ -2512,6 +2590,13 @@ app.post('/api/generate', async (req, res) => {
   }
   if (shopeeLink && !isValidHttpUrl(shopeeLink)) {
     return res.status(400).json({ error: 'Link produk harus berupa URL http/https yang valid.' });
+  }
+  if (shopeeLink && !isSafeExternalUrl(shopeeLink)) {
+    return res.status(400).json({ error: 'Link produk menuju alamat internal/lokal yang tidak diizinkan.' });
+  }
+  if (options.productImage && !isSafeExternalUrl(options.productImage)) {
+    // Cegah SSRF / data junk: URL gambar produk harus http(s) publik yang valid
+    options.productImage = '';
   }
   if (productTitle && isBulkyOrUnsuitableProduct(productTitle)) {
     return res.status(400).json({ error: 'Produk ditolak karena tergolong perabot besar / rak besar yang memenuhi frame. Niche disetel hanya untuk alat dapur praktis.' });
@@ -2957,7 +3042,7 @@ async function runAutoStage1Worker(run) {
   }
 }
 
-app.get('/api/auto/status', (req, res) => {
+app.get('/api/auto/status', requireApiToken, (req, res) => {
   res.json({ run: publicAutoRunState(getLatestAutoRun()) });
 });
 
@@ -2970,7 +3055,7 @@ app.get('/api/auto/keywords/stats', (req, res) => {
   }
 });
 
-app.post('/api/auto/keywords/reset', (req, res) => {
+app.post('/api/auto/keywords/reset', requireApiToken, (req, res) => {
   try {
     const result = clearUsedKeywords();
     res.json({ success: true, message: 'Riwayat kata kunci berhasil di-reset.', result });
@@ -2996,7 +3081,7 @@ app.get('/api/niches', (req, res) => {
   }
 });
 
-app.post('/api/auto/start', (req, res) => {
+app.post('/api/auto/start', requireApiToken, (req, res) => {
   reloadEnvironment();
   const latest = getLatestAutoRun();
   if (latest && (latest.status === 'running' || latest.status === 'starting')) {
@@ -3043,7 +3128,7 @@ app.post('/api/auto/start', (req, res) => {
   res.json({ run: publicAutoRunState(run) });
 });
 
-app.post('/api/auto/stop', (req, res) => {
+app.post('/api/auto/stop', requireApiToken, (req, res) => {
   const { runId } = req.body || {};
   const run = autoRuns.get(runId) || getLatestAutoRun();
   if (run && (run.status === 'running' || run.status === 'starting')) {
@@ -3052,7 +3137,7 @@ app.post('/api/auto/stop', (req, res) => {
   res.json({ run: publicAutoRunState(run) });
 });
 
-app.get('/api/auto/progress/:runId', (req, res) => {
+app.get('/api/auto/progress/:runId', requireApiToken, (req, res) => {
   const { runId } = req.params;
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
@@ -3075,7 +3160,7 @@ app.get('/api/auto/progress/:runId', (req, res) => {
 });
 
 // 6. STAGE 2: Upload Voiceover & Merge Subtitles
-app.post('/api/upload-voiceover', upload.single('audio'), async (req, res) => {
+app.post('/api/upload-voiceover', requireApiToken, upload.single('audio'), async (req, res) => {
   reloadEnvironment();
   const { jobId } = req.body;
   const audioFile = req.file;
@@ -3339,7 +3424,7 @@ async function processJobVoiceover(jobId, customScript = null, options = {}) {
 }
 
 // 6b. Regenerate Voiceover automatically via TTS & Re-render Final Video (Single Job)
-app.post('/api/regenerate-voiceover', async (req, res) => {
+app.post('/api/regenerate-voiceover', requireApiToken, async (req, res) => {
   reloadEnvironment();
   const { jobId, customScript, lexicon, ttsProvider, ttsModel, ttsFallbackModel, ttsVoice, apiKey } = req.body;
 
@@ -3367,7 +3452,7 @@ app.post('/api/regenerate-voiceover', async (req, res) => {
 // automatically appends new phonetic pronunciations into english_dictionary.json,
 // regenerates TTS audio with the phonetic lexicon,
 // ensures output subtitles remain 100% normal non-phonetic text, and re-renders video.
-app.post('/api/retry-job-tts', async (req, res) => {
+app.post('/api/retry-job-tts', requireApiToken, async (req, res) => {
   reloadEnvironment();
   const { jobId, customScript, apiKey, aiProvider, ttsProvider, ttsModel, ttsFallbackModel, ttsVoice } = req.body;
 
@@ -3453,7 +3538,7 @@ let currentBatchTTS = {
 };
 
 // 6c. Start Server-Side Batch TTS Queue
-app.post('/api/batch-tts/start', async (req, res) => {
+app.post('/api/batch-tts/start', requireApiToken, async (req, res) => {
   reloadEnvironment();
   const { ttsProvider, ttsModel, ttsFallbackModel, ttsVoice, apiKey } = req.body || {};
 
@@ -3566,7 +3651,7 @@ app.get('/api/batch-tts/status', (req, res) => {
 });
 
 // 6e. Stop Batch TTS
-app.post('/api/batch-tts/stop', (req, res) => {
+app.post('/api/batch-tts/stop', requireApiToken, (req, res) => {
   if (currentBatchTTS.isRunning) {
     currentBatchTTS.isStopping = true;
   }
@@ -3631,7 +3716,7 @@ app.get('/api/download/:filename', (req, res) => {
 });
 
 // 8b. Download script & marketing text as .txt file via HTTP
-app.get('/api/jobs/:jobId/script.txt', (req, res) => {
+app.get('/api/jobs/:jobId/script.txt', requireApiToken, (req, res) => {
   const { jobId } = req.params;
   const job = activeJobs.get(jobId);
   if (!job) return res.status(404).send('Job not found.');
@@ -3667,7 +3752,7 @@ app.get('/api/jobs/:jobId/script.txt', (req, res) => {
 });
 
 // 9. Open output folder in native OS file explorer
-app.post('/api/open-folder', (req, res) => {
+app.post('/api/open-folder', requireApiToken, (req, res) => {
   const { filename } = req.body || {};
   let targetFile = null;
 
@@ -3678,25 +3763,22 @@ app.post('/api/open-folder', (req, res) => {
     }
   }
 
-  let command = '';
+  let command;
   if (process.platform === 'win32') {
-    if (targetFile) {
-      command = `explorer.exe /select,"${targetFile.replace(/\//g, '\\')}"`;
-    } else {
-      command = `explorer.exe "${outputDir.replace(/\//g, '\\')}"`;
-    }
+    const winTarget = (targetFile || outputDir).replace(/\//g, '\\');
+    command = targetFile
+      ? { cmd: 'explorer.exe', args: ['/select,', winTarget] }
+      : { cmd: 'explorer.exe', args: [winTarget] };
   } else if (process.platform === 'darwin') {
-    if (targetFile) {
-      command = `open -R "${targetFile}"`;
-    } else {
-      command = `open "${outputDir}"`;
-    }
+    command = targetFile
+      ? { cmd: 'open', args: ['-R', targetFile] }
+      : { cmd: 'open', args: [outputDir] };
   } else {
-    command = `xdg-open "${outputDir}"`;
+    command = { cmd: 'xdg-open', args: [outputDir] };
   }
 
-  console.log(`[System] Opening output folder in file manager: ${command}`);
-  exec(command, (err) => {
+  console.log(`[System] Opening output folder in file manager: ${command.cmd} ${command.args.join(' ')}`);
+  execFile(command.cmd, command.args, (err) => {
     if (err) {
       console.warn('[System] Could not open folder:', err.message);
       return res.status(500).json({ success: false, error: err.message });
@@ -3705,18 +3787,20 @@ app.post('/api/open-folder', (req, res) => {
   });
 });
 
-app.get('/api/open-folder', (req, res) => {
-  let command = process.platform === 'win32'
-    ? `explorer.exe "${outputDir.replace(/\//g, '\\')}"`
-    : process.platform === 'darwin' ? `open "${outputDir}"` : `xdg-open "${outputDir}"`;
-  exec(command, (err) => {
+app.get('/api/open-folder', requireApiToken, (req, res) => {
+  const command = process.platform === 'win32'
+    ? { cmd: 'explorer.exe', args: [outputDir.replace(/\//g, '\\')] }
+    : process.platform === 'darwin'
+      ? { cmd: 'open', args: [outputDir] }
+      : { cmd: 'xdg-open', args: [outputDir] };
+  execFile(command.cmd, command.args, (err) => {
     if (err) return res.status(500).json({ success: false, error: err.message });
     res.json({ success: true, folder: outputDir });
   });
 });
 
 // 10. Restart Server & Execute ./update.sh (Designed for VPS, Termux, Codespace & Local Dev)
-app.post('/api/restart', async (req, res) => {
+app.post('/api/restart', requireApiToken, async (req, res) => {
   const { runUpdate = true, cleanReset = true } = req.body || {};
   const rootDir = path.resolve(__dirname, '..');
   const updateScriptPath = path.join(rootDir, 'update.sh');
@@ -3750,9 +3834,9 @@ app.post('/api/restart', async (req, res) => {
         try {
           const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
           for (const [jobId, job] of activeJobs.entries()) {
-            existing[jobId] = job;
+            existing[jobId] = scrubJobSecrets(job);
           }
-          fs.writeFileSync(jobsFilePath, JSON.stringify(existing, null, 2), 'utf-8');
+          writeJobsFileAtomic(existing);
         } catch {}
       }
     }
@@ -3852,7 +3936,7 @@ app.get('/api/cookies-status', (req, res) => {
 });
 
 // POST /api/upload-cookies – receive cookies.txt content and save to server/cookies.txt
-app.post('/api/upload-cookies', express.text({ type: '*/*', limit: '10mb' }), (req, res) => {
+app.post('/api/upload-cookies', requireApiToken, express.text({ type: '*/*', limit: '10mb' }), (req, res) => {
   const content = req.body;
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Request body is empty. Please send cookies.txt content.' });
@@ -3861,7 +3945,8 @@ app.post('/api/upload-cookies', express.text({ type: '*/*', limit: '10mb' }), (r
     return res.status(400).json({ success: false, error: 'File tidak terdeteksi sebagai YouTube cookies.txt yang valid. Pastikan Anda mengekspor cookies dari youtube.com.' });
   }
   const cookiesPath = path.join(__dirname, 'cookies.txt');
-  fs.writeFileSync(cookiesPath, content, 'utf8');
+  // 0600: file berisi sesi login YouTube — hanya boleh dibaca owner proses
+  fs.writeFileSync(cookiesPath, content, { encoding: 'utf8', mode: 0o600 });
   console.log(`[Cookies] cookies.txt saved to ${cookiesPath} (${content.length} bytes)`);
   res.json({ success: true, message: 'cookies.txt berhasil disimpan. Sekarang retry job Anda.' });
 });
@@ -3879,7 +3964,7 @@ app.get('/api/english-dictionary', (req, res) => {
 });
 
 // POST /api/english-dictionary – add or update phonetic dictionary entries
-app.post('/api/english-dictionary', (req, res) => {
+app.post('/api/english-dictionary', requireApiToken, (req, res) => {
   try {
     const entries = req.body;
     if (!entries || typeof entries !== 'object') {
@@ -3904,7 +3989,7 @@ app.get('/api/bandwidth-stats', (req, res) => {
 });
 
 // POST /api/bandwidth-stats/reset – reset bandwidth counter
-app.post('/api/bandwidth-stats/reset', (req, res) => {
+app.post('/api/bandwidth-stats/reset', requireApiToken, (req, res) => {
   try {
     const scope = req.body?.scope || 'session';
     const stats = resetBandwidthStats(scope);
@@ -3926,6 +4011,43 @@ app.use((err, req, res, next) => {
   }
   next();
 });
+
+// ─── Memory Sweeper: cegah pertumbuhan memory tak terbatas pada proses berjalan lama ──
+const PROGRESS_TTL_MS = 30 * 60 * 1000;   // progress job terminal disimpan maks 30 menit
+const RUNS_HISTORY_LIMIT = 20;            // simpan maksimal 20 riwayat auto run / auto retry
+
+function sweepInMemoryStores() {
+  try {
+    const now = Date.now();
+    let prunedProgress = 0;
+    for (const [jobId, payload] of jobProgress.entries()) {
+      if (payload?.terminalAt && now - payload.terminalAt > PROGRESS_TTL_MS) {
+        jobProgress.delete(jobId);
+        prunedProgress++;
+      }
+    }
+    const pruneRunMap = (map, label) => {
+      if (map.size <= RUNS_HISTORY_LIMIT) return 0;
+      const sorted = Array.from(map.entries())
+        .sort((a, b) => new Date(b[1].updatedAt || b[1].startedAt || 0) - new Date(a[1].updatedAt || a[1].startedAt || 0));
+      let pruned = 0;
+      for (const [key] of sorted.slice(RUNS_HISTORY_LIMIT)) {
+        if (map.get(key)?.status === 'running') continue; // jangan buang run aktif
+        map.delete(key);
+        pruned++;
+      }
+      return pruned;
+    };
+    const prunedAuto = pruneRunMap(autoRuns, 'autoRuns');
+    const prunedRetry = pruneRunMap(autoRetryRuns, 'autoRetryRuns');
+    if (prunedProgress || prunedAuto || prunedRetry) {
+      console.log(`[Sweeper] 🧹 Dibersihkan: ${prunedProgress} progress, ${prunedAuto} auto run, ${prunedRetry} auto retry.`);
+    }
+  } catch (err) {
+    console.warn('[Sweeper] Warning:', err.message);
+  }
+}
+setInterval(sweepInMemoryStores, 10 * 60 * 1000).unref();
 
 app.listen(PORT, '0.0.0.0', () => {
   reloadEnvironment();

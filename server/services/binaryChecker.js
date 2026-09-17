@@ -13,6 +13,8 @@ if (!fs.existsSync(binDir)) {
   fs.mkdirSync(binDir, { recursive: true });
 }
 
+let ytDlpDownloadFailedAt = 0;
+
 // 1. Resolve FFmpeg executable path
 export function getFFmpegPath() {
   // Check if system ffmpeg exists
@@ -76,22 +78,62 @@ export async function getYtDlpPath(onProgress = null) {
   }
 
   // Auto-download yt-dlp binary if missing
+  // Negative-cache: bila unduhan baru saja gagal (mis. offline/TLS proxy),
+  // jangan coba lagi selama 10 menit agar tidak membanjiri log & memperlambat tiap job.
+  if (ytDlpDownloadFailedAt && Date.now() - ytDlpDownloadFailedAt < 10 * 60 * 1000) {
+    return localBinaryPath;
+  }
   console.log(`[BinaryChecker] yt-dlp not found. Auto-downloading binary to ${localBinaryPath}...`);
   if (onProgress) onProgress('Downloading yt-dlp binary engine for first-time setup...');
 
   try {
     const YTDlpWrapClass = YTDlpWrap.default?.downloadFromGithub ? YTDlpWrap.default : (YTDlpWrap.downloadFromGithub ? YTDlpWrap : (YTDlpWrap.default?.default || YTDlpWrap));
-    await YTDlpWrapClass.downloadFromGithub(localBinaryPath);
+    await downloadYtDlpSafely(YTDlpWrapClass, localBinaryPath);
     if (process.platform !== 'win32') {
       fs.chmodSync(localBinaryPath, '755');
     }
     console.log(`[BinaryChecker] yt-dlp successfully downloaded to ${localBinaryPath}`);
     return localBinaryPath;
   } catch (error) {
+    ytDlpDownloadFailedAt = Date.now();
     console.error(`[BinaryChecker] Failed to auto-download yt-dlp: ${error.message}`);
+    console.warn('[BinaryChecker] Server tetap berjalan. Install yt-dlp manual (pip install yt-dlp / apt install yt-dlp) lalu restart.');
     // Return localBinaryPath anyway or fallback name
     return localBinaryPath;
   }
+}
+
+/**
+ * Unduh yt-dlp dengan pengaman:
+ * 1. Crash-guard: error event tak tertangani dari HTTP client yt-dlp-wrap
+ *    (mis. sertifikat TLS/proxy bermasalah) sebelumnya MERUNTUHKAN seluruh
+ *    server lewat uncaughtException — kini ditangkap sebagai rejection biasa.
+ * 2. Timeout 3 menit agar unduhan menggantung tidak membekukan /api/health.
+ */
+function downloadYtDlpSafely(YTDlpWrapClass, destPath) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      process.removeListener('uncaughtException', onUncaught);
+      if (err) reject(err);
+      else resolve();
+    };
+    const onUncaught = (err) => finish(err);
+    const timer = setTimeout(() => finish(new Error('Unduhan yt-dlp timeout (180 detik).')), 180000);
+
+    process.on('uncaughtException', onUncaught);
+    try {
+      Promise.resolve(YTDlpWrapClass.downloadFromGithub(destPath)).then(
+        () => finish(),
+        (err) => finish(err)
+      );
+    } catch (err) {
+      finish(err);
+    }
+  });
 }
 
 export async function checkSystemDependencies() {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Video, Sparkles, Settings, Cpu, ShieldCheck, FolderOpen, Loader2, RotateCw, AlertTriangle, CheckCircle2, Wifi } from 'lucide-react';
+import { Video, Sparkles, Settings, Cpu, ShieldCheck, FolderOpen, Loader2, RotateCw, AlertTriangle, CheckCircle2, Wifi, KeyRound, X } from 'lucide-react';
+import { getApiToken, setApiToken, clearApiToken } from '../utils/api.js';
 import BandwidthModal from './BandwidthModal';
 
 export default function Navbar({ onOpenSettings, engineStatus }) {
@@ -12,6 +13,35 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
   const [restartError, setRestartError] = useState(null);
   const [showBandwidthModal, setShowBandwidthModal] = useState(false);
   const [bandwidthStats, setBandwidthStats] = useState(engineStatus?.bandwidthStats || null);
+  const [showTokenModal, setShowTokenModal] = useState(false);
+  const [tokenInput, setTokenInput] = useState('');
+  const [tokenActive, setTokenActive] = useState(Boolean(getApiToken()));
+  const [tokenJustSaved, setTokenJustSaved] = useState(false);
+
+  // Server membalas 401 (token salah/belum diisi) -> buka dialog kunci akses
+  useEffect(() => {
+    const onUnauthorized = () => {
+      setTokenActive(Boolean(getApiToken()));
+      setShowTokenModal(true);
+    };
+    window.addEventListener('clipper:unauthorized', onUnauthorized);
+    return () => window.removeEventListener('clipper:unauthorized', onUnauthorized);
+  }, []);
+
+  const handleSaveToken = () => {
+    const cleaned = tokenInput.trim();
+    if (!cleaned) return;
+    setApiToken(cleaned);
+    setTokenJustSaved(true);
+    setTimeout(() => window.location.reload(), 600);
+  };
+
+  const handleClearToken = () => {
+    clearApiToken();
+    setTokenInput('');
+    setTokenActive(false);
+    setTimeout(() => window.location.reload(), 400);
+  };
 
   const fetchBandwidthStats = async () => {
     try {
@@ -198,6 +228,20 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
               <span>Anti-Detection</span>
             </div>
 
+            {/* API Access Token (Kunci Akses) Button */}
+            <button
+              onClick={() => { setTokenInput(getApiToken()); setShowTokenModal(true); }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-all hover:scale-[1.02] active:scale-[0.98] ${
+                tokenActive
+                  ? 'bg-emerald-500/10 hover:bg-emerald-500/20 border-emerald-500/30 text-emerald-300'
+                  : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300'
+              }`}
+              title={tokenActive ? 'Kunci akses API aktif. Klik untuk mengubah token.' : 'Atur API Access Token (aktifkan API_ACCESS_TOKEN di server/.env)'}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">{tokenActive ? 'Terkunci' : 'Kunci'}</span>
+            </button>
+
             {/* Settings Button */}
             <button
               onClick={onOpenSettings}
@@ -321,6 +365,81 @@ export default function Navbar({ onOpenSettings, engineStatus }) {
           </div>
         </div>
       )}
+      {/* API Access Token Modal */}
+      {showTokenModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-start justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <KeyRound className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base text-white">Kunci Akses API</h3>
+                  <p className="text-xs text-slate-400">Wajib bila server mengaktifkan API_ACCESS_TOKEN</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTokenModal(false)}
+                className="text-slate-500 hover:text-slate-300 transition-colors"
+                title="Tutup"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {tokenJustSaved ? (
+              <div className="flex items-center gap-2 text-emerald-400 text-sm font-semibold bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3">
+                <CheckCircle2 className="w-4 h-4" />
+                <span>Token tersimpan! Memuat ulang halaman...</span>
+              </div>
+            ) : (
+              <>
+                <p className="text-xs text-slate-400 mb-3 leading-relaxed">
+                  Isi token yang sama dengan nilai <code className="text-orange-400 bg-slate-950 px-1 py-0.5 rounded font-mono">API_ACCESS_TOKEN</code> di <code className="text-orange-400 bg-slate-950 px-1 py-0.5 rounded font-mono">server/.env</code>. Token dipakai untuk melindungi server VPS Anda dari akses orang lain melalui link publik.
+                </p>
+                <input
+                  type="password"
+                  value={tokenInput}
+                  onChange={(e) => setTokenInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSaveToken()}
+                  placeholder="Tempel API Access Token di sini..."
+                  autoFocus
+                  className="w-full px-4 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-sm font-mono placeholder:text-slate-600 focus:outline-none focus:border-orange-500/50 mb-4"
+                />
+                <div className="flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={handleClearToken}
+                    className="px-3 py-2 rounded-xl text-xs text-slate-400 hover:text-rose-300 transition-colors"
+                    title="Hapus token tersimpan"
+                  >
+                    Hapus Token
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowTokenModal(false)}
+                      className="px-4 py-2 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveToken}
+                      disabled={!tokenInput.trim()}
+                      className="px-4 py-2 rounded-xl text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white shadow-lg shadow-emerald-600/25 transition-all active:scale-95"
+                    >
+                      Simpan & Muat Ulang
+                    </button>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Bandwidth Usage Detail Modal */}
       <BandwidthModal
         isOpen={showBandwidthModal}

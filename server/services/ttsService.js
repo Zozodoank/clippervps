@@ -1,11 +1,35 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { spawn } from 'child_process';
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { applyTalingPhonetics } from './phoneticData.js';
 import { getFFmpegPath } from './binaryChecker.js';
 import { applyEnglishLexicon, restoreStandardText } from './dictionaryService.js';
 import { trackBandwidth } from './bandwidthTracker.js';
+
+/**
+ * Jalankan FFmpeg secara async dengan array argumen (tanpa shell).
+ * - Tidak memblokir event loop (execSync sebelumnya membekukan server ± detik).
+ * - Tanpa risiko command injection karena argumen tidak melewati shell.
+ * - Kutipan path ditangani otomatis oleh spawn (tanpa tambahan tanda kutip).
+ */
+function runFfmpegAsync(args, { timeoutMs = 180000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(getFFmpegPath(), args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      reject(new Error(`FFmpeg timeout setelah ${Math.round(timeoutMs / 1000)}s.`));
+    }, timeoutMs);
+    proc.on('error', (err) => { clearTimeout(timer); reject(err); });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve();
+      reject(new Error(`FFmpeg gagal (code ${code}): ${stderr.slice(-300)}`));
+    });
+  });
+}
 
 // Default Google Gemini Flash TTS Models (Free Tier: 10 RPD)
 export const DEFAULT_GEMINI_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
@@ -414,7 +438,6 @@ export async function generateVoiceoverEdgeTTS({
   }
 
   log(`Menghasilkan voice over Gadis ekspresif (${scenes.length} adegan sinkron video)...`);
-  const ffmpeg = getFFmpegPath();
   const tempDir = path.join(outDir, `tts_parts_${jobId || Date.now()}`);
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true });
@@ -513,7 +536,7 @@ export async function generateVoiceoverEdgeTTS({
 
     for (let i = 0; i < parts.length; i++) {
       const p = parts[i];
-      filterInputs.push('-i', `"${p.partPath}"`);
+      filterInputs.push('-i', p.partPath);
 
       let startSec = cursor;
       // If targetSec was explicitly specified and fits naturally, align without creating huge dead silence (> 0.9s)
@@ -544,9 +567,14 @@ export async function generateVoiceoverEdgeTTS({
     }
 
     const mixFilter = `${filterDelays.join(';')};${filterLabels.join('')}amix=inputs=${parts.length}:dropout_transition=0:normalize=0[aout]`;
-    const cmd = `"${ffmpeg}" -y ${filterInputs.join(' ')} -filter_complex "${mixFilter}" -map "[aout]" -c:a libmp3lame "${outputPath}"`;
-
-    execSync(cmd, { stdio: 'pipe' });
+    await runFfmpegAsync([
+      '-y',
+      ...filterInputs,
+      '-filter_complex', mixFilter,
+      '-map', '[aout]',
+      '-c:a', 'libmp3lame',
+      outputPath,
+    ]);
 
     parts.forEach((p) => {
       if (fs.existsSync(p.partPath)) fs.unlinkSync(p.partPath);
@@ -840,18 +868,22 @@ export async function generateVoiceoverGeminiTTS({
 
   // Convert raw PCM / WAV buffer to MP3 using FFmpeg
   log(`Mengonversi audio Gemini ke format MP3...`);
-  const ffmpeg = getFFmpegPath();
   const isWav = audioBuffer.length >= 4 && audioBuffer.toString('ascii', 0, 4) === 'RIFF';
   const tempAudioPath = path.join(outDir, `temp_gemini_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.${isWav ? 'wav' : 'raw'}`);
   fs.writeFileSync(tempAudioPath, audioBuffer);
 
   try {
     const inputArgs = isWav
-      ? `-i "${tempAudioPath}"`
-      : `-f s16le -ar 24000 -ac 1 -i "${tempAudioPath}"`;
-    const filterArgStr = audioFilterArgs.length > 0 ? audioFilterArgs.join(' ') : '';
-    const cmd = `"${ffmpeg}" -y ${inputArgs} ${filterArgStr} -c:a libmp3lame -b:a 128k "${outputPath}"`;
-    execSync(cmd, { stdio: 'pipe' });
+      ? ['-i', tempAudioPath]
+      : ['-f', 's16le', '-ar', '24000', '-ac', '1', '-i', tempAudioPath];
+    await runFfmpegAsync([
+      '-y',
+      ...inputArgs,
+      ...audioFilterArgs,
+      '-c:a', 'libmp3lame',
+      '-b:a', '128k',
+      outputPath,
+    ]);
   } finally {
     if (fs.existsSync(tempAudioPath)) {
       try { fs.unlinkSync(tempAudioPath); } catch {}

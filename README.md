@@ -11,7 +11,7 @@ Web application berbasis **React (Vite)** dan **Node.js (Express)** yang bertuga
 ## ⚡ Cara Menjalankan & Mengontrol VPS
 
 ### 1. Dari Komputer / Laptop Windows (Metode Praktis)
-Cukup klik dua kali file **[`JALANKAN_VPS.cmd`](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/JALANKAN_VPS.cmd)** di folder ini:
+Cukup klik dua kali file **[`JALANKAN_VPS.cmd`](./JALANKAN_VPS.cmd)** di folder ini:
 * **Menu [1]**: Jalankan aplikasi interaktif & otomatis forward port ke browser `http://localhost:3000`. Script otomatis memeriksa dan menarik update terbaru dari GitHub (`git fetch & git pull`) sebelum aplikasi dijalankan.
 * **Menu [2]**: Memantau log real-time server VPS (PM2).
 * **Menu [3]**: Menampilkan link publik Cloudflare Tunnel aktif.
@@ -19,10 +19,18 @@ Cukup klik dua kali file **[`JALANKAN_VPS.cmd`](file:///c:/Users/SEMOGA%20AWET/D
 
 ### 2. Dari HP Android (Termux)
 Panduan lengkap menjalankan dan menghubungkan dari HP Android dapat dilihat di:  
-👉 **[CARA_JALANKAN_TERMUX.md](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/CARA_JALANKAN_TERMUX.md)**
+👉 **[CARA_JALANKAN_TERMUX.md](./CARA_JALANKAN_TERMUX.md)**
 
 ### 3. Akses Publik (Cloudflare Tunnel)
 Aplikasi selalu aktif di background server VPS dan dapat diakses dari browser manapun melalui URL HTTPS publik yang tercatat di file `.env` (`CLOUDFLARE_TUNNEL_URL`).
+
+### 4. 🔐 Kunci Akses API (Wajib untuk VPS Publik)
+Karena URL tunnel bersifat publik, siapa pun yang mengetahui URL dapat mengontrol server. Aktifkan kunci akses:
+1. Generate token acak: `openssl rand -hex 24`
+2. Isi di `server/.env`: `API_ACCESS_TOKEN=<token-anda>`
+3. Restart server, lalu di aplikasi klik tombol **Kunci** (ikon kunci, kanan atas) dan masukkan token yang sama.
+
+Tanpa token ini, endpoint seperti restart server, upload cookies, dan generate video terbuka untuk umum. Laporan lengkap: [`AUDIT_PERBAIKAN_MENYELURUH.md`](./AUDIT_PERBAIKAN_MENYELURUH.md).
 
 ---
 
@@ -80,7 +88,7 @@ Jika `GEMINI_API_KEY` baru ditambahkan saat server sudah berjalan, klik **Check*
 
 ### 1. Buka Terminal di Folder Proyek
 ```bash
-cd "c:\Users\SEMOGA AWET\Documents\clipper"
+cd clipperVPS        # folder hasil git clone
 # atau di Termux: cd ~/clipper
 ```
 

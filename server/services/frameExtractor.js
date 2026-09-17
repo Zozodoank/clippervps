@@ -6,7 +6,6 @@ import { getFFmpegPath } from './binaryChecker.js';
 /**
  * Extracts timeline frames from a video and converts selected keyframes to base64.
  * @param {string} videoPath - Path to the local raw mp4 file
- * @param {string} videoPath - Path to the local raw mp4 file
  * @param {string} framesDir - Directory to store extracted JPEG frames
  * @param {Function} onProgress - Progress status callback
  * @returns {Promise<{ frames: Array<{ index: number, timestamp: number, timeFormatted: string, base64: string }>, totalFrames: number, framesDir: string }>}
@@ -14,6 +13,7 @@ import { getFFmpegPath } from './binaryChecker.js';
 export async function extractFrames(videoPath, framesDir, onProgress = () => {}, {
   sampleIntervalSec = 1,
   maxSampleFrames = 30,
+  duration = 0,
 } = {}) {
   if (!fs.existsSync(framesDir)) {
     fs.mkdirSync(framesDir, { recursive: true });
