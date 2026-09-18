@@ -161,18 +161,19 @@ function getFastArgs() {
  * - Avoids sudden 50-100 Mbps burst spikes that trigger YouTube SABR bot detection
  */
 function getDownloadArgs(clientProfile = 'default') {
-  const rateLimit = process.env.YTDLP_RATE_LIMIT || '2.2M';
+  const rateLimit = process.env.YTDLP_RATE_LIMIT || '25M';
+  const sleepReq = process.env.YTDLP_SLEEP_REQUESTS || '0.2';
   return [
     ...getYtDlpArgs(clientProfile),
-    // 1. IDM-style Progressive Rate Pacing (hindari burst traffic bot)
+    // 1. High-speed progressive buffering
     '--limit-rate', rateLimit,
     '--throttled-rate', '100K',
-    // 2. IDM-style DASH Chunk Slicing (10MB chunk range buffering)
-    '--http-chunk-size', '10M',
+    // 2. DASH Chunk Slicing (16MB chunks)
+    '--http-chunk-size', '16M',
     '--buffer-size', '16M',
-    // 3. Human-like Request Jitter (jeda alami antar request segmen)
+    // 3. Fast Request Pacing (0.2s jitter between fragments)
     '--sleep-subtitles', '1',
-    '--sleep-requests', '1.5',
+    '--sleep-requests', sleepReq,
     '--rm-cache-dir',
   ];
 }
@@ -827,16 +828,15 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
 
     const dlBaseArgs = getDownloadArgs(clientType);
 
-    // Resilient format selector: 360p preview for AI analysis vs High Quality HD (1080p+ preferred, 720p HD accepted)
+    // Resilient format selector: 360p preview for AI analysis vs High Quality HD (strictly capped at 1080p to avoid bloated 4K/1440p downloads)
     const formatSelector = isPreview
       ? '18/bestvideo[height<=360]+bestaudio/best[height<=360]/bestvideo[height<=480]+bestaudio/best[height<=480]/worstvideo+worstaudio/worst/best'
-      : 'bestvideo[height>=1080]+bestaudio/bestvideo[width>=1080]+bestaudio/bestvideo[height>=720]+bestaudio/bestvideo[width>=720]+bestaudio/best[height>=720]/best[width>=720]/bestvideo+bestaudio/best';
+      : 'bestvideo[height<=1080][height>=720]+bestaudio/bestvideo[width<=1920][width>=1280]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080][height>=720]/best[height<=1080]/best';
 
     const dlArgs = [
       '--ffmpeg-location',
       ffmpegPath,
       ...dlBaseArgs,
-      '--sponsorblock-remove', 'sponsor,selfpromo',
       '-f',
       formatSelector,
       '--merge-output-format',

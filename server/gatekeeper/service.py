@@ -498,8 +498,10 @@ def detect_pillarbox(image_bgr):
 
 def detect_paper_manual(image_bgr):
     """
-    Mendeteksi kertas buku panduan manual / kartu garansi / unboxing document:
-    Kertas putih cerah (val > 150), sangat desaturasi (sat < 45), dan memiliki densitas garis teks paragraf tinggi (edge_cov > 0.022).
+    Mendeteksi kertas buku panduan manual / kartu garansi cetak:
+    Kertas putih murni (val > 215), hampir tanpa saturasi warna (sat < 22), 
+    dan memiliki densitas teks cetak paragraf tinggi (edge_cov > 0.065).
+    Produk plastik putih, mangkuk, atau alat dapur memiliki gradien bayangan dan bentuk melengkung.
     """
     h, w = image_bgr.shape[:2]
     if h < 60 or w < 60:
@@ -511,7 +513,8 @@ def detect_paper_manual(image_bgr):
     edges = cv2.Canny(gray, 50, 150)
     edge_cov = float(np.count_nonzero(edges)) / float(h * w)
 
-    if val_mean > 150 and sat_mean < 45 and edge_cov > 0.022:
+    # Hanya anggap buku manual jika benar-benar kertas dokumen putih datar dengan teks rapat
+    if val_mean > 215 and sat_mean < 22 and edge_cov > 0.065:
         return True, f"Buku panduan / dokumen kertas manual terdeteksi (val={val_mean:.0f}, sat={sat_mean:.0f}, edges={edge_cov*100:.1f}%)"
     return False, "Bukan dokumen kertas"
 

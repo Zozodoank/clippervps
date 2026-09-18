@@ -1410,7 +1410,7 @@ export async function runStage1Pipeline({
           if (activeStreamUrl) {
             const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
               duration: meta.duration,
-              maxSampleFrames: 30,
+              maxSampleFrames: 12,
               onProgress: updateProgress,
             });
             if (res?.frames && res.frames.length >= 5) {
@@ -1822,7 +1822,7 @@ export async function runStage1Pipeline({
 
           const sampleRes = await sampleFramesFromStream(candStreamUrl, candFramesDir, {
             duration: candMeta.duration,
-            maxSampleFrames: 25,
+            maxSampleFrames: 12,
             onProgress: updateProgress,
           });
 

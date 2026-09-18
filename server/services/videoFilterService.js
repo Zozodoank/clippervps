@@ -136,43 +136,56 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
   };
 
   // Step 2: Extract direct stream URL for low-resolution 360p (Fast & Quota-efficient)
-  onProgress({
-    step: 'stream_url_fetch',
-    message: 'Mengambil stream URL preview 360p langsung dari YouTube...',
-    progress: 14,
-  });
+  let streamUrl = null;
+  if (Array.isArray(metaResult.formats) && metaResult.formats.length > 0) {
+    const format360 = metaResult.formats.find(f => f.format_id === '18' && f.url && f.url.startsWith('http')) ||
+      metaResult.formats.find(f => f.height && f.height <= 360 && f.url && f.url.startsWith('http')) ||
+      metaResult.formats.find(f => f.height && f.height <= 480 && f.url && f.url.startsWith('http')) ||
+      metaResult.formats.find(f => f.url && f.url.startsWith('http'));
+    if (format360?.url) {
+      streamUrl = format360.url;
+    }
+  }
 
-  const streamArgs = [
-    ...getYtDlpBaseArgs(),
-    '-g',
-    '-f', '18/bestvideo[height<=360]+bestaudio/bestvideo[height<=360]/best[height<=360]/worstvideo/worst/best',
-    '--no-playlist',
-    url
-  ];
-
-  const streamUrl = await new Promise((resolve, reject) => {
-    const proc = spawn(ytDlpPath, streamArgs);
-    let stdout = '';
-    let stderr = '';
-
-    proc.stdout.on('data', (d) => stdout += d.toString());
-    proc.stderr.on('data', (d) => stderr += d.toString());
-
-    proc.on('close', (code) => {
-      if (code === 0 && stdout) {
-        const firstLine = stdout.trim().split(/\r?\n/)[0].trim();
-        if (firstLine.startsWith('http')) {
-          resolve(firstLine);
-        } else {
-          reject(new Error(`Stream URL tidak valid: ${firstLine}`));
-        }
-      } else {
-        reject(new Error(`yt-dlp stream URL failed (code ${code}): ${stderr.slice(-300)}`));
-      }
+  if (!streamUrl) {
+    onProgress({
+      step: 'stream_url_fetch',
+      message: 'Mengambil stream URL preview 360p langsung dari YouTube...',
+      progress: 14,
     });
 
-    proc.on('error', reject);
-  });
+    const streamArgs = [
+      ...getYtDlpBaseArgs(),
+      '-g',
+      '-f', '18/bestvideo[height<=360]+bestaudio/bestvideo[height<=360]/best[height<=360]/worstvideo/worst/best',
+      '--no-playlist',
+      url
+    ];
+
+    streamUrl = await new Promise((resolve, reject) => {
+      const proc = spawn(ytDlpPath, streamArgs);
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (d) => stdout += d.toString());
+      proc.stderr.on('data', (d) => stderr += d.toString());
+
+      proc.on('close', (code) => {
+        if (code === 0 && stdout) {
+          const firstLine = stdout.trim().split(/\r?\n/)[0].trim();
+          if (firstLine.startsWith('http')) {
+            resolve(firstLine);
+          } else {
+            reject(new Error(`Stream URL tidak valid: ${firstLine}`));
+          }
+        } else {
+          reject(new Error(`yt-dlp stream URL failed (code ${code}): ${stderr.slice(-300)}`));
+        }
+      });
+
+      proc.on('error', reject);
+    });
+  }
 
   return { metadata, streamUrl };
 }
@@ -401,7 +414,7 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
  */
 export async function sampleFramesFromStream(streamUrl, outputDir, {
   duration = 60,
-  maxSampleFrames = 30,
+  maxSampleFrames = 12,
   onProgress = () => {}
 } = {}) {
   if (!fs.existsSync(outputDir)) {
@@ -415,7 +428,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   }
 
   const ffmpegPath = getFFmpegPath();
-  const safeMax = Math.max(5, Math.min(30, Number(maxSampleFrames) || 30));
+  const safeMax = Math.max(5, Math.min(20, Number(maxSampleFrames) || 12));
   const safeDuration = Math.max(10, Number(duration) || 60);
 
   // Generate evenly distributed timestamps across video (skipping first 3.5s intro bumpers/ads and last 4.5s outro endcards)
@@ -431,7 +444,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   onProgress({
     step: 'stream_sampling',
-    message: `Sampling cepat ${safeMax} keyframe visual langsung dari stream URL (fast seek paralel)...`,
+    message: `Sampling kilat ${safeMax} keyframe visual langsung dari stream URL (fast parallel seek)...`,
     progress: 25,
   });
 
@@ -440,28 +453,31 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
-  // Fast seek each timestamp with concurrency limit (2 parallel workers on 2-core VPS)
-  const concurrency = 2;
+  // Fast seek each timestamp with concurrency limit (4 parallel workers)
+  const concurrency = 4;
   const executing = [];
   for (const point of samplePoints) {
-    // 50ms gentle pacing delay between seek dispatches to avoid burst traffic
-    await new Promise(r => setTimeout(r, 50));
+    // 10ms micro pacing delay
+    await new Promise(r => setTimeout(r, 10));
 
     const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
     const outputPath = path.join(outputDir, frameFile);
 
     const p = new Promise((resolve) => {
       // Input seeking (-ss before -i) fetches only the keyframe near timestamp via HTTP Range headers
-      // Browser headers and user-agent mimic real browser / IDM buffering
+      // -an -sn -dn omits audio and subtitle parsing for maximum keyframe seek speed
       const proc = spawn(ffmpegPath, [
         '-y',
         '-user_agent', browserUserAgent,
         '-headers', browserHeaders,
         '-reconnect', '1',
         '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '4',
+        '-reconnect_delay_max', '2',
         '-ss', String(point.timestamp),
         '-i', streamUrl,
+        '-an',
+        '-sn',
+        '-dn',
         '-frames:v', '1',
         '-vf', 'scale=-2:360',
         '-q:v', '3',
