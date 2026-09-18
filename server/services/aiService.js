@@ -581,17 +581,15 @@ ${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, 
 
 CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP GEOMETRY RULE)
 - 9:16 CROP GEOMETRY MANDATE (HORIZONTAL 16:9 vs VERTICAL 9:16 SOURCE VIDEOS):
-  * HORIZONTAL 16:9 VIDEOS: The backend crops the central 9:16 vertical frame (~45-50% width). Outer left margins (0-20%) and outer right margins (80-100%) are completely cropped out. Peripheral corner watermarks in the far corners are safely cut off.
+  * HORIZONTAL 16:9 VIDEOS: The final Short uses ONLY the central 9:16 vertical strip (the middle 56.25% width: horizontal X from 22% to 78%). The entire outer left side (0% to 22%) and outer right side (78% to 100%) ARE COMPLETELY DISCARDED AND CUT OFF BY FFMPEG!
+    CRITICAL RULE: Channel logos, channel badges, subscriber icons, or watermarks located in the far-right corner (X > 78%, such as top-right or bottom-right creator icons) or far-left corner (X < 22%) WILL NEVER APPEAR in the 9:16 crop! DO NOT REJECT HORIZONTAL 16:9 VIDEOS FOR CORNER LOGOS LOCATED IN THE FAR-RIGHT (X > 78%) OR FAR-LEFT (X < 22%) EDGES! Only reject if a digital watermark or channel logo directly intrudes into the central 56% peragaan area.
   * VERTICAL 9:16 VIDEOS (SHORTS / REELS / TIKTOK): ZERO HORIZONTAL CROPPING OCCURS! The full 100% width and all four corners remain completely visible in the final output!
     THEREFORE: In vertical videos, ANY watermark, channel handle, or creator text overlay anywhere in the frame (including corners and margins) CANNOT be cropped out and MUST BE REJECTED IMMEDIATELY!
-- STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME:
+- STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME (THE CENTRAL 56% ZONE):
   * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
-  * Setiap watermark atau logo yang masuk ke dalam frame 9:16 wajib DITOLAK karena tidak bisa terpotong.
-  * PERINGATAN KERAS WATERMARK ABU-ABU / TRANSPARAN / SAMAR:
-    Perhatikan dengan sangat teliti setiap watermark semi-transparan, watermark abu-abu muda, logo rumah/bangunan/karakter, atau teks merek kreator/studio (seperti logo channel samar, teks abu-abu di sudut atas atau tengah frame).
-    JIKA WATERMARK ABU-ABU/SAMAR INI TERLIHAT DI DALAM AREA FRAME PERAGAAN (tidak terpotong habis di luar layar), VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Mengandung watermark abu-abu/logo samar di dalam frame."}
+  * Setiap watermark atau logo yang benar-benar masuk ke dalam area tengah 9:16 wajib DITOLAK karena tidak bisa terpotong.
 - PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
-  * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
+  * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "SilverCrest", "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
 CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GRAPHIC OVERLAYS
 - HARD REJECT CRITERIA (IMMEDIATE ZERO TOLERANCE INSIDE 9:16 CROP):
