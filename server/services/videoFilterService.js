@@ -137,11 +137,22 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
 
   // Step 2: Extract direct stream URL for low-resolution 360p (Fast & Quota-efficient)
   let streamUrl = null;
-  if (Array.isArray(metaResult.formats) && metaResult.formats.length > 0) {
-    const format360 = metaResult.formats.find(f => f.format_id === '18' && f.url && f.url.startsWith('http')) ||
-      metaResult.formats.find(f => f.height && f.height <= 360 && f.url && f.url.startsWith('http')) ||
-      metaResult.formats.find(f => f.height && f.height <= 480 && f.url && f.url.startsWith('http')) ||
-      metaResult.formats.find(f => f.url && f.url.startsWith('http'));
+  const rawFormats = Array.isArray(metaResult.formats) ? metaResult.formats : [];
+  const validVideoFormats = rawFormats.filter(f =>
+    f.url &&
+    f.url.startsWith('http') &&
+    f.vcodec &&
+    f.vcodec !== 'none' &&
+    f.protocol !== 'mhtml' &&
+    !f.format_id?.startsWith('sb') &&
+    !f.url.includes('/sb/')
+  );
+
+  if (validVideoFormats.length > 0) {
+    const format360 = validVideoFormats.find(f => f.format_id === '18') ||
+      validVideoFormats.find(f => f.height && f.height <= 360) ||
+      validVideoFormats.find(f => f.height && f.height <= 480) ||
+      validVideoFormats[0];
     if (format360?.url) {
       streamUrl = format360.url;
     }
@@ -157,7 +168,7 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
     const streamArgs = [
       ...getYtDlpBaseArgs(),
       '-g',
-      '-f', '18/bestvideo[height<=360]+bestaudio/bestvideo[height<=360]/best[height<=360]/worstvideo/worst/best',
+      '-f', 'bestvideo[height<=360]/18/bestvideo[height<=480]/best[height<=360]/worstvideo/best',
       '--no-playlist',
       url
     ];
