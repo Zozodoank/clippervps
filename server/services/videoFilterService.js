@@ -232,8 +232,10 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
 
   // 2C. Filter Konten Perbaikan / Servis / Barang Rusak pada Deskripsi
-  const repairDescRegex = /\b(perbaikan|penggantian|pergantian|mengganti|rusak|kerusakan|service|servis|reparasi|bongkar mesin|mati total|matot|ganti lcd)\b/i;
-  if (repairDescRegex.test(descLower.slice(0, 500))) {
+  // Bersihkan URL terlebih dahulu agar link domain seperti service.kompernass.com tidak memicu false positive
+  const descNoUrls = descLower.replace(/https?:\/\/[^\s]+/g, '');
+  const repairDescRegex = /\b(perbaikan|penggantian|pergantian|mengganti|rusak|kerusakan|bengkel|jasa\s+servis|tempat\s+servis|reparasi|bongkar\s+mesin|mati\s+total|matot|ganti\s+lcd)\b/i;
+  if (repairDescRegex.test(descNoUrls.slice(0, 500))) {
     return { eligible: false, reason: 'Terdeteksi indikasi konten perbaikan / servis / penggantian alat rusak pada deskripsi video.' };
   }
 
