@@ -216,7 +216,7 @@ class TextGatekeeper:
                 if bw >= int(160 * 0.45) and int(280 * 0.06) <= bh <= int(280 * 0.35):
                     if (bw * bh) > (160 * 280 * 0.08) and (by + bh / 2) > (280 * 0.15):
                         inner_edge_density = np.count_nonzero(edges[by:by+bh, bx:bx+bw]) / float(bw * bh)
-                        if inner_edge_density > 0.06:
+                        if inner_edge_density > 0.18:
                             return True, 0.12, 0.15, f"Banner promosi / kartu teks statis terdeteksi di frame 9:16 ({bw}x{bh}px)"
         except Exception:
             pass
@@ -274,9 +274,9 @@ class TextGatekeeper:
                 bottom_right_mask = text_mask[bottom_cut:, int(target_w * 0.45):]
                 bottom_right_cov = int(np.count_nonzero(bottom_right_mask)) / float((target_h - bottom_cut) * (target_w - int(target_w * 0.45))) if bottom_zone_pixels > 0 else 0.0
 
-                if top_cov >= 0.025 or top_left_cov >= 0.022 or top_right_cov >= 0.022:
+                if top_cov >= 0.070 or top_left_cov >= 0.060 or top_right_cov >= 0.060:
                     return True, total_cov, bottom_cov, f"Teks overlay / watermark di area atas (coverage {max(top_cov, top_left_cov, top_right_cov) * 100:.1f}%)"
-                if bottom_right_cov >= 0.025:
+                if bottom_right_cov >= 0.065:
                     return True, total_cov, bottom_cov, f"Watermark / logo kreator di pojok bawah (coverage {bottom_right_cov * 100:.1f}%)"
                 if bottom_cov >= max_bottom:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)"
@@ -289,12 +289,13 @@ class TextGatekeeper:
         gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
         grad_x = cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3)
         abs_grad_x = cv2.convertScaleAbs(grad_x)
-        _, thresh = cv2.threshold(abs_grad_x, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
 
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 3))
-        connected = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+        # Morphological horizontal connection to form text line blobs
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 3))
+        connected = cv2.morphologyEx(abs_grad_x, cv2.MORPH_CLOSE, kernel)
+        _, connected = cv2.threshold(connected, 55, 255, cv2.THRESH_BINARY)
 
-        total_cov = float(cv2.countNonZero(connected)) / crop_area
+        total_cov = float(cv2.countNonZero(connected)) / float(crop_area)
 
         # Top 35% zone fallback
         top_y = int(h * 0.35)
@@ -321,9 +322,9 @@ class TextGatekeeper:
         sobel_bottom_thresh = 0.08 if niche == "gadget_smartphone" else 0.06
         sobel_total_thresh = 0.10 if niche == "gadget_smartphone" else 0.07
 
-        if left_top_cov >= 0.035 or right_top_cov >= 0.035 or top_cov >= 0.040:
+        if left_top_cov >= 0.075 or right_top_cov >= 0.075 or top_cov >= 0.080:
             return True, total_cov, bottom_cov, f"Teks overlay / watermark di area atas (densitas {max(top_cov, left_top_cov, right_top_cov) * 100:.1f}%)"
-        if bottom_right_cov >= 0.035:
+        if bottom_right_cov >= 0.070:
             return True, total_cov, bottom_cov, f"Watermark sudut bawah terdeteksi (densitas {bottom_right_cov * 100:.1f}%)"
         if bottom_cov >= sobel_bottom_thresh:
             return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (densitas {bottom_cov * 100:.1f}%)"

@@ -220,7 +220,7 @@ def analyze_frame_features(cropped_bgr, full_bgr, prev_cropped, consecutive_stat
         c_density = float(np.count_nonzero(c_edges)) / float(c_edges.size)
         
         # High edge density in a small corner indicates logo/watermark overlay
-        if c_density > 0.22:
+        if c_density > 0.28:
             has_watermark = True
             reasons.append(f"Watermark/logo terdeteksi di sudut {c_name} ({c_density * 100:.1f}%)")
             break
@@ -374,6 +374,13 @@ def curate_video(
 
     target_base = VAL_DIR if split == "val" else (TEST_DIR if split == "test" else TRAIN_DIR)
 
+    # Clean old files for this video
+    for sub in ["valid_real", "rejected"]:
+        for d in [TRAIN_DIR, VAL_DIR, TEST_DIR]:
+            for old_f in glob.glob(os.path.join(d, sub, f"clip_{video_id}_*.jpg")):
+                try: os.remove(old_f)
+                except Exception: pass
+
     datasheet_records = []
     saved_clusters = []   # Representatives of accepted frame clusters
     prev_cropped = None
@@ -432,8 +439,8 @@ def curate_video(
                     assigned_cluster_id = cl_id
                     break
 
-            # If redundant and we already have enough valid frames in this cluster, drop it
-            if is_redundant and label == "valid_real":
+            # If redundant, drop it to prevent dataset repetition & bias
+            if is_redundant:
                 stats["dropped_similarity"] += 1
                 # Still record in datasheet for audit with 'dropped_redundant' note
                 datasheet_records.append({
