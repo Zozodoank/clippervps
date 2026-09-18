@@ -17,6 +17,9 @@ const IS_LINUX = process.platform === 'linux';
  * Scan all common directory locations and filename variations for cookies.txt
  */
 function findCookiesFile() {
+  if (process.env.DISABLE_COOKIES === 'true' || process.env.NO_COOKIES === 'true') {
+    return null;
+  }
   const rootDir = path.resolve(serverDir, '..');
   const candidatePaths = [
     path.join(serverDir, 'cookies.txt'),

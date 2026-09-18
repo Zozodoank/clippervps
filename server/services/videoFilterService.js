@@ -15,6 +15,9 @@ const serverDir = path.resolve(__dirname, '..');
  * Scan common locations for cookies.txt
  */
 export function findCookiesFile() {
+  if (process.env.DISABLE_COOKIES === 'true' || process.env.NO_COOKIES === 'true') {
+    return null;
+  }
   const rootDir = path.resolve(serverDir, '..');
   const candidatePaths = [
     path.join(serverDir, 'cookies.txt'),

@@ -9,7 +9,7 @@ import multer from 'multer';
 import { exec, spawn, execSync } from 'child_process';
 
 import { checkSystemDependencies, getFFmpegPath } from './services/binaryChecker.js';
-import { downloadYouTubeVideo, extractVideoId } from './services/downloader.js';
+import { downloadYouTubeVideo, extractVideoId, isLocalPortListening } from './services/downloader.js';
 import { extractFrames } from './services/frameExtractor.js';
 import {
   selectHighlightWithAI,
@@ -3051,16 +3051,23 @@ async function runAutoStage1Worker(run) {
           msg.includes('cookies for the authentication') || msg.includes('login required') || msg.includes('private video') ||
           (msg.includes('yt-dlp') && msg.includes('authentication'));
         if (isYouTubeAuthError) {
-          console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
-          updateAutoRun(run, {
-            status: 'stopped',
-            message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Upload cookies.txt ke server/cookies.txt dan restart server.',
-            progress: 100,
-            finishedAt: new Date().toISOString(),
-            currentJobId: null,
-            currentProductTitle: null,
-          });
-          return;
+          const isProxyActive = isLocalPortListening(10808) || Boolean(process.env.PROXY_URL || process.env.RESIDENTIAL_PROXY);
+          const isCookiesDisabled = process.env.DISABLE_COOKIES === 'true' || process.env.NO_COOKIES === 'true';
+
+          if (isProxyActive || isCookiesDisabled) {
+            console.warn(`[Auto] ⚠️ Video ini membutuhkan login / autentikasi. Melewati produk ini dan lanjut ke antrean berikutnya (Mode Proxy 10808 / Tanpa Cookies aktif).`);
+          } else {
+            console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
+            updateAutoRun(run, {
+              status: 'stopped',
+              message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Solusi: Hubungkan SSH Reverse Proxy Termux (port 10808) atau upload cookies.txt.',
+              progress: 100,
+              finishedAt: new Date().toISOString(),
+              currentJobId: null,
+              currentProductTitle: null,
+            });
+            return;
+          }
         }
 
         // 3. Limit Kuota Model Gemini AI (Visual atau TTS)
