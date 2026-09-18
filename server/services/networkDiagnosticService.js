@@ -1,7 +1,7 @@
 import http from 'http';
 import https from 'https';
 import { spawn } from 'child_process';
-import { getYtDlpPath } from './downloader.js';
+import { getYtDlpPath } from './binaryChecker.js';
 
 let cachedPublicIp = null;
 let lastIpCheckTime = 0;
