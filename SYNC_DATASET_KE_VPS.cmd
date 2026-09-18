@@ -16,14 +16,14 @@ echo   User      : %VPS_USER%
 echo =====================================================================
 echo.
 
-echo [1/3] Memeriksa file dataset lokal...
-if not exist "server\gatekeeper\dataset\curated_local_6864ee_datasheet.json" (
-  echo ❌ Berkas curated_local_6864ee_datasheet.json tidak ditemukan!
+echo [1/4] Memeriksa file dataset & model AI lokal...
+if not exist "server\gatekeeper\dataset\curated_local_diverse_faces_datasheet.json" (
+  echo ❌ Berkas curated_local_diverse_faces_datasheet.json tidak ditemukan!
   pause
   exit /b 1
 )
 
-echo [2/3] Mengunggah datasheet JSON ke folder gatekeeper VPS...
+echo [2/4] Mengunggah datasheet JSON ke folder gatekeeper VPS...
 scp -P %VPS_PORT% -o StrictHostKeyChecking=no server\gatekeeper\dataset\*.json %VPS_USER%@%VPS_HOST%:~/clipperVPS/server/gatekeeper/dataset/
 
 if %ERRORLEVEL% NEQ 0 (
@@ -36,11 +36,19 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo.
-echo [3/3] Mengunggah master dataset_v2.zip ke VPS...
+echo [3/4] Mengunggah model AI (Face, Text, Scene) ke folder models VPS...
+scp -P %VPS_PORT% -o StrictHostKeyChecking=no server\gatekeeper\models\* %VPS_USER%@%VPS_HOST%:~/clipperVPS/server/gatekeeper/models/
+
+echo.
+echo [4/4] Mengunggah master dataset_v2.zip ke VPS...
 scp -P %VPS_PORT% -o StrictHostKeyChecking=no server\gatekeeper\dataset_v2.zip %VPS_USER%@%VPS_HOST%:~/clipperVPS/server/gatekeeper/dataset_v2.zip
 
 echo.
+echo 🔄 Me-restart service AI Gatekeeper di VPS agar model wajah aktif...
+ssh -p %VPS_PORT% -o StrictHostKeyChecking=no %VPS_USER%@%VPS_HOST% "pm2 restart gatekeeper"
+
+echo.
 echo =====================================================================
-echo ✅ SINKRONISASI DATASET KE VPS BERHASIL LENGKAP!
+echo ✅ SINKRONISASI DATASET, DATASHEET & MODEL WAJAH KE VPS BERHASIL!
 echo =====================================================================
 pause

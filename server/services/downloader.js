@@ -270,6 +270,14 @@ export const DIRTY_NEGATIVE_OPERATORS = [
   '-pabrik',
   '-manufacturing',
   '-factory',
+  '-industri',
+  '-"mesin industri"',
+  '-"alat berat"',
+  '-"mesin usaha"',
+  '-"mesin pabrik"',
+  '-"mesin produksi"',
+  '-"commercial machine"',
+  '-"industrial machine"',
   '-slideshow',
   '-ternak',
   '-pakan',
@@ -306,8 +314,8 @@ export function buildCleanYouTubeQuery(baseQuery) {
 
   // 1. Bersihkan kata-kata sampah tanpa mematikan kata cara/tutorial jika mencari alat dapur
   const stripRegex = isMoldOrFoodTool
-    ? /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|mukbang|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
-    : /\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
+    ? /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|mukbang|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
+    : /\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
 
   let cleaned = String(baseQuery)
     .replace(stripRegex, '')

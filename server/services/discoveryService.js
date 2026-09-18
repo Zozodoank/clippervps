@@ -532,12 +532,18 @@ export const BULKY_EXCLUDE_WORDS = [
   'griddle outdoor',
   'commercial grill',
 
-  // Pabrik / Industri / Proses Pembuatan
+  // Pabrik / Industri / Proses Pembuatan / Mesin Komersial
   'pabrik',
   'manufacturing',
   'factory',
   'proses pembuatan',
   'industri',
+  'mesin industri',
+  'mesin usaha',
+  'mesin umkm',
+  'mesin produksi',
+  'mesin pabrik',
+  'alat berat',
   'produksi masal',
 
   // Pertanian / Peternakan / Mesin Berat / Penggilingan

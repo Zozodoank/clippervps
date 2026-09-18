@@ -300,6 +300,15 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     }
   }
 
+  // 2G. Filter Mesin Industri, Pabrik, Alat Berat, dan Manufaktur Skala Usaha (Cegah Buang Token AI)
+  const industrialRegex = /\b(pabrik|factory|manufacturing|mesin\s+industri|alat\s+berat|bengkel|mesin\s+usaha|mesin\s+umkm|mesin\s+produksi|mesin\s+pabrik|mesin\s+selep|pakan\s+ternak|mesin\s+ternak|traktor|perontok\s+padi|pemipil\s+jagung|chopper\s+pakan|chopper\s+rumput|silase|mesin\s+otomatis\s+pabrik|industri\s+makanan)\b/i;
+  if (industrialRegex.test(titleLower)) {
+    return { eligible: false, reason: 'Judul video mengindikasikan mesin industri / peralatan pabrik / alat berat (bukan alat dapur praktis rumah tangga).' };
+  }
+  if (industrialRegex.test(descNoUrls.slice(0, 500))) {
+    return { eligible: false, reason: 'Deskripsi video mengindikasikan mesin industri / peralatan pabrik / alat berat.' };
+  }
+
   // 3. Filter Iklan & Sponsor Komersial
   const adKeywords = [
     'sponsored', 'promoted', 'paid promotion', 'endorsement', 'iklan',
