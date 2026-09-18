@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import net from 'net';
 import os from 'os';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -82,6 +83,47 @@ function startServerProcess() {
   });
 }
 
+const GATEKEEPER_PORT = 5050;
+let gatekeeperProcess = null;
+
+async function startGatekeeperProcess() {
+  const gatekeeperScript = path.join(__dirname, 'server', 'gatekeeper', 'service.py');
+  if (!fs.existsSync(gatekeeperScript)) return;
+
+  const portFree = await isPortFree(GATEKEEPER_PORT);
+  if (!portFree) {
+    console.log(`🤖 AI Local Gatekeeper is already running on port ${GATEKEEPER_PORT}.`);
+    return;
+  }
+
+  const pyCmd = isWindows ? 'python' : 'python3';
+  console.log(`🤖 Starting AI Local Gatekeeper on port ${GATEKEEPER_PORT}...`);
+  gatekeeperProcess = spawn(pyCmd, [gatekeeperScript, '--port', String(GATEKEEPER_PORT)], {
+    cwd: path.join(__dirname, 'server', 'gatekeeper'),
+    env: {
+      ...process.env,
+      OMP_NUM_THREADS: '1',
+      OPENBLAS_NUM_THREADS: '1',
+      MKL_NUM_THREADS: '1',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  gatekeeperProcess.stdout.on('data', (d) => {
+    const text = d.toString().trim();
+    if (text.includes('Serving') || text.includes('ready') || text.includes('aktif') || text.includes('AKTIF') || text.includes('Gatekeeper')) {
+      console.log(`[Gatekeeper] ${text}`);
+    }
+  });
+
+  gatekeeperProcess.on('exit', (code) => {
+    if (!isShuttingDown) {
+      console.log(`[dev-runner] Gatekeeper exited with code ${code}.`);
+    }
+  });
+}
+
+await startGatekeeperProcess();
 startServerProcess();
 
 const clientProcess = spawn(npmCmd, ['run', 'dev', '--', '--host', '0.0.0.0', '--port', String(CLIENT_PORT)], {
@@ -98,6 +140,9 @@ const cleanup = () => {
   isShuttingDown = true;
   console.log('\n🛑 Shutting down services...');
   if (serverProcess) serverProcess.kill();
+  if (gatekeeperProcess) {
+    try { gatekeeperProcess.kill(); } catch {}
+  }
   clientProcess.kill();
   process.exit();
 };

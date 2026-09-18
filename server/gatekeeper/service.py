@@ -494,6 +494,56 @@ def detect_paper_manual(image_bgr):
     return False, "Bukan dokumen kertas"
 
 
+def detect_synthetic_graphic_overlay(crop_bgr):
+    """
+    Mendeteksi elemen grafis non-teks buatan editor video YouTube:
+    - Panah merah/kuning penunjuk produk
+    - Lingkaran merah / kotak penanda highlight
+    - Tombol subscribe / follow / badge harga animasi
+    - Stiker emoji / grafis digital vektor berlatar solid
+    """
+    h, w = crop_bgr.shape[:2]
+    if h < 60 or w < 60:
+        return False, "Crop terlalu kecil"
+
+    hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
+    _, s_channel, v_channel = cv2.split(hsv)
+
+    # 1. Mask piksel dengan saturasi & kecerahan ultra-tinggi (warna buatan/neon)
+    # Red range 1 & 2 (panah / lingkaran merah YouTube)
+    red_mask1 = cv2.inRange(hsv, np.array([0, 190, 160]), np.array([10, 255, 255]))
+    red_mask2 = cv2.inRange(hsv, np.array([170, 190, 160]), np.array([180, 255, 255]))
+    # Bright pure yellow / neon (kotak penanda / tombol highlight)
+    yellow_mask = cv2.inRange(hsv, np.array([22, 210, 180]), np.array([34, 255, 255]))
+    # Neon green / cyan / magenta
+    neon_mask = cv2.inRange(hsv, np.array([35, 220, 180]), np.array([160, 255, 255]))
+
+    synthetic_mask = cv2.bitwise_or(cv2.bitwise_or(red_mask1, red_mask2), cv2.bitwise_or(yellow_mask, neon_mask))
+
+    # Bersihkan noise kecil (titik-titik bintik) dengan morfologi opening
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    opened = cv2.morphologyEx(synthetic_mask, cv2.MORPH_OPEN, kernel)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(opened)
+
+    total_area = float(h * w)
+    for i in range(1, num_labels):
+        comp_area = stats[i, cv2.CC_STAT_AREA]
+        # Panah, badge, atau lingkaran biasanya berukuran antara 0.3% hingga 15% frame
+        comp_ratio = comp_area / total_area
+        if 0.003 <= comp_ratio <= 0.15:
+            comp_mask = (labels == i).astype(np.uint8)
+            # Periksa kehalusan warna (flatness / standard deviation): grafis buatan warnanya datar tanpa bayangan alami
+            comp_v = v_channel[comp_mask > 0]
+            v_std = float(np.std(comp_v)) if len(comp_v) > 0 else 99.0
+
+            # Grafis vektor buatan editor memiliki v_std sangat rendah (< 14.0)
+            if v_std < 14.0:
+                return True, f"Terdeteksi grafis overlay buatan (panah/lingkaran/stiker vektor, area {comp_ratio*100:.1f}%, std={v_std:.1f})"
+
+    return False, "Tidak ada grafis sintetis"
+
+
 class FrameGatekeeper:
     def __init__(self):
         print("\n🚀 [AI Gatekeeper] Memuat pipeline pra-pemrosesan di CPU...")
@@ -594,6 +644,17 @@ class FrameGatekeeper:
                 "reason": text_reason,
                 "totalCoverage": round(total_cov, 3),
                 "bottomCoverage": round(bottom_cov, 3)
+            }
+
+        # ── TAHAP 2B: Deteksi Grafis Sintetis Non-Teks (Panah, Stiker, Badge, Lingkaran Merah) ──
+        has_graphic, graphic_reason = detect_synthetic_graphic_overlay(crop)
+        if has_graphic:
+            return {
+                "filePath": file_path,
+                "timestamp": timestamp,
+                "status": "discarded",
+                "stage": "graphic_overlay",
+                "reason": graphic_reason
             }
 
         # ── TAHAP 3: Scene Classifier ──

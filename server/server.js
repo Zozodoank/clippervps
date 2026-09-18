@@ -2106,34 +2106,51 @@ export async function runStage1Pipeline({
           continue;
         }
 
-        const t1 = Math.round((c.startSeconds + 0.8) * 10) / 10;
-        const t2 = Math.round((c.startSeconds + Math.min(2.4, Math.max(1.2, (c.duration || 3.3) - 0.6))) * 10) / 10;
+        const dur = Math.max(1.5, Number(c.duration || 3.3));
+        // Dense temporal sampling (4-5 frames per clip segment) to guarantee zero pop-up graphic/face/watermark escapes
+        const sampleOffsets = [
+          0.35,
+          Math.min(1.0, dur * 0.3),
+          Math.min(1.8, dur * 0.55),
+          Math.min(2.5, dur * 0.78),
+          Math.max(0.8, dur - 0.3)
+        ];
+        const uniqueOffsets = Array.from(new Set(sampleOffsets.map(o => Math.round(o * 10) / 10)));
+        const sampleTimestamps = uniqueOffsets.map(offset => Math.round((c.startSeconds + offset) * 10) / 10);
 
-        const f1Path = path.join(auditFramesDir, `clip_${cIdx}_t1.jpg`);
-        const f2Path = path.join(auditFramesDir, `clip_${cIdx}_t2.jpg`);
+        const frameExtractTasks = sampleTimestamps.map((ts, sIdx) => {
+          const framePath = path.join(auditFramesDir, `clip_${cIdx}_s${sIdx}.jpg`);
+          return extractSingleFrameAsync(clipVid, ts, framePath).then(ok => (ok ? { filePath: framePath, timestamp: ts } : null));
+        });
 
-        // Async non-blocking frame extraction using dynamic getFFmpegPath() (Poin 7)
-        await Promise.all([
-          extractSingleFrameAsync(clipVid, t1, f1Path),
-          extractSingleFrameAsync(clipVid, t2, f2Path),
-        ]);
-
-        const testFrames = [
-          { filePath: f1Path, timestamp: t1 },
-          { filePath: f2Path, timestamp: t2 },
-        ].filter(f => fs.existsSync(f.filePath));
+        const testFrames = (await Promise.all(frameExtractTasks)).filter(Boolean);
 
         let hasDirtyContent = false;
         let dirtyReason = '';
         if (testFrames.length > 0) {
-          const gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 10 });
+          let gkRes = null;
+          try {
+            gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 12, niche: options?.niche || 'kitchen_tools' });
+          } catch (e) {}
+
           if (gkRes && Array.isArray(gkRes.allFrames)) {
             const dirtyDet = gkRes.allFrames.find(f => f.status !== 'clean');
             if (dirtyDet) {
               hasDirtyContent = true;
               dirtyReason = `[${dirtyDet.stage ? dirtyDet.stage.toUpperCase() : 'DIRTY'}] ${dirtyDet.reason || 'Konten tidak layak'}`;
-              console.warn(`[ClipAudit] ⛔ Konten tidak layak terdeteksi pada klip #${cIdx + 1} di detik ${dirtyDet.timestamp}s (${dirtyReason}). Klip dibuang!`);
             }
+          } else {
+            // SAFETY FALLBACK: Jika Gatekeeper microservice port 5050 belum menyala / offline,
+            // jalankan fallback heuristik lokal agar klip kotor TIDAK lolos tanpa pengawasan!
+            const fallbackRes = await inspectFramesLocally(testFrames, { niche: options?.niche || 'kitchen_tools' });
+            if (fallbackRes && (!fallbackRes.eligible || fallbackRes.discardedFrames?.length > 0)) {
+              hasDirtyContent = true;
+              dirtyReason = `[HEURISTIC] ${fallbackRes.reason || 'Terdeteksi teks overlay/bumper statis pada klip'}`;
+            }
+          }
+
+          if (hasDirtyContent) {
+            console.warn(`[ClipAudit] ⛔ Segment klip #${cIdx + 1} (${c.startSeconds}s - ${Math.round((c.startSeconds + dur) * 10) / 10}s) REJECTED (${dirtyReason}). Klip dibuang!`);
           }
         }
 

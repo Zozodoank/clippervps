@@ -593,23 +593,20 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP GEO
 - PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
   * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
-CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO ANIMATED GRAPHIC OVERLAYS INSIDE 9:16 OUTPUT
-- The backend generates and burns its own clean, animated subtitles.
-- CREATOR PROMOTIONAL TEXT & OVERLAY BAN (CRITICAL FOR VERTICAL VIDEOS):
-  * DILARANG KERAS teks ajakan promosi kreator seperti "da di deskripsi", "link di bio", "klik keranjang kuning", "cek bio", "baca deskripsi", "follow", atau running caption!
-  * Pada video vertikal 9:16, teks overlay di pojok kiri atas/bawah TIDAK AKAN TERPOTONG dan wajib langsung DITOLAK!
-- STATIC TEXT BANNERS & COLORED BACKGROUND CARDS BAN:
-  * DILARANG KERAS jika ada banner teks statis, kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan tulisan di dalamnya), lower-third card, atau label promosi digital yang menempel di dalam frame 9:16 tengah!
+CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GRAPHIC OVERLAYS
+- HARD REJECT CRITERIA (IMMEDIATE ZERO TOLERANCE INSIDE 9:16 CROP):
+  * NON-TEXT GRAPHIC OVERLAYS: Pointing arrows (panah penunjuk merah/kuning), highlight circles/rectangles, animated emojis, stickers, subscription/bell/like buttons, floating price badges, or discount callouts added by video editors.
+  * CREATOR PROMOTIONAL TEXT: "da di deskripsi", "link di bio", "klik keranjang kuning", "cek bio", "follow", or running text captions.
+  * STATIC TEXT BANNERS: Colored background cards (kotak warna kuning/merah/putih dengan tulisan), lower-third bars, or digital promo stickers.
+  * SPEECH DIALOGUE & SUBTITLES: Speech dialogue captions, translated subtitles, or lyric bars.
 - OPENING INTRO BUMPER / TITLE CARD TOLERANCE (CRITICAL MANDATE):
   * JIKA VIDEO MEMILIKI KARTU INTRO / BUMPER PEMBUKA / LOGO CHANNEL ANIMASI DI DETIK 0 SAMPAI DETIK 5: JANGAN DITOLAK!
   * Video TETAP DITERIMA (status: 'accept') asalkan bagian peragaan produk setelahnya bersih dan faceless.
   * GEMINI WAJIB MEMBUANG INTRO TERSEBUT dengan cara: HANYA memilih timestamps klip yang dimulai SETELAH INTRO SELESAI (misal: mulai detik >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
 - REJECT ONLY IF:
-  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS: Ada banner teks statis, kartu persegi berlatar warna, atau kartu promo.
-  * Kartu bumper foto / slide diam mendominasi isi tengah video (video berupa kumpulan foto/slideshow statis).
-  * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
-  * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
+  * Kartu bumper foto / slide diam mendominasi isi video (video berupa kumpulan foto/slideshow statis).
+  * Grafis animasi overlay, panah penunjuk, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
 - ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable. Paper manuals, brochures, and packaging labels are NOT exempt!
 
 ${buildFaceAndMotionCriterion(niche, clipSec)}
@@ -632,10 +629,18 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
   * DILARANG KERAS video yang memiliki pilar / garis hitam vertikal tebal di sisi kiri dan kanan (pillarbox narrow slit)! Video harus mengisi penuh frame secara proporsional.
 - Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
-CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
-- Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions for a full 30 to 35 second video ad.
-- Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
-- If the video does NOT contain at least 10 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
+CRITERION 5: CLEAN TIMESTAMP SELECTION & ACTION PROGRESSION SEQUENCE
+- HARD REJECT (ZERO-TOLERANCE for selected clips):
+  * Every timestamp in "timestamps" MUST be 100% free of faces, subtitles, creator text, watermarks, pointing arrows, stickers, emojis, price tags, unboxing cardboard, paper manuals, and static slides.
+- SOFT SCORE (PRIORITIZE HIGH-QUALITY CLIPS):
+  * Give highest priority to clips showing clear hands-on demonstration, crisp natural lighting, and active physical product motion.
+- ACTION PROGRESSION (NATURAL STORY FLOW):
+  * Order the selected timestamps to follow a coherent demonstration sequence:
+    1. Phase 1 (Product Overview / Hook): 1-2 clips introducing the complete physical product in action.
+    2. Phase 2 (Hands-on Preparation): Hands preparing, holding, or loading ingredients/product.
+    3. Phase 3 (Active Demonstration): Core action of the product operating (cutting, frying, blending, cleaning).
+    4. Phase 4 (Result & Satisfaction): Appetizing, clean, or satisfying finished result.
+- Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) for a full 30 to 35 second video ad.
 - If the video does NOT contain at least 10 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
 
 Output valid JSON ONLY with this exact format:
