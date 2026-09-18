@@ -44,7 +44,8 @@ import {
   inspectFramesLocally,
   filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice
+  callAIGatekeeperMicroservice,
+  sampleDenseClustersAroundCleanFrames
 } from './services/videoFilterService.js';
 import {
   getBandwidthStats,
@@ -966,6 +967,7 @@ async function runAutoRetryWorker(jobId, run) {
             options: {
               aiProvider: effectiveAiProvider,
               autoSearchFallback: false,
+              singleVideoOnly: true,
               ttsProvider: run.ttsProvider || job.ttsProvider || process.env.TTS_PROVIDER || 'gemini_tts',
               ttsModel: run.ttsModel || job.ttsModel || process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL,
               ttsFallbackModel: run.ttsFallbackModel || job.ttsFallbackModel || process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
@@ -1410,7 +1412,7 @@ export async function runStage1Pipeline({
           if (activeStreamUrl) {
             const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
               duration: meta.duration,
-              maxSampleFrames: 12,
+              maxSampleFrames: 25,
               onProgress: updateProgress,
             });
             if (res?.frames && res.frames.length >= 5) {
@@ -1451,6 +1453,28 @@ export async function runStage1Pipeline({
         candidateIntroCutoff = localCheck.introCutoffSec || 5.0;
         console.log(`[Job ${jobId}] ℹ️ Intro bumper pembuka terdeteksi (${candidateIntroCutoff}s). AI & backend akan membuang detik awal ini.`);
       }
+
+      // Coarse-to-Dense Sampling (Audit GPT 2026):
+      // Jika scan coarse menemukan area peragaan bersih, lakukan sampling rapat (dense 1 frame / 1.2s)
+      // di sekitar area tersebut untuk memverifikasi gerakan fisik nyata & memberi Gemini sekuens aksi yang kaya!
+      if (localCheck.eligible && Array.isArray(localCheck.cleanFrames) && localCheck.cleanFrames.length >= 2 && activeStreamUrl) {
+        try {
+          const denseFrames = await sampleDenseClustersAroundCleanFrames(
+            activeStreamUrl,
+            rawFramesDir,
+            localCheck.cleanFrames,
+            { duration: meta.duration, onProgress: updateProgress }
+          );
+          if (denseFrames && denseFrames.length > 0) {
+            sampled = [...sampled, ...denseFrames].sort((a, b) => a.timestamp - b.timestamp);
+            preSampledFrames = sampled;
+            console.log(`[Job ${jobId}] 🎯 Coarse-to-Dense sampling sukses: ditambahkan ${denseFrames.length} frame rapat di sekitar area aksi fisik (total ${sampled.length} frame).`);
+          }
+        } catch (denseErr) {
+          console.warn(`[Job ${jobId}] Sampling rapat tambahan dilewati: ${denseErr.message}`);
+        }
+      }
+
       console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Frame visual valid. Verifikasi grafis visual, logo, subtitle, faceless & kecocokan produk diserahkan ke AI Vision.`);
 
       // ── JALUR 1: GOOGLE GEMINI NATIVE YOUTUBE STREAM (0 MB KUOTA LOKAL, 1.500 REQ/HARI) ──
@@ -1656,13 +1680,15 @@ export async function runStage1Pipeline({
         });
         const initialClips = initialRes.highlight?.clips || [];
         const initialDuration = initialClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
-        if (initialClips.length >= 6 && initialDuration >= 30.0) {
+        const minRequiredClips = options.singleVideoOnly ? 3 : 5;
+        const minRequiredDur = options.singleVideoOnly ? 15.0 : 25.0;
+        if (initialClips.length >= minRequiredClips && initialDuration >= minRequiredDur) {
           highlight = initialRes.highlight;
           videoMeta = initialRes.videoMeta;
           previewVideoPath = initialRes.previewVideoPath;
           approved = true;
         } else {
-          console.log(`[Job ${jobId}] ⚠️ Video tunggal (${currentYoutubeUrl}) hanya menghasilkan ${initialClips.length} klip (${initialDuration.toFixed(1)}s, target minimal 30-35s). Membuka Multi-Video Harvesting (stream 3-5 video) untuk variasi adegan & durasi penuh...`);
+          console.log(`[Job ${jobId}] ⚠️ Video tunggal (${currentYoutubeUrl}) hanya menghasilkan ${initialClips.length} klip (${initialDuration.toFixed(1)}s, target minimal ${minRequiredDur}s). Membuka Multi-Video Harvesting (stream 3-5 video) untuk variasi adegan & durasi penuh...`);
           if (!targetCandidates) targetCandidates = [];
           targetCandidates.unshift({
             url: currentYoutubeUrl,
@@ -1777,16 +1803,20 @@ export async function runStage1Pipeline({
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
         // Footage Budget Target (Audit GPT 2026):
-        // 2 video sumber kaya adegan (>= 12 frame bersih) sudah lebih dari cukup untuk video 30-35 detik.
-        // Berhenti lebih cepat untuk menghemat waktu proses dan kuota API!
-        const hasEnoughFootage = (candidateResults.length >= 2 && totalCleanCount >= 8) ||
-                                 (candidateResults.length >= 1 && totalCleanCount >= 10 && (candidateResults[0].videoMeta?.duration || 0) >= 90) ||
-                                 (candidateResults.length >= 3 && totalCleanCount >= 10) ||
+        // Hitung estimasi clean usable duration (setiap frame bersih mewakili ~4 detik footage aksi).
+        const totalUsableDuration = candidateResults.reduce((acc, cr) => {
+          const cleanCount = cr.cleanFrames?.length || 0;
+          return acc + Math.min(cr.videoMeta?.duration || 60, cleanCount * 4.0);
+        }, 0);
+
+        const hasEnoughFootage = (candidateResults.length >= 2 && (totalCleanCount >= 8 || totalUsableDuration >= 35.0)) ||
+                                 (candidateResults.length >= 1 && (totalCleanCount >= 10 || totalUsableDuration >= 45.0) && (candidateResults[0].videoMeta?.duration || 0) >= 90) ||
+                                 (candidateResults.length >= 3 && totalCleanCount >= 8) ||
                                  (candidateResults.length >= 4) ||
-                                 (totalCleanCount >= 16);
+                                 (totalCleanCount >= 14);
 
         if (hasEnoughFootage) {
-          console.log(`[Job ${jobId}] ✅ Target footage budget terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video kandidat). Menghentikan pencarian awal, langsung ke AI Vision!`);
+          console.log(`[Job ${jobId}] ✅ Target footage budget terpenuhi (~${totalUsableDuration.toFixed(1)}s usable footage dari ${candidateResults.length} video kandidat). Menghentikan pencarian awal, langsung ke AI Vision!`);
           break;
         }
 
@@ -1822,7 +1852,7 @@ export async function runStage1Pipeline({
 
           const sampleRes = await sampleFramesFromStream(candStreamUrl, candFramesDir, {
             duration: candMeta.duration,
-            maxSampleFrames: 12,
+            maxSampleFrames: 25,
             onProgress: updateProgress,
           });
 

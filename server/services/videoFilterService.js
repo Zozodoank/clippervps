@@ -424,7 +424,8 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
  */
 export async function sampleFramesFromStream(streamUrl, outputDir, {
   duration = 60,
-  maxSampleFrames = 12,
+  maxSampleFrames = 25,
+  customTimestamps = null,
   onProgress = () => {}
 } = {}) {
   if (!fs.existsSync(outputDir)) {
@@ -439,18 +440,30 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   const ffmpegPath = getFFmpegPath();
   const isMobile = process.platform === 'android' || Boolean(process.env.TERMUX_VERSION) || os.cpus().length <= 4;
-  const safeMax = Math.max(5, Math.min(15, Number(maxSampleFrames) || (isMobile ? 8 : 10)));
   const safeDuration = Math.max(10, Number(duration) || 60);
 
-  // Generate evenly distributed timestamps across video (skipping first 3.5s intro bumpers/ads and last 4.5s outro endcards)
-  const safeStart = Math.min(3.5, safeDuration * 0.1);
-  const safeEnd = Math.max(safeStart + 2, safeDuration - 4.5);
-  const effectiveSpan = Math.max(1, safeEnd - safeStart);
-  const interval = effectiveSpan / (safeMax + 1);
+  // Dynamic coarse sampling: for 10-15 min video, sample every ~20-25s.
+  // Jangan potong paksa ke 15 frame agar video 10-15 menit tidak kehilangan momen demo penting!
+  const targetCoarseInterval = safeDuration >= 600 ? 25 : (safeDuration >= 300 ? 20 : 12);
+  const autoCalculatedFrames = Math.max(8, Math.min(36, Math.round(safeDuration / targetCoarseInterval)));
+  const requestedMax = Number(maxSampleFrames) > 0 ? Number(maxSampleFrames) : autoCalculatedFrames;
+  const safeMax = Math.max(6, Math.min(45, requestedMax));
+
   const samplePoints = [];
-  for (let i = 1; i <= safeMax; i++) {
-    const ts = Math.round((safeStart + (i * interval)) * 10) / 10;
-    samplePoints.push({ index: i, timestamp: ts });
+  if (Array.isArray(customTimestamps) && customTimestamps.length > 0) {
+    customTimestamps.forEach((ts, idx) => {
+      samplePoints.push({ index: idx + 1, timestamp: Math.round(ts * 10) / 10 });
+    });
+  } else {
+    // Generate evenly distributed timestamps across video (skipping first 3.5s intro bumpers/ads and last 4.5s outro endcards)
+    const safeStart = Math.min(3.5, safeDuration * 0.1);
+    const safeEnd = Math.max(safeStart + 2, safeDuration - 4.5);
+    const effectiveSpan = Math.max(1, safeEnd - safeStart);
+    const interval = effectiveSpan / (safeMax + 1);
+    for (let i = 1; i <= safeMax; i++) {
+      const ts = Math.round((safeStart + (i * interval)) * 10) / 10;
+      samplePoints.push({ index: i, timestamp: ts });
+    }
   }
 
   onProgress({
@@ -797,22 +810,27 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   const staticFrameIndices = new Set();
 
   for (let i = 0; i < frameBuffers.length - 1; i++) {
-    const b1 = frameBuffers[i];
-    const b2 = frameBuffers[i + 1];
-    let diff = 0;
-    for (let j = 0; j < b1.length; j++) {
-      diff += Math.abs(b1[j] - b2[j]);
-    }
-    const mad = diff / b1.length;
-    // Jika MAD < 6.0 (selisih < 2.5% piksel), frame identik diam / bumper hold / foto statis
-    if (mad < 6.0) {
-      staticFrameIndices.add(i);
-      staticFrameIndices.add(i + 1);
-      const ts = frames[i]?.timestamp ?? (i * 3);
-      if (ts <= 5.0 || i <= 1) {
-        openingBumperCount++;
-      } else {
-        bodyBumperCount++;
+    const ts1 = frames[i]?.timestamp ?? (i * 3);
+    const ts2 = frames[i + 1]?.timestamp ?? ((i + 1) * 3);
+
+    // Deteksi frame diam hanya valid jika frame bersebelahan waktu (<= 2.5 detik)
+    if (Math.abs(ts2 - ts1) <= 2.5) {
+      const b1 = frameBuffers[i];
+      const b2 = frameBuffers[i + 1];
+      let diff = 0;
+      for (let j = 0; j < b1.length; j++) {
+        diff += Math.abs(b1[j] - b2[j]);
+      }
+      const mad = diff / b1.length;
+      // Jika MAD < 6.0 (selisih < 2.5% piksel), frame identik diam / bumper hold / foto statis
+      if (mad < 6.0) {
+        staticFrameIndices.add(i);
+        staticFrameIndices.add(i + 1);
+        if (ts1 <= 5.0 || i <= 1) {
+          openingBumperCount++;
+        } else {
+          bodyBumperCount++;
+        }
       }
     }
   }
@@ -1206,4 +1224,148 @@ function formatSecondsLocal(secs) {
   const m = Math.floor(s / 60);
   const rem = s % 60;
   return `${String(m).padStart(2, '0')}:${String(rem).padStart(2, '0')}`;
+}
+
+/**
+ * Melakukan sampling frame rapat (dense 1 frame per 1-1.5s) di sekitar timestamp frame yang lolos Gatekeeper.
+ * Memverifikasi kontinuitas gerakan fisik dan memberikan rangkaian frame adegan nyata ke AI Storyboard.
+ *
+ * @param {string} streamUrl
+ * @param {string} outputDir
+ * @param {Array<{ timestamp: number }>} cleanFrames
+ * @param {{ duration?: number, onProgress?: Function }} options
+ * @returns {Promise<Array<object>>}
+ */
+export async function sampleDenseClustersAroundCleanFrames(streamUrl, outputDir, cleanFrames = [], {
+  duration = 60,
+  onProgress = () => {}
+} = {}) {
+  if (!Array.isArray(cleanFrames) || cleanFrames.length === 0 || !streamUrl) {
+    return [];
+  }
+
+  // Pilih hingga 4 anchor timestamp bersih terbaik (sebarkan secara temporal)
+  const sorted = [...cleanFrames].sort((a, b) => a.timestamp - b.timestamp);
+  const anchors = [];
+  for (const f of sorted) {
+    const ts = f.timestamp || 0;
+    if (ts < 3.0 || ts > duration - 3.0) continue;
+    // Beri jarak minimal 10s antar anchor agar tidak menumpuk di 1 titik
+    if (anchors.every(a => Math.abs(a - ts) >= 10.0)) {
+      anchors.push(ts);
+      if (anchors.length >= 4) break;
+    }
+  }
+
+  if (anchors.length === 0 && sorted.length > 0) {
+    anchors.push(sorted[0].timestamp || 5.0);
+  }
+
+  // Untuk setiap anchor, buat 1-2 timestamp rapat (+1.2s, +2.4s)
+  const denseTimestamps = [];
+  for (const a of anchors) {
+    if (a + 1.2 < duration - 2.0) denseTimestamps.push(Math.round((a + 1.2) * 10) / 10);
+    if (a + 2.4 < duration - 2.0) denseTimestamps.push(Math.round((a + 2.4) * 10) / 10);
+  }
+
+  if (denseTimestamps.length === 0) return [];
+
+  const denseDir = path.join(outputDir, 'dense_clusters');
+  if (!fs.existsSync(denseDir)) fs.mkdirSync(denseDir, { recursive: true });
+
+  onProgress({
+    step: 'stream_sampling_dense',
+    message: `Sampling rapat ${denseTimestamps.length} frame di sekitar kandidat aksi fisik...`,
+    progress: 30,
+  });
+
+  const ffmpegPath = getFFmpegPath();
+  const isMobile = process.platform === 'android' || Boolean(process.env.TERMUX_VERSION) || os.cpus().length <= 4;
+  const concurrency = isMobile ? 2 : 4;
+  const executing = [];
+  const densePoints = denseTimestamps.map((ts, idx) => ({ index: idx + 1, timestamp: ts }));
+
+  const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
+  const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
+
+  for (const point of densePoints) {
+    const frameFile = `dense_${String(point.index).padStart(4, '0')}.jpg`;
+    const outputPath = path.join(denseDir, frameFile);
+
+    const p = new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, [
+        '-y',
+        '-user_agent', browserUserAgent,
+        '-headers', browserHeaders,
+        '-reconnect', '1',
+        '-reconnect_streamed', '1',
+        '-reconnect_delay_max', '2',
+        '-ss', String(point.timestamp),
+        '-i', streamUrl,
+        '-an', '-sn', '-dn',
+        '-frames:v', '1',
+        '-vf', 'scale=-2:270',
+        '-q:v', '3',
+        outputPath
+      ]);
+      let finished = false;
+      const timer = setTimeout(() => {
+        if (!finished) {
+          finished = true;
+          try { proc.kill('SIGKILL'); } catch {}
+          resolve();
+        }
+      }, 7000);
+      proc.on('close', () => {
+        if (!finished) { finished = true; clearTimeout(timer); resolve(); }
+      });
+      proc.on('error', () => {
+        if (!finished) { finished = true; clearTimeout(timer); resolve(); }
+      });
+    });
+
+    const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+    executing.push(e);
+    if (executing.length >= concurrency) {
+      await Promise.race(executing);
+    }
+  }
+  await Promise.all(executing);
+
+  const denseFiles = fs.readdirSync(denseDir).filter(f => f.startsWith('dense_') && f.endsWith('.jpg')).sort();
+  if (denseFiles.length === 0) return [];
+
+  const densePointMap = new Map(densePoints.map(p => [`dense_${String(p.index).padStart(4, '0')}.jpg`, p.timestamp]));
+  const denseFrames = [];
+
+  for (let i = 0; i < denseFiles.length; i++) {
+    const filename = denseFiles[i];
+    const filePath = path.join(denseDir, filename);
+    const ts = densePointMap.get(filename) || 0;
+    const mins = Math.floor(ts / 60).toString().padStart(2, '0');
+    const secs = Math.floor(ts % 60).toString().padStart(2, '0');
+    const fileBuffer = fs.readFileSync(filePath);
+    const base64Data = fileBuffer.toString('base64');
+
+    denseFrames.push({
+      index: 1000 + i + 1,
+      frameNumber: 1000 + i + 1,
+      timestamp: ts,
+      timeFormatted: `${mins}:${secs}`,
+      base64: `data:image/jpeg;base64,${base64Data}`,
+      filePath,
+      isDenseCompanion: true,
+    });
+  }
+
+  // Verifikasi cepat dengan AI Gatekeeper jika aktif
+  try {
+    const gkRes = await callAIGatekeeperMicroservice(denseFrames, { timeoutSec: 10 });
+    if (gkRes && Array.isArray(gkRes.allFrames)) {
+      const cleanPaths = new Set(gkRes.allFrames.filter(f => f.status === 'clean').map(f => f.filePath));
+      return denseFrames.filter(f => cleanPaths.has(f.filePath));
+    }
+  } catch {}
+
+  return denseFrames;
 }

@@ -50,3 +50,4 @@ server/gatekeeper/dataset/*
 __pycache__/
 *.pyc
 scratch/
+*.bak

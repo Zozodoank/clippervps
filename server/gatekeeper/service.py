@@ -731,21 +731,29 @@ class FrameGatekeeper:
 
         # ── 1. Inter-Frame Motion & Static Frame Detection (MAD < 6.0) ──
         prev_small = None
+        prev_ts = None
+        consecutive_pairs = 0
         static_transitions = 0
         static_indices = set()
 
         for idx, item in enumerate(frame_items):
             path = item.get("filePath") if isinstance(item, dict) else str(item)
+            ts = float(item.get("timestamp", 0.0)) if isinstance(item, dict) else 0.0
             if path and os.path.exists(path):
                 img = cv2.imread(path)
                 if img is not None:
                     small = cv2.resize(img, (80, 144))
-                    if prev_small is not None:
+                    # Deteksi frame statis HANYA valid jika membandingkan frame yang bersebelahan waktu (<= 2.5 detik)
+                    # Pada sampling jarang (selisih 20-75s), frame TIDAK boleh dibandingkan karena kamera meja bisa statis
+                    # meskipun di antaranya terdapat aksi peragaan nyata!
+                    if prev_small is not None and prev_ts is not None and abs(ts - prev_ts) <= 2.5:
+                        consecutive_pairs += 1
                         diff = float(cv2.absdiff(small, prev_small).mean())
                         if diff < 6.0:
                             static_transitions += 1
                             static_indices.add(idx)
                     prev_small = small
+                    prev_ts = ts
 
         # ── 2. Per-Frame Gatekeeper Evaluation ──
         for idx, item in enumerate(frame_items):
@@ -777,7 +785,7 @@ class FrameGatekeeper:
                 intro_cutoff_sec = max(intro_cutoff_sec, results[1].get("timestamp", 5.0))
 
         total_count = max(1, len(frame_items))
-        static_ratio = float(static_transitions) / max(1, total_count - 1)
+        static_ratio = float(static_transitions) / max(1, consecutive_pairs) if consecutive_pairs > 0 else 0.0
         
         face_discards = sum(1 for d in discarded_frames if d["stage"] == "face")
         text_discards = sum(1 for d in discarded_frames if d["stage"] == "text")

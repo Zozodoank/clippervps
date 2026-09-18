@@ -1492,18 +1492,25 @@ export async function discoverYouTubeCandidatesForProduct({
     candidates = nonExcluded;
   }
 
-  const cleanCandidates = candidates
+  const scoredCandidates = candidates
     .filter((candidate) => isLikelyCleanYouTubeCandidate(candidate, coreWords))
     .map((candidate) => ({
       ...candidate,
       searchQuery: usedQuery,
       coreProductNoun: coreNoun,
       matchScore: scoreCandidateMatch(candidate, coreWords, productDescription),
-    }))
-    .filter((candidate) => candidate.matchScore > 0)
-    .sort((a, b) => b.matchScore - a.matchScore);
+    }));
 
-  // Return strictly vetted, compliant candidates (5-15 min, clean content); NEVER leak disqualified raw candidates
+  // Jika ada video dengan kecocokan judul positif, utamakan yang berbobot tinggi.
+  // Jika judul berbahasa Inggris/global tanpa keyword harfiah namun konten bersih & berasal dari query produk,
+  // JANGAN buang kandidat bersih tersebut (biarkan AI Vision & Gatekeeper memverifikasi fisik produk)!
+  const hasPositiveMatch = scoredCandidates.some((c) => c.matchScore > 0);
+  const cleanCandidates = (hasPositiveMatch
+    ? scoredCandidates.filter((c) => c.matchScore > 0)
+    : scoredCandidates
+  ).sort((a, b) => b.matchScore - a.matchScore);
+
+  // Return strictly vetted, compliant candidates (clean content); NEVER leak disqualified raw candidates
   return cleanCandidates;
 }
 
@@ -1571,8 +1578,8 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
         if (uploaderMatch) channel = uploaderMatch[1].trim();
       }
 
-      // Filter out videos with known duration < 5 min (300s) or > 15 min (900s)
-      if (durationSec > 0 && (durationSec < 300 || durationSec > 900)) return;
+      // Filter out videos with known duration < 2 min (120s) or > 15 min (900s)
+      if (durationSec > 0 && (durationSec < 120 || durationSec > 900)) return;
 
       // Filter out videos with banned / tutorial / DIY / repair keywords
       if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
@@ -2315,8 +2322,8 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     'blackstone', 'weber', 'smoker', 'barbecue', 'bbq outdoor', 'grill outdoor', 'pemanggang besar', 'panggangan besar', 'commercial grill',
     // Filter slide foto statis
     'slideshow', 'slide foto', 'katalog foto',
-    // Filter mesin pertanian, peternakan, limbah, dan chopper pakan
-    'pakan ternak', 'mesin ternak', 'limbah', 'janggel', 'selep', 'pemipil', 'perontok', 'pemanen', 'traktor', 'chopper multifungsi', 'mesin pencacah', 'chopper', 'choper', 'silase', 'alat berat'
+    // Filter mesin pertanian, peternakan, limbah, dan chopper pakan (JANGAN tolak chopper dapur mini/elektrik!)
+    'pakan ternak', 'mesin ternak', 'limbah', 'janggel', 'selep', 'pemipil', 'perontok', 'pemanen', 'traktor', 'chopper pakan', 'chopper rumput', 'chopper ternak', 'pencacah rumput', 'pencacah ranting', 'pencacah pakan', 'silase', 'alat berat'
   ];
   if (excludedTitleWords.some((keyword) => titleText.includes(keyword))) return false;
 
