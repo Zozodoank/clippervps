@@ -77,7 +77,7 @@ def evaluate_frame_heuristic(crop_bgr):
     return "valid_real", "Peragaan produk fisik nyata alami"
 
 
-def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2, max_frames=None):
+def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2, max_frames=None, split_override=None):
     print(f"🎬 [Collector] Mengekstrak frame dari video: {video_path}")
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -89,13 +89,25 @@ def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2, max_f
     duration_sec = total_frames / fps
     print(f"   Durasi video: {duration_sec:.1f} detik | FPS: {fps:.1f}")
 
+    video_base = os.path.splitext(os.path.basename(video_path))[0]
+
+    # VIDEO-LEVEL SPLIT: Mencegah data leakage. Semua frame dari 1 video HARUS masuk ke split yang sama.
+    if split_override in ["train", "val"]:
+        is_val = (split_override == "val")
+    else:
+        import hashlib
+        video_hash = int(hashlib.md5(video_base.encode("utf-8")).hexdigest(), 16)
+        is_val = (video_hash % 100) < int(val_ratio * 100)
+
+    target_sub = VAL_DIR if is_val else TRAIN_DIR
+    split_name = "val" if is_val else "train"
+    print(f"   🎯 Split ditetapkan ke: [{split_name.upper()}] (Video-level grouping)")
+
     frame_step = max(1, int(fps * sample_interval_sec))
     frame_idx = 0
     saved_counts = {"valid_real": 0, "rejected": 0}
     datasheet = []
     prev_small = None
-
-    video_base = os.path.splitext(os.path.basename(video_path))[0]
 
     while True:
         if max_frames and (saved_counts["valid_real"] + saved_counts["rejected"]) >= max_frames:
@@ -121,8 +133,6 @@ def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2, max_f
                     reason = f"Foto statis / frame beku tanpa peragaan gerakan fisik (MAD: {diff:.2f})"
             prev_small = small
 
-            is_val = (np.random.rand() < val_ratio)
-            target_sub = VAL_DIR if is_val else TRAIN_DIR
             out_filename = f"{video_base}_t{int(ts_sec * 10):05d}.jpg"
             out_path = os.path.join(target_sub, label, out_filename)
 
@@ -135,7 +145,7 @@ def extract_from_video(video_path, sample_interval_sec=1.0, val_ratio=0.2, max_f
                 "filename": out_filename,
                 "timestamp_sec": ts_sec,
                 "label": label,
-                "split": "val" if is_val else "train",
+                "split": split_name,
                 "reason": reason
             })
 
@@ -233,7 +243,7 @@ def print_stats():
     print(f"  Grand Total    : {train_valid + train_reject + val_valid + val_reject} frame\n")
 
 
-def extract_from_videos_dir(video_dir, sample_interval_sec=1.0, val_ratio=0.2, max_per_video=30):
+def extract_from_videos_dir(video_dir, sample_interval_sec=1.0, val_ratio=0.2, max_per_video=30, split_override=None):
     print(f"🎬 [Collector] Memindai semua video di folder: {video_dir}")
     video_files = glob.glob(os.path.join(video_dir, "**", "*.mp4"), recursive=True)
     if not video_files:
@@ -243,7 +253,7 @@ def extract_from_videos_dir(video_dir, sample_interval_sec=1.0, val_ratio=0.2, m
     print(f"   Ditemukan {len(video_files)} file video. Memulai ekstraksi...")
     for idx, vpath in enumerate(video_files):
         print(f"\n--- [{idx + 1}/{len(video_files)}] Memproses: {os.path.basename(vpath)} ---")
-        extract_from_video(vpath, sample_interval_sec=sample_interval_sec, val_ratio=val_ratio, max_frames=max_per_video)
+        extract_from_video(vpath, sample_interval_sec=sample_interval_sec, val_ratio=val_ratio, max_frames=max_per_video, split_override=split_override)
 
 
 def main():
@@ -253,14 +263,17 @@ def main():
     parser.add_argument("--frames-dir", type=str, help="Path ke direktori frame gambar yang sudah ada")
     parser.add_argument("--interval", type=float, default=1.0, help="Interval pengambilan frame (detik)")
     parser.add_argument("--max-per-video", type=int, default=30, help="Maksimal frame yang diambil per video")
+    parser.add_argument("--split", type=str, choices=["auto", "train", "val"], default="auto", help="Split target dataset (train/val/auto per video)")
     parser.add_argument("--zip", action="store_true", help="Kompres dataset ke dataset_v2.zip untuk Colab")
     parser.add_argument("--stats", action="store_true", help="Tampilkan statistik frame yang terkumpul")
     args = parser.parse_args()
 
+    split_target = None if args.split == "auto" else args.split
+
     if args.video:
-        extract_from_video(args.video, sample_interval_sec=args.interval, max_frames=args.max_per_video)
+        extract_from_video(args.video, sample_interval_sec=args.interval, max_frames=args.max_per_video, split_override=split_target)
     elif args.video_dir:
-        extract_from_videos_dir(args.video_dir, sample_interval_sec=args.interval, max_per_video=args.max_per_video)
+        extract_from_videos_dir(args.video_dir, sample_interval_sec=args.interval, max_per_video=args.max_per_video, split_override=split_target)
     elif args.frames_dir:
         process_existing_frames(args.frames_dir)
 

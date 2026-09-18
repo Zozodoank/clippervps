@@ -257,9 +257,12 @@ class TextGatekeeper:
                 top_zone_pixels = float(top_cut * target_w)
                 top_cov = top_text_pixels / top_zone_pixels if top_zone_pixels > 0 else 0.0
 
-                # Top-left and top-right corner zone (60% width)
+                # Top-left and top-right corner zone (detects top watermarks & channel names)
                 top_left_mask = text_mask[:top_cut, :int(target_w * 0.60)]
                 top_left_cov = int(np.count_nonzero(top_left_mask)) / float(top_cut * int(target_w * 0.60)) if top_zone_pixels > 0 else 0.0
+
+                top_right_mask = text_mask[:top_cut, int(target_w * 0.40):]
+                top_right_cov = int(np.count_nonzero(top_right_mask)) / float(top_cut * (target_w - int(target_w * 0.40))) if top_zone_pixels > 0 else 0.0
 
                 # Bottom 35% zone
                 bottom_cut = int(target_h * 0.65)
@@ -268,8 +271,13 @@ class TextGatekeeper:
                 bottom_zone_pixels = float((target_h - bottom_cut) * target_w)
                 bottom_cov = bottom_text_pixels / bottom_zone_pixels if bottom_zone_pixels > 0 else 0.0
 
-                if top_cov >= 0.025 or top_left_cov >= 0.022:
-                    return True, total_cov, bottom_cov, f"Teks overlay / promo kreator di area atas (coverage {top_cov * 100:.1f}%)"
+                bottom_right_mask = text_mask[bottom_cut:, int(target_w * 0.45):]
+                bottom_right_cov = int(np.count_nonzero(bottom_right_mask)) / float((target_h - bottom_cut) * (target_w - int(target_w * 0.45))) if bottom_zone_pixels > 0 else 0.0
+
+                if top_cov >= 0.025 or top_left_cov >= 0.022 or top_right_cov >= 0.022:
+                    return True, total_cov, bottom_cov, f"Teks overlay / watermark di area atas (coverage {max(top_cov, top_left_cov, top_right_cov) * 100:.1f}%)"
+                if bottom_right_cov >= 0.025:
+                    return True, total_cov, bottom_cov, f"Watermark / logo kreator di pojok bawah (coverage {bottom_right_cov * 100:.1f}%)"
                 if bottom_cov >= max_bottom:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)"
                 if total_cov >= max_total:
@@ -298,15 +306,25 @@ class TextGatekeeper:
         left_top_area = float(top_y * int(w * 0.60))
         left_top_cov = float(cv2.countNonZero(left_top_roi)) / left_top_area if left_top_area > 0 else 0.0
 
+        right_top_roi = connected[:top_y, int(w * 0.40):]
+        right_top_area = float(top_y * (w - int(w * 0.40)))
+        right_top_cov = float(cv2.countNonZero(right_top_roi)) / right_top_area if right_top_area > 0 else 0.0
+
         bottom_roi = connected[bottom_y:, :]
         bottom_zone_area = float((h - bottom_y) * w)
         bottom_cov = float(cv2.countNonZero(bottom_roi)) / bottom_zone_area if bottom_zone_area > 0 else 0.0
 
+        bottom_right_roi = connected[bottom_y:, int(w * 0.45):]
+        bottom_right_area = float((h - bottom_y) * (w - int(w * 0.45)))
+        bottom_right_cov = float(cv2.countNonZero(bottom_right_roi)) / bottom_right_area if bottom_right_area > 0 else 0.0
+
         sobel_bottom_thresh = 0.08 if niche == "gadget_smartphone" else 0.06
         sobel_total_thresh = 0.10 if niche == "gadget_smartphone" else 0.07
 
-        if left_top_cov >= 0.035 or top_cov >= 0.040:
-            return True, total_cov, bottom_cov, f"Teks overlay / watermark di area atas (densitas {top_cov * 100:.1f}%)"
+        if left_top_cov >= 0.035 or right_top_cov >= 0.035 or top_cov >= 0.040:
+            return True, total_cov, bottom_cov, f"Teks overlay / watermark di area atas (densitas {max(top_cov, left_top_cov, right_top_cov) * 100:.1f}%)"
+        if bottom_right_cov >= 0.035:
+            return True, total_cov, bottom_cov, f"Watermark sudut bawah terdeteksi (densitas {bottom_right_cov * 100:.1f}%)"
         if bottom_cov >= sobel_bottom_thresh:
             return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (densitas {bottom_cov * 100:.1f}%)"
         if total_cov >= sobel_total_thresh:
@@ -341,7 +359,7 @@ class SceneGatekeeper:
                     )
                     self.is_custom_model = True
                     self.backend = "custom_scene_filter_v2"
-                    print("  [SceneGatekeeper] 🎯 AI Custom Model (scene_filter_v2.onnx) AKTIF (Class 0: Real, Class 1: Reject).")
+                    print("  [SceneGatekeeper] 🎯 AI Custom Model (scene_filter_v2.onnx) AKTIF (Class 0: rejected, Class 1: valid_real).")
                 except Exception as e:
                     print(f"  [SceneGatekeeper] ⚠️ Gagal memuat custom scene_filter_v2.onnx: {e}")
 
@@ -540,6 +558,23 @@ def detect_synthetic_graphic_overlay(crop_bgr):
             # Grafis vektor buatan editor memiliki v_std sangat rendah (< 14.0)
             if v_std < 14.0:
                 return True, f"Terdeteksi grafis overlay buatan (panah/lingkaran/stiker vektor, area {comp_ratio*100:.1f}%, std={v_std:.1f})"
+
+    # 2. Deteksi watermark box / badge putih terang datar di area sudut (top 30% atau bottom 30%)
+    white_mask = cv2.inRange(hsv, np.array([0, 0, 235]), np.array([180, 25, 255]))
+    opened_w = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
+    num_labels_w, labels_w, stats_w, _ = cv2.connectedComponentsWithStats(opened_w)
+    for i in range(1, num_labels_w):
+        comp_area = stats_w[i, cv2.CC_STAT_AREA]
+        comp_ratio = comp_area / total_area
+        top_y = stats_w[i, cv2.CC_STAT_TOP]
+        height_c = stats_w[i, cv2.CC_STAT_HEIGHT]
+        # Jika badge putih berukuran 0.4% - 10% dan berada di area atas (< 35% h) atau bawah (> 65% h)
+        if 0.004 <= comp_ratio <= 0.10 and (top_y < int(h * 0.35) or (top_y + height_c) > int(h * 0.65)):
+            comp_mask = (labels_w == i).astype(np.uint8)
+            comp_v = v_channel[comp_mask > 0]
+            v_std = float(np.std(comp_v)) if len(comp_v) > 0 else 99.0
+            if v_std < 10.0:
+                return True, f"Terdeteksi watermark / badge grafis putih di sudut frame (area {comp_ratio*100:.1f}%, std={v_std:.1f})"
 
     return False, "Tidak ada grafis sintetis"
 

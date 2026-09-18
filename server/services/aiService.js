@@ -2105,6 +2105,7 @@ CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
    - Closing line MUST have the price appeal ("murah meriah") and direct CTA to "keranjang pojok kiri bawah".
 
 STRICT RULES FOR VOICE OVER:
+- ORIGINALITY & TRANSFORMATION: DILARANG hanya sekadar mendeskripsikan apa yang terlihat di video secara datar (misal: "Ini adalah alat..."). Naskah WAJIB menyajikan alur transformasi bernilai tambah: 1) Hook Masalah/Pain Point cara lama, 2) Solusi & cara kerja praktis produk, 3) Bukti/kepuasan hasil, 4) CTA penutup. Ini wajib agar video dianggap konten original bernilai tambah oleh algoritma Meta/Reels dan Shorts.
 - NEVER mention unboxing, packaging, bubble wrap, or cardboard. Focus 100% on product action and problem-solving.
 - Write in natural, engaging conversational Indonesian.
 - DILARANG KERAS menggunakan kata "kece" dan "kangen".

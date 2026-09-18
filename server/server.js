@@ -2107,16 +2107,19 @@ export async function runStage1Pipeline({
         }
 
         const dur = Math.max(1.5, Number(c.duration || 3.3));
-        // Dense temporal sampling (4-5 frames per clip segment) to guarantee zero pop-up graphic/face/watermark escapes
-        const sampleOffsets = [
-          0.35,
-          Math.min(1.0, dur * 0.3),
-          Math.min(1.8, dur * 0.55),
-          Math.min(2.5, dur * 0.78),
-          Math.max(0.8, dur - 0.3)
-        ];
-        const uniqueOffsets = Array.from(new Set(sampleOffsets.map(o => Math.round(o * 10) / 10)));
-        const sampleTimestamps = uniqueOffsets.map(offset => Math.round((c.startSeconds + offset) * 10) / 10);
+        // High-density temporal audit (2.5 FPS across entire clip span)
+        // Eliminates temporal blind spots where watermarks, creator logos, or faces flash in between snapshots
+        const sampleStepSec = 0.40; // Every 400ms (2.5 fps)
+        const sampleOffsets = [];
+        for (let offset = 0.20; offset <= Math.max(0.20, dur - 0.20); offset += sampleStepSec) {
+          sampleOffsets.push(Math.round(offset * 100) / 100);
+        }
+        // Always include near the end of the clip to catch closing subtitles or logos
+        const endOffset = Math.round(Math.max(0.20, dur - 0.20) * 100) / 100;
+        if (!sampleOffsets.includes(endOffset)) {
+          sampleOffsets.push(endOffset);
+        }
+        const sampleTimestamps = sampleOffsets.map(offset => Math.round((c.startSeconds + offset) * 100) / 100);
 
         const frameExtractTasks = sampleTimestamps.map((ts, sIdx) => {
           const framePath = path.join(auditFramesDir, `clip_${cIdx}_s${sIdx}.jpg`);

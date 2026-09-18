@@ -2,8 +2,8 @@
 """
 PyTorch Training & ONNX Export Pipeline for ClipperVPS Scene Gatekeeper.
 Fine-tunes MobileNetV3-Small binary classifier:
-- Class 0: valid_real (Clean live-action tabletop product demonstration)
-- Class 1: rejected   (2D cartoons, overlays, static bumpers, subtitle banners, unboxing clutter)
+- Class 0: rejected   (2D cartoons, overlays, static bumpers, subtitle banners, unboxing clutter)
+- Class 1: valid_real (Clean live-action tabletop product demonstration)
 
 Exports: scene_filter_v2.onnx (opset 12, sub-10ms CPU inference)
 """
@@ -89,7 +89,7 @@ def train_model(dataset_dir="dataset", epochs=10, batch_size=16, lr=0.0008, outp
     in_features = model.classifier[3].in_features
     model.classifier[3] = nn.Sequential(
         nn.Dropout(p=0.3),
-        nn.Linear(in_features, 2)  # 2 classes: 0=valid_real, 1=rejected
+        nn.Linear(in_features, 2)  # 2 classes: 0=rejected, 1=valid_real (ImageFolder alphabetical)
     )
 
     model = model.to(device)

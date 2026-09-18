@@ -1,0 +1,903 @@
+Saya sudah membedah project ZIP ini. Kesimpulan saya cukup jelas:
+
+**Secara engineering, ClipperVPS sudah jauh lebih matang daripada filter sederhana. Tetapi secara machine-learning, datasheet/model-nya belum bisa disebut “sangat canggih”.** Masalah utamanya bukan kekurangan aturan, melainkan **dataset kecil, pembagian train/val yang bocor, classifier terlalu sederhana, dan pemeriksaan masih terlalu banyak berbasis frame tunggal.**
+
+### 1. Kondisi datasheet sekarang
+
+Di project terdapat **34 datasheet JSON dengan total 387 sample**:
+
+| Komponen                    |             Kondisi sekarang |
+| --------------------------- | ---------------------------: |
+| Total frame                 |                      **387** |
+| `valid_real`                |                      **257** |
+| `rejected`                  |                      **130** |
+| Kategori reject terstruktur |               **8 kategori** |
+| Sample reject terkurasi     |                       **94** |
+| Model utama                 |            MobileNetV3-Small |
+| Klasifikasi model           | **binary**: valid / rejected |
+| Input model                 |                      224×224 |
+| Inference                   |                     ONNX CPU |
+| Face detector               |            MediaPipe + YuNet |
+| Text detector               |               DBNet PP-OCRv4 |
+| Graphic detector            |                Heuristik HSV |
+| Pemeriksaan temporal        |      Ada, tetapi masih kasar |
+
+Kategori reject yang sudah dibuat sebenarnya bagus: `reject_zoom`, `reject_orientation`, `reject_text`, `reject_unboxing`, `reject_bulky`, `reject_face`, `reject_static`, dan `reject_watermark`.
+
+Jadi **datasheet-nya secara konsep sudah bagus**, tetapi jumlah datanya masih terlalu kecil dan distribusinya belum ideal untuk model yang harus menghadapi ribuan video YouTube yang bentuk visualnya sangat beragam.
+
+---
+
+# 2. Masalah paling serius yang saya temukan
+
+### Train dan validation mengalami data leakage
+
+Ini justru lebih penting daripada menambah jumlah frame.
+
+Script `collect_dataset.py` melakukan:
+
+```text
+random 20% → val
+80% → train
+```
+
+dari **video yang sama**.
+
+Artinya bisa terjadi:
+
+```text
+Video A
+00:10 → TRAIN
+00:11 → TRAIN
+00:12 → VAL
+00:13 → TRAIN
+00:14 → VAL
+```
+
+Padahal frame 00:12 dan 00:11 hampir sama.
+
+Dalam dataset yang sekarang, saya menemukan **semua `video_source` yang tercatat pada curated dataset muncul di lebih dari satu split**.
+
+Akibatnya, model bisa tampak sangat bagus ketika validasi, tetapi ketika diberikan **video YouTube baru dari creator berbeda**, performanya dapat jauh turun.
+
+Untuk vision model seperti ini, split yang benar seharusnya:
+
+```text
+VIDEO 01 ───────── TRAIN
+VIDEO 02 ───────── TRAIN
+VIDEO 03 ───────── TRAIN
+
+VIDEO 04 ───────── VALIDATION
+VIDEO 05 ───────── VALIDATION
+
+VIDEO 06 ───────── TEST
+VIDEO 07 ───────── TEST
+```
+
+**Bukan berdasarkan frame.**
+
+Ini perubahan pertama yang saya sarankan.
+
+---
+
+# 3. MobileNetV3 sekarang belum benar-benar "AI filter profesional"
+
+Model custom sekarang hanya:
+
+```text
+                  MobileNetV3
+                       │
+             ┌─────────┴─────────┐
+             │                   │
+        valid_real            rejected
+```
+
+Padahal kebutuhan Clipper sebenarnya jauh lebih kompleks:
+
+```text
+                         FRAME
+                           │
+       ┌───────────────────┼───────────────────┐
+       │                   │                   │
+     FACE                TEXT              GRAPHIC
+       │                   │                   │
+     YES/NO              YES/NO            YES/NO
+       │
+       └──────────────┬────────────────────────┘
+                      │
+                 SCENE TYPE
+                      │
+       ┌──────────────┼───────────────┐
+       │              │               │
+      HERO          FEATURE         ACTION
+       │              │               │
+       └──────────────┼───────────────┘
+                      │
+                 PRODUCT STATE
+                      │
+             ┌────────┴────────┐
+             │                 │
+          COMPLETE           PARTIAL
+```
+
+Model binary `valid_real/rejected` tidak tahu secara eksplisit:
+
+> "Ini frame manusia?"
+> "Ini subtitle?"
+> "Ini watermark?"
+> "Ini grafis?"
+> "Ini produk?"
+> "Ini adegan demonstrasi?"
+> "Ini packaging?"
+> "Ini hero shot?"
+
+Detektor lain memang membantu, tetapi model scene sendiri tetap terlalu general.
+
+---
+
+# 4. Ada kelemahan lain: graphic detector sekarang sangat mudah lolos
+
+Saya menemukan fungsi:
+
+`detect_synthetic_graphic_overlay()`
+
+yang terutama mencari:
+
+* merah sangat jenuh
+* kuning sangat jenuh
+* hijau neon
+* cyan
+* magenta
+* warna flat
+
+Ini cukup bagus untuk:
+
+```text
+➡️
+⭕
+🔥
+💥
+SUBSCRIBE
+PROMO
+```
+
+Tetapi bisa gagal untuk watermark:
+
+```text
+abu-abu transparan
+putih transparan
+hitam transparan
+logo sangat tipis
+logo dengan gradient
+watermark fotografis
+logo yang menyatu dengan background
+animasi kecil
+```
+
+Contohnya watermark:
+
+```text
+        [background dapur]
+
+                 ─────────
+                 creator_name
+                 ─────────
+```
+
+dengan opacity 15–20%.
+
+HSV detector bisa saja menganggap itu bagian dari scene normal.
+
+**Ini sangat mungkin salah satu sumber "sudah difilter tetapi masih lolos".**
+
+---
+
+# 5. Masalah terbesar berikutnya: filter hanya memeriksa frame, bukan seluruh klip
+
+Ini menurut saya **bug desain paling penting**.
+
+Saat ini sumber diambil kira-kira:
+
+```text
+1 frame / detik
+```
+
+lalu dipilih sekitar 25–30 frame.
+
+Kemudian AI memilih anchor frame.
+
+Misalnya AI memilih:
+
+```text
+00:31
+```
+
+Backend membuat clip:
+
+```text
+00:31 ───────── 00:35.8
+```
+
+Tetapi frame lokal mungkin hanya memeriksa:
+
+```text
+31.0
+32.0
+33.0
+34.0
+35.0
+```
+
+Bayangkan watermark muncul:
+
+```text
+32.4 ─ 32.9
+```
+
+Tidak ada frame sampling yang mengenai bagian itu.
+
+Hasil:
+
+```text
+LOCAL FILTER   → PASS
+GEMINI         → PASS
+RENDER         → watermark muncul
+```
+
+Ini bukan masalah datasheet lagi.
+
+Ini masalah **temporal coverage**.
+
+---
+
+# 6. Solusi profesional: tiga tingkatan pemeriksaan
+
+Saya sangat menyarankan pipeline berubah menjadi:
+
+```text
+SOURCE QC
+    ↓
+FRAME QC
+    ↓
+SHOT QC
+    ↓
+CLIP QC
+    ↓
+ORIGINALITY QC
+    ↓
+RENDER
+    ↓
+FINAL FRAME AUDIT
+```
+
+### Level 1 — Source QC
+
+Sudah sebagian besar ada.
+
+Periksa:
+
+```text
+durasi
+resolusi
+orientasi
+metadata
+sumber sosial media
+watermark permanen
+jenis konten
+```
+
+Tetapi beberapa aturan sekarang terlalu keras.
+
+Contohnya project menolak video kitchen hanya karena judul mengandung:
+
+```text
+unboxing
+```
+
+Padahal prompt AI sendiri mengatakan:
+
+> unboxing boleh ada selama bagian unboxing dibuang dan ada demonstrasi produk.
+
+Jadi:
+
+```text
+metadata = reject unboxing
+```
+
+bertentangan dengan:
+
+```text
+AI = accept video, discard unboxing frames
+```
+
+Sebaiknya jangan konflik seperti ini.
+
+---
+
+# 7. Level 2 — Frame QC
+
+Tetap gunakan:
+
+**MediaPipe/YuNet + DBNet + MobileNetV3 + heuristik.**
+
+Untuk VPS 2 core / 4 GB, pendekatan ini masuk akal.
+
+Tetapi output sebaiknya bukan hanya:
+
+```json
+{
+  "status": "clean"
+}
+```
+
+melainkan:
+
+```json
+{
+  "face": false,
+  "text": false,
+  "watermark": false,
+  "graphic": false,
+  "static": false,
+  "blur": false,
+  "packaging": false,
+  "orientation": true,
+  "product_visible": true,
+  "action_visible": true,
+  "scene_type": "action",
+  "quality": 0.91
+}
+```
+
+Kemudian backend bisa mengambil keputusan sendiri.
+
+---
+
+# 8. Level 3 — Shot QC
+
+Ini yang belum dimiliki project secara kuat.
+
+Jangan berpikir:
+
+```text
+FRAME 31 = clean
+```
+
+tetapi:
+
+```text
+SHOT 30.8–35.6 = clean
+```
+
+Misalnya clip 4.8 detik:
+
+```text
+30.8
+31.0
+31.2
+31.4
+31.6
+31.8
+32.0
+...
+35.6
+```
+
+Gunakan sekitar **3–5 fps** untuk final candidate.
+
+Untuk 4.8 detik:
+
+```text
+3 fps → ~14 frame
+5 fps → ~24 frame
+```
+
+Dengan resolusi kecil, ini masih sangat ringan dibanding mengirim seluruh video ke Gemini.
+
+Untuk hard filter seperti:
+
+```text
+face
+subtitle
+watermark
+graphic
+black frame
+```
+
+saya lebih memilih **false positive daripada false negative**.
+
+Artinya:
+
+> satu frame kotor di tengah shot → shot ditolak.
+
+---
+
+# 9. Bahkan lebih baik: beri "dirty interval"
+
+Misalnya detektor menemukan:
+
+```text
+31.2  clean
+31.4  clean
+31.6  clean
+31.8  DIRTY graphic
+32.0  DIRTY graphic
+32.2  DIRTY graphic
+32.4  clean
+```
+
+Backend menyimpan:
+
+```text
+DIRTY_INTERVAL
+31.7 ─ 32.3
+```
+
+Kemudian jangan hanya membuang frame 31.8–32.2.
+
+Berikan margin:
+
+```text
+31.5 ───── 32.5
+```
+
+Jadi transisi juga bersih.
+
+---
+
+# 10. Filter gerakan sebaiknya bukan "harus ganti adegan setiap 5 detik"
+
+Project saat ini sangat berorientasi:
+
+```text
+Slot 1 = 5 sec
+Slot 2 = 5 sec
+Slot 3 = 5 sec
+...
+```
+
+Ini bagus sebagai storyboard, tetapi **bukan cara terbaik untuk menentukan potongan video secara visual**.
+
+Video profesional lebih baik:
+
+```text
+Hero             2.4 s
+Feature          3.1 s
+Action           3.8 s
+Close-up         2.2 s
+Action           4.1 s
+Result           3.0 s
+Hero/CTA         2.8 s
+```
+
+daripada:
+
+```text
+4.8
+4.8
+4.8
+4.8
+4.8
+4.8
+4.8
+```
+
+Jadi **shot boundary harus mengikuti footage**, bukan dipaksa mengikuti timer.
+
+---
+
+# 11. Untuk produk dapur, saya akan mengajarkan AI kategori shot
+
+Dataset sebaiknya naik kelas dari:
+
+```text
+valid_real
+rejected
+```
+
+menjadi minimal:
+
+```text
+VALID_HERO
+VALID_FEATURE
+VALID_ACTION
+VALID_RESULT
+VALID_PRODUCT_CLOSEUP
+
+REJECT_FACE
+REJECT_TEXT
+REJECT_WATERMARK
+REJECT_GRAPHIC
+REJECT_STATIC
+REJECT_PACKAGING
+REJECT_BLUR
+REJECT_ORIENTATION
+REJECT_WRONG_PRODUCT
+```
+
+Tidak harus semua menjadi satu classifier.
+
+Malah lebih baik:
+
+```text
+                 FRAME
+                   │
+           ┌───────┴───────┐
+           │               │
+       HARD FILTER      SCENE MODEL
+           │               │
+       bad / clean    hero / action /
+                     feature / result
+```
+
+---
+
+# 12. Dataset pengguna sebenarnya memiliki pondasi bagus
+
+Ada hal yang saya suka dari project ini.
+
+Dataset sudah memiliki metadata seperti:
+
+```text
+reason
+category
+timestamp
+video_source
+video_index
+split
+curated_by_user
+session_id
+```
+
+Ini lebih baik daripada sekadar folder:
+
+```text
+good/
+bad/
+```
+
+Tetapi saat ini informasi kaya tersebut **belum dimanfaatkan sepenuhnya untuk training**.
+
+Misalnya:
+
+```text
+reject_watermark
+reject_face
+reject_text
+reject_static
+```
+
+akhirnya masuk menjadi satu:
+
+```text
+rejected
+```
+
+AI kehilangan informasi penyebabnya.
+
+---
+
+# 13. Ada masalah kecil tapi penting pada notebook training
+
+Notebook menyatakan:
+
+```text
+Class 0 = valid_real
+Class 1 = rejected
+```
+
+sementara `ImageFolder` secara alfabetis justru menghasilkan:
+
+```text
+0 = rejected
+1 = valid_real
+```
+
+Dan `labels.json` project sekarang memang:
+
+```json
+[
+  "rejected",
+  "valid_real"
+]
+```
+
+Jadi runtime `service.py` saat ini sebenarnya lebih konsisten dengan `ImageFolder` daripada komentar notebook-nya.
+
+Tetapi dokumentasi/training pipeline **perlu dibetulkan supaya tidak terjadi kesalahan ketika retraining**.
+
+---
+
+# 14. Model ONNX custom belum ada di ZIP
+
+Dalam ZIP yang saya terima, folder:
+
+```text
+server/gatekeeper/models/
+```
+
+hanya berisi:
+
+```text
+labels.json
+```
+
+Tidak ada:
+
+```text
+scene_filter_v2.onnx
+blaze_face...
+yunet...
+DBNet...
+```
+
+Artinya saya **belum bisa menguji kualitas model custom yang benar-benar dipakai**, hanya dapat mengaudit kode dan dataset/training pipeline.
+
+`download_models.py` memang disiapkan untuk mengunduh model dasar secara terpisah.
+
+Jadi penilaian saya terhadap "seberapa pintar AI" masih terutama berdasarkan arsitekturnya, bukan benchmark actual ONNX model.
+
+---
+
+# 15. Yang paling penting terkait Facebook/Reels
+
+Ada perubahan penting pada kebijakan/arah rekomendasi Meta yang sangat relevan untuk project ini.
+
+Meta pada Maret 2026 secara eksplisit mengatakan Facebook semakin memprioritaskan **original content** dan mengurangi distribusi konten yang dianggap unoriginal. Meta juga memberi contoh bahwa **sekadar menggabungkan beberapa clip, menambahkan caption, mengubah kecepatan, atau melakukan perubahan kecil pada karya orang lain tidak dianggap sebagai nilai tambah yang cukup**. Konten pihak ketiga dapat lebih layak direkomendasikan ketika ada kreativitas, informasi baru, analisis, atau perubahan substantif pada storyline. ([Facebook About][1])
+
+Ini berarti ada masalah konseptual pada ClipperVPS:
+
+```text
+YouTube A
+    +
+YouTube B
+    +
+YouTube C
+    +
+cut cepat
+    +
+subtitle
+    +
+TTS
+```
+
+**belum otomatis menjadi "original".**
+
+Dan YouTube sendiri membedakan reused content yang memiliki perbedaan bermakna dari sekadar upload ulang; hak cipta tetap merupakan persoalan terpisah. ([Dukungan Google][2])
+
+Jadi filter profesional seharusnya memiliki satu layer tambahan:
+
+# `ORIGINALITY / TRANSFORMATION QC`
+
+---
+
+# 16. Saya akan menambahkan "Transformation Score"
+
+Misalnya:
+
+```text
+TRANSFORMATION SCORE
+─────────────────────
+
+Original storyline           20
+New product explanation      20
+Original voiceover           15
+Meaningful editing           15
+Demonstration sequencing     15
+Original graphics/context    10
+Source diversity              5
+────────────────────────────
+TOTAL                       100
+```
+
+Tetapi bukan berarti sekadar menambahkan TTS = otomatis original.
+
+Voiceover harus memberikan:
+
+```text
+masalah
+→ solusi
+→ apa yang dilakukan produk
+→ bukti
+→ hasil
+```
+
+bukan hanya:
+
+> "Ini alat dapur yang bagus dan praktis..."
+
+karena itu hanya mendeskripsikan apa yang sudah terlihat.
+
+Meta sendiri menyebut bahwa sekadar menarasikan apa yang sudah terlihat tanpa menambahkan sesuatu yang bermakna dapat dianggap unoriginal. ([Facebook About][1])
+
+---
+
+# 17. Saya justru akan mengubah aturan Multi-Source
+
+Project sekarang memiliki aturan keras:
+
+```text
+minimal 2–3 video
+```
+
+Menurut saya ini **bukan aturan algoritma Facebook**.
+
+Lebih tepat:
+
+```text
+2–3 source = optional strategy
+```
+
+Bukan:
+
+```text
+2–3 source = mandatory algorithm requirement
+```
+
+Karena tiga video orang lain yang hanya dijahit menjadi satu juga tetap bisa dianggap unoriginal. ([Facebook About][1])
+
+Lebih profesional:
+
+```text
+SOURCE A → HERO
+SOURCE B → DEMONSTRATION
+SOURCE C → RESULT
+```
+
+tetapi semuanya harus:
+
+```text
+same product
++
+usable rights / legitimate source
++
+new storyline
++
+original explanation
+```
+
+---
+
+# 18. Untuk Reels sendiri, 9:16 memang pilihan yang masuk akal
+
+Meta secara eksplisit menyarankan creative Reels yang native vertical 9:16, dengan audio dan elemen penting berada di safe zone untuk Reels ads. ([Facebook][3])
+
+Jadi bagian project yang menjaga:
+
+```text
+9:16
+safe crop
+no pillarbox
+produk tidak tertutup
+```
+
+sudah sejalan dengan prinsip produksi Reels yang baik.
+
+Tetapi:
+
+```text
+faceless
+tanpa subtitle
+tanpa logo
+ganti scene setiap 5 detik
+```
+
+lebih tepat diperlakukan sebagai **creative QC milik aplikasi**, bukan sebagai aturan resmi bahwa Facebook pasti akan menolak video tersebut.
+
+Facebook juga sekarang semakin menekankan original content dan watch/engagement quality; Meta menyebut ranking/recommendation mereka terus diperbarui untuk menampilkan konten yang lebih relevan dan original. ([Facebook About][4])
+
+---
+
+# 19. Arsitektur yang menurut saya paling cocok untuk VPS 2 core / 4 GB
+
+Saya tidak akan memasukkan model besar.
+
+Saya akan membuat:
+
+```text
+                 YOUTUBE STREAM
+                       │
+                       ▼
+                METADATA FILTER
+                       │
+                       ▼
+                SAMPLE 1 FPS
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ LOCAL FRAME QC  │
+              │                 │
+              │ Face            │
+              │ DBNet text      │
+              │ Watermark       │
+              │ Graphic         │
+              │ Blur            │
+              │ Orientation     │
+              │ Static          │
+              └────────┬────────┘
+                       │
+                       ▼
+               SHOT CANDIDATES
+                       │
+                       ▼
+              PRODUCT / SCENE AI
+                       │
+                       ▼
+             STORYBOARD PLANNER
+                       │
+                       ▼
+           CANDIDATE CLIPS 2–5 sec
+                       │
+                       ▼
+              ┌─────────────────┐
+              │ CLIP QC         │
+              │                 │
+              │ 3–5 FPS         │
+              │ every frame     │
+              │ hard reject     │
+              └────────┬────────┘
+                       │
+                       ▼
+                 GEMINI VERIFY
+                       │
+                       ▼
+             TRANSFORMATION QC
+                       │
+                       ▼
+                    RENDER
+                       │
+                       ▼
+              FINAL FRAME AUDIT
+                       │
+                       ▼
+                   OUTPUT
+```
+
+Ini jauh lebih kuat daripada terus memperbesar datasheet binary classifier.
+
+---
+
+# 20. Prioritas perbaikan saya
+
+Urutannya justru bukan "tambahkan 10.000 frame".
+
+Saya akan mengerjakan:
+
+**Paling penting**
+
+1. **Perbaiki train/val/test split berdasarkan video, bukan frame.**
+2. **Tambahkan final clip temporal audit 3–5 FPS.**
+3. **Deteksi watermark/graphic transparan dan persisten.**
+4. **Jangan lagi membuat keputusan final hanya berdasarkan clean frame.**
+5. **Tambahkan test set dari video YouTube yang sama sekali belum pernah masuk dataset.**
+
+**Kemudian**
+
+6. Ubah classifier dari binary menjadi scene taxonomy/multi-head.
+7. Tambahkan kategori `reject_graphic`, `reject_watermark`, `reject_overlay`, `valid_action`, `valid_result`, dan sebagainya.
+8. Buat scene duration dinamis, bukan selalu 4.8 detik.
+9. Jadikan multi-source sebagai strategi, bukan "aturan algoritma".
+10. Tambahkan `originality/transformation QC`.
+
+### Penilaian saya terhadap project saat ini
+
+```text
+Engineering architecture       █████████░  9/10
+Local filter concept           ████████░░  8/10
+Dataset metadata               ████████░░  8/10
+Dataset quantity               ███░░░░░░░  3/10
+Dataset diversity              ████░░░░░░  4/10
+ML training methodology        ████░░░░░░  4/10
+Temporal clip validation       ███░░░░░░░  3/10
+Watermark/graphic robustness   ████░░░░░░  4/10
+Platform/originality strategy  █████░░░░░  5/10
+```
+
+**Jadi problem utama bukan "AI lokal kurang pintar".** Arsitektur lokalnya sudah lumayan bagus. Yang membuat hasil masih kadang salah adalah **model diberi tugas yang sebenarnya bersifat temporal, sementara sebagian keputusan masih dibuat dari snapshot frame.**
+
+Dan ada satu temuan yang menurut saya sangat penting: **project sudah mempunyai `ClipAudit` setelah AI memilih clip, tetapi audit itu hanya mengambil sekitar 5 frame per clip.** Ini adalah tempat terbaik untuk diperbaiki terlebih dahulu, karena perubahan tersebut bisa langsung mengurangi kasus "frame terlihat bersih saat seleksi, tetapi hasil clip ternyata mengandung watermark/subtitle/grafis di tengah."
+
+[1]: https://about.fb.com/news/2026/03/rewarding-original-creators-on-facebook/amp/?utm_source=chatgpt.com "Rewarding Original Creators on Facebook"
+[2]: https://support.google.com/youtube/answer/1311392?hl=en&utm_source=chatgpt.com "YouTube channel monetization policies - YouTube Help"
+[3]: https://www.facebook.com/business/ads/facebook-instagram-reels-ads?utm_source=chatgpt.com "Instagram & Facebook Reels: Create Short Video Ads | Meta for Business"
+[4]: https://about.fb.com/news/2026/01/2026-ai-drives-performance/?utm_source=chatgpt.com "2026: AI Drives Performance"

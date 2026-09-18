@@ -95,6 +95,31 @@ def run_merge(user_zip_path=None):
 
         datasheet_entries = []
 
+        # Video-level split: Cegah kebocoran data leakage antar frame dari video yang sama.
+        all_video_sources = list(dict.fromkeys(
+            item.get("video_source") or f"video_{item.get('video_index', 1)}" for item in csv_records
+        ))
+
+        split_override = None
+        for arg in sys.argv:
+            if arg in ["--train", "--val"]:
+                split_override = arg.replace("--", "")
+            elif arg.startswith("--split="):
+                split_override = arg.split("=")[1]
+
+        val_video_sources = set()
+        if split_override:
+            if split_override == "val":
+                val_video_sources = set(all_video_sources)
+        else:
+            # Jika dalam sesi kurasi terdapat >= 4 video sumber terpisah, alokasikan video ke-4 dst ke val
+            if len(all_video_sources) >= 4:
+                val_count = max(1, len(all_video_sources) // 4)
+                val_video_sources = set(all_video_sources[-val_count:])
+            # Jika video sumber sedikit (1-3 video), masukkan ke train agar tidak ada frame dari video yang sama bocor ke val
+
+        print(f"📊 Video sources terdeteksi: {len(all_video_sources)} | Masuk Val: {len(val_video_sources)} video, Train: {len(all_video_sources) - len(val_video_sources)} video")
+
         for cat, items in category_groups.items():
             is_valid_type = cat.startswith("valid")
             target_class_folder = "valid_real" if is_valid_type else "rejected"
@@ -102,10 +127,10 @@ def run_merge(user_zip_path=None):
 
             # Sort items by timestamp for determinism
             sorted_items = sorted(items, key=lambda x: (int(x.get("video_index", 1)), int(x.get("timestamp_sec", 0))))
-            val_indices = {len(sorted_items) - 1} if len(sorted_items) <= 4 else {len(sorted_items) // 3, (2 * len(sorted_items)) // 3}
 
             for idx, item in enumerate(sorted_items):
-                is_val = idx in val_indices
+                v_source = item.get("video_source") or f"video_{item.get('video_index', 1)}"
+                is_val = v_source in val_video_sources
                 split = "val" if is_val else "train"
 
                 # Find source file inside user_temp
