@@ -282,10 +282,13 @@ class TextGatekeeper:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)"
                 if total_cov >= max_total:
                     return True, total_cov, bottom_cov, f"Teks promosi dominan menutupi frame (coverage {total_cov * 100:.1f}%)"
+
+                # DBNet PP-OCRv4 terverifikasi bersih bebas teks
+                return False, total_cov, bottom_cov, "Teks dalam batas wajar (DBNet bersih)"
             except Exception as e:
                 pass
 
-        # ── Jalur 2: Fast Sobel Horizontal Gradient Check (Complementary / Fallback) ──
+        # ── Jalur 2: Fast Sobel Horizontal Gradient Check (Fallback HANYA jika DBNet tidak aktif) ──
         gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
         grad_x = cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3)
         abs_grad_x = cv2.convertScaleAbs(grad_x)
