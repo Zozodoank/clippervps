@@ -1,9 +1,9 @@
 import { spawn } from 'child_process';
 import path from 'path';
 import fs from 'fs';
-import net from 'net';
 import { fileURLToPath } from 'url';
 import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
+export { getYtDlpPath, getFFmpegPath };
 import { getVideoDimensions } from './videoRenderer.js';
 import { trackBandwidth } from './bandwidthTracker.js';
 
