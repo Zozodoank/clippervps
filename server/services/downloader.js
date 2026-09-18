@@ -161,21 +161,27 @@ function getFastArgs() {
  * - Avoids sudden 50-100 Mbps burst spikes that trigger YouTube SABR bot detection
  */
 function getDownloadArgs(clientProfile = 'default') {
-  const rateLimit = process.env.YTDLP_RATE_LIMIT || '25M';
-  const sleepReq = process.env.YTDLP_SLEEP_REQUESTS || '0.2';
-  return [
+  const args = [
     ...getYtDlpArgs(clientProfile),
-    // 1. High-speed progressive buffering
-    '--limit-rate', rateLimit,
-    '--throttled-rate', '100K',
-    // 2. DASH Chunk Slicing (16MB chunks)
-    '--http-chunk-size', '16M',
+    '--concurrent-fragments', '4',
     '--buffer-size', '16M',
-    // 3. Fast Request Pacing (0.2s jitter between fragments)
-    '--sleep-subtitles', '1',
-    '--sleep-requests', sleepReq,
     '--rm-cache-dir',
   ];
+
+  // Enable Node.js JS runtime to solve YouTube n-token signature challenges without throttle
+  args.push('--js-runtimes', 'node');
+
+  // If rate limit is explicitly specified in env, apply it
+  if (process.env.YTDLP_RATE_LIMIT) {
+    args.push('--limit-rate', process.env.YTDLP_RATE_LIMIT);
+  }
+
+  // Micro sleep jitter if specified in env
+  if (process.env.YTDLP_SLEEP_REQUESTS) {
+    args.push('--sleep-requests', process.env.YTDLP_SLEEP_REQUESTS);
+  }
+
+  return args;
 }
 
 
