@@ -293,34 +293,43 @@ def resolve_video_source(source_input):
     vid_id = m.group(1) if m else "online_video"
 
     local_output = os.path.join(TEMP_DIR, f"{vid_id}.mp4")
+    test_output = os.path.join(TEMP_DIR, "test_dl.mp4")
+
+    # Check existing caches
     if os.path.exists(local_output) and os.path.getsize(local_output) > 100_000:
         print(f"📁 [Curator] Video lokal sudah tersedia di cache: {local_output}")
         return local_output, vid_id, False
+    if os.path.exists(test_output) and os.path.getsize(test_output) > 100_000:
+        print(f"📁 [Curator] Video lokal ditemukan di {test_output}")
+        return test_output, vid_id, False
 
     print(f"⬇️ [Curator] Mengunduh video YouTube: {source_input}...")
     yt_dlp_bin = "/usr/local/bin/yt-dlp" if os.path.exists("/usr/local/bin/yt-dlp") else "yt-dlp"
 
+    user_agent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36'
     cmd = [
         yt_dlp_bin,
-        "-f", "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "--merge-output-format", "mp4",
+        "--user-agent", user_agent,
+        "--extractor-args", "youtube:formats=missing_pot",
+        "--no-check-certificates", "--geo-bypass",
+        "-f", "230/134/worstvideo/best",
         "-o", local_output,
         source_input,
         "--no-warnings"
     ]
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0 or not os.path.exists(local_output):
-        # Fallback to direct single stream
-        cmd2 = [
-            yt_dlp_bin,
-            "-f", "18/best[ext=mp4]/best",
-            "-o", local_output,
-            source_input,
-            "--no-warnings"
-        ]
-        res2 = subprocess.run(cmd2, capture_output=True, text=True)
-        if res2.returncode != 0 or not os.path.exists(local_output):
-            raise RuntimeError(f"Gagal mengunduh video: {res.stderr or res2.stderr}")
+        # Fallback: extract direct stream URL and download with ffmpeg
+        print(f"⚠️ Direct download retry with stream URL...")
+        cmd_g = [yt_dlp_bin, "--user-agent", user_agent, "--extractor-args", "youtube:formats=missing_pot", "-g", "-f", "230/134/worstvideo/best", source_input]
+        res_g = subprocess.run(cmd_g, capture_output=True, text=True)
+        if res_g.returncode == 0 and res_g.stdout.strip():
+            stream_url = res_g.stdout.strip().split("\n")[0]
+            ff_cmd = ["ffmpeg", "-y", "-user_agent", user_agent, "-i", stream_url, "-c", "copy", local_output]
+            subprocess.run(ff_cmd, capture_output=True, text=True)
+
+    if not os.path.exists(local_output) or os.path.getsize(local_output) < 50_000:
+        raise RuntimeError(f"Gagal mengunduh video: {res.stderr}")
 
     print(f"✅ Video berhasil diunduh: {local_output} ({os.path.getsize(local_output) // 1024} KB)")
     return local_output, vid_id, True
