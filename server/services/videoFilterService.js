@@ -7,6 +7,7 @@ import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
 import { trackBandwidth, trackSavedBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isTitleMatchingProduct } from './discoveryService.js';
 import { getSmartProxyArgs } from './downloader.js';
+import { classifyPipelineError } from './networkDiagnosticService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -111,7 +112,13 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
           reject(new Error(`Gagal membaca metadata JSON yt-dlp: ${e.message}`));
         }
       } else {
-        reject(new Error(`yt-dlp metadata failed (code ${code}): ${stderr.slice(-300)}`));
+        const diag = classifyPipelineError(stderr);
+        const err = new Error(`${diag.userFriendlyReason} (${diag.failureCode}): ${stderr.slice(-300)}`);
+        err.failureCode = diag.failureCode;
+        err.sourceStatus = diag.sourceStatus;
+        err.isNetworkOrIpIssue = diag.isNetworkOrIpIssue;
+        err.actionableAdvice = diag.actionableAdvice;
+        reject(err);
       }
     });
 
@@ -191,7 +198,13 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
             reject(new Error(`Stream URL tidak valid: ${firstLine}`));
           }
         } else {
-          reject(new Error(`yt-dlp stream URL failed (code ${code}): ${stderr.slice(-300)}`));
+          const diag = classifyPipelineError(stderr);
+          const err = new Error(`${diag.userFriendlyReason} (${diag.failureCode}): ${stderr.slice(-300)}`);
+          err.failureCode = diag.failureCode;
+          err.sourceStatus = diag.sourceStatus;
+          err.isNetworkOrIpIssue = diag.isNetworkOrIpIssue;
+          err.actionableAdvice = diag.actionableAdvice;
+          reject(err);
         }
       });
 

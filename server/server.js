@@ -48,6 +48,11 @@ import {
   sampleDenseClustersAroundCleanFrames
 } from './services/videoFilterService.js';
 import {
+  getPublicIpAddress,
+  classifyPipelineError,
+  checkYouTubeHealth
+} from './services/networkDiagnosticService.js';
+import {
   getBandwidthStats,
   resetBandwidthStats,
   trackSavedBandwidth
@@ -634,8 +639,19 @@ app.get('/api/health', async (req, res) => {
     },
     envFilesLoaded: envFiles.map((envPath) => path.relative(path.resolve(__dirname, '..'), envPath).replace(/\\/g, '/')),
     bandwidthStats: getBandwidthStats(),
+    publicIp: await getPublicIpAddress(),
     ready: binaryCheck.ffmpeg.available && binaryCheck.ytdlp.available,
   });
+});
+
+// Network diagnostic endpoint: Check public IP and verify YouTube connectivity
+app.get('/api/network-diagnostic', async (req, res) => {
+  try {
+    const health = await checkYouTubeHealth();
+    res.json(health);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
 });
 
 function sanitizeCaptionText(caption = '', job = null) {
@@ -876,13 +892,15 @@ async function runAutoRetryWorker(jobId, run) {
     }
 
     const targetTitle = job.productTitle;
-    console.log(`[AutoRetry ${jobId}] Memulai Auto Retry pencarian video persis untuk "${targetTitle}"...`);
+    const publicIp = await getPublicIpAddress();
+    console.log(`[AutoRetry ${jobId}] Memulai Auto Retry pencarian video persis untuk "${targetTitle}" (IP Publik Server/Termux: ${publicIp || 'tidak diketahui'})...`);
     updateJobProgress(jobId, {
       step: 'auto_retry_start',
-      message: `[Auto Retry] Memulai pencarian video yang cocok persis & faceless untuk "${targetTitle.slice(0, 30)}..."`,
+      message: `[Auto Retry] Memulai pencarian video yang cocok persis & faceless untuk "${targetTitle.slice(0, 30)}..." [IP: ${publicIp || 'aktif'}]`,
       progress: 5,
       status: 'running',
       isAutoRetrying: true,
+      publicIp,
       attemptCount: 0,
     });
 
@@ -991,17 +1009,73 @@ async function runAutoRetryWorker(jobId, run) {
           console.log(`[AutoRetry ${jobId}] BERHASIL pada percobaan ke-${run.attemptCount} dengan video: ${candidate.url}`);
           break;
         } catch (candErr) {
-          console.warn(`[AutoRetry ${jobId}] Kandidat ke-${run.attemptCount} (${candidate.url}) ditolak/gagal: ${candErr.message}`);
+          const diag = classifyPipelineError(candErr);
           deleteJobFiles(jobId, outputDir, tempDir);
-          updateJobProgress(jobId, {
-            step: 'auto_retry_next',
-            message: `[Percobaan ke-${run.attemptCount} Ditolak] ${candErr.message.slice(0, 80)}... Mencoba kandidat berikutnya...`,
-            progress: 10,
-            status: 'running',
-            isAutoRetrying: true,
-            attemptCount: run.attemptCount,
-          });
-          await new Promise((r) => setTimeout(r, 1500));
+
+          console.warn(`[AutoRetry ${jobId}] [${diag.sourceStatus}] [${diag.failureCode}] Kandidat ke-${run.attemptCount} (${candidate.url}): ${diag.userFriendlyReason}`);
+
+          if (diag.sourceStatus === 'UNAVAILABLE') {
+            if (diag.isNetworkOrIpIssue) {
+              const currentIp = await getPublicIpAddress({ forceRefresh: true });
+
+              // Jika terdeteksi YouTube 429 Too Many Requests / Bot Check / IP Block:
+              if (
+                diag.failureCode === 'YOUTUBE_RATE_LIMITED' ||
+                diag.failureCode === 'YOUTUBE_BOT_CHECK' ||
+                diag.failureCode === 'YOUTUBE_IP_BLOCKED'
+              ) {
+                run.status = 'error';
+                run.sourceStatus = 'UNAVAILABLE';
+                run.failureCode = diag.failureCode;
+                run.publicIp = currentIp;
+                run.message = `🛑 Akses YouTube Dibatasi (${diag.failureCode}): IP Publik Termux (${currentIp || 'Anda'}) dibatasi oleh YouTube.\n` +
+                  `⚠️ Ini BUKAN karena video ditolak filter AI!\n` +
+                  `💡 Solusi Cepat: Aktifkan Mode Pesawat (Airplane Mode) di HP selama 5-10 detik lalu matikan lagi untuk mendapatkan IP baru dari operator seluler.`;
+                run.updatedAt = new Date().toISOString();
+
+                console.error(`[AutoRetry ${jobId}] 🛑 Circuit Breaker: YouTube membatasi request dari IP ${currentIp}. Menghentikan Auto Retry agar IP tidak terblokir permanen.`);
+                updateJobProgress(jobId, {
+                  step: 'youtube_ip_rate_limited',
+                  sourceStatus: 'UNAVAILABLE',
+                  failureCode: diag.failureCode,
+                  publicIp: currentIp,
+                  message: run.message,
+                  progress: 100,
+                  status: 'error',
+                  error: run.message,
+                  isAutoRetrying: false,
+                  actionableAdvice: diag.actionableAdvice,
+                });
+                break;
+              }
+            }
+
+            // Error UNAVAILABLE lain (misal format stream gagal di video ini):
+            updateJobProgress(jobId, {
+              step: 'auto_retry_next',
+              sourceStatus: 'UNAVAILABLE',
+              failureCode: diag.failureCode,
+              message: `[Kandidat Tidak Dapat Diakses: ${diag.failureCode}] ${diag.userFriendlyReason}. Mencoba kandidat berikutnya...`,
+              progress: 10,
+              status: 'running',
+              isAutoRetrying: true,
+              attemptCount: run.attemptCount,
+            });
+            await new Promise((r) => setTimeout(r, 3500));
+          } else {
+            // sourceStatus === 'REJECT' (Video berhasil dianalisis frame-nya, tapi ditolak filter AI/lokal)
+            updateJobProgress(jobId, {
+              step: 'auto_retry_next',
+              sourceStatus: 'REJECT',
+              failureCode: diag.failureCode,
+              message: `[Percobaan ke-${run.attemptCount} Ditolak Filter: ${diag.failureCode}] ${diag.userFriendlyReason.slice(0, 65)}... Mencoba kandidat berikutnya...`,
+              progress: 10,
+              status: 'running',
+              isAutoRetrying: true,
+              attemptCount: run.attemptCount,
+            });
+            await new Promise((r) => setTimeout(r, 2000));
+          }
         }
       }
 
