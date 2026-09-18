@@ -439,6 +439,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     try { fs.unlinkSync(path.join(outputDir, f)); } catch {}
   }
 
+  const ffmpegPath = getFFmpegPath();
   const isMobile = process.platform === 'android' || Boolean(process.env.TERMUX_VERSION) || os.cpus().length <= 4;
   const safeMax = Math.max(5, Math.min(15, Number(maxSampleFrames) || (isMobile ? 8 : 10)));
   const safeDuration = Math.max(10, Number(duration) || 60);
