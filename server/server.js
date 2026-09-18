@@ -1779,11 +1779,11 @@ export async function runStage1Pipeline({
         // Footage Budget Target (Audit GPT 2026):
         // 2 video sumber kaya adegan (>= 12 frame bersih) sudah lebih dari cukup untuk video 30-35 detik.
         // Berhenti lebih cepat untuk menghemat waktu proses dan kuota API!
-        const hasEnoughFootage = (candidateResults.length >= 2 && totalCleanCount >= 12) ||
-                                 (candidateResults.length >= 1 && totalCleanCount >= 16 && (candidateResults[0].videoMeta?.duration || 0) >= 120) ||
-                                 (candidateResults.length >= 3 && totalCleanCount >= 15) ||
+        const hasEnoughFootage = (candidateResults.length >= 2 && totalCleanCount >= 8) ||
+                                 (candidateResults.length >= 1 && totalCleanCount >= 10 && (candidateResults[0].videoMeta?.duration || 0) >= 90) ||
+                                 (candidateResults.length >= 3 && totalCleanCount >= 10) ||
                                  (candidateResults.length >= 4) ||
-                                 (totalCleanCount >= 22);
+                                 (totalCleanCount >= 16);
 
         if (hasEnoughFootage) {
           console.log(`[Job ${jobId}] ✅ Target footage budget terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video kandidat). Menghentikan pencarian awal, langsung ke AI Vision!`);

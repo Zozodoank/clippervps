@@ -438,8 +438,8 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     try { fs.unlinkSync(path.join(outputDir, f)); } catch {}
   }
 
-  const ffmpegPath = getFFmpegPath();
-  const safeMax = Math.max(5, Math.min(20, Number(maxSampleFrames) || 12));
+  const isMobile = process.platform === 'android' || Boolean(process.env.TERMUX_VERSION) || os.cpus().length <= 4;
+  const safeMax = Math.max(5, Math.min(15, Number(maxSampleFrames) || (isMobile ? 8 : 10)));
   const safeDuration = Math.max(10, Number(duration) || 60);
 
   // Generate evenly distributed timestamps across video (skipping first 3.5s intro bumpers/ads and last 4.5s outro endcards)
@@ -455,20 +455,20 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   onProgress({
     step: 'stream_sampling',
-    message: `Sampling kilat ${safeMax} keyframe visual langsung dari stream URL (fast parallel seek)...`,
+    message: `Sampling kilat ${safeMax} keyframe visual langsung dari stream URL (${isMobile ? 'mode mobile efisien' : 'fast seek'})...`,
     progress: 25,
   });
 
-  console.log(`[VideoFilterService] Fast seek sampling ${safeMax} frames across ${safeDuration}s from stream...`);
+  console.log(`[VideoFilterService] Fast seek sampling ${safeMax} frames across ${safeDuration}s from stream (${isMobile ? 'Mobile 2-core' : 'Multi-core'})...`);
 
   const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
-  // Fast seek each timestamp with concurrency limit (4 parallel workers)
-  const concurrency = 4;
+  // Fast seek each timestamp with adaptive concurrency (2 parallel workers on mobile/Termux to prevent CPU heating)
+  const concurrency = isMobile ? 2 : 4;
   const executing = [];
   for (const point of samplePoints) {
-    // 10ms micro pacing delay
+    // Micro pacing delay
     await new Promise(r => setTimeout(r, 10));
 
     const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
@@ -477,6 +477,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     const p = new Promise((resolve) => {
       // Input seeking (-ss before -i) fetches only the keyframe near timestamp via HTTP Range headers
       // -an -sn -dn omits audio and subtitle parsing for maximum keyframe seek speed
+      // scale=-2:270 provides optimal balance of speed and visual clarity for AI gatekeeper
       const proc = spawn(ffmpegPath, [
         '-y',
         '-user_agent', browserUserAgent,
@@ -490,7 +491,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
         '-sn',
         '-dn',
         '-frames:v', '1',
-        '-vf', 'scale=-2:360',
+        '-vf', 'scale=-2:270',
         '-q:v', '3',
         outputPath
       ]);
@@ -501,7 +502,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
           try { proc.kill('SIGKILL'); } catch {}
           resolve();
         }
-      }, 15000);
+      }, 8000);
       proc.on('close', () => {
         if (!finished) {
           finished = true;
