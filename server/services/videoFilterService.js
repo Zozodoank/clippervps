@@ -326,11 +326,9 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 
   const descPreview = descLower.slice(0, 500);
   const isFaceTitle = faceAndVlogKeywords.some(kw => titleLower.includes(kw)) || (!isGadget && personaRegex.test(titleLower));
-  // Pada niche smartphone, evaluasi visual (MediaPipe/YuNet) yang memfilter wajah di video.
-  // Jangan tolak deskripsi tech reviewer hanya karena sapaan santai ("Halo guys", "Instagram Mas David").
-  const isFaceDesc = isGadget
-    ? /\b(daily vlog|podcast|facecam|live stream|a day in my life)\b/i.test(descPreview)
-    : (faceAndVlogKeywords.some(kw => descPreview.includes(kw)) || personaRegex.test(descPreview));
+  // Jangan tolak video sebelum diinspeksi visual hanya karena sapaan santai ("Halo guys", "Halo teman") di deskripsi.
+  // Hanya tolak jika deskripsi secara tegas menyatakan format podcast atau daily vlog pribadi.
+  const isFaceDesc = /\b(daily vlog|podcast|facecam|live stream|a day in my life)\b/i.test(descPreview);
 
   if (isFaceTitle || isFaceDesc) {
     return { eligible: false, reason: 'Format video terindikasi berpusat pada wajah / vlogger / persona manusia.' };
@@ -722,10 +720,10 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
         ...f,
       }));
 
-    const cleanRatio = cleanFrames.length / frames.length;
+    // Video dianggap eligible selama ada minimal 2 frame bersih lolos (atau Gatekeeper tidak menolak seluruh video)
     const isEligible = (aiResult.eligible !== false) && (allowPartialClean
-      ? cleanFrames.length >= 3
-      : (cleanFrames.length >= 4 && cleanRatio >= 0.35));
+      ? cleanFrames.length >= 2
+      : cleanFrames.length >= 3);
 
     if (isEligible) {
       console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame bersih lolos (${aiResult.benchmarks?.totalMs || 0}ms).`);

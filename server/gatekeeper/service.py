@@ -776,35 +776,39 @@ class FrameGatekeeper:
             if results[1]["status"] == "discarded" and results[1]["stage"] in ("text", "scene", "static_frame", "unboxing_manual", "orientation"):
                 intro_cutoff_sec = max(intro_cutoff_sec, results[1].get("timestamp", 5.0))
 
-        # Eligible if at least 4 clean frames and clean frames represent >= 35% of video
-        static_ratio = float(static_transitions) / max(1, len(frame_items) - 1)
-        is_static_slideshow = (static_transitions >= 3) or (static_ratio >= 0.35)
+        total_count = max(1, len(frame_items))
+        static_ratio = float(static_transitions) / max(1, total_count - 1)
+        
+        face_discards = sum(1 for d in discarded_frames if d["stage"] == "face")
+        text_discards = sum(1 for d in discarded_frames if d["stage"] == "text")
+        scene_discards = sum(1 for d in discarded_frames if d["stage"] == "scene")
+        static_discards = sum(1 for d in discarded_frames if d["stage"] == "static_frame")
+        orient_discards = sum(1 for d in discarded_frames if d["stage"] == "orientation")
+        manual_discards = sum(1 for d in discarded_frames if d["stage"] == "unboxing_manual")
 
-        eligible = (not is_static_slideshow) and len(clean_frames) >= 4 and (len(clean_frames) / max(1, len(frame_items)) >= 0.35)
+        # Toleransi Granular Sesuai Arahan Pengguna:
+        # Jangan tolak video hanya karena 1-2 frame tidak sesuai filter (frame tersebut dibuang per-frame).
+        # Tolak seluruh video HANYA jika:
+        # 1. Wajah seluruhnya / dominan vlogger (>= 80% frame wajah atau < 2 frame bersih)
+        # 2. Subtitle / teks promosi seluruhnya (>= 80% frame teks atau < 2 frame bersih)
+        # 3. Slideshow diam / beku seluruhnya (>= 80% transisi statis)
+        # 4. Tidak ada frame bersih sama sekali (< 2 frame)
+        is_entirely_faces = (face_discards / total_count >= 0.80) or (len(clean_frames) < 2 and face_discards >= 3)
+        is_entirely_text = (text_discards / total_count >= 0.80) or (len(clean_frames) < 2 and text_discards >= 3)
+        is_entirely_static = (static_ratio >= 0.80) or (static_discards / total_count >= 0.80)
+
+        eligible = (len(clean_frames) >= 2) and (not is_entirely_faces) and (not is_entirely_text) and (not is_entirely_static)
 
         summary_reason = "Visual video bersih dan fokus pada produk natural."
         if not eligible:
-            face_discards = sum(1 for d in discarded_frames if d["stage"] == "face")
-            text_discards = sum(1 for d in discarded_frames if d["stage"] == "text")
-            scene_discards = sum(1 for d in discarded_frames if d["stage"] == "scene")
-            static_discards = sum(1 for d in discarded_frames if d["stage"] == "static_frame")
-            orient_discards = sum(1 for d in discarded_frames if d["stage"] == "orientation")
-            manual_discards = sum(1 for d in discarded_frames if d["stage"] == "unboxing_manual")
-
-            if is_static_slideshow or static_discards >= 3:
-                summary_reason = f"Ditolak AI Gatekeeper: Video terdeteksi berupa slideshow foto statis / gambar diam ({static_transitions} transisi beku). Wajib video dengan gerakan fisik nyata."
-            elif orient_discards >= 2:
-                summary_reason = f"Ditolak AI Gatekeeper: {orient_discards} frame terdeteksi pillarbox hitam / orientasi abnormal."
-            elif manual_discards >= 2:
-                summary_reason = f"Ditolak AI Gatekeeper: {manual_discards} frame berupa dokumen buku panduan manual / unboxing."
-            elif face_discards >= 3:
-                summary_reason = f"Ditolak AI Gatekeeper: Terdeteksi {face_discards} frame menampilkan wajah manusia."
-            elif text_discards >= 4:
-                summary_reason = f"Ditolak AI Gatekeeper: {text_discards} frame dipenuhi subtitle / teks promosi dominan."
-            elif scene_discards >= 4:
-                summary_reason = f"Ditolak AI Gatekeeper: {scene_discards} frame berupa kartun, animasi, atau slide statis."
+            if is_entirely_static:
+                summary_reason = f"Ditolak AI Gatekeeper: Video terdeteksi seluruhnya berupa slideshow foto statis ({static_transitions} transisi beku). Wajib video dengan peragaan fisik nyata."
+            elif is_entirely_faces:
+                summary_reason = f"Ditolak AI Gatekeeper: Video seluruhnya/dominan menampilkan wajah manusia ({face_discards}/{total_count} frame wajah). Wajib fokus pada produk."
+            elif is_entirely_text:
+                summary_reason = f"Ditolak AI Gatekeeper: Video seluruhnya dipenuhi subtitle / teks promosi dominan ({text_discards}/{total_count} frame teks)."
             else:
-                summary_reason = f"Ditolak AI Gatekeeper: Hanya {len(clean_frames)}/{len(frame_items)} frame bersih yang ditemukan."
+                summary_reason = f"Ditolak AI Gatekeeper: Hanya {len(clean_frames)} frame bersih ditemukan (kurang dari syarat minimal 2 frame)."
 
         return {
             "status": "success",
