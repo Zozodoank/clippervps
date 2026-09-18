@@ -1776,9 +1776,17 @@ export async function runStage1Pipeline({
       let totalCleanCount = 0;
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
-        // Multi-Video Target: Kumpulkan minimal 3 video kandidat dengan frame bersih untuk variasi visual
-        if ((candidateResults.length >= 3 && totalCleanCount >= 18) || candidateResults.length >= 5) {
-          console.log(`[Job ${jobId}] ✅ Target streaming multi-video terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video kandidat). Cepat, kaya variasi adegan, lanjut ke AI Vision!`);
+        // Footage Budget Target (Audit GPT 2026):
+        // 2 video sumber kaya adegan (>= 12 frame bersih) sudah lebih dari cukup untuk video 30-35 detik.
+        // Berhenti lebih cepat untuk menghemat waktu proses dan kuota API!
+        const hasEnoughFootage = (candidateResults.length >= 2 && totalCleanCount >= 12) ||
+                                 (candidateResults.length >= 1 && totalCleanCount >= 16 && (candidateResults[0].videoMeta?.duration || 0) >= 120) ||
+                                 (candidateResults.length >= 3 && totalCleanCount >= 15) ||
+                                 (candidateResults.length >= 4) ||
+                                 (totalCleanCount >= 22);
+
+        if (hasEnoughFootage) {
+          console.log(`[Job ${jobId}] ✅ Target footage budget terpenuhi (${totalCleanCount} frame bersih dari ${candidateResults.length} video kandidat). Menghentikan pencarian awal, langsung ke AI Vision!`);
           break;
         }
 
@@ -1846,8 +1854,16 @@ export async function runStage1Pipeline({
         }
       }
 
-      if (candidateResults.length < 2) {
-        throw new Error(`Hanya ditemukan ${candidateResults.length} video kandidat yang cocok untuk "${productTitle}". Standar affiliate mewajibkan variasi dari minimal 2-3 video sumber yang mereview produk yang sama persis.`);
+      if (candidateResults.length === 0) {
+        throw new Error(`Tidak ditemukan video YouTube yang cocok dan memiliki frame bersih untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'semua kandidat tidak memenuhi standar kualitas'}.`);
+      }
+
+      if (candidateResults.length === 1) {
+        const singleCleanCount = candidateResults[0].cleanFrames?.length || 0;
+        if (singleCleanCount < 5) {
+          throw new Error(`Hanya ditemukan 1 video kandidat untuk "${productTitle}" dan frame bersihnya terlalu sedikit (${singleCleanCount} frame). Dibutuhkan minimal 5 frame peragaan bersih.`);
+        }
+        console.warn(`[Job ${jobId}] ℹ️ Beroperasi dalam mode Single-Source Kaya Adegan (${singleCleanCount} frame bersih dari 1 video). Melanjutkan proses storyboard...`);
       }
 
       // Kumpulkan frame bersih gabungan dari seluruh kandidat (maksimal 30 frame pilihan)

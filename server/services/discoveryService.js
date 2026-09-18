@@ -1575,7 +1575,7 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
       if (durationSec > 0 && (durationSec < 300 || durationSec > 900)) return;
 
       // Filter out videos with banned / tutorial / DIY / repair keywords
-      if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
+      if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
 
       candidates.push({
         id,

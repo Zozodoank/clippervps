@@ -639,9 +639,8 @@ CRITERION 5: CLEAN TIMESTAMP SELECTION & ACTION PROGRESSION SEQUENCE
     1. Phase 1 (Product Overview / Hook): 1-2 clips introducing the complete physical product in action.
     2. Phase 2 (Hands-on Preparation): Hands preparing, holding, or loading ingredients/product.
     3. Phase 3 (Active Demonstration): Core action of the product operating (cutting, frying, blending, cleaning).
-    4. Phase 4 (Result & Satisfaction): Appetizing, clean, or satisfying finished result.
-- Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) for a full 30 to 35 second video ad.
-- If the video does NOT contain at least 10 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
+- Determine 5 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a coherent 30 to 35 second video ad.
+- If the video does NOT contain at least 5 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -1071,9 +1070,9 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
 - Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
 CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
-- Select 10 to 12 non-overlapping timestamps (each about ${clipSec}s long) showing the best, satisfying hands-on product actions for a full 30 to 35 second video ad.
+- Determine 5 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a coherent 30 to 35 second video ad.
 - Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
-- If the video does NOT contain at least 10 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
+- If the video does NOT contain at least 5 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -1517,7 +1516,7 @@ CRITERIA FOR ACCEPTANCE (ALL MUST BE TRUE):
 2. Clean Hands-On Demonstration in Selected Frames: Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.
 3. 100% Clean from hardburned speech subtitles/captions and colored text banner boxes inside 9:16 frame (physical text/labels on the product are 100% allowed).
 4. 100% Clean from watermarks, social media logos, and channel identities inside the 9:16 central frame (outer left/right watermarks that get cropped/covered are acceptable).
-5. Real authentic physical demonstration (10 to 12 frames for full 30 to 35 second video ad).
+5. Real authentic physical demonstration (5 to 8 clean clips across the storyboard for full 30 to 35 second video ad).
 
 Output strictly valid JSON with this exact schema:
 If ACCEPTED:

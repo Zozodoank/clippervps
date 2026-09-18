@@ -219,13 +219,13 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
 
   // 2B. Filter Kata Kunci Terlarang pada Judul Video
-  // Khusus gadget_smartphone: IZINKAN unboxing (sumber B-roll utama fisik HP), hanya tolak perbaikan/rusak/matot/bypass.
+  // IZINKAN unboxing (karena AI visual memiliki filter Criterion 4B untuk membuang frame kardus/kertas dan hanya mengambil demonstrasi produk).
   const bannedKeywordRegex = isGadget
     ? /\b(cara|tutorial|diy|how\s+to|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti lcd|ganti baterai|repair|reparasi|bongkar mesin|mati total|matot|bypass|bootloop)\b/i
-    : /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|unboxing|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
+    : /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
 
   if (bannedKeywordRegex.test(titleLower)) {
-    return { eligible: false, reason: `Terdeteksi kata kunci terlarang (${isGadget ? 'perbaikan / servis / mati total / bypass' : 'cara / tutorial / DIY / unboxing / perbaikan / servis'}) pada judul video.` };
+    return { eligible: false, reason: `Terdeteksi kata kunci terlarang (${isGadget ? 'perbaikan / servis / mati total / bypass' : 'cara / tutorial / DIY / perbaikan / servis'}) pada judul video.` };
   }
 
   // 2C. Filter Konten Perbaikan / Servis / Barang Rusak pada Deskripsi
