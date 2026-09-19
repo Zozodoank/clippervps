@@ -65,7 +65,8 @@ let isShuttingDown = false;
 let serverProcess = null;
 
 function startServerProcess() {
-  serverProcess = spawn(npmCmd, ['run', 'dev'], {
+  const cmd = `${npmCmd} run dev`;
+  serverProcess = spawn(cmd, {
     cwd: path.join(__dirname, 'server'),
     env: {
       ...process.env,
@@ -102,6 +103,8 @@ async function startGatekeeperProcess() {
     cwd: path.join(__dirname, 'server', 'gatekeeper'),
     env: {
       ...process.env,
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
       OMP_NUM_THREADS: '1',
       OPENBLAS_NUM_THREADS: '1',
       MKL_NUM_THREADS: '1',
@@ -111,8 +114,15 @@ async function startGatekeeperProcess() {
 
   gatekeeperProcess.stdout.on('data', (d) => {
     const text = d.toString().trim();
-    if (text.includes('Serving') || text.includes('ready') || text.includes('aktif') || text.includes('AKTIF') || text.includes('Gatekeeper')) {
+    if (text) {
       console.log(`[Gatekeeper] ${text}`);
+    }
+  });
+
+  gatekeeperProcess.stderr.on('data', (d) => {
+    const text = d.toString().trim();
+    if (text) {
+      console.error(`[Gatekeeper ERR] ${text}`);
     }
   });
 
@@ -126,7 +136,8 @@ async function startGatekeeperProcess() {
 await startGatekeeperProcess();
 startServerProcess();
 
-const clientProcess = spawn(npmCmd, ['run', 'dev', '--', '--host', '0.0.0.0', '--port', String(CLIENT_PORT)], {
+const clientCmd = `${npmCmd} run dev -- --host 0.0.0.0 --port ${CLIENT_PORT}`;
+const clientProcess = spawn(clientCmd, {
   cwd: path.join(__dirname, 'client'),
   env: {
     ...process.env,

@@ -577,18 +577,32 @@ async function downloadWithYouTubeMediaDownloader(url, outputPath, onProgress, {
 }
 
 
-// ── Direct Native YouTube Web Search Scraper (0-second lag & 0 dependency) ───
+// ── Direct Native YouTube Web Search Scraper (With Stealth Headers & Human Pacing) ───
 
 async function searchDirectYouTubeWeb(query, limit = 10) {
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
 
+    // Natural human pacing delay before request (1.2s - 2.5s) to avoid bot rate-limits
+    await new Promise(r => setTimeout(r, 1200 + Math.floor(Math.random() * 1300)));
+
+    const stealthHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Sec-Ch-Ua': '"Not(A:Brand";v="99", "Google Chrome";v="133", "Chromium";v="133"',
+      'Sec-Ch-Ua-Mobile': '?0',
+      'Sec-Ch-Ua-Platform': '"Windows"',
+      'Sec-Fetch-Dest': 'document',
+      'Sec-Fetch-Mode': 'navigate',
+      'Sec-Fetch-Site': 'none',
+      'Sec-Fetch-User': '?1',
+      'Upgrade-Insecure-Requests': '1',
+    };
+
     // sp=EgIQAQ%253D%253D enforces YouTube Video filter (all durations, from 35s upwards)
     let res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}&sp=EgIQAQ%253D%253D`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-        'Accept-Language': 'id-ID,id;q=0.9,ms-MY,ms;q=0.8,th-TH,th;q=0.7,vi-VN,vi;q=0.6,en;q=0.5'
-      },
+      headers: stealthHeaders,
       signal: AbortSignal.timeout(8000)
     });
     if (!res.ok) return null;
@@ -600,11 +614,9 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
 
     // Fallback: If filtered query returned 0 items, query standard search without sp
     if (!hasVideos) {
+      await new Promise(r => setTimeout(r, 1000 + Math.floor(Math.random() * 1000)));
       const fallbackRes = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-          'Accept-Language': 'id-ID,id;q=0.9,ms-MY,ms;q=0.8,th-TH,th;q=0.7,vi-VN,vi;q=0.6,en;q=0.5'
-        },
+        headers: stealthHeaders,
         signal: AbortSignal.timeout(8000)
       });
       if (fallbackRes.ok) {
@@ -660,7 +672,7 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
 }
 
 /**
- * Searches YouTube candidates using YouTube Data API v3, RapidAPI, Native Web Search, or yt-dlp.
+ * Searches YouTube candidates using YouTube Data API v3, RapidAPI, yt-dlp, or Native Web Search.
  * @param {string} query - Search query text
  * @param {{ limit?: number, onProgress?: Function }} options
  * @returns {Promise<Array<{ id: string, title: string, url: string, duration: number, channel: string, description: string }>>}
@@ -688,13 +700,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
     return rapidResults;
   }
 
-  // 3. Direct fast native YouTube web search parser (0-second lag, 0 external binary dependency)
-  const webResults = await searchDirectYouTubeWeb(query, safeLimit);
-  if (webResults && webResults.length > 0) {
-    return webResults;
-  }
-
-  // 4. Fallback to direct yt-dlp search
+  // 3. Fallback to direct yt-dlp search with human sleep and player client rotation
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
     const ytDlpPath = await getYtDlpPath(reportProgress);
@@ -706,6 +712,10 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
       progress: 8,
     });
 
+    const isTermuxOrMobile = process.platform === 'android' ||
+      Boolean(process.env.TERMUX_VERSION) ||
+      (process.platform === 'linux' && !process.env.DISPLAY);
+
     const baseArgs = [
       '--no-check-certificates',
       '--geo-bypass',
@@ -713,6 +723,10 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
       '--dump-json',
       '--no-playlist',
       '--skip-download',
+      '--sleep-requests', '1.5',
+      '--extractor-args', isTermuxOrMobile
+        ? 'youtube:player_client=android,mweb,web'
+        : 'youtube:player_client=web,mweb,android',
       '--match-filter', 'duration >= 150 & duration <= 600',
       searchTarget
     ];
@@ -723,7 +737,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
     const result = await runYtDlp(ytDlpPath, baseArgs);
 
     if (result.code === 0 && result.stdout) {
-      return result.stdout
+      const candidates = result.stdout
         .split(/\r?\n/)
         .map((line) => line.trim())
         .filter(Boolean)
@@ -744,9 +758,19 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
           description: (item.description || '').slice(0, 500),
         }))
         .filter((item) => item.id && item.url && (item.duration === 0 || (item.duration >= 35 && item.duration <= 900)));
+
+      if (candidates.length > 0) {
+        return candidates;
+      }
     }
   } catch (err) {
     console.warn(`[Downloader] yt-dlp search fallback warning: ${err.message}`);
+  }
+
+  // 4. Secondary fallback: Direct fast native YouTube web search parser with stealth headers
+  const webResults = await searchDirectYouTubeWeb(query, safeLimit);
+  if (webResults && webResults.length > 0) {
+    return webResults;
   }
 
   return [];

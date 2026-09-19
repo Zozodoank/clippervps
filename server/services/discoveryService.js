@@ -1455,15 +1455,21 @@ export async function discoverYouTubeCandidatesForProduct({
   let usedQuery = queryCandidates[0];
 
   for (const query of queryCandidates) {
-    const rawResults = await searchYouTubeVideos(query, { limit, onProgress });
+    // 1. Prioritize Bing Video search (100% safe from YouTube bot detection & IP blocking)
+    let rawResults = await searchBingVideos(query, { limit, onProgress });
+    if (!rawResults || rawResults.length === 0) {
+      // 2. Fallback to YouTube search with anti-bot pacing
+      rawResults = await searchYouTubeVideos(query, { limit, onProgress });
+    }
+
     if (rawResults && rawResults.length) {
-      // 1. Filter out videos that have already been processed in past or current jobs
+      // Filter out videos that have already been processed in past or current jobs
       const freshResults = rawResults.filter((c) => {
         const vid = c.id || extractVideoId(c.url);
         return vid && !excludeSet.has(vid);
       });
 
-      // 2. Only accept if the query produced compliant candidate(s) (5-15 min, faceless, multi-word matching)
+      // Only accept if the query produced compliant candidate(s) (5-15 min, faceless, multi-word matching)
       const cleanResults = freshResults.filter((c) => isLikelyCleanYouTubeCandidate(c, coreWords));
 
       if (cleanResults.length > 0) {
@@ -1472,12 +1478,15 @@ export async function discoverYouTubeCandidatesForProduct({
         break;
       }
     }
-    await delayWithJitter(300, 600);
+    await delayWithJitter(1500, 2500);
   }
 
   // Fallback: If all results were previously used or cleanResults was empty, search exact core noun
   if (!candidates.length) {
-    const fallbackResults = await searchYouTubeVideos(`${coreNoun} "b-roll"`, { limit, onProgress });
+    let fallbackResults = await searchBingVideos(`${coreNoun} "b-roll"`, { limit, onProgress });
+    if (!fallbackResults || fallbackResults.length === 0) {
+      fallbackResults = await searchYouTubeVideos(`${coreNoun} "b-roll"`, { limit, onProgress });
+    }
     const nonExcluded = (fallbackResults || []).filter((c) => {
       const vid = c.id || extractVideoId(c.url);
       return vid && !excludeSet.has(vid) && isLikelyCleanYouTubeCandidate(c, coreWords);

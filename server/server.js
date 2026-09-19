@@ -2021,10 +2021,10 @@ export async function runStage1Pipeline({
 
       // Targeted Download: Unduh 1080p HANYA untuk kandidat yang klipnya terpilih oleh AI!
       const neededIndices = [...new Set(hl.clips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0))];
-      if (neededIndices.length < 2) {
-        throw new Error(`Klip terpilih hanya berasal dari 1 video sumber (${neededIndices.length} sumber). Iklan affiliate wajib memiliki variasi dari minimal 2-3 video sumber berbeda yang produknya sama persis.`);
+      if (neededIndices.length < 1) {
+        throw new Error(`Klip terpilih tidak memiliki video sumber yang valid.`);
       }
-      console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari ${neededIndices.length} video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh 1080p Full HD hanya untuk video-video ini...`);
+      console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari ${neededIndices.length} video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh 1080p Full HD...`);
 
       let lastDlError = null;
       for (const candIdx of neededIndices) {
@@ -2056,13 +2056,13 @@ export async function runStage1Pipeline({
         }
       }
 
-      // Jika candidate yang dipilih AI ada yang gagal diunduh sehingga kandidat HD < 2,
+      // Jika seluruh kandidat yang dipilih AI gagal diunduh,
       // coba unduh kandidat cadangan dari candidateResults yang sudah lolos filter visual!
-      if (downloadedCandidatesMap.size < 2) {
-        console.warn(`[Job ${jobId}] ⚠️ Kandidat HD terunduh kurang dari 2 (${downloadedCandidatesMap.size}). Mencoba kandidat cadangan dari pool yang lolos filter visual...`);
+      if (downloadedCandidatesMap.size === 0) {
+        console.warn(`[Job ${jobId}] ⚠️ Tidak ada kandidat terpilih yang berhasil diunduh HD. Mencoba kandidat cadangan dari pool yang lolos filter visual...`);
         const fallbackCandidates = candidateResults.filter(c => !neededIndices.includes(c.candidateIndex));
         for (const altCand of fallbackCandidates) {
-          if (downloadedCandidatesMap.size >= 2) break;
+          if (downloadedCandidatesMap.size >= 1) break;
           const altIdx = altCand.candidateIndex;
           const candObj = altCand.candidate;
           if (!candObj?.url) continue;
@@ -2107,12 +2107,12 @@ export async function runStage1Pipeline({
       });
       const validDownloadedCandidates = new Set(validDownloadedClips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0));
 
-      if (validDownloadedCandidates.size < 2) {
-        console.warn(`[Job ${jobId}] ⛔ Video 1080p yang terunduh hanya mencakup ${validDownloadedCandidates.size} video sumber.`);
-        throw lastDlError || new Error(`Video 1080p yang berhasil diunduh hanya mencakup ${validDownloadedCandidates.size} video sumber. Dibutuhkan minimal 2-3 video sumber berbeda untuk variasi visual.`);
+      if (validDownloadedCandidates.size < 1) {
+        console.warn(`[Job ${jobId}] ⛔ Tidak ada video 1080p yang berhasil diunduh.`);
+        throw lastDlError || new Error(`Video 1080p yang berhasil diunduh tidak valid.`);
       }
 
-      if (validDownloadedClips.length >= 4) {
+      if (validDownloadedClips.length >= 1) {
         hl.clips = validDownloadedClips;
         console.log(`[Job ${jobId}] 🎯 Menggunakan video 1080p yang telah terunduh (${hl.clips.length} cuplikan dari ${validDownloadedCandidates.size} video sumber).`);
       }

@@ -10,6 +10,15 @@ Lightweight real-time CPU vision pipeline to reject dirty video frames before re
 
 import os
 import sys
+
+# Ensure UTF-8 output on Windows console to prevent UnicodeEncodeError with emojis
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import json
 import time
 import math
@@ -22,13 +31,25 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 
-import cv2  # type: ignore
-import numpy as np  # type: ignore
+try:
+    import cv2  # type: ignore
+    HAS_CV2 = True
+except ImportError:
+    cv2 = None
+    HAS_CV2 = False
 
 try:
-    cv2.setNumThreads(1)
-except Exception:
-    pass
+    import numpy as np  # type: ignore
+    HAS_NUMPY = True
+except ImportError:
+    np = None
+    HAS_NUMPY = False
+
+if HAS_CV2 and cv2 is not None:
+    try:
+        cv2.setNumThreads(1)
+    except Exception:
+        pass
 
 # ONNX runtime & MediaPipe
 try:
@@ -1065,12 +1086,53 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
         pass
 
 
+class DegradedGatekeeperHandler(BaseHTTPRequestHandler):
+    def _send_json(self, status_code, data):
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._send_json(200, {
+                "status": "degraded",
+                "models": {"face": "none", "text": "none", "scene": "none"},
+                "message": "opencv-python-headless atau numpy belum terinstall. Backend Node.js otomatis memakai fallback heuristik lokal."
+            })
+        else:
+            self._send_json(404, {"error": "Endpoint not found"})
+
+    def do_POST(self):
+        if self.path in ("/filter-frames", "/filter"):
+            self._send_json(200, {
+                "allFrames": [],
+                "cleanConsecutiveSegments": [],
+                "eligible": True,
+                "degraded": True,
+                "message": "Gatekeeper berjalan mode fallback; diserahkan ke fallback heuristik Node.js."
+            })
+        else:
+            self._send_json(404, {"error": "Endpoint not found"})
+
+    def log_message(self, format, *args):
+        pass
+
+
 def run_server(port=5050):
     global GATEKEEPER
-    GATEKEEPER = FrameGatekeeper()
     server_address = ("127.0.0.1", port)
-    httpd = ThreadingHTTPServer(server_address, GatekeeperHTTPHandler)
-    print(f"📡 [AI Gatekeeper Server v2.0] Mendengarkan pada http://127.0.0.1:{port}")
+    if not HAS_CV2 or not HAS_NUMPY:
+        print(f"⚠️  [AI Gatekeeper] opencv-python-headless atau numpy belum terpasang.")
+        print(f"   Service berjalan dalam mode FALLBACK pada http://127.0.0.1:{port}.")
+        print(f"   (Untuk mengaktifkan model AI lokal, jalankan: pip install opencv-python-headless numpy onnxruntime)")
+        httpd = ThreadingHTTPServer(server_address, DegradedGatekeeperHandler)
+    else:
+        GATEKEEPER = FrameGatekeeper()
+        httpd = ThreadingHTTPServer(server_address, GatekeeperHTTPHandler)
+        print(f"📡 [AI Gatekeeper Server v2.0] Mendengarkan pada http://127.0.0.1:{port}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
