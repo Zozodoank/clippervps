@@ -532,31 +532,18 @@ export const BULKY_EXCLUDE_WORDS = [
   'griddle outdoor',
   'commercial grill',
 
-  // Pabrik / Industri / Proses Pembuatan / Mesin Komersial
-  'pabrik',
-  'manufacturing',
-  'factory',
-  'proses pembuatan',
-  'industri',
-  'mesin industri',
-  'mesin usaha',
-  'mesin umkm',
-  'mesin produksi',
-  'mesin pabrik',
+  // Mesin Industri Berat / Alat Berat / Pertanian Skala Raksasa
   'alat berat',
-  'produksi masal',
+  'mesin pabrik besar',
+  'mesin industri berat',
 
-  // Pertanian / Peternakan / Mesin Berat / Penggilingan
+  // Pertanian / Peternakan Skala Besar / Mesin Berat
   'pakan ternak',
   'mesin ternak',
-  'mesin selep',
-  'mesin pemipil jagung',
+  'mesin selep gabah',
   'perontok padi',
-  'pemanen',
   'traktor',
-  'mesin pencacah pakan',
   'chopper pakan ternak',
-  'giling janggel',
   'silase'
 ];
 
@@ -576,8 +563,8 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
     return true;
   }
 
-  // 1C. Factory / manufacturing / industrial process / agricultural machinery
-  if (/\b(?:blackstone|weber|smoker|barbecue|bbq|pabrik|factory|manufacturing|industri|pembuatan|ternak|pakan|limbah|selep|mesin\s+pemipil|perontok|pemanen|traktor|chopper\s+ternak|chopper\s+rumput|cacah\s+rumput|silase|janggel)\b/i.test(normalized)) {
+  // 1C. Heavy machinery / agricultural machinery (bukan alat rumah tangga praktis)
+  if (/\b(?:blackstone|weber|smoker|barbecue|bbq|alat\s+berat|traktor|pakan\s+ternak|selep\s+gabah|perontok\s+padi|pemanen\s+padi|chopper\s+ternak|chopper\s+rumput|cacah\s+rumput|silase|janggel)\b/i.test(normalized)) {
     return true;
   }
 

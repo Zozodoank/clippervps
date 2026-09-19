@@ -327,13 +327,11 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     }
   }
 
-  // 2G. Filter Mesin Industri, Pabrik, Alat Berat, dan Manufaktur Skala Usaha (Cegah Buang Token AI)
-  const industrialRegex = /\b(pabrik|factory|manufacturing|mesin\s+industri|alat\s+berat|bengkel|mesin\s+usaha|mesin\s+umkm|mesin\s+produksi|mesin\s+pabrik|mesin\s+selep|pakan\s+ternak|mesin\s+ternak|traktor|perontok\s+padi|pemipil\s+jagung|chopper\s+pakan|chopper\s+rumput|silase|mesin\s+otomatis\s+pabrik|industri\s+makanan)\b/i;
-  if (industrialRegex.test(titleLower)) {
-    return { eligible: false, reason: 'Judul video mengindikasikan mesin industri / peralatan pabrik / alat berat (bukan alat dapur praktis rumah tangga).' };
-  }
-  if (industrialRegex.test(descNoUrls.slice(0, 500))) {
-    return { eligible: false, reason: 'Deskripsi video mengindikasikan mesin industri / peralatan pabrik / alat berat.' };
+  // 2G. Filter Mesin Alat Berat & Pertanian Skala Raksasa (Hanya blokir alat berat/traktor/pakan ternak raksasa)
+  // JANGAN blokir 'pemipil jagung' (karena ada pemipil jagung manual mini), dan jangan blokir kata 'pabrik'/'usaha'/'umkm'
+  const heavyMachineryRegex = /\b(alat\s+berat|traktor|perontok\s+padi|chopper\s+pakan\s+ternak|chopper\s+rumput|cacah\s+rumput|mesin\s+selep\s+gabah|silase|mesin\s+industri\s+berat)\b/i;
+  if (heavyMachineryRegex.test(titleLower)) {
+    return { eligible: false, reason: 'Judul video mengindikasikan alat berat / mesin pertanian raksasa (bukan alat rumah tangga praktis).' };
   }
 
   // 3. Filter Iklan & Sponsor Komersial
