@@ -171,10 +171,12 @@ const tempDir = path.join(__dirname, 'temp');
 const outputDir = path.join(__dirname, 'output');
 const uploadsDir = path.join(tempDir, 'uploads');
 const jobsFilePath = path.join(__dirname, 'jobs.json');
+const rejectedYunetDir = path.join(__dirname, 'rejected_frames', 'yunet');
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+if (!fs.existsSync(rejectedYunetDir)) fs.mkdirSync(rejectedYunetDir, { recursive: true });
 
 // Multer storage for uploaded voiceover audio
 const storage = multer.diskStorage({
@@ -222,7 +224,8 @@ function tokenAuthMiddleware(req, res, next) {
     reqPath.startsWith('/api/video/') ||
     reqPath.startsWith('/api/audio/') ||
     reqPath.startsWith('/api/download/') ||
-    reqPath.startsWith('/api/video-player-file')
+    reqPath.startsWith('/api/video-player-file') ||
+    reqPath.startsWith('/api/rejected-frames')
   ) {
     return next();
   }
@@ -1412,6 +1415,7 @@ export async function runStage1Pipeline({
     highlight = null;
     let approved = false;
     let lastRejectionError = null;
+    let pooledFrames = [];
 
     const usedVids = getAllUsedYouTubeVideoIds();
     const initialVid = extractVideoId(currentYoutubeUrl);
@@ -1982,7 +1986,7 @@ export async function runStage1Pipeline({
       }
 
       // Kumpulkan frame bersih gabungan dari seluruh kandidat (maksimal 30 frame pilihan)
-      const pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 });
+      pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 });
       console.log(`[Job ${jobId}] 🎯 Pool Multi-Kandidat Terbentuk: ${pooledFrames.length} frame bersih gabungan dari ${candidateResults.length} video kandidat.`);
 
       if (pooledFrames.length < 2) {
@@ -4063,6 +4067,32 @@ app.get('/api/jobs/:jobId/script.txt', (req, res) => {
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(content);
+});
+
+// 8c. Serve & list rejected face frames (YuNet / Face Gatekeeper)
+app.use('/api/rejected-frames/yunet', express.static(rejectedYunetDir));
+
+app.get('/api/rejected-frames', (req, res) => {
+  try {
+    if (!fs.existsSync(rejectedYunetDir)) {
+      return res.json({ success: true, count: 0, files: [] });
+    }
+    const files = fs.readdirSync(rejectedYunetDir)
+      .filter(f => f.endsWith('.jpg') || f.endsWith('.png'))
+      .map(f => {
+        const stat = fs.statSync(path.join(rejectedYunetDir, f));
+        return {
+          filename: f,
+          url: `/api/rejected-frames/yunet/${f}`,
+          size: stat.size,
+          createdAt: stat.birthtime || stat.mtime,
+        };
+      })
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json({ success: true, count: files.length, folderPath: rejectedYunetDir, files });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // 9. Open output folder in native OS file explorer

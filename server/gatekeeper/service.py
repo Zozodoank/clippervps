@@ -124,6 +124,42 @@ class FaceGatekeeper:
         if self.backend == "none":
             print("  [FaceGatekeeper] ⚠️ Mode fallback aktif.")
 
+    def _save_rejected_face_frame(self, image_bgr, bbox, score, detector_name="YuNet"):
+        """
+        Menyimpan visual frame yang ditolak oleh detektor wajah (YuNet / MediaPipe)
+        ke folder server/rejected_frames/yunet lengkap dengan bounding box & confidence score
+        agar pengguna dapat menginspeksi akurasi deteksi secara langsung.
+        """
+        try:
+            rejected_dir = os.path.join(CURRENT_DIR, "..", "rejected_frames", "yunet")
+            os.makedirs(rejected_dir, exist_ok=True)
+
+            # Batasi maksimal 200 frame agar tidak memenuhi penyimpanan Termux/VPS
+            existing = sorted(os.listdir(rejected_dir))
+            if len(existing) > 200:
+                for old in existing[:25]:
+                    try:
+                        os.unlink(os.path.join(rejected_dir, old))
+                    except Exception:
+                        pass
+
+            vis = image_bgr.copy()
+            if bbox and len(bbox) == 4:
+                bx, by, bw, bh = bbox
+                # Gambar kotak merah terang di sekeliling wajah terdeteksi
+                cv2.rectangle(vis, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
+                # Label teks confidence score
+                label = f"{detector_name}: {score * 100:.1f}%"
+                cv2.putText(vis, label, (bx, max(20, by - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+
+            ts_ms = int(time.time() * 1000)
+            fname = f"rejected_{detector_name.lower()}_{ts_ms}.jpg"
+            out_path = os.path.join(rejected_dir, fname)
+            cv2.imwrite(out_path, vis)
+            print(f"  [FaceGatekeeper] 📸 Frame wajah ditolak {detector_name} ({score * 100:.1f}%) disimpan ke: {out_path}")
+        except Exception as e:
+            pass
+
     def detect(self, image_bgr, niche="kitchen_tools"):
         h, w = image_bgr.shape[:2]
         if h < 30 or w < 30:
@@ -156,6 +192,7 @@ class FaceGatekeeper:
                                     best_score = score
                                     best_box = [bx, by, bw, bh]
                     if best_box:
+                        self._save_rejected_face_frame(image_bgr, best_box, float(best_score), "MediaPipe")
                         return True, float(best_score), best_box, f"Wajah vlogger/presenter terdeteksi (BlazeFace: {best_score * 100:.1f}%)"
             except Exception:
                 pass
@@ -171,6 +208,7 @@ class FaceGatekeeper:
                         if score >= 0.40:
                             bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
                             if bh >= min_face_px and bw >= min_face_px:
+                                self._save_rejected_face_frame(image_bgr, [bx, by, bw, bh], score, "YuNet")
                                 return True, score, [bx, by, bw, bh], f"Wajah presenter terdeteksi (YuNet: {score * 100:.1f}%)"
             except Exception:
                 pass
