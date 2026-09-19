@@ -634,18 +634,25 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
   * DILARANG KERAS video yang memiliki pilar / garis hitam vertikal tebal di sisi kiri dan kanan (pillarbox narrow slit)! Video harus mengisi penuh frame secara proporsional.
 - Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
-CRITERION 5: CLEAN TIMESTAMP SELECTION & ACTION PROGRESSION SEQUENCE
+CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
 - HARD REJECT (ZERO-TOLERANCE for selected clips):
   * Every timestamp in "timestamps" MUST be 100% free of faces, subtitles, creator text, watermarks, pointing arrows, stickers, emojis, price tags, unboxing cardboard, paper manuals, and static slides.
-- SOFT SCORE (PRIORITIZE HIGH-QUALITY CLIPS):
-  * Give highest priority to clips showing clear hands-on demonstration, crisp natural lighting, and active physical product motion.
+- MOTION FIRST (ACTIVE DEMONSTRATION OVER FROZEN PRODUCT):
+  * Give highest priority to clips showing clear hands-on demonstration, crisp natural lighting, and active physical product motion (operating, cutting, pressing, demonstrating function).
+  * DO NOT select frozen or lifeless shots of the product sitting idly on a table.
+- MANDATORY VISUAL & ACTION DIVERSITY (ANTI-MONOTONOUS RULE):
+  * Each selected timestamp MUST represent a genuinely distinct action, angle, or demonstration phase.
+  * DILARANG KERAS memilih cuplikan yang secara visual mengulang satu shot atau satu gerakan yang sama secara monoton!
+  * If the video merely repeats the same static cutting action without varied angles, phases, or functions, REJECT IT:
+    {"status": "reject", "reason": "Video ditolak: Footage monoton, hanya mengulang 1 gerakan/sudut yang sama tanpa variasi aksi yang memadai."}
 - ACTION PROGRESSION (NATURAL STORY FLOW):
   * Order the selected timestamps to follow a coherent demonstration sequence:
     1. Phase 1 (Product Overview / Hook): 1-2 clips introducing the complete physical product in action.
     2. Phase 2 (Hands-on Preparation): Hands preparing, holding, or loading ingredients/product.
     3. Phase 3 (Active Demonstration): Core action of the product operating (cutting, frying, blending, cleaning).
-- Determine 5 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a coherent 30 to 35 second video ad.
-- If the video does NOT contain at least 5 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
+    4. Phase 4 (Satisfying Result): Clear view of the final completed outcome.
+- Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.
+- If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -1078,10 +1085,13 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
   * DILARANG KERAS video yang memiliki pilar / garis hitam vertikal tebal di sisi kiri dan kanan (pillarbox narrow slit)! Video harus mengisi penuh frame secara proporsional.
 - Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
-CRITERION 5: CLEAN TIMESTAMP SELECTION (30 TO 35 SECONDS TOTAL RUNTIME)
-- Determine 5 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a coherent 30 to 35 second video ad.
+CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
+- Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.
 - Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
-- If the video does NOT contain at least 5 clean faceless product clips inside the 9:16 frame: MUST BE REJECTED.
+- MOTION FIRST: Prioritize active hands-on demonstration (cutting, pressing, operating, tangible results) over frozen/static product displays.
+- ANTI-MONOTONOUS RULE: Each timestamp MUST represent a distinct action, phase, or camera angle. If the footage repeats the same static cut without diversity, REJECT IT:
+  {"status": "reject", "reason": "Video ditolak: Footage monoton, hanya mengulang 1 gerakan tanpa variasi aksi yang memadai."}
+- If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -1950,61 +1960,31 @@ export async function generateAdAdvisorScriptWithAI({
 
   const effectiveTitle = (productTitle || '').trim() || videoMetadata?.title || (isGadget ? 'Smartphone Flagship & Mid-Range' : 'Produk Viral Shopee');
   const effectiveDesc = truncateProductDescription(productDescription, 900);
-  const targetDuration = Math.max(30, Math.min(45, Math.round(Number(segmentDuration) || 33)));
+  const targetDuration = Math.max(15, Math.min(45, Math.round(Number(segmentDuration) || 24)));
   const effectiveSceneSec = Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
-  const sceneCount = Math.max(7, Math.min(12, Math.round(targetDuration / effectiveSceneSec)));
-  const targetSpeechSec = Math.max(26, targetDuration - 3.5);
-  const targetWords = Math.round(targetSpeechSec * 1.95); // ~55-60 words
-  const minWords = Math.max(50, Math.round(targetSpeechSec * 1.8)); // >= 50 words
-  const maxWords = Math.max(65, Math.round(targetSpeechSec * 2.1)); // <= 65 words
+  const sceneCount = Math.max(4, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
+  const targetSpeechSec = Math.max(14, targetDuration - 3.0);
+  const targetWords = Math.round(targetSpeechSec * 1.9);
+  const minWords = Math.max(25, Math.round(targetSpeechSec * 1.7));
+  const maxWords = Math.max(35, Math.round(targetSpeechSec * 2.1));
 
   const systemPrompt = isGadget
     ? `You are a Senior Tech Reviewer and Creative Director specializing in Indonesian YouTube Shorts and TikTok smartphone reviews (Faceless B-roll tech content).
 
 You will receive the Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
 
-Use the proven 7-SLOT SMARTPHONE REVIEW STORYBOARD FORMULA engineered for high retention and engagement on YouTube Shorts without sounding like a hard-sell telemarketer:
+CRITICAL ${sceneCount}-SLOT SMARTPHONE STORYBOARD FORMULA (${targetDuration}s Total Runtime):
+The video consists of ${sceneCount} dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY ${sceneCount} distinct spoken lines matching the progression of the video:
 
-CRITICAL 7-SLOT SMARTPHONE STORYBOARD FORMULA (${targetDuration}s Total Runtime):
-The video consists of 7 dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY 7 distinct spoken lines starting with these exact timestamps:
-
-1. [00:00] [excited] SLOT 1: THE DYNAMIC HOOK (00:00 - 00:05) -> ~7-9 kata santai
-   - MUST immediately grab viewer attention within the first 3-5 seconds.
-   - DILARANG KERAS menggunakan kata "fix" atau "fiks"!
-   - DILARANG kata "alat dapur", "Shopee", "keranjang kuning"!
-   - Hook memancing rasa penasaran penonton YouTube Shorts mengenai keunggulan bodi, layar 120Hz mulus, performa kencang anti lag, atau value for money smartphone.
-   - Contoh: "Capek pakai HP yang gampang patah-patah pas scrolling? Smartphone ini mulusnya kebangetan!" / "HP harga terjangkau tapi pas dipakai gaming rasanya kayak pakai HP belasan juta!" / "Siapa sangka HP di kelas harga segini bisa ngasilin rekaman video 4K yang stabil begini?"
-
-2. [00:05] [emphasis] SLOT 2: HERO DESAIN BODI & BUILD QUALITY (00:05 - 00:10) -> ~7-9 kata santai
-   - Sorot desain bodi belakang mewah, finishing elegan tahan sidik jari, dan frame kokoh yang nyaman digenggam.
-   - Contoh: "Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam."
-
-3. [00:10] [neutral] SLOT 3: LAYAR AMOLED 120HZ & NAVIGASI UI (00:10 - 00:15) -> ~7-9 kata santai
-   - Sensasi scrolling sosmed super mulus 120Hz dan transisi menu responsif tanpa patah-patah.
-   - Contoh: "Layar AMOLED seratus dua puluh Hertz bikin scrolling sosmed super mulus."
-
-4. [00:15] [emphasis] SLOT 4: PERFORMA CHIPSET & MULTITASKING (00:15 - 00:20) -> ~7-9 kata santai
-   - Performa kencang, RAM 8GB, storage lega 256/512GB, dan gaming lancar anti lag (DILARANG istilah GPU rumit).
-   - Contoh: "Chipset kencang dipadu RAM delapan giga, gaming lancar tanpa hambatan."
-
-5. [00:20] [excited] SLOT 5: UJI KAMERA JERNIH & FOTO TAJAM (00:20 - 00:25) -> ~7-9 kata santai
-   - Kualitas rekaman video 4K stabil dan hasil jepretan foto malam/outdoor yang detail dan natural.
-   - Contoh: "Hasil jepretan kamera dan rekaman videonya jernih, tajam serta stabil."
-
-6. [00:25] [emphasis] SLOT 6: BATERAI AWET & FAST CHARGING (00:25 - 00:30) -> ~7-9 kata santai
-   - Daya tahan baterai seharian untuk mobilitas tinggi dan pengisian daya kilat.
-   - Contoh: "Baterai awet seharian penuh didukung teknologi pengisian daya super cepat."
-
-7. [00:30] [excited] SLOT 7: SOFT CTA: KISARAN HARGA & LEMPAR DISKUSI PENONTON (00:30 - ${formatSeconds(targetDuration)}) -> ~7-9 kata santai
-   - Sebutkan perkiraan kisaran harga pasar (Rupiah atau konversi Yuan) serta pancingan interaksi penonton di kolom komentar:
-   - DILARANG KERAS kata-kata jualan: "Shopee", "keranjang kuning", "checkout sekarang", "murah meriah", "link di bio"!
-   - Contoh: "Di kisaran harga dua jutaan, menurut kalian worth it gak? Komen di bawah ya!" / "Harganya ada di kisaran tiga jutaan, kalian tertarik beli gak nih? Tulis di komentar ya!"
+- Slot 1 [00:00]: Dynamic Hook (tarik perhatian seputar keunggulan bodi, layar mulus, atau kamera).
+- Slot 2 s/d Slot ${sceneCount - 1}: Sorot fitur dan pengujian fisik yang tampak di frame (desain bodi, layar, performa, kamera).
+- Slot ${sceneCount}: Soft CTA penutup (kisaran harga pasar dan pancingan diskusi penonton).
 
 CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
 - TEMPO BICARA WAJIB SANTAI, JELAS, DAN TIDAK TERBURU-BURU!
-- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, ~7-9 words per line across all 7 scenes).
+- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (~${targetWords} words target, ~7-8 words per line across all ${sceneCount} scenes).
 - DILARANG menempelkan judul panjang SEO ke dalam naskah. Gunakan nama pendek produk (2-3 kata).
-- Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai detik [00:30] dengan tempo santai, rileks, dan artikulasi jelas.
+- Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai selesai dengan tempo santai.
 
 STRICT RULES FOR VOICE OVER:
 - NEVER mention unboxing cardboard boxes, bubble wrap, or plastic packaging. Focus 100% on phone aesthetics, UI, camera, performance, and battery.
@@ -2019,50 +1999,29 @@ Output MUST be strictly valid JSON matching the requested schema.`
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
 
-Use the proven 7-SLOT SHOPEE AFFILIATE STORYBOARD FORMULA engineered to fill the ${targetDuration}s runtime with calm, engaging, unhurried conversational speech and drive maximum Keranjang Kuning conversions:
+CRITICAL ${sceneCount}-SLOT STORYBOARD FORMULA (${targetDuration}s Total Runtime):
+The video consists of EXACTLY ${sceneCount} dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY ${sceneCount} distinct spoken lines starting with appropriate timestamps:
 
-CRITICAL 7-SLOT STORYBOARD FORMULA (${targetDuration}s Total Runtime):
-The video consists of 7 dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY 7 distinct spoken lines starting with these exact timestamps:
+MANDATORY VISUAL GROUNDING (CRITICAL ANTI-HALLUCINATION RULE):
+- Setiap baris voiceover WAJIB mencerminkan bukti fisik yang tampak pada frame-frame foto yang dilampirkan (${trimmedFrames.length} frames).
+- DILARANG KERAS menyalin kalimat template generik seperti "busa melimpah", "kain biasa", "sela-sela sempit", "ergonomis anti selip", atau "murah meriah tidak bikin boros" jika aksi tersebut tidak tampak di frame gambar!
+- Jelaskan secara spesifik apa yang sedang didemonstrasikan tangan: cara memasang, memotong, mengupas, mengoperasikan tuas/alat, atau memperlihatkan hasil kerja produk.
 
-1. [00:00] [excited] SLOT 1: THE DYNAMIC HOOK (00:00 - 00:05) -> ~7-9 kata santai
-   - MUST immediately grab viewer attention within the first 3-5 seconds.
-   - DILARANG KERAS menggunakan kata "fix" atau "fiks" di hook maupun seluruh naskah!
+STRUKTUR NASKAH ${sceneCount} SLOT:
+1. Slot 1 [00:00]: The Dynamic Hook (tarik perhatian penonton dalam 3 detik pertama sesuai masalah produk).
    - DILARANG sapaan basi seperti "Stop scroll!", "Halo guys!", "Racun Shopee wajib punya!".
-   - DILARANG menggunakan kata "alat dapur" maupun kata "Shopee" di hook pembuka! Fokuskan ke kegiatan memasak, food prep, kerapian meja makan, atau masalah spesifik saat menyiapkan makanan.
-   - PILIH SALAH SATU DARI 6 SUDUT HOOK DINAMIS BERIKUT (Sesuaikan dengan karakter produk):
-     a) 🍳 Solusi Masalah Memasak & Food Prep: "Bikin sarapan jadi 2x lebih cepat cuma modal barang ini!" / "Capek bersihin percikan minyak pas goreng? Sini berkumpul." / "Solusi cerdas buat yang malas potong bahan masakan sampai nangis."
-     b) 🧼 Estetika & Kerapian Ruangan (Clean Vibes): "Transformasi meja masak yang berantakan jadi rapi instan cuma pakai ini." / "Nyesel baru tahu ada organizer se-aesthetic ini buat naruh bumbu." / "Spill barang rahasia yang bikin tempat food prep estetik dan betah dipandang."
-     c) 💸 Racun Belanja & Worth It (FOMO): "Barang receh online tapi gunanya bener-bener di luar nalar!" / "Jangan checkout barang lain sebelum kalian lihat fungsi benda ini!" / "Gak nyangka barang semurah ini bisa awet dan sekokoh ini buat harian."
-     d) 🤫 Penasaran & Demo Visual (Faceless): "Bisa tebak gak benda sekecil ini fungsinya buat apa?" / "Satu trik rahasia biar urusan masak cepat beres." / "Ada yang aneh dari benda ini, kelihatannya simpel tapi kok efektif banget?"
-     e) 📉 Perbandingan & Edukasi: "Mending beli yang versi ini daripada versi lama yang harganya selangit!" / "Battle kupas buah pakai cara viral vs manual, mana yang bikin kerjaan cepat beres?" / "Jangan ketipu sama ukurannya yang kecil, lihat dulu pas dipakai."
-     f) ⏱️ Urgensi & Dorongan Klik: "Uji coba langsung: beneran mempermudah food prep atau cuma gimmick iklan?" / "Buruan cek keranjang kuning sebelum harganya naik normal besok pagi!" / "Tantangan bikin cemilan praktis cuma pakai satu benda ini!"
-
-2. [00:05] [emphasis] SLOT 2: HERO SOLUTION & MATERIAL (00:05 - 00:10) -> ~7-9 kata santai
-   - Introduce product using a short, concise spoken name (2-3 words, e.g. "alat pemeras jeruk ini", DILARANG menempelkan seluruh judul SEO yang panjang!).
-   - Contoh: "Untung ada pemeras manual ini, bahannya kokoh dan praktis!"
-
-3. [00:10] [neutral] SLOT 3: PERAGAAN AKSI AWAL (00:10 - 00:15) -> ~7-9 kata santai
-   - Describe the effortless initial hands-on demonstration.
-   - Contoh: "Tinggal masukkan buahnya, tekan ringan sarinya langsung keluar tuntas."
-
-4. [00:15] [emphasis] SLOT 4: SUDUT LAIN & KEMUDAHAN FITUR (00:15 - 00:20) -> ~7-9 kata santai
-   - Highlight the versatility, multi-angle ease, or ergonomic handle.
-   - Contoh: "Gagangnya ergonomis anti selip, sangat nyaman dipakai setiap hari."
-
-5. [00:20] [excited] SLOT 5: BUKTI HASIL NYATA & KEPUASAN (00:20 - 00:25) -> ~7-9 kata santai
-   - Describe the satisfying result shown on screen (clean cuts, spotless shine, pure juice).
-   - Contoh: "Hasil perasannya jernih maksimal tanpa biji, bersihinnya super mudah."
-
-6. [00:25] [emphasis] SLOT 6: VALUE FOR MONEY & PROMO HEMAT (00:25 - 00:30) -> ~7-9 kata santai
-   - Voiceover MUST state the price appeal:
-   - "Kualitas premium harganya murah meriah, hemat gak bikin boros!"
-
-7. [00:30] [excited] SLOT 7: SHOPEE KERANJANG POJOK KIRI BAWAH CTA (00:30 - ${formatSeconds(targetDuration)}) -> ~7-9 kata santai
-   - Direct viewers with urgent FOMO to the Shopee Keranjang Kuning at the bottom-left corner:
-   - "Yuk buruan checkout di keranjang pojok kiri bawah sekarang!"
+   - Fokuskan ke kegiatan memasak, food prep, kerapian, atau masalah spesifik produk.
+2. Slot 2 s/d Slot ${sceneCount - 1}: Peragaan aksi nyata & kemudahan fitur:
+   - Deskripsikan peragaan tangan yang tampak di frame detik bersangkutan secara lugas dan meyakinkan.
+   - Sorot hasil penggunaan nyata yang rapi dan memuaskan.
+3. Slot ${sceneCount}: Call to Action Penutup:
+   - Ajak penonton mengecek produk di bawah / keranjang pojok kiri bawah sebelum kehabisan.
 
 CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
 - TEMPO BICARA WAJIB SANTAI, JELAS, DAN TIDAK TERBURU-BURU!
+- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: ~${targetWords} words, ~7-8 words per line across all ${sceneCount} scenes).
+- DILARANG menempelkan judul panjang SEO ke dalam naskah. Gunakan nama pendek produk (2-3 kata).
+- Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai selesai dengan tempo santai, rileks, dan artikulasi jelas.
 - Total voiceover script MUST contain between ${minWords} and ${maxWords} words (Target ideal: exactly ~${targetWords} words, ~7-9 words per line across all 7 scenes).
 - DILARANG menempelkan judul panjang SEO ke dalam naskah. Gunakan nama pendek produk (2-3 kata).
 - Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai detik [00:30] dengan tempo santai, rileks, dan artikulasi jelas.
@@ -2092,7 +2051,7 @@ CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
      * [soft] for empathetic problem statements.
      * [pause] for natural human breathing pauses between sentences.
    - Each line MUST start with an exact timestamp corresponding to each scene (e.g. [00:00], [00:03], [00:07], up to the closing CTA), followed by the emotion tag and spoken line.
-   - Closing line MUST have the price appeal ("murah meriah") and direct CTA to "keranjang pojok kiri bawah".
+   - Closing line MUST have a direct, urgent CTA to "keranjang pojok kiri bawah" atau "produk di bawah".
 
 STRICT RULES FOR VOICE OVER:
 - ORIGINALITY & TRANSFORMATION: DILARANG hanya sekadar mendeskripsikan apa yang terlihat di video secara datar (misal: "Ini adalah alat..."). Naskah WAJIB menyajikan alur transformasi bernilai tambah: 1) Hook Masalah/Pain Point cara lama, 2) Solusi & cara kerja praktis produk, 3) Bukti/kepuasan hasil, 4) CTA penutup. Ini wajib agar video dianggap konten original bernilai tambah oleh algoritma Meta/Reels dan Shorts.
@@ -3032,95 +2991,19 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
 
   console.log(`[normalizeClipPlan] Accepted ${normalized.length} valid clips from AI vision`);
 
-  // Continuous Stride Expansion if fewer than 7 clips
-  if (normalized.length > 0 && normalized.length < 7) {
-    console.log(`[normalizeClipPlan] AI menyetujui ${normalized.length} anchor clip bersih. Melakukan Dynamic Stride Expansion menuju 7-8 klip (30-35s)...`);
-    const targetClips = Math.min(8, Math.max(7, Math.ceil(31 / clipLength)));
-    const originalAnchors = [...normalized];
-
-    const intervalsByCand = new Map();
-    for (const clip of normalized) {
-      const cKey = clip.candidateIndex !== null && clip.candidateIndex !== undefined ? clip.candidateIndex : 'default';
-      if (!intervalsByCand.has(cKey)) intervalsByCand.set(cKey, []);
-      intervalsByCand.get(cKey).push({ start: clip.startSeconds, end: clip.endSeconds });
-    }
-
-    const isIntervalFree = (cKey, start, end, candDuration) => {
-      if (start < 0 || end > candDuration) return false;
-      const hitsDirty = dirtyTimestamps.some(ts => ts >= start && ts <= end);
-      if (hitsDirty) return false;
-      const intervals = intervalsByCand.get(cKey) || [];
-      const overlaps = intervals.some(iv => Math.max(start, iv.start) < Math.min(end, iv.end));
-      return !overlaps;
-    };
-
-    let expanded = true;
-    let strideRound = 1;
-    while (normalized.length < targetClips && expanded && strideRound <= 5) {
-      expanded = false;
-      for (const baseClip of originalAnchors) {
-        if (normalized.length >= targetClips) break;
-
-        const cKey = baseClip.candidateIndex !== null && baseClip.candidateIndex !== undefined ? baseClip.candidateIndex : 'default';
-        const candDuration = baseClip.candidate?.duration || totalDuration;
-
-        const sceneJump = Math.max(3.5, strideRound * 3.5);
-        const fwdStart = Math.round((baseClip.endSeconds + sceneJump) * 10) / 10;
-        const fwdEnd = Math.round((fwdStart + clipLength) * 10) / 10;
-
-        if (isIntervalFree(cKey, fwdStart, fwdEnd, candDuration)) {
-          normalized.push({
-            ...baseClip,
-            startSeconds: fwdStart,
-            endSeconds: fwdEnd,
-            duration: clipLength,
-            startTime: formatSeconds(fwdStart),
-            endTime: formatSeconds(fwdEnd),
-            storyboardSlot: normalized.length + 1,
-            reason: `${baseClip.reason} (Dynamic Scene Cut #${strideRound})`,
-          });
-          intervalsByCand.get(cKey).push({ start: fwdStart, end: fwdEnd });
-          expanded = true;
-          if (normalized.length >= targetClips) break;
-        } else {
-          const bwdStart = Math.round((baseClip.startSeconds - sceneJump - clipLength) * 10) / 10;
-          const bwdEnd = Math.round((bwdStart + clipLength) * 10) / 10;
-          if (bwdStart >= 0 && isIntervalFree(cKey, bwdStart, bwdEnd, candDuration)) {
-            normalized.push({
-              ...baseClip,
-              startSeconds: bwdStart,
-              endSeconds: bwdEnd,
-              duration: clipLength,
-              startTime: formatSeconds(bwdStart),
-              endTime: formatSeconds(bwdEnd),
-              storyboardSlot: normalized.length + 1,
-              reason: `${baseClip.reason} (Pre-Anchor Scene Cut #${strideRound})`,
-            });
-            intervalsByCand.get(cKey).push({ start: bwdStart, end: bwdEnd });
-            expanded = true;
-            if (normalized.length >= targetClips) break;
-          }
-        }
-      }
-      strideRound++;
-    }
-
-    // Preserve storyboard slot order if defined, otherwise sort ascending
-    if (!hasStoryboardSlots) {
-      normalized.sort((a, b) => {
-        const candA = a.candidateIndex ?? 0;
-        const candB = b.candidateIndex ?? 0;
-        if (candA !== candB) return candA - candB;
-        return a.startSeconds - b.startSeconds;
-      });
-    } else {
-      normalized.sort((a, b) => (a.storyboardSlot || 0) - (b.storyboardSlot || 0));
-    }
-
-    console.log(`[normalizeClipPlan] ✅ Dynamic Stride Expansion sukses: menghasilkan total ${normalized.length} klip (${(normalized.length * clipLength).toFixed(1)}s total).`);
-  } else if (hasStoryboardSlots) {
+  // Urutkan klip berdasarkan storyboard slot atau urutan waktu alami
+  if (!hasStoryboardSlots) {
+    normalized.sort((a, b) => {
+      const candA = a.candidateIndex ?? 0;
+      const candB = b.candidateIndex ?? 0;
+      if (candA !== candB) return candA - candB;
+      return a.startSeconds - b.startSeconds;
+    });
+  } else {
     normalized.sort((a, b) => (a.storyboardSlot || 0) - (b.storyboardSlot || 0));
   }
+
+  console.log(`[normalizeClipPlan] ✅ Mempertahankan ${normalized.length} klip bersih asli hasil kurasi (${(normalized.length * clipLength).toFixed(1)}s total) tanpa ekspansi sintetis.`);
 
   // Deduplikasi ketat: Pastikan tidak ada 2 klip dari kandidat yang sama dengan selisih waktu < 2.0 detik
   const dedupedClips = [];
@@ -3142,16 +3025,19 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     }
   }
 
-  if (dedupedClips.length > 0) {
+  // Standar kualitas: Minimal 3 aksi berbeda agar video tidak monoton atau mengulang 1 gerakan
+  if (dedupedClips.length >= 3) {
     return dedupedClips;
   }
 
-  if (!allowFallback) {
-    const cleanErr = new Error('AI menolak video ini: tidak ditemukan potongan video bersih dari watermark, subtitle terjemahan, nama channel mengambang, wajah, atau proses unboxing.');
-    cleanErr.isAiRejection = true;
-    cleanErr.rejectionReason = 'Tidak ditemukan potongan video bersih dari watermark, subtitle terjemahan, nama channel, wajah, atau proses unboxing.';
-    throw cleanErr;
+  if (dedupedClips.length > 0 && allowFallback) {
+    return dedupedClips;
   }
+
+  const cleanErr = new Error('AI menolak video ini: cuplikan aksi demonstrasi bersih terlalu sedikit (kurang dari 3 variasi aksi demonstrasi berbeda).');
+  cleanErr.isAiRejection = true;
+  cleanErr.rejectionReason = 'Cuplikan aksi demonstrasi bersih terlalu sedikit (kurang dari 3 variasi aksi demonstrasi berbeda).';
+  throw cleanErr;
 
   // Fallback: build 10 to 12 evenly spaced clips (around 30 to 35 seconds total, exactly clipLength per clip)
   console.log(`[normalizeClipPlan] Building ~30-35s fallback clip plan for ${totalDuration}s video with clipLength=${clipLength}s`);
@@ -3216,49 +3102,49 @@ function clampNumber(value, min, max, fallback) {
 }
 
 function buildFallbackScenes(productName, segmentDuration, sceneDuration = 3.3) {
-  const totalDuration = Math.max(30, Math.min(45, Math.round(Number(segmentDuration) || 33)));
+  const totalDuration = Math.max(15, Math.min(45, Math.round(Number(segmentDuration) || 24)));
   const sceneLength = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
-  const sceneCount = Math.max(7, Math.min(12, Math.round(totalDuration / sceneLength)));
+  const sceneCount = Math.max(4, Math.min(8, Math.round(totalDuration / sceneLength)));
   const sceneTemplates = [
     {
-      visualDescription: `Hook perbandingan visual: demonstrasi cara lama atau alat biasa yang kurang maksimal.`,
+      visualDescription: `Hook aksi: demonstrasi cara lama yang merepotkan vs solusi modern.`,
       voiceover: getDynamicProductHookFallback(productName),
-      adAdvisorNotes: 'Teks hook merah/kuning tebal, SFX alert, potongan cepat 3 detik pertama.'
+      adAdvisorNotes: 'Teks hook kontras tebal, SFX alert, potongan cepat pembuka.'
     },
     {
-      visualDescription: `Solusi hero: ${productName} ditampilkan saat mulai digunakan dengan mudah.`,
-      voiceover: `Untung sekarang ada ${productName} ini, sekali usap langsung beres.`,
-      adAdvisorNotes: 'Transisi snappy, tunjukkan tangan memegang produk dengan percaya diri.'
+      visualDescription: `Solusi hero: ${productName} mulai digunakan dengan tangan secara praktis.`,
+      voiceover: `Untung sekarang ada ${productName} ini, sekali pakai langsung beres.`,
+      adAdvisorNotes: 'Transisi snappy, tunjukkan tangan mengoperasikan produk secara mantap.'
     },
     {
-      visualDescription: `Aksi satisfying demo: busa melimpah atau kotoran rontok seketika.`,
-      voiceover: `Busanya melimpah banget dan langsung mengangkat semua kotoran membandel.`,
-      adAdvisorNotes: 'Visual satisfying close-up, SFX desis busa / gosokan bersih.'
+      visualDescription: `Aksi peragaan aktif: peragaan fungsi fisik produk bekerja dengan lancar.`,
+      voiceover: `Tinggal operasikan dengan santai, prosesnya cepat dan gak perlu tenaga ekstra.`,
+      adAdvisorNotes: 'Visual satisfying close-up peragaan aksi produk.'
     },
     {
-      visualDescription: `Menjangkau sela-sela sempit yang sulit dijangkau alat biasa.`,
-      voiceover: `Bisa menjangkau sela-sela sempit tanpa bikin tangan lecet atau baret.`,
-      adAdvisorNotes: 'Close-up sela-sela bersih kinclong, pergerakan tangan luwes.'
+      visualDescription: `Detail fungsi & kepraktisan saat digunakan untuk kebutuhan harian.`,
+      voiceover: `Desainnya ringkas dan presisi, bikin pekerjaan jadi jauh lebih efisien.`,
+      adAdvisorNotes: 'Sorot detail pergerakan alat dan kepraktisan penggunaannya.'
     },
     {
-      visualDescription: `Detail material produk: tebal, lembut, dan awet dicuci berkali-kali.`,
-      voiceover: `Materialnya tebal dan halus, gak gampang rontok walau dipakai tiap hari.`,
-      adAdvisorNotes: 'Tunjukkan tekstur produk, teks benefit kuning di layar.'
+      visualDescription: `Hasil peragaan nyata yang memuaskan dan rapi seketika.`,
+      voiceover: `Lihat hasilnya, benar-benar rapi memuaskan dan gampang banget dibersihkan.`,
+      adAdvisorNotes: 'Tunjukkan hasil kerja produk secara jelas di frame tengah.'
     },
     {
-      visualDescription: `Psikologi harga: produk ditampilkan siap pakai dengan tulisan promo hemat.`,
-      voiceover: `Harganya murah meriah banget, bener-bener gak bikin kantong jebol!`,
-      adAdvisorNotes: 'Teks harga promo mencolok, SFX kaching / coin.'
+      visualDescription: `Kualitas dan fungsionalitas produk untuk penggunaan jangka panjang.`,
+      voiceover: `Materialnya solid dan awet, cocok banget jadi andalan di rumah.`,
+      adAdvisorNotes: 'Teks keunggulan di layar, SFX coin.'
     },
     {
-      visualDescription: `Hero shot penutup dengan animasi panah ke keranjang kuning pojok kiri bawah.`,
-      voiceover: `Buruan cek keranjang pojok kiri bawah sekarang sebelum kehabisan!`,
+      visualDescription: `Hero shot penutup dengan animasi panah ke keranjang pojok kiri bawah.`,
+      voiceover: `Yuk buruan cek produk di keranjang pojok kiri bawah sebelum kehabisan!`,
       adAdvisorNotes: 'Grafis panah berkedip ke pojok kiri bawah, CTA mendesak.'
     },
     {
-      visualDescription: `Stiker diskon dan keranjang kuning berkedip.`,
+      visualDescription: `Stiker diskon dan keranjang pojok kiri bawah.`,
       voiceover: `Langsung checkout di keranjang pojok kiri bawah mumpung masih promo!`,
-      adAdvisorNotes: 'Teks urgensi terakhir, SFX click.'
+      adAdvisorNotes: 'Teks urgensi penutup, SFX click.'
     },
   ];
 

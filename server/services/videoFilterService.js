@@ -808,14 +808,17 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       }));
 
     const verifiedSegments = aiResult.verifiedSegments || [];
-    // USER MANDATE: Video eligible jika terdapat frame peragaan bersih (cleanFrames >= 1)
-    // Frame kotor disingkirkan, frame bersih disimpan untuk diekspansi dinamis menjadi klip utuh!
-    const isEligible = cleanFrames.length > 0;
+    // Syarat kelayakan: Minimal 3 frame bersih atau minimal 1 segmen terverifikasi bersih
+    // Menghindari pembuatan video dari 1-2 frame diam yang kemudian dipotong berulang kali secara monoton.
+    const isEligible = cleanFrames.length >= 3 || (verifiedSegments.length > 0 && cleanFrames.length >= 2);
+    const rejectReason = isEligible
+      ? undefined
+      : (aiResult.reason || `Video ditolak: Cuplikan bersih terlalu sedikit (${cleanFrames.length} frame peragaan). Tidak cukup variasi visual.`);
 
     if (isEligible) {
       console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame VERIFIED_CLEAN (${verifiedSegments.length} segmen kontinu, ${aiResult.benchmarks?.totalMs || 0}ms).`);
     } else {
-      console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper: 0/${frames.length} frame bersih (${aiResult.reason || 'seluruh frame tidak layak'}).`);
+      console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper: Hanya ${cleanFrames.length}/${frames.length} frame bersih (${rejectReason}).`);
     }
 
     const discardedFaceTimestamps = discardedFrames
@@ -829,7 +832,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       eligible: isEligible,
       cleanFrames,
       discardedFrames,
-      reason: aiResult.reason,
+      reason: rejectReason || aiResult.reason,
       verifiedSegments,
       discardedFaceTimestamps,
       discardedViolationTimestamps,
@@ -1198,11 +1201,16 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     };
   }
 
-  const isEligible = finalClean.length > 0;
+  const isEligible = finalClean.length >= 3 || (verifiedSegments.length > 0 && finalClean.length >= 2);
+  const rejectReason = isEligible
+    ? undefined
+    : (finalClean.length === 0
+      ? 'Tidak ditemukan frame peragaan produk yang bersih (bebas watermark/wajah/subtitle).'
+      : `Video ditolak: Cuplikan peragaan bersih terlalu sedikit (${finalClean.length} frame / < 10 detik). Tidak cukup variasi visual.`);
 
   return {
     eligible: isEligible,
-    reason: isEligible ? undefined : 'Tidak ditemukan frame peragaan produk yang bersih (bebas watermark/wajah/subtitle).',
+    reason: rejectReason,
     cleanFrames: finalClean,
     discardedFrames,
     verifiedSegments,

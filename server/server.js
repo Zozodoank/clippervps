@@ -2494,66 +2494,69 @@ export async function runStage1Pipeline({
       const isGadget = (options.niche === 'gadget_smartphone');
       console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah ${isGadget ? 'Smartphone Shorts' : 'Shopee'}...`);
       const fallbackHook = highlight.productHook || getDynamicProductHookFallback(productTitle, options.niche || 'kitchen_tools');
+      const stepSec = Math.max(3.0, actualSilentDuration / 5);
+      const ts0 = '00:00';
+      const ts1 = formatSeconds(Math.round(stepSec));
+      const ts2 = formatSeconds(Math.round(stepSec * 2));
+      const ts3 = formatSeconds(Math.round(stepSec * 3));
+      const ts4 = formatSeconds(Math.round(Math.max(stepSec * 4, actualSilentDuration - 3.5)));
+
       const fallbackVoiceScript = isGadget
-        ? `[00:00] [excited] ${fallbackHook}
-[00:05] [emphasis] Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam.
-[00:10] [neutral] Layar AMOLED seratus dua puluh Hertz bikin scrolling sosmed super mulus.
-[00:15] [emphasis] Chipset kencang dipadu RAM delapan giga, gaming lancar tanpa hambatan.
-[00:20] [excited] Hasil jepretan kamera dan rekaman videonya jernih, tajam serta stabil.
-[00:25] [emphasis] Baterai awet seharian penuh didukung teknologi pengisian daya super cepat.
-[00:30] [excited] Di kisaran harga dua jutaan, menurut kalian worth it gak? Komen di bawah ya!`
-        : `[00:00] [excited] ${fallbackHook}
-[00:05] [emphasis] Untung ada alat praktis ini, bahannya kokoh dan awet banget!
-[00:10] [neutral] Pakainya super simpel, sekali tekan langsung beres tanpa tenaga ekstra.
-[00:15] [emphasis] Desainnya ergonomis anti selip, sangat nyaman dipakai setiap hari.
-[00:20] [excited] Lihat hasilnya, benar-benar rapi memuaskan, dan mudah banget dibilas.
-[00:25] [emphasis] Kualitas sebagus ini harganya murah meriah, hemat di kantong.
-[00:30] [excited] Yuk buruan checkout di keranjang pojok kiri bawah sekarang!`;
+        ? `[${ts0}] [excited] ${fallbackHook}
+[${ts1}] [emphasis] Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam.
+[${ts2}] [neutral] Layar seratus dua puluh Hertz bikin scrolling sosmed super mulus.
+[${ts3}] [excited] Hasil jepretan kamera dan rekaman videonya jernih serta stabil.
+[${ts4}] [excited] Di kisaran harga terjangkau ini, menurut kalian worth it gak? Komen di bawah ya!`
+        : `[${ts0}] [excited] ${fallbackHook}
+[${ts1}] [emphasis] Untung ada inovasi praktis ini, cara pakainya simpel dan efisien banget.
+[${ts2}] [neutral] Tinggal gunakan dengan santai, prosesnya cepat tanpa perlu repot.
+[${ts3}] [excited] Lihat peragaannya, hasilnya benar-benar rapi, presisi, dan memuaskan.
+[${ts4}] [excited] Yuk buruan cek produk di keranjang pojok kiri bawah sekarang sebelum kehabisan!`;
 
       scriptData = {
         sampleContext: {
           productName: productTitle || videoMeta?.title || (isGadget ? 'Smartphone Pilihan' : 'Produk Pilihan'),
           videoDuration: `${Math.round(actualSilentDuration)} detik`,
-          targetAudience: isGadget ? 'Pencari smartphone, tech enthusiast, dan penonton YouTube Shorts' : 'Pengguna harian dan pembeli Shopee',
+          targetAudience: isGadget ? 'Pencari smartphone, tech enthusiast, dan penonton YouTube Shorts' : 'Pengguna harian dan pembeli online',
           coreProblem: isGadget ? 'HP lama lemot, kamera buram, dan baterai boros' : 'Cara konvensional yang merepotkan dan memakan waktu',
           keyFeatures: isGadget ? ['Layar AMOLED 120Hz', 'Chipset Kencang & RAM Lega', 'Kamera Jernih 4K'] : ['Praktis & Ringkas', 'Kualitas Teruji', 'Mudah Digunakan'],
-          buyingTrigger: isGadget ? 'Spek gahar di harga terjangkau' : 'Harga murah meriah dan solusi instan',
+          buyingTrigger: isGadget ? 'Spek gahar di harga terjangkau' : 'Kemudahan pemakaian dan hasil presisi',
         },
         scenes: [
           {
             sceneNumber: 1,
-            timeRange: '00:00 - 00:04',
+            timeRange: `00:00 - ${ts1}`,
             visualDescription: isGadget ? 'Tampilan bodi belakang dan modul kamera smartphone' : 'Demonstrasi pembuka produk',
             voiceover: fallbackHook,
             adAdvisorNotes: 'Hook visual pembuka',
           },
           {
             sceneNumber: 2,
-            timeRange: '00:04 - 00:09',
-            visualDescription: 'Tampilan produk utama',
-            voiceover: 'Praktis digunakan, kualitas premium, dan bikin kerjaan cepat beres.',
+            timeRange: `${ts1} - ${ts2}`,
+            visualDescription: 'Peragaan aksi awal produk',
+            voiceover: isGadget ? 'Bodi belakangnya mewah dan nyaman digenggam.' : 'Untung ada inovasi praktis ini, cara pakainya simpel dan efisien.',
             adAdvisorNotes: 'Pengenalan manfaat',
           },
           {
             sceneNumber: 3,
-            timeRange: '00:09 - 00:14',
-            visualDescription: 'Fitur dan keunggulan',
-            voiceover: 'Bahannya tebal, awet, dan nyaman dipakai sehari-hari.',
-            adAdvisorNotes: 'Bukti kualitas',
+            timeRange: `${ts2} - ${ts3}`,
+            visualDescription: 'Fitur dan kemudahan pengoperasian',
+            voiceover: isGadget ? 'Layar mulus dan navigasi responsif.' : 'Tinggal gunakan dengan santai, cepat tanpa perlu repot.',
+            adAdvisorNotes: 'Bukti kemudahan',
           },
           {
             sceneNumber: 4,
-            timeRange: '00:14 - 00:18',
-            visualDescription: 'Penawaran harga terbaik',
-            voiceover: 'Harganya murah meriah banget, gak bikin kantong jebol!',
-            adAdvisorNotes: 'Price appeal',
+            timeRange: `${ts3} - ${ts4}`,
+            visualDescription: 'Hasil nyata peragaan',
+            voiceover: isGadget ? 'Kamera jernih dan rekaman video stabil.' : 'Lihat peragaannya, hasilnya rapi dan memuaskan.',
+            adAdvisorNotes: 'Hasil nyata',
           },
           {
             sceneNumber: 5,
-            timeRange: '00:18 - 00:22',
-            visualDescription: 'Ajakan checkout keranjang kuning',
-            voiceover: 'Langsung checkout di keranjang pojok kiri bawah sekarang juga!',
-            adAdvisorNotes: 'CTA konversi tinggi',
+            timeRange: `${ts4} - ${formatSeconds(Math.round(actualSilentDuration))}`,
+            visualDescription: isGadget ? 'Tampilan display penutup' : 'Ajakan cek keranjang pojok kiri bawah',
+            voiceover: isGadget ? 'Di kisaran harga ini, worth it gak? Komen di bawah!' : 'Yuk buruan cek produk di keranjang pojok kiri bawah sekarang!',
+            adAdvisorNotes: 'CTA penutup',
           },
         ],
         voiceoverScript: fallbackVoiceScript,

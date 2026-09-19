@@ -228,7 +228,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,50,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4.5,2.0,2,60,60,380,1
+Style: Default,Arial,42,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,2.6,1.2,2,60,60,360,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -236,13 +236,13 @@ ${formattedEvents.join('\n')}
 `;
 
   fs.writeFileSync(assOutputPath, assContent, 'utf8');
-  console.log(`[SubtitleService] Generated ${events.length} Shopee 2-tone (Yellow & White) ASS subtitles synchronized to ${safeTotalDuration.toFixed(1)}s audio at ${assOutputPath}`);
+  console.log(`[SubtitleService] Generated ${events.length} clean modern ASS subtitles synchronized to ${safeTotalDuration.toFixed(1)}s audio at ${assOutputPath}`);
   return assOutputPath;
 }
 
 /**
- * Highlights punchy keywords in bright yellow (\\c&H0000FFFF&) and base text in white (\\c&H00FFFFFF&).
- * If no specific keyword is matched, alternates highlighting on punchy words to guarantee visual engagement.
+ * Highlights punchy focal keywords in bright yellow (\\c&H0000FFFF&) and base text in white (\\c&H00FFFFFF&).
+ * Restricts highlighting to at most 1 key impact word per phrase to avoid visual fatigue.
  */
 function colorizeShopeeSubtitle(text, index = 0) {
   if (!text || typeof text !== 'string') return '';
@@ -251,30 +251,23 @@ function colorizeShopeeSubtitle(text, index = 0) {
   const yellow = '{\\c&H0000FFFF&}';
   const white = '{\\c&H00FFFFFF&}';
 
-  // Keyword patterns for high-converting Shopee Affiliate narration
-  const viralKeywordsPattern = /\b(fix|kurang maksimal|kain biasa|alat biasa|masalah|rusak|gagal|capek|ribet|baret|lecet|kotor|solusi|sarung tangan|cendol|busa|melimpah|praktis|serbaguna|bersih|kinclong|tuntas|mudah|cepat|lembut|kokoh|awet|rapi|ampuh|otomatis|murah meriah|murah|diskon|promo|hemat|worth it|terjangkau|keranjang|pojok kiri bawah|keranjang kuning|sekarang|buruan|cek|klik|checkout|sebelum kehabisan)\b/gi;
+  // Highlight selectively on pivotal conversion / high-impact phrases only (max 1 highlight per phrase)
+  const focalKeywordsPattern = /\b(keranjang kuning|pojok kiri bawah|checkout|solusi|worth it|rekomendasi|promo|diskon|cepat|praktis)\b/i;
 
-  if (viralKeywordsPattern.test(clean)) {
-    // Reset regex index
-    viralKeywordsPattern.lastIndex = 0;
-    const highlighted = clean.replace(viralKeywordsPattern, (match) => `${yellow}${match}${white}`);
+  if (focalKeywordsPattern.test(clean)) {
+    let highlightedOnce = false;
+    const highlighted = clean.replace(focalKeywordsPattern, (match) => {
+      if (!highlightedOnce) {
+        highlightedOnce = true;
+        return `${yellow}${match}${white}`;
+      }
+      return match;
+    });
     return `${white}${highlighted}`.replace(/\{\\c&H00FFFFFF&\}\{\\c&H00FFFFFF&\}/g, '{\\c&H00FFFFFF&}');
   }
 
-  // Fallback: highlight the last 1-2 words (or punchy segment) in yellow for visual pacing
-  const words = clean.split(/\s+/);
-  if (words.length <= 2) {
-    return `${yellow}${clean}`;
-  }
-
-  // Highlight the latter half / punchy words
-  const splitPoint = Math.max(1, Math.floor(words.length / 2));
-  const firstPart = words.slice(0, splitPoint).join(' ');
-  const secondPart = words.slice(splitPoint).join(' ');
-
-  return index % 2 === 0
-    ? `${white}${firstPart} ${yellow}${secondPart}${white}`
-    : `${yellow}${firstPart}${white} ${secondPart}`;
+  // Clean, professional white text by default
+  return `${white}${clean}`;
 }
 
 /**
@@ -409,7 +402,7 @@ PlayResY: 1920
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,Arial,50,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4.5,2.0,2,60,60,380,1
+Style: Default,Arial,42,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,2.6,1.2,2,60,60,360,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

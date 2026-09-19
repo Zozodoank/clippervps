@@ -403,47 +403,10 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
       }
     }
 
-    // JAMINAN DURASI MINIMAL 30 DETIK (Target 30-35s):
-    // Jika total durasi deduplicated kurang dari 30.0 detik, lakukan dynamic scene expansion
-    let currentTotal = deduplicated.reduce((sum, c) => sum + (c.duration || defaultClipLength), 0);
-    const MIN_REQUIRED_SEC = 30.0;
-
-    if (currentTotal < MIN_REQUIRED_SEC && deduplicated.length > 0) {
-      console.log(`[normalizeRenderClips] Total durasi klip (${currentTotal.toFixed(1)}s) di bawah minimal 30 detik. Melakukan ekspansi adegan dinamis ke target 30-35s...`);
-      
-      // Tahap 1: Tingkatkan durasi per klip ke 4.8 detik jika durasi saat ini lebih pendek
-      for (const c of deduplicated) {
-        if (c.duration < 4.8) {
-          c.duration = 4.8;
-        }
-      }
-      currentTotal = deduplicated.reduce((sum, c) => sum + c.duration, 0);
-
-      // Tahap 2: Jika masih di bawah 30s, sintesis potongan adegan dinamis baru dari video yang tersedia
-      // dengan loncatan waktu aman (scene jump +4.0s) agar adegan berganti variatif setiap ~5 detik
-      let round = 1;
-      const basePool = [...deduplicated];
-      while (currentTotal < MIN_REQUIRED_SEC && round <= 4) {
-        for (const base of basePool) {
-          if (currentTotal >= MIN_REQUIRED_SEC) break;
-          const newStart = Math.max(0, base.startSeconds + base.duration + (round * 4.0));
-          const newClip = {
-            ...base,
-            startSeconds: newStart,
-            duration: 4.8,
-            reframe: {
-              ...base.reframe,
-              // Variasikan framing focusY agar terasa seperti sudut kamera berbeda
-              focusY: round % 2 === 0 ? 0.65 : 0.55,
-            },
-          };
-          deduplicated.push(newClip);
-          currentTotal += 4.8;
-        }
-        round++;
-      }
-      console.log(`[normalizeRenderClips] ✅ Total durasi akhir: ${currentTotal.toFixed(1)}s (${deduplicated.length} klip). Memenuhi standar minimal 30 detik!`);
-    }
+    // Durasi adaptif dan natural (15s - 35s):
+    // Klip hasil kurasi AI dipertahankan secara murni tanpa duplikasi sintetis atau pemaksaan durasi palsu.
+    const currentTotal = deduplicated.reduce((sum, c) => sum + (c.duration || defaultClipLength), 0);
+    console.log(`[normalizeRenderClips] ✅ Total durasi klip terkurasi: ${currentTotal.toFixed(1)}s (${deduplicated.length} klip bersih). Durasi adaptif natural.`);
 
     return deduplicated;
   }
@@ -451,8 +414,8 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
   const fallbackStart = parseTimeToSeconds(fallbackStartTime);
   const fallbackEnd = parseTimeToSeconds(fallbackEndTime);
   const clipLength = defaultClipLength;
-  const fallbackDuration = fallbackEnd > fallbackStart ? fallbackEnd - fallbackStart : (clipLength * 7);
-  const clipCount = Math.max(7, Math.min(10, Math.floor(fallbackDuration / clipLength)));
+  const fallbackDuration = fallbackEnd > fallbackStart ? fallbackEnd - fallbackStart : (clipLength * 5);
+  const clipCount = Math.max(4, Math.min(8, Math.floor(fallbackDuration / clipLength)));
 
   for (let index = 0; index < clipCount; index++) {
     normalized.push({
