@@ -111,13 +111,13 @@ class FaceGatekeeper:
                     model=yunet_path,
                     config="",
                     input_size=(320, 320),
-                    score_threshold=0.40,
+                    score_threshold=0.60,
                     nms_threshold=0.3,
                     top_k=5000
                 )
                 if self.backend == "none":
                     self.backend = "yunet"
-                print("  [FaceGatekeeper] ✅ OpenCV YuNet Face Detection aktif (threshold 0.40).")
+                print("  [FaceGatekeeper] ✅ OpenCV YuNet Face Detection aktif (threshold 0.80 + Semantic Gate).")
             except Exception as e:
                 print(f"  [FaceGatekeeper] ⚠️ YuNet init error: {e}")
 
@@ -160,15 +160,80 @@ class FaceGatekeeper:
         except Exception as e:
             pass
 
+    def _is_valid_human_face(self, image_bgr, bbox, score, landmarks=None):
+        """
+        Penyaring Semantik Pasca-Deteksi (Post-Processing Semantic Verification Gate):
+        Membedakan wajah vlogger/presenter manusia asli dari tangan, perkakas dapur,
+        blender kaca, tutup chopper transparan, atau gambar kartun di kardus kemasan produk.
+        """
+        h, w = image_bgr.shape[:2]
+        bx, by, bw, bh = bbox
+
+        # 1. Ambang batas keyakinan (Score Threshold) untuk wajah nyata
+        if score < 0.80:
+            return False, f"Score rendah ({score * 100:.1f}% < 80.0%)"
+
+        # 2. Ukuran minimal wajah presenter:
+        # Menolak maskot kartun kecil di kemasan produk / stiker meja
+        min_dim = max(45, int(min(h, w) * 0.07))
+        if bw < min_dim or bh < min_dim:
+            return False, f"Ukuran wajah terlalu kecil untuk presenter ({bw}x{bh} < {min_dim}px)"
+
+        # 3. Rasio aspek wajah manusia normal (tinggi vs lebar biasanya 0.88 - 1.65)
+        # Objek horizontal melebar (bh/bw < 0.88) biasanya adalah genggaman tangan atau alat dapur
+        aspect = bh / max(bw, 1)
+        if aspect < 0.88 or aspect > 1.65:
+            return False, f"Proporsi aspek tidak wajar untuk wajah manusia ({aspect:.2f})"
+
+        # 4. Verifikasi spektrum warna kulit manusia alami (HSV + YCrCb ganda)
+        # Membuang blender kaca, pisau stainless steel, tutup chopper plastik, panci teflon
+        crop = image_bgr[max(0, by):min(h, by + bh), max(0, bx):min(w, bx + bw)]
+        if crop.size == 0:
+            return False, "Area crop wajah kosong"
+
+        try:
+            hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+            ycrcb = cv2.cvtColor(crop, cv2.COLOR_BGR2YCrCb)
+            mask_hsv = cv2.inRange(hsv, (0, 25, 50), (25, 255, 255))
+            mask_ycrcb = cv2.inRange(ycrcb, (0, 133, 77), (255, 173, 127))
+            skin_mask = cv2.bitwise_and(mask_hsv, mask_ycrcb)
+            skin_ratio = float(np.count_nonzero(skin_mask)) / float(crop.shape[0] * crop.shape[1])
+            if skin_ratio < 0.20:
+                return False, f"Bukan warna kulit manusia (skin_ratio: {skin_ratio * 100:.1f}%)"
+        except Exception:
+            pass
+
+        # 5. Geometri 5-titik landmark wajah (mata kanan, mata kiri, hidung, mulut kanan, mulut kiri)
+        if landmarks is not None and len(landmarks) >= 10:
+            re_x, re_y = landmarks[0], landmarks[1]
+            le_x, le_y = landmarks[2], landmarks[3]
+            n_x, n_y = landmarks[4], landmarks[5]
+            rm_x, rm_y = landmarks[6], landmarks[7]
+            lm_x, lm_y = landmarks[8], landmarks[9]
+
+            # Jarak antarmata terhadap lebar wajah (normalnya 22% - 58%)
+            eye_dist = np.hypot(re_x - le_x, re_y - le_y)
+            eye_ratio = eye_dist / max(bw, 1)
+            if eye_ratio < 0.22 or eye_ratio > 0.58:
+                return False, f"Jarak antarmata di luar proporsi natural ({eye_ratio:.2f})"
+
+            # Kemiringan mata (wajah presenter wajar kemiringan mata < ~35 derajat)
+            eye_tilt = abs(re_y - le_y) / max(eye_dist, 1)
+            if eye_tilt > 0.60:
+                return False, f"Kemiringan mata abnormal ({eye_tilt:.2f})"
+
+            # Hierarki susunan vertikal: mata di atas hidung, hidung di atas mulut
+            avg_eye_y = (re_y + le_y) / 2.0
+            avg_mouth_y = (rm_y + lm_y) / 2.0
+            if not (avg_eye_y < n_y < avg_mouth_y):
+                return False, "Susunan landmark vertikal tidak sesuai wajah manusia"
+
+        return True, "Wajah manusia valid"
+
     def detect(self, image_bgr, niche="kitchen_tools"):
         h, w = image_bgr.shape[:2]
         if h < 30 or w < 30:
             return False, 0.0, None, "Dimensi frame terlalu kecil"
-
-        total_frame_area = float(h * w)
-
-        # Wajah kecil presenter/vlogger di latar belakang: deteksi mulai 16px
-        min_face_px = max(16, int(min(h, w) * 0.02))
 
         # 1. MediaPipe BlazeFace
         if self.mp_detector:
@@ -181,16 +246,15 @@ class FaceGatekeeper:
                     best_box = None
                     for det in results.detections:
                         score = det.categories[0].score if det.categories else 0.0
-                        if score >= self.min_confidence:
-                            bbox = det.bounding_box
-                            bx = max(0, int(bbox.origin_x))
-                            by = max(0, int(bbox.origin_y))
-                            bw = int(bbox.width)
-                            bh = int(bbox.height)
-                            if bh >= min_face_px and bw >= min_face_px:
-                                if score > best_score:
-                                    best_score = score
-                                    best_box = [bx, by, bw, bh]
+                        bbox = det.bounding_box
+                        bx = max(0, int(bbox.origin_x))
+                        by = max(0, int(bbox.origin_y))
+                        bw = int(bbox.width)
+                        bh = int(bbox.height)
+                        is_valid, _ = self._is_valid_human_face(image_bgr, [bx, by, bw, bh], score)
+                        if is_valid and score > best_score:
+                            best_score = score
+                            best_box = [bx, by, bw, bh]
                     if best_box:
                         self._save_rejected_face_frame(image_bgr, best_box, float(best_score), "MediaPipe")
                         return True, float(best_score), best_box, f"Wajah vlogger/presenter terdeteksi (BlazeFace: {best_score * 100:.1f}%)"
@@ -205,11 +269,12 @@ class FaceGatekeeper:
                 if faces is not None and len(faces) > 0:
                     for face in faces:
                         score = float(face[-1])
-                        if score >= 0.40:
-                            bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-                            if bh >= min_face_px and bw >= min_face_px:
-                                self._save_rejected_face_frame(image_bgr, [bx, by, bw, bh], score, "YuNet")
-                                return True, score, [bx, by, bw, bh], f"Wajah presenter terdeteksi (YuNet: {score * 100:.1f}%)"
+                        bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
+                        landmarks = [float(face[i]) for i in range(4, 14)]
+                        is_valid, reason = self._is_valid_human_face(image_bgr, [bx, by, bw, bh], score, landmarks)
+                        if is_valid:
+                            self._save_rejected_face_frame(image_bgr, [bx, by, bw, bh], score, "YuNet")
+                            return True, score, [bx, by, bw, bh], f"Wajah presenter terdeteksi (YuNet: {score * 100:.1f}%)"
             except Exception:
                 pass
 
