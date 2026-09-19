@@ -1026,47 +1026,58 @@ async function runAutoRetryWorker(jobId, run) {
               diag.failureCode === 'YOUTUBE_IP_BLOCKED';
 
             if (isHardBlock) {
-              consecutiveIpBlocks++;
-              console.warn(`[AutoRetry ${jobId}] ⚠️ Terdeteksi kendala akses YouTube (${diag.failureCode}, beruntun: ${consecutiveIpBlocks}/3).`);
-
-              // Verifikasi kesehatan IP publik aktual via test ringan ke YouTube
-              let health = { ok: true };
+              // A candidate failure is NOT proof of an IP block. Require an independent
+              // YouTube health probe to return the SAME hard-block classification.
+              let health = { ok: false, status: 'UNKNOWN' };
               try {
                 health = await checkYouTubeHealth();
-              } catch {}
+              } catch (healthErr) {
+                console.warn(`[AutoRetry ${jobId}] Health check YouTube error: ${healthErr.message}`);
+              }
+
+              const healthConfirmsBlock =
+                health.ok === false &&
+                health.status === diag.failureCode;
 
               if (health.ok) {
-                // IP publik sebenarnya sehat! Masalah terjadi hanya pada video spesifik ini (misal bot check per-video / DRM)
                 consecutiveIpBlocks = 0;
-                console.log(`[AutoRetry ${jobId}] ℹ️ IP publik (${health.publicIp || 'lokal'}) terkonfirmasi SEHAT oleh YouTube Health Check. Error terjadi khusus pada URL kandidat ini. Melanjutkan...`);
-              } else if (consecutiveIpBlocks >= 3) {
-                // Terbukti 3 kali berturut-turut gagal DAN health check mengonfirmasi IP sedang terbatasi
-                const currentIp = health.publicIp || await getPublicIpAddress({ forceRefresh: true });
-                run.status = 'error';
-                run.sourceStatus = 'UNAVAILABLE';
-                run.failureCode = diag.failureCode;
-                run.publicIp = currentIp;
-                run.message = `🛑 Akses YouTube Dibatasi (${diag.failureCode}): IP Publik Termux (${currentIp || 'Anda'}) dibatasi oleh YouTube setelah 3 percobaan beruntun.\n` +
-                  `⚠️ Ini BUKAN karena video ditolak filter AI!\n` +
-                  `💡 Solusi Cepat: Aktifkan Mode Pesawat (Airplane Mode) di HP selama 5-10 detik lalu matikan lagi untuk mendapatkan IP baru dari operator seluler.`;
-                run.updatedAt = new Date().toISOString();
+                console.log(`[AutoRetry ${jobId}] ✅ Health check YouTube sehat (IP ${health.publicIp || 'unknown'}). Kegagalan kandidat dianggap spesifik-video.`);
+              } else if (!healthConfirmsBlock) {
+                consecutiveIpBlocks = 0;
+                console.warn(`[AutoRetry ${jobId}] ℹ️ Kandidat gagal ${diag.failureCode}, tetapi health probe=${health.status || 'UNKNOWN'} tidak mengonfirmasi blokir IP. Lanjut kandidat.`);
+              } else {
+                consecutiveIpBlocks++;
+                console.warn(`[AutoRetry ${jobId}] ⚠️ Blokir YouTube terkonfirmasi (${health.status}), beruntun: ${consecutiveIpBlocks}/3.`);
 
-                console.error(`[AutoRetry ${jobId}] 🛑 Circuit Breaker: YouTube membatasi request dari IP ${currentIp} (3x berturut-turut). Menghentikan Auto Retry.`);
-                updateJobProgress(jobId, {
-                  step: 'youtube_ip_rate_limited',
-                  sourceStatus: 'UNAVAILABLE',
-                  failureCode: diag.failureCode,
-                  publicIp: currentIp,
-                  message: run.message,
-                  progress: 100,
-                  status: 'error',
-                  error: run.message,
-                  isAutoRetrying: false,
-                  actionableAdvice: diag.actionableAdvice,
-                });
-                break;
+                if (consecutiveIpBlocks >= 3) {
+                  const currentIp = health.publicIp || await getPublicIpAddress({ forceRefresh: true });
+                  run.status = 'error';
+                  run.sourceStatus = 'UNAVAILABLE';
+                  run.failureCode = health.status;
+                  run.publicIp = currentIp;
+                  run.message = `🛑 Akses YouTube Dibatasi (${health.status}): IP publik ${currentIp || 'tidak diketahui'} terkonfirmasi dibatasi setelah 3 probe YouTube yang konsisten.\n` +
+                    `⚠️ Timeout, CDN error, format video, atau kegagalan pada satu video tidak lagi dihitung sebagai blokir IP.\n` +
+                    `💡 Ganti IP/jaringan hanya jika pesan ini benar-benar muncul.`;
+                  run.updatedAt = new Date().toISOString();
+
+                  console.error(`[AutoRetry ${jobId}] 🛑 Circuit Breaker: blokir YouTube terkonfirmasi pada IP ${currentIp} (${health.status}).`);
+                  updateJobProgress(jobId, {
+                    step: 'youtube_ip_rate_limited',
+                    sourceStatus: 'UNAVAILABLE',
+                    failureCode: health.status,
+                    publicIp: currentIp,
+                    message: run.message,
+                    progress: 100,
+                    status: 'error',
+                    error: run.message,
+                    isAutoRetrying: false,
+                    attemptCount: run.attemptCount,
+                    actionableAdvice: health.advice || diag.actionableAdvice,
+                  });
+                  break;
+                }
               }
-            } else {
+            }            } else {
               consecutiveIpBlocks = 0;
             }
 
