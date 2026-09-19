@@ -103,11 +103,14 @@ export function classifyPipelineError(err, context = {}) {
     };
   }
 
-  // 1.3 YouTube IP Block / HTTP 403 Forbidden
+  // 1.3 Explicit YouTube IP block / 403.
+  // NOTE: a generic 403 can also be video/format-specific, so prefer explicit
+  // block wording before treating it as an IP circuit-breaker signal.
   if (
     lower.includes('blocked by youtube') ||
     lower.includes('ip address blocked') ||
-    (lower.includes('http error 403') && lower.includes('forbidden'))
+    lower.includes('your ip has been blocked') ||
+    lower.includes('requests from your computer network are unusual')
   ) {
     return {
       sourceStatus: 'UNAVAILABLE',
