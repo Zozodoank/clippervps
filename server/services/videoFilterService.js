@@ -267,13 +267,8 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Sesuai target, durasi video dibatasi 3-10 menit (maksimal 600 detik).` };
   }
 
-  // 1B. Resolusi Maksimal Video Sumber (Wajib minimal HD 720p/1080p ke atas)
-  if (metadata.maxHeight && metadata.maxHeight < 720) {
-    return {
-      eligible: false,
-      reason: `Resolusi maksimal video YouTube (${metadata.maxHeight}p) di bawah standar minimal HD 720p/1080p. Video berkualitas rendah buram tidak dapat digunakan.`
-    };
-  }
+  // Catatan: Verifikasi resolusi HD 720p/1080p dilakukan saat video diunduh di downloader.js
+  // (Jangan tolak di sini karena preview stream metadata hanya mengambil format 360p untuk hemat kuota)
 
   const titleLower = (metadata.title || '').toLowerCase();
   const descLower = (metadata.description || '').toLowerCase();
