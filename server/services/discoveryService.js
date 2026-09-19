@@ -1584,8 +1584,8 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
         if (uploaderMatch) channel = uploaderMatch[1].trim();
       }
 
-      // Filter out videos with known duration < 2 min (120s) or > 15 min (900s)
-      if (durationSec > 0 && (durationSec < 120 || durationSec > 900)) return;
+      // Filter out videos with known duration < 2.5 min (150s) or > 10 min (600s)
+      if (durationSec > 0 && (durationSec < 150 || durationSec > 600)) return;
 
       // Filter out videos with banned / tutorial / DIY / repair keywords
       if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
@@ -2276,8 +2276,8 @@ export function extractShopeeLinkFromText(text = '') {
 
 export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (!candidate.url || !candidate.id) return false;
-  // If duration is known, reject if too short (< 35s) or too long (> 15 min / 900s)
-  if (candidate.duration > 0 && (candidate.duration < 35 || candidate.duration > 900)) return false;
+  // If duration is known, reject if too short (< 150s / 2.5 min) or too long (> 10 min / 600s)
+  if (candidate.duration > 0 && (candidate.duration < 150 || candidate.duration > 600)) return false;
 
   // Reject vertical Shorts (which already have hardburned music/captions)
   if (candidate.url.includes('/shorts/') || /#shorts\b/i.test(candidate.title || '')) return false;

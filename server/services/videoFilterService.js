@@ -71,11 +71,20 @@ function getYtDlpBaseArgs() {
   const foundCookies = findCookiesFile();
   const cookiesArgs = foundCookies ? ['--cookies', foundCookies] : [];
 
+  const isTermuxOrMobile = process.platform === 'android' ||
+    Boolean(process.env.TERMUX_VERSION) ||
+    (process.platform === 'linux' && !process.env.DISPLAY);
+
   const args = [
     '--no-check-certificates',
     '--geo-bypass',
-    '--extractor-args', 'youtube:formats=missing_pot',
-    '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
+    '--extractor-args', isTermuxOrMobile
+      ? 'youtube:player_client=mweb,android,web;formats=missing_pot'
+      : 'youtube:player_client=web,mweb,android;formats=missing_pot',
+    '--sleep-requests', '1.0',
+    '--user-agent', isTermuxOrMobile
+      ? 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
+      : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
   ];
 
   if (cookiesArgs.length) args.push(...cookiesArgs);
@@ -159,23 +168,33 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
   // Step 2: Extract direct stream URL for low-resolution 360p (Fast & Quota-efficient)
   let streamUrl = null;
   const rawFormats = Array.isArray(metaResult.formats) ? metaResult.formats : [];
-  const validVideoFormats = rawFormats.filter(f =>
-    f.url &&
-    f.url.startsWith('http') &&
-    f.vcodec &&
-    f.vcodec !== 'none' &&
-    f.protocol !== 'mhtml' &&
-    !f.format_id?.startsWith('sb') &&
-    !f.url.includes('/sb/')
-  );
+  
+  // Memprioritaskan progressive direct HTTPS MP4/WebM stream (googlevideo.com/videoplayback).
+  // SANGAT PENTING: Jangan gunakan HLS m3u8 playlist karena FFmpeg akan timeout 8 detik saat seek frame!
+  const isDirectStream = (f) =>
+    Boolean(f?.url &&
+      f.url.startsWith('http') &&
+      f.vcodec &&
+      f.vcodec !== 'none' &&
+      !f.format_id?.startsWith('sb') &&
+      !f.url.includes('/sb/') &&
+      !f.url.includes('.m3u8') &&
+      !f.manifest_url &&
+      f.protocol === 'https' &&
+      !f.protocol?.includes('m3u8'));
 
-  if (validVideoFormats.length > 0) {
-    const format360 = validVideoFormats.find(f => f.format_id === '18') ||
-      validVideoFormats.find(f => f.height && f.height <= 360) ||
-      validVideoFormats.find(f => f.height && f.height <= 480) ||
-      validVideoFormats[0];
-    if (format360?.url) {
-      streamUrl = format360.url;
+  const directVideoFormats = rawFormats.filter(isDirectStream);
+
+  if (directVideoFormats.length > 0) {
+    const chosenFormat =
+      directVideoFormats.find(f => f.format_id === '18') ||
+      directVideoFormats.find(f => f.ext === 'mp4' && f.height && f.height <= 360) ||
+      directVideoFormats.find(f => f.ext === 'mp4' && f.height && f.height <= 480) ||
+      directVideoFormats.find(f => f.height && f.height <= 360) ||
+      directVideoFormats.find(f => f.height && f.height <= 480) ||
+      directVideoFormats[0];
+    if (chosenFormat?.url) {
+      streamUrl = chosenFormat.url;
     }
   }
 
@@ -189,7 +208,7 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
     const streamArgs = [
       ...getYtDlpBaseArgs(),
       '-g',
-      '-f', 'bestvideo[height<=360]/18/bestvideo[height<=480]/best[height<=360]/worstvideo/best',
+      '-f', '18/bestvideo[ext=mp4][protocol=https][height<=360]/bestvideo[ext=mp4][protocol=https][height<=480]/best[protocol=https][height<=360]/bestvideo[protocol=https][height<=360]/worstvideo[protocol=https]/best',
       '--no-playlist',
       url
     ];
@@ -239,13 +258,13 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 
   const isGadget = options.niche === 'gadget_smartphone';
 
-  // 1. Durasi Video (Wajib antara 35 detik s/d 15 menit)
+  // 1. Durasi Video (Wajib antara 3 menit s/d 10 menit: 150s - 600s)
   const duration = Number(metadata.duration) || 0;
-  if (duration > 0 && duration < 35) {
-    return { eligible: false, reason: `Durasi video terlalu pendek (${Math.round(duration)} detik). Minimal durasi video 35 detik agar memiliki footage peragaan produk yang memadai untuk video final 30-35 detik.` };
+  if (duration > 0 && duration < 150) {
+    return { eligible: false, reason: `Durasi video terlalu pendek (${Math.round(duration)} detik). Sesuai target, minimal durasi 3 menit (150-180 detik) agar footage peragaan produk memadai.` };
   }
-  if (duration > 900) {
-    return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Maksimal durasi video 15 menit.` };
+  if (duration > 600) {
+    return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Sesuai target, durasi video dibatasi 3-10 menit (maksimal 600 detik).` };
   }
 
   // 1B. Resolusi Maksimal Video Sumber (Wajib minimal HD 720p/1080p ke atas)
@@ -477,13 +496,11 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   const isMobile = process.platform === 'android' || Boolean(process.env.TERMUX_VERSION) || os.cpus().length <= 4;
   const safeDuration = Math.max(10, Number(duration) || 60);
 
-  // Dynamic Dense-Cluster Sampling (Temporal Consistency Architecture):
-  // Alih-alih sampling renggang 20-25s yang meloloskan overlay/watermark sesaat,
-  // sistem mengekstrak kluster temporal rapat (triplet ts, ts+2.0s, ts+4.0s) di beberapa segmen representatif.
-  // Ini memungkinkan AI Gatekeeper memverifikasi Clean Temporal Segment (>=3 frame kontinu / 4.0s)
-  // dengan total frame tetap ringan di VPS (24-33 frame).
-  const requestedMax = Number(maxSampleFrames) > 0 ? Number(maxSampleFrames) : 30;
-  const safeMax = Math.max(9, Math.min(36, requestedMax));
+  // Dense Temporal Sampling untuk Video Target 3 - 10 Menit (150s - 600s):
+  // Menjamin seluruh rekaman demonstrasi fisik produk terinspeksi tanpa blind spot besar,
+  // sekaligus melewati iklan/intro bumper awal (skip first 6-12s).
+  const requestedMax = Number(maxSampleFrames) > 0 ? Number(maxSampleFrames) : (isMobile ? 38 : 45);
+  const safeMax = Math.max(15, Math.min(55, requestedMax));
 
   const samplePoints = [];
   if (Array.isArray(customTimestamps) && customTimestamps.length > 0) {
@@ -491,13 +508,14 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
       samplePoints.push({ index: idx + 1, timestamp: Math.round(ts * 10) / 10 });
     });
   } else {
-    const safeStart = Math.min(3.5, safeDuration * 0.1);
-    const safeEnd = Math.max(safeStart + 4.5, safeDuration - 4.5);
+    // Lewati intro bumper / sponsor di awal video (6-12 detik) dan outro cards di akhir (8 detik)
+    const safeStart = Math.max(6.0, Math.min(12.0, safeDuration * 0.04));
+    const safeEnd = Math.max(safeStart + 15.0, safeDuration - 8.0);
     const effectiveSpan = Math.max(1, safeEnd - safeStart);
 
-    if (safeDuration <= 60) {
-      // Video pendek (< 60s): sampling sekuensial rapat tiap ~2.0 detik
-      const step = Math.max(1.8, Math.min(2.5, effectiveSpan / 24));
+    if (safeDuration <= 300) {
+      // Video 3 - 5 menit (150s - 300s): Sampling sekuensial rapat tiap ~4-6 detik di seluruh video
+      const step = Math.max(3.5, Math.min(6.5, effectiveSpan / safeMax));
       let cur = safeStart;
       let pIdx = 1;
       while (cur <= safeEnd && pIdx <= safeMax) {
@@ -505,19 +523,23 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
         cur += step;
       }
     } else {
-      // Video panjang (> 60s): buat 8-10 kluster temporal (tiap kluster: triplet ts, ts+2.0s, ts+4.0s)
-      const numClusters = Math.max(4, Math.min(10, Math.floor(safeMax / 3)));
-      const clusterSpan = effectiveSpan - 4.5;
+      // Video 5 - 10 menit (300s - 600s): 8-10 kluster temporal rapat (4 frame per kluster: ts, ts+1.8s, ts+3.6s, ts+5.4s)
+      // Memberikan toleransi tinggi: jika 1 frame terkena glitch, 3 frame lainnya tetap membentuk Clean Temporal Segment
+      const numClusters = Math.max(6, Math.min(10, Math.floor(safeMax / 4)));
+      const clusterSpan = effectiveSpan - 6.0;
       const clusterInterval = clusterSpan > 0 ? (clusterSpan / (numClusters + 1)) : 0;
       let pIdx = 1;
       for (let c = 1; c <= numClusters; c++) {
         const baseTs = Math.round((safeStart + (c * clusterInterval)) * 10) / 10;
         samplePoints.push({ index: pIdx++, timestamp: baseTs });
-        if (baseTs + 2.0 <= safeEnd && pIdx <= safeMax) {
-          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 2.0) * 10) / 10 });
+        if (baseTs + 1.8 <= safeEnd && pIdx <= safeMax) {
+          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 1.8) * 10) / 10 });
         }
-        if (baseTs + 4.0 <= safeEnd && pIdx <= safeMax) {
-          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 4.0) * 10) / 10 });
+        if (baseTs + 3.6 <= safeEnd && pIdx <= safeMax) {
+          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 3.6) * 10) / 10 });
+        }
+        if (baseTs + 5.4 <= safeEnd && pIdx <= safeMax) {
+          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 5.4) * 10) / 10 });
         }
       }
     }
@@ -525,21 +547,23 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   onProgress({
     step: 'stream_sampling',
-    message: `Sampling ${samplePoints.length} keyframe visual adaptif/kluster temporal langsung dari stream URL (${isMobile ? 'mode mobile efisien' : 'fast seek'})...`,
+    message: `Sampling ${samplePoints.length} keyframe visual adaptif langsung dari stream URL (${isMobile ? 'mode mobile efisien' : 'fast seek'})...`,
     progress: 25,
   });
 
   console.log(`[VideoFilterService] Fast seek cluster sampling ${samplePoints.length} frames across ${safeDuration}s from stream (${isMobile ? 'Mobile 2-core' : 'Multi-core'})...`);
 
-  const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
+  const browserUserAgent = isMobile
+    ? 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
+    : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
   // Fast seek each timestamp with adaptive concurrency (2 parallel workers on mobile/Termux to prevent CPU heating)
   const concurrency = isMobile ? 2 : 4;
   const executing = [];
   for (const point of samplePoints) {
-    // Micro pacing delay
-    await new Promise(r => setTimeout(r, 10));
+    // Micro pacing delay (human-like pacing)
+    await new Promise(r => setTimeout(r, isMobile ? 35 : 15));
 
     const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
     const outputPath = path.join(outputDir, frameFile);

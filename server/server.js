@@ -909,6 +909,7 @@ async function runAutoRetryWorker(jobId, run) {
     if (oldVid) usedVids.add(oldVid);
 
     let foundSuccess = false;
+    let consecutiveIpBlocks = 0;
 
     while (run.status === 'running') {
       if (run.attemptCount >= 60) {
@@ -1015,25 +1016,38 @@ async function runAutoRetryWorker(jobId, run) {
           console.warn(`[AutoRetry ${jobId}] [${diag.sourceStatus}] [${diag.failureCode}] Kandidat ke-${run.attemptCount} (${candidate.url}): ${diag.userFriendlyReason}`);
 
           if (diag.sourceStatus === 'UNAVAILABLE') {
-            if (diag.isNetworkOrIpIssue) {
-              const currentIp = await getPublicIpAddress({ forceRefresh: true });
+            const isHardBlock =
+              diag.failureCode === 'YOUTUBE_RATE_LIMITED' ||
+              diag.failureCode === 'YOUTUBE_BOT_CHECK' ||
+              diag.failureCode === 'YOUTUBE_IP_BLOCKED';
 
-              // Jika terdeteksi YouTube 429 Too Many Requests / Bot Check / IP Block:
-              if (
-                diag.failureCode === 'YOUTUBE_RATE_LIMITED' ||
-                diag.failureCode === 'YOUTUBE_BOT_CHECK' ||
-                diag.failureCode === 'YOUTUBE_IP_BLOCKED'
-              ) {
+            if (isHardBlock) {
+              consecutiveIpBlocks++;
+              console.warn(`[AutoRetry ${jobId}] ⚠️ Terdeteksi kendala akses YouTube (${diag.failureCode}, beruntun: ${consecutiveIpBlocks}/3).`);
+
+              // Verifikasi kesehatan IP publik aktual via test ringan ke YouTube
+              let health = { ok: true };
+              try {
+                health = await checkYouTubeHealth();
+              } catch {}
+
+              if (health.ok) {
+                // IP publik sebenarnya sehat! Masalah terjadi hanya pada video spesifik ini (misal bot check per-video / DRM)
+                consecutiveIpBlocks = 0;
+                console.log(`[AutoRetry ${jobId}] ℹ️ IP publik (${health.publicIp || 'lokal'}) terkonfirmasi SEHAT oleh YouTube Health Check. Error terjadi khusus pada URL kandidat ini. Melanjutkan...`);
+              } else if (consecutiveIpBlocks >= 3) {
+                // Terbukti 3 kali berturut-turut gagal DAN health check mengonfirmasi IP sedang terbatasi
+                const currentIp = health.publicIp || await getPublicIpAddress({ forceRefresh: true });
                 run.status = 'error';
                 run.sourceStatus = 'UNAVAILABLE';
                 run.failureCode = diag.failureCode;
                 run.publicIp = currentIp;
-                run.message = `🛑 Akses YouTube Dibatasi (${diag.failureCode}): IP Publik Termux (${currentIp || 'Anda'}) dibatasi oleh YouTube.\n` +
+                run.message = `🛑 Akses YouTube Dibatasi (${diag.failureCode}): IP Publik Termux (${currentIp || 'Anda'}) dibatasi oleh YouTube setelah 3 percobaan beruntun.\n` +
                   `⚠️ Ini BUKAN karena video ditolak filter AI!\n` +
                   `💡 Solusi Cepat: Aktifkan Mode Pesawat (Airplane Mode) di HP selama 5-10 detik lalu matikan lagi untuk mendapatkan IP baru dari operator seluler.`;
                 run.updatedAt = new Date().toISOString();
 
-                console.error(`[AutoRetry ${jobId}] 🛑 Circuit Breaker: YouTube membatasi request dari IP ${currentIp}. Menghentikan Auto Retry agar IP tidak terblokir permanen.`);
+                console.error(`[AutoRetry ${jobId}] 🛑 Circuit Breaker: YouTube membatasi request dari IP ${currentIp} (3x berturut-turut). Menghentikan Auto Retry.`);
                 updateJobProgress(jobId, {
                   step: 'youtube_ip_rate_limited',
                   sourceStatus: 'UNAVAILABLE',
@@ -1048,21 +1062,25 @@ async function runAutoRetryWorker(jobId, run) {
                 });
                 break;
               }
+            } else {
+              consecutiveIpBlocks = 0;
             }
 
-            // Error UNAVAILABLE lain (misal format stream gagal di video ini):
+            // Human-like pacing delay sebelum mencoba kandidat berikutnya (anti-bot behavior)
+            const humanJitterMs = 3500 + Math.floor(Math.random() * 3000);
             updateJobProgress(jobId, {
               step: 'auto_retry_next',
               sourceStatus: 'UNAVAILABLE',
               failureCode: diag.failureCode,
-              message: `[Kandidat Tidak Dapat Diakses: ${diag.failureCode}] ${diag.userFriendlyReason}. Mencoba kandidat berikutnya...`,
+              message: `[Kandidat ${diag.failureCode}] ${diag.userFriendlyReason}. Jeda manusia (${(humanJitterMs / 1000).toFixed(1)}s) lalu mencoba kandidat berikutnya...`,
               progress: 10,
               status: 'running',
               isAutoRetrying: true,
               attemptCount: run.attemptCount,
             });
-            await new Promise((r) => setTimeout(r, 3500));
+            await new Promise((r) => setTimeout(r, humanJitterMs));
           } else {
+            consecutiveIpBlocks = 0;
             // sourceStatus === 'REJECT' (Video berhasil dianalisis frame-nya, tapi ditolak filter AI/lokal)
             updateJobProgress(jobId, {
               step: 'auto_retry_next',
@@ -1486,7 +1504,7 @@ export async function runStage1Pipeline({
           if (activeStreamUrl) {
             const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
               duration: meta.duration,
-              maxSampleFrames: 25,
+              maxSampleFrames: 42,
               onProgress: updateProgress,
             });
             if (res?.frames && res.frames.length >= 5) {

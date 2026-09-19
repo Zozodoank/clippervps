@@ -74,8 +74,7 @@ export function classifyPipelineError(err, context = {}) {
   if (
     lower.includes('http error 429') ||
     lower.includes('status: 429') ||
-    lower.includes('too many requests') ||
-    lower.includes('error 429')
+    lower.includes('too many requests')
   ) {
     return {
       sourceStatus: 'UNAVAILABLE',
@@ -91,9 +90,7 @@ export function classifyPipelineError(err, context = {}) {
   // 1.2 YouTube Bot Check ("Sign in to confirm you're not a bot")
   if (
     lower.includes('sign in to confirm') ||
-    lower.includes('not a bot') ||
-    lower.includes('automated queries') ||
-    lower.includes('bot detection')
+    lower.includes('automated queries')
   ) {
     return {
       sourceStatus: 'UNAVAILABLE',
@@ -106,20 +103,18 @@ export function classifyPipelineError(err, context = {}) {
     };
   }
 
-  // 1.3 YouTube IP Block / HTTP 403 Forbidden / PO Token required
+  // 1.3 YouTube IP Block / HTTP 403 Forbidden
   if (
     lower.includes('blocked by youtube') ||
     lower.includes('ip address blocked') ||
-    (lower.includes('http error 403') && lower.includes('forbidden')) ||
-    lower.includes('po token') ||
-    lower.includes('missing_pot')
+    (lower.includes('http error 403') && lower.includes('forbidden'))
   ) {
     return {
       sourceStatus: 'UNAVAILABLE',
       failureCode: 'YOUTUBE_IP_BLOCKED',
       isNetworkOrIpIssue: true,
       analysisPerformed: false,
-      userFriendlyReason: 'YouTube memblokir koneksi dari IP publik Anda (HTTP 403 Forbidden / Proof-of-Origin Token).',
+      userFriendlyReason: 'YouTube memblokir koneksi dari IP publik Anda (HTTP 403 Forbidden).',
       actionableAdvice: 'Ganti IP publik (Mode Pesawat HP ON/OFF atau ganti koneksi jaringan).',
       rawMessage,
     };
@@ -171,10 +166,10 @@ export function classifyPipelineError(err, context = {}) {
     return {
       sourceStatus: 'UNAVAILABLE',
       failureCode: 'FRAME_EXTRACTION_FAILED',
-      isNetworkOrIpIssue: true,
+      isNetworkOrIpIssue: false,
       analysisPerformed: false,
-      userFriendlyReason: 'Gagal mengekstrak frame dari stream URL YouTube (koneksi stream terputus di tengah jalan).',
-      actionableAdvice: 'Koneksi ke CDN YouTube terhambat. Mencoba kandidat video berikutnya.',
+      userFriendlyReason: 'Gagal mengekstrak frame dari stream URL YouTube (format stream kandidat ini tidak dapat diakses).',
+      actionableAdvice: 'Mencoba format atau kandidat video berikutnya secara otomatis.',
       rawMessage,
     };
   }

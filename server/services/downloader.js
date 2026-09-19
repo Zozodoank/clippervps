@@ -715,7 +715,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
       '--dump-json',
       '--no-playlist',
       '--skip-download',
-      '--match-filter', 'duration >= 60 & duration <= 900',
+      '--match-filter', 'duration >= 150 & duration <= 600',
       searchTarget
     ];
 
