@@ -1503,16 +1503,17 @@ export async function discoverYouTubeCandidatesForProduct({
       matchScore: scoreCandidateMatch(candidate, coreWords, productDescription),
     }));
 
-  // Jika ada video dengan kecocokan judul positif, utamakan yang berbobot tinggi.
-  // Jika judul berbahasa Inggris/global tanpa keyword harfiah namun konten bersih & berasal dari query produk,
-  // JANGAN buang kandidat bersih tersebut (biarkan AI Vision & Gatekeeper memverifikasi fisik produk)!
-  const hasPositiveMatch = scoredCandidates.some((c) => c.matchScore > 0);
-  const cleanCandidates = (hasPositiveMatch
-    ? scoredCandidates.filter((c) => c.matchScore > 0)
-    : scoredCandidates
-  ).sort((a, b) => b.matchScore - a.matchScore);
+  // Keyword discovery must have a textual product signal before it reaches expensive
+  // visual analysis. Visual-search candidates are the only exception because the
+  // physical reference image is the primary matching signal there.
+  const visualCandidates = scoredCandidates.filter(
+    (c) => Boolean(c.isVisualSearch || c.source === 'bing_visual_search' || c.source === 'visual_ai_query')
+  );
+  const matchedCandidates = scoredCandidates.filter((c) => c.matchScore > 0);
+  const cleanCandidates = [...matchedCandidates, ...visualCandidates.filter((c) => c.matchScore <= 0)]
+    .sort((a, b) => b.matchScore - a.matchScore);
 
-  // Return strictly vetted, compliant candidates (clean content); NEVER leak disqualified raw candidates
+  // Never leak a keyword-search candidate with zero product signal.
   return cleanCandidates;
 }
 
@@ -1700,15 +1701,32 @@ export async function searchMultiEngineVideos(query, {
     }
   }
 
-  // 3. Extract core words from the query (ignoring modifiers and negative terms)
-  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'diy', 'how', 'unboxing', 'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw']);
-  const queryWords = normalizeText(query).split(' ').filter((w) => w.length >= 3 && !ignoredQueryWords.has(w));
+  // 3. Extract the product family from the actual search query. This is the
+  // semantic guardrail for auto-search: a result must still mention the target
+  // product family in its title/description unless it came from visual search.
+  const queryInfo = extractCoreProductInfo(query);
+  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'diy', 'how', 'unboxing', 'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw', 'review', 'demo', 'test', 'produk']);
+  const queryWords = (queryInfo?.coreWords || normalizeText(query).split(' '))
+    .map((w) => normalizeText(w))
+    .filter((w) => w.length >= 3 && !ignoredQueryWords.has(w));
 
-  // 4. Filter through Stage 1 Metadata Pre-filter (clean content, faceless keywords, no bulky furniture)
-  const cleanCandidates = allCandidates.filter((candidate) => isLikelyCleanYouTubeCandidate(candidate, queryWords));
+  // 4. Filter through Stage 1 Metadata Pre-filter.
+  const metadataClean = allCandidates.filter((candidate) => isLikelyCleanYouTubeCandidate(candidate, queryWords));
 
-  console.log(`[MultiEngineVideo] Ditemukan ${allCandidates.length} total video (${cleanCandidates.length} lolos filter metadata Stage 1) untuk: "${query}"`);
-  return cleanCandidates.slice(0, safeLimit);
+  // 5. Rank by actual target-product signal, then refuse zero-match keyword results.
+  const ranked = metadataClean
+    .map((candidate) => ({
+      ...candidate,
+      matchScore: scoreCandidateMatch(candidate, queryWords, queryInfo?.cleanTitle || query),
+    }))
+    .filter((candidate) => {
+      const isVisual = Boolean(candidate.isVisualSearch || candidate.source === 'bing_visual_search' || candidate.source === 'visual_ai_query');
+      return isVisual || candidate.matchScore > 0;
+    })
+    .sort((a, b) => b.matchScore - a.matchScore);
+
+  console.log(`[MultiEngineVideo] Ditemukan ${allCandidates.length} total video (${ranked.length} lolos filter metadata + product-match) untuk: "${query}"`);
+  return ranked.slice(0, safeLimit);
 }
 
 /**
@@ -2302,7 +2320,7 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     // Exclude cooking recipes, food vlogs, and mukbangs (kecuali video peragaan alat cetakan/pemotong)
     ...(isToolDemoTitle ? [] : ['resep', 'resep masakan', 'cara memasak', 'cooking recipe', 'baking recipe', 'food recipe']),
     'food vlog', 'kuliner', 'mukbang', 'asmr eating', 'masakan rumahan', 'dapur umami',
-    'cook with me', 'masak yuk',
+    'cook with me', 'masak yuk', 'meal prep', 'food prep', 'cooking vlog', 'cooking show', 'menu harian',
     // Creator/face-centric and person-focused videos
     'muka', 'wajah', 'facecam', 'webcam', 'selfie', 'grwm', 'get ready with me',
     'try on haul', 'try on', 'outfit', 'ootd', 'skincare routine', 'makeup tutorial',
@@ -2335,7 +2353,7 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     if (!isTitleMatchingProduct(candidate.title, productWords, {
       description: candidate.description,
       tags: candidate.tags,
-      isVisualSearch: true // Delegasikan kecocokan produk detail ke AI Vision
+      isVisualSearch: Boolean(candidate.isVisualSearch || candidate.source === 'bing_visual_search' || candidate.source === 'visual_ai_query')
     })) {
       return false;
     }
