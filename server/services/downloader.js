@@ -322,6 +322,13 @@ export function buildCleanYouTubeQuery(baseQuery) {
     .replace(/\s+/g, ' ')
     .trim();
 
+  // Truncate overly long combinatorial keywords (e.g. "alat pemipil jagung serbaguna praktis anti bocor anti tumpah presisi")
+  // Keep maximum 6 words to maintain broad searchability on YouTube
+  const words = cleaned.split(' ');
+  if (words.length > 6) {
+    cleaned = words.slice(0, 6).join(' ');
+  }
+
   // 2. Pilih operator negatif yang relevan dan batasi maksimal 8-10 kata penting saja
   const sensitiveFoodOperators = ['-cara', '-tutorial', '-resep', '-recipe', '-makanan', '-minuman', '-kuliner', '-jajanan', '-streetfood'];
   const relevantOperators = DIRTY_NEGATIVE_OPERATORS.filter(op => {
