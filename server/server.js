@@ -2469,8 +2469,8 @@ export async function runStage1Pipeline({
 
     updateProgress({ step: 'frames_trimmed', message: 'Sampling frames from trimmed video for AI scripting...', progress: 72, status: 'running' });
     const { frames: trimmedFrames } = await extractFrames(silentOutputPath, trimmedFramesDir, updateProgress, {
-      sampleIntervalSec: 3,
-      maxSampleFrames: 6,
+      sampleIntervalSec: 2.2,
+      maxSampleFrames: 12,
     });
 
     updateProgress({ step: 'gpt_scripting', message: 'AI generating Kotak Scene, Context, Naskah...', progress: 80, status: 'running' });
@@ -2481,7 +2481,7 @@ export async function runStage1Pipeline({
         aiProvider,
         trimmedFrames,
         videoMetadata: videoMeta,
-        productTitle,
+        productTitle: (highlight.detectedProduct || productTitle || '').trim(),
         productDescription,
         shopeeLink,
         productHook: highlight.productHook,
@@ -2508,10 +2508,10 @@ export async function runStage1Pipeline({
 [${ts3}] [excited] Hasil jepretan kamera dan rekaman videonya jernih serta stabil.
 [${ts4}] [excited] Di kisaran harga terjangkau ini, menurut kalian worth it gak? Komen di bawah ya!`
         : `[${ts0}] [excited] ${fallbackHook}
-[${ts1}] [emphasis] Untung ada inovasi praktis ini, cara pakainya simpel dan efisien banget.
-[${ts2}] [neutral] Tinggal gunakan dengan santai, prosesnya cepat tanpa perlu repot.
-[${ts3}] [excited] Lihat peragaannya, hasilnya benar-benar rapi, presisi, dan memuaskan.
-[${ts4}] [excited] Yuk buruan cek produk di keranjang pojok kiri bawah sekarang sebelum kehabisan!`;
+[${ts1}] [emphasis] Begini cara penggunaan produk ini.
+[${ts2}] [neutral] Lihat langkah penggunaannya secara langsung.
+[${ts3}] [excited] Perhatikan hasil yang terlihat di adegan ini.
+[${ts4}] [excited] Cek produk di bawah sekarang sebelum kehabisan!`;
 
       scriptData = {
         sampleContext: {

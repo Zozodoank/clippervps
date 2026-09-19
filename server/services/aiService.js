@@ -422,24 +422,20 @@ ${effectiveDesc ? `- Description: "${effectiveDesc}"` : ''}
 
   // Default: Kitchen tools
   if (isVideoFirstMode) {
-    return `CRITERION 1: VIDEO-FIRST PRODUCT IDENTIFICATION & VALIDATION (COMPACT KITCHEN TOOLS NICHE)
-- Discovery Topic / Keyword: "${coreNoun}"
-- PURPOSE: This video was retrieved via video search engine. Your task is to identify the physical kitchen tool/gadget demonstrated and verify it is suitable for an affiliate video ad.
-- VIDEO-FIRST REVERSE DISCOVERY RULE (MANDATORY):
-  * IN VIDEO-FIRST MODE, THE VIDEO DEFINES THE PRODUCT!
-  * If the video demonstrates ANY compact, useful tabletop or handheld kitchen tool/gadget with clean hands-on action (e.g. food choppers, mandoline slicers, peelers, garlic presses, dumpling/waffle/egg molds, rolling knife sharpeners, scissors, oil pots, dispensers, graters, mini sealers, etc.), ALWAYS ACCEPT THE VIDEO (status: 'accept', isExactProductMatch: true).
-  * In "detectedProduct", output the clean, specific Indonesian name of the product shown in the video (e.g. "Chopper Manual Tarik Serbaguna", "Alat Pengupas Apel Putar", "Batu Asahan Pisau Roll", "Gunting Dapur Stainless SK5", "Pemotong Sayur Mandoline Slicer", "Garlic Press Rocker Stainless", "Alat Pembuat Dumpling Pastel").
-  * In "detectedBrand", output any brand name visible on the physical body (or "none").
-  * DO NOT REJECT merely because the detected product differs from the initial search keyword. The backend will automatically link the detected product to Shopee!
-- REJECTION STANDARD:
-  * STRICT KITCHEN NICHE ONLY: REJECT IMMEDIATELY if it demonstrates large furniture, big cabinets (lemari, kabinet, kitchen set), big shelving racks (rak piring besar, rak susun standing besar, rak wastafel), or bulky large appliances (kulkas, mesin cuci, meja makan).
-  * INDUSTRIAL / FACTORY / MANUFACTURING PROCESS BAN: REJECT IMMEDIATELY (status: 'reject') if the video demonstrates factory assembly lines, mass industrial manufacturing, metal stamping, molten plastic injection molding, machinery fabrication, or industrial factory workers ("pabrik", "proses pembuatan", "factory", "manufacturing").
-  * BULKY OUTDOOR GRILLS / BLACKSTONE BAN: REJECT IMMEDIATELY (status: 'reject') if the demonstrated product is a large outdoor griddle/grill (Blackstone, Weber, smoker, BBQ).
-  * REJECT if compilation / haul of multiple random gadgets instead of demonstrating this product.
-  * REJECT if non-kitchen unrelated items (pakaian, kosmetik, sepatu, mainan).
-  * STRICT NO-FOOD / NO-DRINK / NO-RECIPE: REJECT IMMEDIATELY (status: 'reject') if the video is purely about cooking food recipes or mukbang without focusing on a specific compact kitchen tool/gadget.
-  * STRICT NO-TUTORIAL / NO-CARA / NO-DIY BAN: REJECT IMMEDIATELY (status: 'reject') if the video is a tutorial ("cara membuat", "cara memasak", "tutorial"), DIY crafting, or repair tutorial.
-  * STRICT SINGLE PRODUCT ONLY (NO SET / NO PACK / NO BUNDLE): REJECT IMMEDIATELY (status: 'reject') if the product is an arbitrary combo pack, multi-item set, bundle, or multi-piece kit.`;
+    return `CRITERION 1: STRICT TARGET PRODUCT MATCH (VIDEO-FIRST DISCOVERY DOES NOT OVERRIDE PRODUCT IDENTITY)
+- Target Product Family: "${coreNoun}" (Listing: "${effectiveTitle}")
+${effectiveDesc ? `- Product Description: "${effectiveDesc}"` : ''}
+- NON-NEGOTIABLE RULE: The TARGET PRODUCT defines what may be accepted. "Video-first" only means the candidate came from search; it NEVER means the video is allowed to define a new product.
+- ACCEPT only when the physical item demonstrated is the SAME product family / same primary function as the target.
+- OEM / white-label tolerance is allowed: color, minor shape, brand, handle contour, and small styling differences may vary, but the PRIMARY OBJECT AND PRIMARY FUNCTION must stay the same.
+- If a reference product image is attached, compare the demonstrated physical object against that reference image and reject clear category/object mismatches.
+- REJECT immediately when the video mainly demonstrates a different tool, cookware, food, recipe, meal preparation, or another kitchen object while the target product is absent or only incidental.
+- REJECT recipe / cooking / food footage when the target product is not the object being actively demonstrated.
+- REJECT if the selected footage shows ingredients or cookware as the main subject and the target product is not clearly visible and operated.
+- REJECT large furniture, cabinets, standing racks, refrigerators, washing machines, large appliances, industrial machinery, factory production, outdoor grills, multi-product compilations, repair/service tutorials, DIY tutorials, and unrelated categories.
+- The detected product may be a cleaner OEM name than the listing title, but it must remain inside the target product family.
+- Output `isExactProductMatch: false` whenever the physical product/category is materially different, even if the video itself is clean and faceless.
+- A clean/faceless video is NOT sufficient for acceptance; PRODUCT MATCH is mandatory.`;
   }
 
   return `CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
@@ -531,7 +527,7 @@ export async function analyzeYouTubeVideoWithGemini({
   }
 
   const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
-  const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
+  const isVideoFirstMode = Boolean(isVideoFirst);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
@@ -1748,9 +1744,11 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const rawStatus = String(parsed.status || '').toLowerCase().trim();
       const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
       const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
-      const isMatchFalse = isVideoFirstMode
-        ? (isBulky || parsed.isUsableSourceVideo === false)
-        : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky || parsed.isUsableSourceVideo === false);
+      const isMatchFalse =
+        parsed.isProductMatch === false ||
+        parsed.isExactProductMatch === false ||
+        isBulky ||
+        parsed.isUsableSourceVideo === false;
       const hasFace = parsed.hasFaceIn916Frame === true ||
         parsed.hasFaceOrHumanInSelectedFrames === true ||
         parsed.hasFaceInSelectedClips === true;
@@ -2003,8 +2001,11 @@ CRITICAL ${sceneCount}-SLOT STORYBOARD FORMULA (${targetDuration}s Total Runtime
 The video consists of EXACTLY ${sceneCount} dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY ${sceneCount} distinct spoken lines starting with appropriate timestamps:
 
 MANDATORY VISUAL GROUNDING (CRITICAL ANTI-HALLUCINATION RULE):
+- Frame video adalah sumber kebenaran utama untuk visual dan aksi. Product Description hanya boleh dipakai untuk nama/konteks produk, BUKAN sebagai bukti fitur yang tidak terlihat.
 - Setiap baris voiceover WAJIB mencerminkan bukti fisik yang tampak pada frame-frame foto yang dilampirkan (${trimmedFrames.length} frames).
-- DILARANG KERAS menyalin kalimat template generik seperti "busa melimpah", "kain biasa", "sela-sela sempit", "ergonomis anti selip", atau "murah meriah tidak bikin boros" jika aksi tersebut tidak tampak di frame gambar!
+- DILARANG KERAS menyalin kalimat template generik seperti "busa melimpah", "kain biasa", "sela-sela sempit", "ergonomis anti selip", atau "murah meriah tidak bikin boros" jika aksi tersebut tidak tampak di frame gambar.
+- JIKA visual hanya menunjukkan makanan, wajan, cobek, bahan masakan, atau proses memasak tanpa demonstrasi target product, JANGAN membuat narasi seolah-olah target product sedang dipakai.
+- DILARANG mengarang spesifikasi seperti bahan, kapasitas, ukuran, kecepatan, ketahanan, atau hasil tertentu kecuali terlihat jelas pada frame atau disebut eksplisit dalam deskripsi produk.
 - Jelaskan secara spesifik apa yang sedang didemonstrasikan tangan: cara memasang, memotong, mengupas, mengoperasikan tuas/alat, atau memperlihatkan hasil kerja produk.
 
 STRUKTUR NASKAH ${sceneCount} SLOT:
@@ -2186,7 +2187,7 @@ Return strict JSON in this format:
           { role: 'user', content: messageContent },
         ],
         response_format: { type: 'json_object' },
-        temperature: 0.7,
+        temperature: 0.2,
         max_tokens: 4000,
       });
 
