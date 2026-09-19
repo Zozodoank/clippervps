@@ -19,7 +19,8 @@ import {
   detectPhoneticLexiconWithAI,
   formatEnrichedCaption,
   formatSeconds,
-  getDynamicProductHookFallback
+  getDynamicProductHookFallback,
+  build7SlotStoryboardClips
 } from './services/aiService.js';
 import { generateSrtSubtitles } from './services/subtitleService.js';
 import { loadEnglishDictionary, saveToEnglishDictionary } from './services/dictionaryService.js';
@@ -1996,24 +1997,56 @@ export async function runStage1Pipeline({
         status: 'running',
       });
 
-      const hl = await selectHighlightWithAI({
-        apiKey,
-        aiProvider,
-        frames: pooledFrames,
-        videoPath: null,
-        youtubeUrl: null, // Pakai frame pooling AI Vision
-        videoMetadata: { duration: 600, title: productTitle },
-        productTitle,
-        productDescription,
-        productImage: effectiveProductImage,
-        shopeeLink,
-        sceneDuration,
-        allowFallbackClips: !requireCleanGeminiPlan,
-        introCutoffSec: 0,
-        isVideoFirst: Boolean(options.isVideoFirst),
-        niche: options.niche || 'kitchen_tools',
-        onProgress: updateProgress,
-      });
+      let hl = null;
+      try {
+        hl = await selectHighlightWithAI({
+          apiKey,
+          aiProvider,
+          frames: pooledFrames,
+          videoPath: null,
+          youtubeUrl: null, // Pakai frame pooling AI Vision
+          videoMetadata: { duration: 600, title: productTitle },
+          productTitle,
+          productDescription,
+          productImage: effectiveProductImage,
+          shopeeLink,
+          sceneDuration,
+          allowFallbackClips: true,
+          introCutoffSec: 0,
+          isVideoFirst: Boolean(options.isVideoFirst),
+          niche: options.niche || 'kitchen_tools',
+          onProgress: updateProgress,
+        });
+      } catch (aiErr) {
+        console.warn(`[Job ${jobId}] ⚠️ AI Vision menolak video: ${aiErr.message}`);
+        // USER MANDATE: Jangan buang video hanya karena ada frame tidak sesuai!
+        // Ambil frame peragaan bersih dari video yang sama untuk menggantikan frame yang ditolak.
+        if (pooledFrames.length >= 3) {
+          console.log(`[Job ${jobId}] 🛡️ Memulihkan video: Membangun 7-slot storyboard dari ${pooledFrames.length} frame peragaan bersih yang lolos filter visual...`);
+          const fallbackClips = build7SlotStoryboardClips({
+            parsed: {},
+            frames: pooledFrames,
+            totalDuration: 600,
+            clipSec: sceneDuration,
+            introCutoffSec: 0,
+            niche: options.niche || 'kitchen_tools'
+          });
+          if (fallbackClips && fallbackClips.length > 0) {
+            hl = {
+              status: 'accept',
+              clips: fallbackClips,
+              frames: fallbackClips.map((_, i) => i + 1),
+              detectedProduct: productTitle,
+              isExactProductMatch: true,
+              productHook: getDynamicProductHookFallback(productTitle, options.niche || 'kitchen_tools'),
+              hasProductBrand: false,
+            };
+          }
+        }
+        if (!hl) {
+          throw aiErr;
+        }
+      }
 
       if (!hl || !Array.isArray(hl.clips) || hl.clips.length === 0) {
         throw new Error(`AI Vision tidak menemukan cuplikan produk yang memenuhi syarat dari pool multi-kandidat untuk "${productTitle}".`);

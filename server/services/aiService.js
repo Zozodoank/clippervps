@@ -1612,16 +1612,21 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 1. Exact Product Match & Shopee Regional Market Compatibility:
    - Does the physical item in the video match "${effectiveTitle}" and is it compatible with products sold across Shopee (Shopee Indonesia, Malaysia, Thailand, Vietnam, Philippines, Taiwan)? Hands-on tabletop demos of Asian OEM items are 100% WELCOME.
    - If DIFFERENT product, compilation, or US/Western-exclusive retail item (prominent Amazon, Walmart, Target packaging not found on Shopee): output {"status": "reject", "detectedProduct": "<nama produk>", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan ekosistem produk Shopee (eksklusif pasar barat/Amazon)"}
-2. Faceless QC: Inspect ALL ${evalFrames.length} frames. Does ANY frame show a human face, head, hair, or person talking?
-   - If ANY face or person is visible in ANY frame: output {"status": "reject", "hasHumanOrFaceAnywhereInFrames": true, "isFacelessIn916Frame": false, "hasFaceIn916Frame": true, "reason": "Video ditolak: Menampilkan wajah/orang (wajib 100% faceless tabletop)"}
-   - Dilarang memilih frame tangan dari video yang ada vlogger/orangnya!
-3. Subtitle, Floating Text, & Graphic Overlay QC (with Opening Intro Bumper Tolerance):
-   - OPENING INTRO TOLERANCE: If frame #1 (or opening 0-5s) contains an intro bumper or title card, DO NOT REJECT the video! Simply DISCARD the intro frame by picking frames only from index #2 onwards!
-   - NOTE: Physical text, brand names, or button markings printed/molded ON THE PHYSICAL PRODUCT are 100% ACCEPTABLE and NOT subtitles!
-   - Only reject if speech captions, dialogue subtitles, floating promotional text, or cartoon graphic overlays cover the product demonstration, or if the entire video is a static photo bumper slideshow.
+2. Granular Frame-Level Discard QC (CRITICAL POLICY - DO NOT REJECT WHOLE VIDEO):
+   - JANGAN PERNAH MENOLAK SELURUH VIDEO hanya karena 1 atau beberapa frame terdapat wajah vlogger, subtitle ucapan, intro bumper, atau watermark!
+   - HANYA BUANG FRAME YANG TIDAK SESUAI TERSEBUT (abaikan nomor indeks frame yang ada wajah/ada teks ucapan).
+   - PILIH 7 SLOT ADEGAN DARI FRAME-FRAME PERAGAAN FISIK PRODUK YANG BERSIH! (Contoh: jika frame #1 intro ada wajah, frame #2-20 tangan memperagakan produk di meja, pilih 7 frame dari #2-#20!).
+   - VIDEO HANYA BOLEH DITOLAK (status: "reject") JIKA:
+     1) Produk fisik di video 100% BUKAN produk target ("isExactProductMatch": false).
+     2) SELURUH frame (100% dari detik awal hingga akhir) adalah rekaman podcast wajah orang bicara tanpa ada sama sekali peragaan fisik produk.
+     3) Video adalah animasi CGI / kartun / slide foto statis tanpa video nyata.
+   - Asalkan video memperagakan produk target dan memiliki frame peragaan yang bersih, OUTPUT SELALU {"status": "accept"} dengan memilih frame-frame peragaan bersih ke dalam 7 slot storyboard!
+3. Subtitle, Floating Text, & Graphic Overlay QC (with Granular Frame Tolerance):
+   - Teks merek/tombol yang tercetak langsung pada fisik produk (printed/molded on product) adalah 100% DITERIMA dan BUKAN subtitle!
+   - Jika satu frame ada teks/stiker ucapan, buang frame itu saja dan pilih frame lain yang bersih dari video yang sama!
 4. Watermark & Logo QC (9:16 Crop Tolerance):
-   - Watermark/logo di pojok KIRI atau KANAN video (di luar area tengah 9:16) TETAP DITERIMA karena akan terpotong/tertutup pilar.
-   - Hanya tolak jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE AREA 9:16 TENGAH: output {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Watermark masuk ke dalam frame 9:16."}
+   - Watermark/logo di pojok kiri/kanan video (di luar area 9:16 tengah) TETAP DITERIMA karena akan terpotong saat di-crop ke format vertikal 9:16.
+   - Jika ada watermark di tengah pada satu frame, abaikan frame tersebut dan pilih frame lain yang bersih dari video yang sama!
 5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
    Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
    - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / unboxing rapi / penampakan fisik produk). DILARANG KERAS frame sedang digosok, diperas, dipotong, atau aksi ekstrem di Slot 1!
@@ -1756,47 +1761,22 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const selectedIndices = Array.isArray(parsed.frames) ? parsed.frames : [];
       const hasValidFrames = selectedIndices.length >= 1;
 
-      const shouldReject = isRejectStatus || isMatchFalse || hasFace || hasWatermarkInFrame || hasSocialOrChannelInFrame || hasSubtitles || hasFloatingText || hasGraphic || hasBumper || hasStaticLogo || isSynthetic ||
-        mentionsFaceInReason || mentionsGraphicInReason || mentionsBumperInReason || mentionsWatermarkInFrame || mentionsLogoInFrame || mentionsSubtitlesInReason || !hasValidFrames;
+      // Penolakan FATAL video HANYA jika produk benar-benar salah/berbeda, buatan AI/CGI, atau perabot dilarang
+      const isFatalMismatch = isMatchFalse || isSynthetic || isBulky || (isRejectStatus && (reasonLower.includes('tidak cocok') || reasonLower.includes('pasar barat') || reasonLower.includes('bukan produk')));
 
-      if (shouldReject) {
-        let rejectionMsg = reasonText;
-
-        // Sanitize nonsensical AI conflations (e.g. "produk tidak cocok dengan menampilkan wajah atau vlogger")
-        const lower = (rejectionMsg || '').toLowerCase();
-        const hasConflation = lower.includes('tidak cocok') && (lower.includes('wajah') || lower.includes('vlog') || lower.includes('manusia') || lower.includes('orang'));
-        const isGraphicMisclassifiedAsFace = (hasGraphic || mentionsGraphicInReason) && (lower.includes('wajah') || lower.includes('vlog') || lower.includes('manusia'));
-
-        if (hasConflation || isGraphicMisclassifiedAsFace || !rejectionMsg) {
-          if (hasGraphic || mentionsGraphicInReason) {
-            rejectionMsg = 'Video ditolak: Mengandung grafis animasi overlay, stiker kartun, atau elemen grafis tempelan di frame 9:16.';
-          } else if (hasBumper || mentionsBumperInReason) {
-            rejectionMsg = 'Video ditolak: Mengandung foto bumper atau kartu intro statis pada video.';
-          } else if (hasSocialOrChannelInFrame || hasStaticLogo || mentionsLogoInFrame) {
-            rejectionMsg = 'Video ditolak: Mengandung logo media sosial atau identitas channel/kreator di frame 9:16.';
-          } else if (hasWatermarkInFrame || mentionsWatermarkInFrame) {
-            rejectionMsg = 'Video ditolak: Mengandung watermark digital atau watermark aplikasi editor.';
-          } else if (hasSubtitles || hasFloatingText || mentionsSubtitlesInReason) {
-            rejectionMsg = 'Video ditolak: Mengandung subtitle, teks mengambang, atau stiker teks editan pada frame 9:16.';
-          } else if (hasFace || mentionsFaceInReason) {
-            rejectionMsg = 'Video ditolak: Video didominasi wajah atau vlogger manusia tanpa cukup cuplikan peragaan tangan (wajib cuplikan peragaan tangan bersih).';
-          } else if (isSynthetic) {
-            rejectionMsg = 'Video ditolak: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
-          } else if (isBulky) {
-            rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar / produk set'}) tergolong perabot/rak besar atau paket/set/bundle yang dilarang.`;
-          } else if (isMatchFalse) {
-            rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
-          } else if (!hasValidFrames) {
-            rejectionMsg = 'Video ditolak oleh AI: Tidak ditemukan cukup frame cuplikan produk yang bersih dan memenuhi syarat affiliate.';
-          } else {
-            rejectionMsg = 'Video ditolak oleh AI: Tidak memenuhi syarat affiliate faceless & bersih.';
-          }
-        }
-        console.warn(`[AIService ${provider} ${activeModel}] ⛔ VIDEO RESMI DITOLAK OLEH AI: ${rejectionMsg}`);
+      if (isFatalMismatch) {
+        let rejectionMsg = reasonText || 'Produk di video tidak cocok dengan produk target.';
+        console.warn(`[AIService ${provider} ${activeModel}] ⛔ VIDEO RESMI DITOLAK OLEH AI (Produk Tidak Cocok): ${rejectionMsg}`);
         const rejectError = new Error(`Video ditolak oleh AI (${activeModel}): ${rejectionMsg}`);
         rejectError.isAiRejection = true;
         rejectError.rejectionReason = rejectionMsg;
         throw rejectError;
+      }
+
+      // Jika AI menolak hanya karena ada frame wajah/subtitle/watermark pada sebagian frame:
+      // JANGAN BUANG VIDEO! Pulihkan frame-frame peragaan tangan bersih dari video sumber yang sama.
+      if (isRejectStatus || !hasValidFrames) {
+        console.log(`[AIService ${provider} ${activeModel}] 🛡️ AI mendeteksi kendala pada sebagian frame (${reasonText || 'wajah/subtitle'}), namun fisik produk cocok. Memulihkan cuplikan peragaan bersih dari video yang sama...`);
       }
 
       // Gunakan 7-Slot Storyboard Architecture sesuai permintaan pengguna:
