@@ -434,7 +434,7 @@ ${effectiveDesc ? `- Product Description: "${effectiveDesc}"` : ''}
 - REJECT if the selected footage shows ingredients or cookware as the main subject and the target product is not clearly visible and operated.
 - REJECT large furniture, cabinets, standing racks, refrigerators, washing machines, large appliances, industrial machinery, factory production, outdoor grills, multi-product compilations, repair/service tutorials, DIY tutorials, and unrelated categories.
 - The detected product may be a cleaner OEM name than the listing title, but it must remain inside the target product family.
-- Output `isExactProductMatch: false` whenever the physical product/category is materially different, even if the video itself is clean and faceless.
+- Output 'isExactProductMatch: false' whenever the physical product/category is materially different, even if the video itself is clean and faceless.
 - A clean/faceless video is NOT sufficient for acceptance; PRODUCT MATCH is mandatory.`;
   }
 
