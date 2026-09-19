@@ -1515,7 +1515,7 @@ export async function runStage1Pipeline({
         niche: options.niche || jobMeta.niche || 'kitchen_tools'
       });
 
-      if (!localCheck.eligible) {
+      if (!localCheck.eligible || !Array.isArray(localCheck.cleanFrames) || localCheck.cleanFrames.length < 3) {
         trackSavedBandwidth(35 * 1024 * 1024, `Hemat kuota (Filter 2 Lokal): ${localCheck.reason}`);
         console.warn(`[Job ${jobId}] ⛔ [Filter 2/3 Ditolak Lokal] ${candidateLabel || targetUrl}: ${localCheck.reason}`);
         const localErr = new Error(`Analisa lokal ditolak: ${localCheck.reason}`);
@@ -1549,7 +1549,7 @@ export async function runStage1Pipeline({
         }
       }
 
-      console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Frame visual valid. Verifikasi grafis visual, logo, subtitle, faceless & kecocokan produk diserahkan ke AI Vision.`);
+      console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Frame visual valid (${localCheck.cleanFrames.length} frame VERIFIED_CLEAN dalam ${localCheck.verifiedSegments?.length || 1} segmen temporal). Verifikasi grafis visual & storyboard diserahkan ke AI Vision.`);
 
       // ── JALUR 1: GOOGLE GEMINI NATIVE YOUTUBE STREAM (0 MB KUOTA LOKAL, 1.500 REQ/HARI) ──
       const reqEngine = (options.aiProvider || aiProvider || process.env.ACTIVE_AI_ENGINE || '').toLowerCase();
@@ -1573,6 +1573,8 @@ export async function runStage1Pipeline({
           allowFallbackClips: !requireCleanGeminiPlan,
           totalDuration: meta.duration,
           introCutoffSec: candidateIntroCutoff,
+          verifiedSegments: localCheck.verifiedSegments || [],
+          cleanTimeWindows: (localCheck.verifiedSegments || []).map(s => ({ start: s.startSec, end: s.endSec })),
           discardedFaceTimestamps: localCheck.discardedFaceTimestamps || [],
           discardedViolationTimestamps: localCheck.discardedViolationTimestamps || [],
           isVideoFirst: Boolean(options.isVideoFirst),
@@ -1608,39 +1610,29 @@ export async function runStage1Pipeline({
         return { highlight: hl, videoMeta: meta, previewVideoPath: null };
       }
 
-      // ── JALUR 2: OPENROUTER / STREAM SAMPLING LOKAL DENGAN 20 KEYFRAME ──
-      let rawFrames = preSampledFrames;
-      if (!rawFrames || rawFrames.length < 5) {
-        const sampleMsg = candidateLabel
-          ? `[${candidateLabel}] [Filter 2/3] Sampling 30 keyframe dari stream URL (~1MB kuota)...`
-          : '[Filter 2/3] Sampling 30 keyframe langsung dari stream URL YouTube...';
-        updateProgress({ step: 'stream_sampling', message: sampleMsg, progress: 28, status: 'running' });
+      // ── JALUR 2: OPENROUTER / STREAM SAMPLING LOKAL DENGAN VERIFIED CLEAN FRAMES ──
+      // STRICT SAFETY GATE: Hanya kirim frame yang telah lolos verifikasi segmen bersih (VERIFIED_CLEAN)
+      let verifiedCleanFrames = (localCheck.cleanFrames && localCheck.cleanFrames.length >= 3)
+        ? localCheck.cleanFrames
+        : [];
 
-        const sampleRes = await sampleFramesFromStream(streamUrl, rawFramesDir, {
-          duration: meta.duration,
-          maxSampleFrames: 30,
-          onProgress: updateProgress,
-        });
-        rawFrames = sampleRes.frames;
-      }
-
-      if (!rawFrames || rawFrames.length < 5) {
-        const frameErr = new Error(`Video tidak memiliki cukup frame visual (${rawFrames?.length || 0} frames).`);
+      if (!verifiedCleanFrames || verifiedCleanFrames.length < 3) {
+        const frameErr = new Error(`Tidak cukup frame bersih terverifikasi (${verifiedCleanFrames?.length || 0} frames) untuk dikirim ke AI Vision.`);
         frameErr.isAiRejection = true;
-        frameErr.rejectionReason = 'Frame video tidak mencukupi untuk dianalisa.';
+        frameErr.rejectionReason = 'Frame bersih tidak mencukupi standar Clean Temporal Segment (minimal 3 frame berurutan).';
         throw frameErr;
       }
 
       // ── TAHAP 3: VERIFIKASI AI VISION (QUALITY ASSURANCE FINAL) ──
       const visionMsg = candidateLabel
-        ? `[${candidateLabel}] [Filter 3/3] AI (${aiProvider}) verifikasi produk & QC bebas wajah...`
-        : `[Filter 3/3] AI (${aiProvider}) menganalisa frame produk dan menentukan cuplikan terbaik...`;
+        ? `[${candidateLabel}] [Filter 3/3] AI (${aiProvider}) verifikasi produk & QC bebas wajah (${verifiedCleanFrames.length} frame VERIFIED_CLEAN)...`
+        : `[Filter 3/3] AI (${aiProvider}) menganalisa frame produk dan menentukan cuplikan terbaik (${verifiedCleanFrames.length} frame VERIFIED_CLEAN)...`;
       updateProgress({ step: 'gemini_vision', message: visionMsg, progress: 48, status: 'running' });
 
       const hl = await selectHighlightWithAI({
         apiKey,
         aiProvider,
-        frames: rawFrames,
+        frames: verifiedCleanFrames,
         videoPath: null,
         youtubeUrl: targetUrl,
         videoMetadata: meta,
@@ -1701,7 +1693,7 @@ export async function runStage1Pipeline({
           aspectRatio: options.aspectRatio || '9:16',
           onProgress: updateProgress,
         });
-        if (!localCacheCheck.eligible) {
+        if (!localCacheCheck.eligible || !Array.isArray(localCacheCheck.cleanFrames) || localCacheCheck.cleanFrames.length < 3) {
           console.warn(`[Job ${jobId}] ⛔ [Cache Ditolak Lokal] ${rawVideoPath}: ${localCacheCheck.reason}`);
           const localCacheErr = new Error(`Analisa lokal ditolak pada cache: ${localCacheCheck.reason}`);
           localCacheErr.isAiRejection = true;
@@ -1712,7 +1704,7 @@ export async function runStage1Pipeline({
         highlight = await selectHighlightWithAI({
           apiKey,
           aiProvider,
-          frames: rawFrames,
+          frames: localCacheCheck.cleanFrames,
           videoPath: rawVideoPath,
           videoMetadata: videoMeta,
           productTitle,

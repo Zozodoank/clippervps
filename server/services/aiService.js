@@ -515,6 +515,8 @@ export async function analyzeYouTubeVideoWithGemini({
   introCutoffSec = 0,
   discardedFaceTimestamps = [],
   discardedViolationTimestamps = [],
+  cleanTimeWindows = [],
+  verifiedSegments = [],
   isVideoFirst = false,
   niche = 'kitchen_tools',
   onProgress = () => { },
@@ -572,10 +574,15 @@ export async function analyzeYouTubeVideoWithGemini({
     ? `\nCRITICAL BLACKLIST (DETEKSI AI LOKAL: WAJAH, TEKS OVERLAY, PILLARBOX, DOKUMEN MANUAL): Frame visual pada detik [${allViolationTimestamps.join(', ')}s] terdeteksi melanggar aturan kualitas (wajah presenter / teks overlay / unboxing manual / pillarbox). DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
     : '';
 
+  const cleanWindowsDirective = Array.isArray(cleanTimeWindows) && cleanTimeWindows.length > 0
+    ? `\nCRITICAL MANDATE (VERIFIED CLEAN TEMPORAL SEGMENTS): AI Local Gatekeeper telah memverifikasi segmen-segmen waktu bersih berikut: [${cleanTimeWindows.map(w => `${w.start}s-${w.end}s`).join(', ')}]. Anda HANYA BOLEH memilih timestamps di dalam rentang waktu yang terverifikasi bersih ini! DILARANG KERAS memilih timestamps di luar segmen bersih ini.\n`
+    : '';
+
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
 Evaluate this YouTube video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
 ${violationBlacklistWarning}
+${cleanWindowsDirective}
 
 ${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
 

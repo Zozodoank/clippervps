@@ -14,6 +14,19 @@ const __dirname = path.dirname(__filename);
 const serverDir = path.resolve(__dirname, '..');
 
 /**
+ * Konfigurasi Terpusat AI Local Gatekeeper & Runtime Filtering
+ */
+export const GATEKEEPER_CONFIG = {
+  SAMPLE_INTERVAL_SEC: 2.0,
+  MIN_CONSECUTIVE_CLEAN_FRAMES: 3,
+  MIN_CLEAN_DURATION_SEC: 4.0,
+  MAX_ALLOWED_DIRTY_FRAMES: 0,
+  CLEAN_CONF_THRESHOLD: 0.78,
+  UNCERTAIN_CONF_THRESHOLD: 0.62,
+  TIMEOUT_SEC: 25,
+};
+
+/**
  * Scan common locations for cookies.txt
  */
 export function findCookiesFile() {
@@ -464,12 +477,13 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   const isMobile = process.platform === 'android' || Boolean(process.env.TERMUX_VERSION) || os.cpus().length <= 4;
   const safeDuration = Math.max(10, Number(duration) || 60);
 
-  // Dynamic coarse sampling: for 10-15 min video, sample every ~20-25s.
-  // Jangan potong paksa ke 15 frame agar video 10-15 menit tidak kehilangan momen demo penting!
-  const targetCoarseInterval = safeDuration >= 600 ? 25 : (safeDuration >= 300 ? 20 : 12);
-  const autoCalculatedFrames = Math.max(8, Math.min(36, Math.round(safeDuration / targetCoarseInterval)));
-  const requestedMax = Number(maxSampleFrames) > 0 ? Number(maxSampleFrames) : autoCalculatedFrames;
-  const safeMax = Math.max(6, Math.min(45, requestedMax));
+  // Dynamic Dense-Cluster Sampling (Temporal Consistency Architecture):
+  // Alih-alih sampling renggang 20-25s yang meloloskan overlay/watermark sesaat,
+  // sistem mengekstrak kluster temporal rapat (triplet ts, ts+2.0s, ts+4.0s) di beberapa segmen representatif.
+  // Ini memungkinkan AI Gatekeeper memverifikasi Clean Temporal Segment (>=3 frame kontinu / 4.0s)
+  // dengan total frame tetap ringan di VPS (24-33 frame).
+  const requestedMax = Number(maxSampleFrames) > 0 ? Number(maxSampleFrames) : 30;
+  const safeMax = Math.max(9, Math.min(36, requestedMax));
 
   const samplePoints = [];
   if (Array.isArray(customTimestamps) && customTimestamps.length > 0) {
@@ -477,24 +491,45 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
       samplePoints.push({ index: idx + 1, timestamp: Math.round(ts * 10) / 10 });
     });
   } else {
-    // Generate evenly distributed timestamps across video (skipping first 3.5s intro bumpers/ads and last 4.5s outro endcards)
     const safeStart = Math.min(3.5, safeDuration * 0.1);
-    const safeEnd = Math.max(safeStart + 2, safeDuration - 4.5);
+    const safeEnd = Math.max(safeStart + 4.5, safeDuration - 4.5);
     const effectiveSpan = Math.max(1, safeEnd - safeStart);
-    const interval = effectiveSpan / (safeMax + 1);
-    for (let i = 1; i <= safeMax; i++) {
-      const ts = Math.round((safeStart + (i * interval)) * 10) / 10;
-      samplePoints.push({ index: i, timestamp: ts });
+
+    if (safeDuration <= 60) {
+      // Video pendek (< 60s): sampling sekuensial rapat tiap ~2.0 detik
+      const step = Math.max(1.8, Math.min(2.5, effectiveSpan / 24));
+      let cur = safeStart;
+      let pIdx = 1;
+      while (cur <= safeEnd && pIdx <= safeMax) {
+        samplePoints.push({ index: pIdx++, timestamp: Math.round(cur * 10) / 10 });
+        cur += step;
+      }
+    } else {
+      // Video panjang (> 60s): buat 8-10 kluster temporal (tiap kluster: triplet ts, ts+2.0s, ts+4.0s)
+      const numClusters = Math.max(4, Math.min(10, Math.floor(safeMax / 3)));
+      const clusterSpan = effectiveSpan - 4.5;
+      const clusterInterval = clusterSpan > 0 ? (clusterSpan / (numClusters + 1)) : 0;
+      let pIdx = 1;
+      for (let c = 1; c <= numClusters; c++) {
+        const baseTs = Math.round((safeStart + (c * clusterInterval)) * 10) / 10;
+        samplePoints.push({ index: pIdx++, timestamp: baseTs });
+        if (baseTs + 2.0 <= safeEnd && pIdx <= safeMax) {
+          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 2.0) * 10) / 10 });
+        }
+        if (baseTs + 4.0 <= safeEnd && pIdx <= safeMax) {
+          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 4.0) * 10) / 10 });
+        }
+      }
     }
   }
 
   onProgress({
     step: 'stream_sampling',
-    message: `Sampling kilat ${safeMax} keyframe visual langsung dari stream URL (${isMobile ? 'mode mobile efisien' : 'fast seek'})...`,
+    message: `Sampling ${samplePoints.length} keyframe visual adaptif/kluster temporal langsung dari stream URL (${isMobile ? 'mode mobile efisien' : 'fast seek'})...`,
     progress: 25,
   });
 
-  console.log(`[VideoFilterService] Fast seek sampling ${safeMax} frames across ${safeDuration}s from stream (${isMobile ? 'Mobile 2-core' : 'Multi-core'})...`);
+  console.log(`[VideoFilterService] Fast seek cluster sampling ${samplePoints.length} frames across ${safeDuration}s from stream (${isMobile ? 'Mobile 2-core' : 'Multi-core'})...`);
 
   const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
@@ -679,13 +714,15 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
-export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 20, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
+export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 25, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
   try {
     const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
     if (validFrames.length === 0) return null;
 
     const payload = JSON.stringify({
       niche,
+      minConsecutiveClean: GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES,
+      minCleanDuration: GATEKEEPER_CONFIG.MIN_CLEAN_DURATION_SEC,
       frames: validFrames.map(f => ({
         filePath: f.filePath,
         timestamp: f.timestamp || 0
@@ -722,6 +759,7 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 20, on
  * Tahap 1: MediaPipe Face Detection (100% faceless).
  * Tahap 2: DBNet Text Detection (membuang subtitle terbakar & promo overlay).
  * Tahap 3: MobileNetV3 (membuang bumper foto statis & kartun/animasi).
+ * Tahap 4: Clean Temporal Segment Validation (hanya meloloskan segmen kontinu >= 3 frame / 4.0s).
  */
 export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
@@ -729,7 +767,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   }
 
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
-  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 20, onProgress, niche });
+  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 25, onProgress, niche });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
     const cleanFrames = aiResult.allFrames
@@ -755,15 +793,15 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
         ...f,
       }));
 
-    // Video dianggap eligible selama ada minimal 2 frame bersih lolos (atau Gatekeeper tidak menolak seluruh video)
-    const isEligible = (aiResult.eligible !== false) && (allowPartialClean
-      ? cleanFrames.length >= 2
-      : cleanFrames.length >= 3);
+    const verifiedSegments = aiResult.verifiedSegments || [];
+    // Syarat ketat: Video HANYA eligible jika microservice menyetujui, terdapat minimal 1 Clean Temporal Segment,
+    // dan jumlah frame VERIFIED_CLEAN mencukupi minimal segmen temporal kontinu!
+    const isEligible = (aiResult.eligible === true) && (verifiedSegments.length > 0) && (cleanFrames.length >= (allowPartialClean ? 2 : GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES));
 
     if (isEligible) {
-      console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame bersih lolos (${aiResult.benchmarks?.totalMs || 0}ms).`);
+      console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame VERIFIED_CLEAN dalam ${verifiedSegments.length} segmen kontinu (${aiResult.benchmarks?.totalMs || 0}ms).`);
     } else {
-      console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper menolak video: ${aiResult.reason} (${cleanFrames.length}/${frames.length} frame bersih).`);
+      console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper menolak video: ${aiResult.reason} (${cleanFrames.length}/${frames.length} frame bersih, ${verifiedSegments.length} segmen).`);
     }
 
     const discardedFaceTimestamps = discardedFrames
@@ -778,11 +816,12 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       cleanFrames,
       discardedFrames,
       reason: aiResult.reason,
+      verifiedSegments,
       discardedFaceTimestamps,
       discardedViolationTimestamps,
       hasOpeningIntro: Boolean(aiResult.hasOpeningIntro),
       introCutoffSec: aiResult.introCutoffSec || 0.0,
-      gatekeeperBackend: 'ai_gatekeeper_v1'
+      gatekeeperBackend: 'ai_gatekeeper_v2_temporal'
     };
   }
 
@@ -1026,19 +1065,36 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       if ((upperGenuineSkinPixels / upperTotal) > 0.07) humanFaceSkinCount++;
     }
 
-    // ── Klasifikasi granular per-frame (face, black, intro bumper, static frame vs clean) ──
-    const isFrameFace = (upperGenuineSkinPixels / upperTotal) > 0.07;
+    // ── Klasifikasi granular per-frame (face, black, intro bumper, static frame, watermark, subtitle) ──
+    const isFrameFace = (upperGenuineSkinPixels / upperTotal) > 0.055;
     const isFrameBlack = avgBrightness < 8;
     const isFrameIntro = Boolean(isOpeningFrame);
     const isFrameStatic = staticFrameIndices.has(i) && !isFrameIntro;
+    const isFrameSubtitle = (subWhitePixels / subTotal) > 0.038 && avgBrightness > 25;
+    const isFrameFloatingText = (floatTextWhitePixels / floatTotal) > 0.045 && (floatTextEdges / floatTotal) > 0.04;
+    const isFrameGraphic = (animatedGraphicPixels / (W * H)) > 0.025;
+    const isFrameWatermark = isCornerLogo || isWatermarkOverlay || isBoldLogo;
 
-    if (isFrameFace || isFrameBlack || isFrameIntro || isFrameStatic) {
+    if (isFrameFace || isFrameBlack || isFrameIntro || isFrameStatic || isFrameSubtitle || isFrameFloatingText || isFrameGraphic || isFrameWatermark) {
+      let rReason = 'dirty_frame';
+      if (isFrameFace) rReason = 'face';
+      else if (isFrameBlack) rReason = 'black';
+      else if (isFrameStatic) rReason = 'static_frame';
+      else if (isFrameIntro) rReason = 'intro_bumper';
+      else if (isFrameSubtitle) rReason = 'subtitle';
+      else if (isFrameWatermark) rReason = 'watermark';
+      else if (isFrameFloatingText) rReason = 'floating_text';
+      else if (isFrameGraphic) rReason = 'animated_graphic';
+
       discardedFrames.push({
         ...frames[i],
         index: i,
         timestamp: ts,
         filePath: frames[i]?.filePath,
-        reason: isFrameFace ? 'face' : (isFrameBlack ? 'black' : (isFrameStatic ? 'static_frame' : 'intro_bumper')),
+        stage: rReason,
+        reason: rReason,
+        status: 'discarded',
+        decision: 'REJECT',
       });
     } else {
       cleanFrames.push({
@@ -1046,73 +1102,101 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
         index: i,
         timestamp: ts,
         filePath: frames[i]?.filePath,
+        status: 'candidate_clean',
       });
     }
   }
 
-  // ── DELEGASI KE AI VISION: PENCATATAN DIAGNOSTIK NON-BLOCKING ──
-  // Per instruksi pengguna: Verifikasi grafis visual dan pencocokan produk di-handle AI Vision agar lebih stabil.
-  // Backend mencatat temuan heuristik sebagai info diagnostik dan tidak menolak video secara sepihak.
-  if (staticLogoReason) {
-    console.log(`[VideoFilter] Info diagnostik: ${staticLogoReason} -> Verifikasi grafis/logo diserahkan ke AI Vision.`);
+  // ── VALIDASI SEGMEN TEMPORAL PADA HEURISTIK FALLBACK ──
+  // Hanya loloskan frame yang berada di dalam rentang waktu kontinu (>= 3 frame berurutan / 3.5s)
+  const sortedCandidates = [...cleanFrames].sort((a, b) => a.timestamp - b.timestamp);
+  const verifiedSegments = [];
+  let currentStreak = [];
+
+  for (const f of sortedCandidates) {
+    if (currentStreak.length === 0) {
+      currentStreak.push(f);
+    } else {
+      const prevTs = currentStreak[currentStreak.length - 1].timestamp;
+      if (Math.abs(f.timestamp - prevTs) <= 3.5) {
+        currentStreak.push(f);
+      } else {
+        if (currentStreak.length >= 3 && (currentStreak[currentStreak.length - 1].timestamp - currentStreak[0].timestamp) >= 3.5) {
+          verifiedSegments.push({
+            startSec: currentStreak[0].timestamp,
+            endSec: currentStreak[currentStreak.length - 1].timestamp,
+            frameCount: currentStreak.length,
+            cleanTimestamps: currentStreak.map(c => c.timestamp),
+          });
+        }
+        currentStreak = [f];
+      }
+    }
   }
-  if (subtitleBandCount >= 2) {
-    console.log(`[VideoFilter] Info diagnostik: Terdeteksi piksel terang di area bawah pada ${subtitleBandCount} frame -> Verifikasi subtitle diserahkan ke AI Vision.`);
-  }
-  if (floatingTextCount >= 2) {
-    console.log(`[VideoFilter] Info diagnostik: Terdeteksi tekstur teks pada ${floatingTextCount} frame -> Verifikasi teks diserahkan ke AI Vision.`);
-  }
-  if (animatedGraphicCount >= 2) {
-    console.log(`[VideoFilter] Info diagnostik: Terdeteksi saturasi grafis pada ${animatedGraphicCount} frame -> Verifikasi grafis diserahkan ke AI Vision.`);
+  if (currentStreak.length >= 3 && (currentStreak[currentStreak.length - 1].timestamp - currentStreak[0].timestamp) >= 3.5) {
+    verifiedSegments.push({
+      startSec: currentStreak[0].timestamp,
+      endSec: currentStreak[currentStreak.length - 1].timestamp,
+      frameCount: currentStreak.length,
+      cleanTimestamps: currentStreak.map(c => c.timestamp),
+    });
   }
 
-  // Tolak jika video didominasi wajah/manusia (>= 8 frame) atau tidak cukup frame peragaan produk bersih (< 8 frame) pada mode single
-  const isDominatedByFaces = humanFaceSkinCount >= 8;
-  const lacksCleanFrames = cleanFrames.length < 8;
-
-  if ((isDominatedByFaces || lacksCleanFrames) && !allowPartialClean) {
-    return {
-      eligible: false,
-      cleanFrames: [],
-      discardedFrames,
-      reason: isDominatedByFaces
-        ? `Analisa visual lokal mendeteksi video menampilkan wajah / presenter manusia (${humanFaceSkinCount} dari ${frameBuffers.length} frame). Wajib video 100% faceless peragaan tangan!`
-        : `Analisa visual lokal mendeteksi video tidak memiliki cukup frame peragaan produk bersih (${cleanFrames.length} frame, minimal 8 frame).`
-    };
+  // Filter hanya frame yang masuk ke dalam verifiedSegments
+  const verifiedTimestamps = new Set();
+  for (const seg of verifiedSegments) {
+    for (const ts of seg.cleanTimestamps) {
+      verifiedTimestamps.add(ts);
+    }
   }
 
-  if (humanFaceSkinCount > 0) {
-    console.log(`[VideoFilter] Info diagnostik: Terdeteksi ${humanFaceSkinCount} frame wajah -> ${allowPartialClean ? 'Frame wajah disingkirkan dari pool AI' : 'AI akan membuang scene wajah'}.`);
+  const finalClean = [];
+  for (const f of cleanFrames) {
+    if (verifiedTimestamps.has(f.timestamp)) {
+      finalClean.push({ ...f, status: 'clean', decision: 'VERIFIED_CLEAN' });
+    } else {
+      discardedFrames.push({
+        ...f,
+        status: 'discarded',
+        stage: 'temporal_inconsistency',
+        decision: 'ISOLATED_CLEAN_REJECT',
+        reason: 'Frame bersih terisolasi tanpa konsistensi temporal (kurang dari syarat minimal 3 frame berurutan)'
+      });
+    }
   }
+
   const totalBumperFrames = openingBumperCount + bodyBumperCount;
   const bumperRatio = totalBumperFrames / Math.max(1, frameBuffers.length - 1);
   if (bodyBumperCount >= 3 || bumperRatio >= 0.35) {
-    console.warn(`[VideoFilter] ⛔ Ditolak: Terdeteksi ${bodyBumperCount} frame diam / slideshow (${(bumperRatio * 100).toFixed(0)}% frame beku).`);
     return {
       eligible: false,
       cleanFrames: [],
       discardedFrames,
-      reason: `Analisa visual lokal mendeteksi video berupa slideshow foto statis / gambar diam (${bodyBumperCount} frame beku, ${(bumperRatio * 100).toFixed(0)}% tidak bergerak). Wajib video dengan gerakan fisik peragaan nyata!`
+      verifiedSegments: [],
+      reason: `Analisa visual lokal mendeteksi video berupa slideshow foto statis / gambar diam (${bodyBumperCount} frame beku).`
     };
   }
 
-  // Hanya tolak jika mayoritas frame blank / hitam pekat (> 75%) yang menandakan stream corrupt
   const blackRatio = blackFrameCount / frameBuffers.length;
   if (blackRatio > 0.75) {
     return {
       eligible: false,
       cleanFrames: [],
       discardedFrames,
+      verifiedSegments: [],
       reason: `Analisa visual lokal mendeteksi video kosong / rusak (${Math.round(blackRatio * 100)}% frame hitam pekat).`
     };
   }
 
+  const isEligible = verifiedSegments.length > 0 && finalClean.length >= (allowPartialClean ? 2 : GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES);
+
   return {
-    eligible: cleanFrames.length > 0,
-    reason: cleanFrames.length === 0 ? 'Tidak ditemukan frame bersih peragaan tangan yang memenuhi syarat.' : undefined,
-    cleanFrames,
+    eligible: isEligible,
+    reason: isEligible ? undefined : 'Tidak ditemukan Clean Temporal Segment kontinu (minimal 3 frame berurutan / 4.0s bebas watermark/wajah/subtitle).',
+    cleanFrames: finalClean,
     discardedFrames,
-    cleanFrameCount: cleanFrames.length,
+    verifiedSegments,
+    cleanFrameCount: finalClean.length,
     discardedFrameCount: discardedFrames.length,
     discardedFaceTimestamps: discardedFrames.filter(f => f.stage === 'face' || f.reason === 'face' || f.reason?.includes('Wajah')).map(f => f.timestamp),
     discardedViolationTimestamps: discardedFrames.filter(f => f.timestamp !== undefined).map(f => f.timestamp),
@@ -1129,12 +1213,12 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
 
 /**
  * Memfilter frame visual dari 1 kandidat secara granular per frame:
- * Membuang hanya frame berwajah / intro / corrupt, mempertahankan frame bersih peragaan produk.
+ * Hanya mengembalikan kandidat yang memiliki Clean Temporal Segments yang terverifikasi.
  */
 export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null, niche = 'kitchen_tools' } = {}) {
-  const result = await inspectFramesLocally(frames, { allowPartialClean: true, niche });
-  if (!result.eligible && result.reason && result.reason.includes('kosong / rusak')) {
-    return { candidateIndex, candidate, cleanFrames: [], eligible: false, reason: result.reason };
+  const result = await inspectFramesLocally(frames, { allowPartialClean: false, niche });
+  if (!result.eligible) {
+    return { candidateIndex, candidate, cleanFrames: [], eligible: false, reason: result.reason, verifiedSegments: [] };
   }
 
   const clean = (result.cleanFrames || []).map(f => ({
@@ -1149,8 +1233,9 @@ export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0
   return {
     candidateIndex,
     candidate,
-    eligible: clean.length > 0,
+    eligible: clean.length >= GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES,
     cleanFrames: clean,
+    verifiedSegments: result.verifiedSegments || [],
     discardedCount: frames.length - clean.length,
     totalFrames: frames.length,
   };

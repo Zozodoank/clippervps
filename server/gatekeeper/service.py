@@ -2,9 +2,10 @@
 """
 AI Local Frame Gatekeeper Service for ClipperVPS.
 Lightweight real-time CPU vision pipeline to reject dirty video frames before reaching main LLM:
-- Stage 1: MediaPipe & YuNet Face Detection (100% faceless in 9:16 center area)
-- Stage 2: DBNet Text & Subtitle Detection (rejects burned subtitles and promo banners)
-- Stage 3: MobileNetV3 & Visual Variance Classifier (rejects 2D cartoons, graphic intros, and static bumper slides)
+- Stage 1: MediaPipe & YuNet Face Detection (100% faceless in 9:16 crop & full frame)
+- Stage 2: DBNet Text, Subtitle & 4-Corner Watermark Detection + Temporal Watermark Aggregation
+- Stage 3: MobileNetV3 3-State Scene Classifier (CLEAN >= 0.78, UNCERTAIN 0.62-0.78, REJECT < 0.62)
+- Stage 4: Clean Temporal Segment Validation (Continuous clean windows, min 3 consecutive frames / >=4.0s)
 """
 
 import os
@@ -56,7 +57,8 @@ MODELS_DIR = os.path.join(CURRENT_DIR, "models")
 # 1. TAHAP 1: FACE DETECTOR (MediaPipe BlazeFace + OpenCV YuNet)
 # ─────────────────────────────────────────────────────────────────────────────
 class FaceGatekeeper:
-    def __init__(self, min_confidence=0.50):
+    def __init__(self, min_confidence=0.38):
+        # min_confidence diperketat ke 0.38 untuk menangkap presenter di latar/sudut
         self.min_confidence = min_confidence
         self.mp_detector = None
         self.yunet_detector = None
@@ -73,7 +75,7 @@ class FaceGatekeeper:
                 )
                 self.mp_detector = mp_vision.FaceDetector.create_from_options(options)
                 self.backend = "mediapipe"
-                print("  [FaceGatekeeper] ✅ MediaPipe BlazeFace aktif.")
+                print("  [FaceGatekeeper] ✅ MediaPipe BlazeFace aktif (threshold 0.38).")
             except Exception as e:
                 print(f"  [FaceGatekeeper] ⚠️ MediaPipe init error: {e}")
 
@@ -85,13 +87,13 @@ class FaceGatekeeper:
                     model=yunet_path,
                     config="",
                     input_size=(320, 320),
-                    score_threshold=0.45,
+                    score_threshold=0.40,
                     nms_threshold=0.3,
                     top_k=5000
                 )
                 if self.backend == "none":
                     self.backend = "yunet"
-                print("  [FaceGatekeeper] ✅ OpenCV YuNet Face Detection aktif.")
+                print("  [FaceGatekeeper] ✅ OpenCV YuNet Face Detection aktif (threshold 0.40).")
             except Exception as e:
                 print(f"  [FaceGatekeeper] ⚠️ YuNet init error: {e}")
 
@@ -105,10 +107,10 @@ class FaceGatekeeper:
 
         total_frame_area = float(h * w)
 
-        # Wajah manusia presenter/vlogger di latar belakang / sudut dapur (min 24px).
-        min_face_px = max(24, int(min(h, w) * 0.03))
+        # Wajah kecil presenter/vlogger di latar belakang: deteksi mulai 16px
+        min_face_px = max(16, int(min(h, w) * 0.02))
 
-        # 1. Try MediaPipe BlazeFace
+        # 1. MediaPipe BlazeFace
         if self.mp_detector:
             try:
                 rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -126,21 +128,15 @@ class FaceGatekeeper:
                             bw = int(bbox.width)
                             bh = int(bbox.height)
                             if bh >= min_face_px and bw >= min_face_px:
-                                face_area = float(bw * bh)
-                                area_ratio = face_area / total_frame_area
-                                # Khusus niche smartphone: tolerir pejalan kaki / subjek kamera jauh (< 6% luas frame)
-                                if niche == "gadget_smartphone" and area_ratio < 0.06:
-                                    continue
                                 if score > best_score:
                                     best_score = score
                                     best_box = [bx, by, bw, bh]
                     if best_box:
-                        return True, float(best_score), best_box, f"Wajah vlogger/presenter terdeteksi (confidence: {best_score * 100:.1f}%)"
+                        return True, float(best_score), best_box, f"Wajah vlogger/presenter terdeteksi (BlazeFace: {best_score * 100:.1f}%)"
             except Exception:
                 pass
 
-        # 2. Try OpenCV YuNet (Second-pass detector for angled / in-the-wild faces)
-        # Threshold 0.50 untuk menangkap wajah samping/miring vlogger
+        # 2. OpenCV YuNet (Second-pass detector untuk wajah samping/miring)
         if self.yunet_detector:
             try:
                 self.yunet_detector.setInputSize((w, h))
@@ -148,15 +144,10 @@ class FaceGatekeeper:
                 if faces is not None and len(faces) > 0:
                     for face in faces:
                         score = float(face[-1])
-                        if score >= 0.50:
+                        if score >= 0.40:
                             bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
                             if bh >= min_face_px and bw >= min_face_px:
-                                face_area = float(bw * bh)
-                                area_ratio = face_area / total_frame_area
-                                # Khusus niche smartphone: tolerir pejalan kaki / subjek kamera jauh (< 6% luas frame)
-                                if niche == "gadget_smartphone" and area_ratio < 0.06:
-                                    continue
-                                return True, score, [bx, by, bw, bh], f"Wajah vlogger/presenter terdeteksi (YuNet {score * 100:.1f}%)"
+                                return True, score, [bx, by, bw, bh], f"Wajah presenter terdeteksi (YuNet: {score * 100:.1f}%)"
             except Exception:
                 pass
 
@@ -164,10 +155,15 @@ class FaceGatekeeper:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2. TAHAP 2: TEXT & SUBTITLE DETECTOR (DBNet PP-OCRv4 ONNX)
+# 2. TAHAP 2: TEXT, SUBTITLE & CORNER WATERMARK DETECTOR (DBNet PP-OCRv4 ONNX)
 # ─────────────────────────────────────────────────────────────────────────────
 class TextGatekeeper:
-    def __init__(self, max_total_coverage=0.050, max_bottom_coverage=0.040):
+    """
+    Deteksi teks, watermark pojok, subtitle terbakar, dan promo banner.
+    Memeriksa 4 sudut frame secara ketat untuk menangkap watermark sekecil 2-5% zona.
+    """
+    def __init__(self, max_total_coverage=0.038, max_bottom_coverage=0.025):
+        # Threshold diperketat: subtitle >= 2.5% area bawah, total teks >= 3.8% frame
         self.max_total_coverage = max_total_coverage
         self.max_bottom_coverage = max_bottom_coverage
         self.ort_session = None
@@ -186,21 +182,19 @@ class TextGatekeeper:
                     providers=["CPUExecutionProvider"]
                 )
                 self.backend = "dbnet_onnx"
-                print("  [TextGatekeeper] ✅ DBNet PP-OCRv4 ONNX Text Detection aktif.")
+                print("  [TextGatekeeper] ✅ DBNet PP-OCRv4 ONNX Text & 4-Corner Watermark Detection aktif.")
             except Exception as e:
                 print(f"  [TextGatekeeper] ⚠️ Gagal memuat DBNet ONNX: {e}")
 
         if not self.ort_session:
             self.backend = "gradient_fallback"
-            print("  [TextGatekeeper] ℹ️ Menggunakan fallback Sobel horizontal edge text density.")
+            print("  [TextGatekeeper] ℹ️ Menggunakan fallback Sobel horizontal edge 4-corner text density.")
 
     def detect(self, crop_bgr, niche="kitchen_tools"):
         h, w = crop_bgr.shape[:2]
         crop_area = float(h * w)
         if crop_area < 100:
-            return False, 0.0, 0.0, "Frame terlalu kecil"
-
-        bottom_y = int(h * 0.65) # Bottom 35% zone where subtitles sit
+            return False, 0.0, 0.0, "Frame terlalu kecil", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
 
         # ── Deteksi Kotak Banner Berlatar Warna / Teks Statis (Promo Card / Lower-Third) ──
         try:
@@ -212,22 +206,18 @@ class TextGatekeeper:
             contours, _ = cv2.findContours(dilated_banner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for cnt in contours:
                 bx, by, bw, bh = cv2.boundingRect(cnt)
-                # Kartu banner lebar (>= 45% lebar frame 9:16) dan tinggi 6%-35% frame
-                if bw >= int(160 * 0.45) and int(280 * 0.06) <= bh <= int(280 * 0.35):
-                    if (bw * bh) > (160 * 280 * 0.08) and (by + bh / 2) > (280 * 0.15):
+                # Kartu banner lebar (>= 40% lebar frame 9:16) dan tinggi 5%-35% frame
+                if bw >= int(160 * 0.40) and int(280 * 0.05) <= bh <= int(280 * 0.35):
+                    if (bw * bh) > (160 * 280 * 0.06) and (by + bh / 2) > (280 * 0.12):
                         inner_edge_density = np.count_nonzero(edges[by:by+bh, bx:bx+bw]) / float(bw * bh)
-                        if inner_edge_density > 0.18:
-                            return True, 0.12, 0.15, f"Banner promosi / kartu teks statis terdeteksi di frame 9:16 ({bw}x{bh}px)"
+                        if inner_edge_density > 0.16:
+                            return True, 0.10, 0.12, f"Banner promosi / kartu teks statis terdeteksi ({bw}x{bh}px)", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
         except Exception:
             pass
 
-        max_bottom = self.max_bottom_coverage * (1.5 if niche == "gadget_smartphone" else 1.0)
-        max_total = self.max_total_coverage * (1.4 if niche == "gadget_smartphone" else 1.0)
-
-        # ── Jalur 1: DBNet PP-OCRv4 ONNX Inference (Real-time sub-10ms) ──
+        # ── Jalur 1: DBNet PP-OCRv4 ONNX Inference ──
         if self.ort_session:
             try:
-                # Resize keeping multiple of 32 for DBNet
                 target_size = 320
                 scale_h = target_size / h
                 scale_w = target_size / w
@@ -243,104 +233,126 @@ class TextGatekeeper:
 
                 input_name = self.ort_session.get_inputs()[0].name
                 outputs = self.ort_session.run(None, {input_name: blob})
-                prob_map = outputs[0][0, 0] # (target_h, target_w)
+                prob_map = outputs[0][0, 0]
 
-                # Binary segmentation at 0.3 probability threshold
-                text_mask = prob_map > 0.30
+                # Binary segmentation at 0.28 probability threshold (sedikit lebih sensitif terhadap watermark transparan)
+                text_mask = prob_map > 0.28
                 total_text_pixels = int(np.count_nonzero(text_mask))
                 total_cov = total_text_pixels / float(target_h * target_w)
 
-                # Top 35% zone (detects top overlay, "da di deskripsi", promo banners, channel watermarks)
+                # Definisi 4 Zona Sudut (Watermark biasanya di 35% vertikal & 45% horizontal sudut)
                 top_cut = int(target_h * 0.35)
-                top_mask = text_mask[:top_cut, :]
-                top_text_pixels = int(np.count_nonzero(top_mask))
-                top_zone_pixels = float(top_cut * target_w)
-                top_cov = top_text_pixels / top_zone_pixels if top_zone_pixels > 0 else 0.0
-
-                # Top-left and top-right corner zone (detects top watermarks & channel names)
-                top_left_mask = text_mask[:top_cut, :int(target_w * 0.60)]
-                top_left_cov = int(np.count_nonzero(top_left_mask)) / float(top_cut * int(target_w * 0.60)) if top_zone_pixels > 0 else 0.0
-
-                top_right_mask = text_mask[:top_cut, int(target_w * 0.40):]
-                top_right_cov = int(np.count_nonzero(top_right_mask)) / float(top_cut * (target_w - int(target_w * 0.40))) if top_zone_pixels > 0 else 0.0
-
-                # Bottom 35% zone
                 bottom_cut = int(target_h * 0.65)
+                left_cut = int(target_w * 0.45)
+                right_cut = int(target_w * 0.55)
+
+                tl_zone = text_mask[:top_cut, :left_cut]
+                tr_zone = text_mask[:top_cut, right_cut:]
+                bl_zone = text_mask[bottom_cut:, :left_cut]
+                br_zone = text_mask[bottom_cut:, right_cut:]
+
+                tl_cov = int(np.count_nonzero(tl_zone)) / float(top_cut * left_cut) if (top_cut * left_cut) > 0 else 0.0
+                tr_cov = int(np.count_nonzero(tr_zone)) / float(top_cut * (target_w - right_cut)) if (top_cut * (target_w - right_cut)) > 0 else 0.0
+                bl_cov = int(np.count_nonzero(bl_zone)) / float((target_h - bottom_cut) * left_cut) if ((target_h - bottom_cut) * left_cut) > 0 else 0.0
+                br_cov = int(np.count_nonzero(br_zone)) / float((target_h - bottom_cut) * (target_w - right_cut)) if ((target_h - bottom_cut) * (target_w - right_cut)) > 0 else 0.0
+
+                corner_activations = {"TL": round(tl_cov, 4), "TR": round(tr_cov, 4), "BL": round(bl_cov, 4), "BR": round(br_cov, 4)}
+
+                # Top headline zone (top 35% full width)
+                top_mask = text_mask[:top_cut, :]
+                top_cov = int(np.count_nonzero(top_mask)) / float(top_cut * target_w) if (top_cut * target_w) > 0 else 0.0
+
+                # Bottom subtitle zone (bottom 35% full width)
                 bottom_mask = text_mask[bottom_cut:, :]
-                bottom_text_pixels = int(np.count_nonzero(bottom_mask))
-                bottom_zone_pixels = float((target_h - bottom_cut) * target_w)
-                bottom_cov = bottom_text_pixels / bottom_zone_pixels if bottom_zone_pixels > 0 else 0.0
+                bottom_cov = int(np.count_nonzero(bottom_mask)) / float((target_h - bottom_cut) * target_w) if ((target_h - bottom_cut) * target_w) > 0 else 0.0
 
-                bottom_right_mask = text_mask[bottom_cut:, int(target_w * 0.45):]
-                bottom_right_cov = int(np.count_nonzero(bottom_right_mask)) / float((target_h - bottom_cut) * (target_w - int(target_w * 0.45))) if bottom_zone_pixels > 0 else 0.0
+                # ── Deteksi Komponen Terhubung di Sudut (Watermark Kecil / Ikon Logo) ──
+                # Tangkap jika ada blob teks di sudut berukuran >= 16 piksel
+                for c_name, c_zone in [("TL", tl_zone), ("TR", tr_zone), ("BL", bl_zone), ("BR", br_zone)]:
+                    c_uint8 = c_zone.astype(np.uint8)
+                    n_cc, _, stats_cc, _ = cv2.connectedComponentsWithStats(c_uint8)
+                    for k in range(1, n_cc):
+                        blob_area = stats_cc[k, cv2.CC_STAT_AREA]
+                        bw = stats_cc[k, cv2.CC_STAT_WIDTH]
+                        bh = stats_cc[k, cv2.CC_STAT_HEIGHT]
+                        # Karakter teks/logo di sudut: lebar >= 8px dan tinggi >= 8px dengan area >= 20px
+                        if blob_area >= 20 and bw >= 8 and bh >= 8:
+                            return True, total_cov, bottom_cov, f"Watermark / logo kecil terdeteksi di sudut {c_name} ({bw}x{bh}px)", corner_activations
 
-                if top_cov >= 0.070 or top_left_cov >= 0.060 or top_right_cov >= 0.060:
-                    return True, total_cov, bottom_cov, f"Teks overlay / watermark di area atas (coverage {max(top_cov, top_left_cov, top_right_cov) * 100:.1f}%)"
-                if bottom_right_cov >= 0.065:
-                    return True, total_cov, bottom_cov, f"Watermark / logo kreator di pojok bawah (coverage {bottom_right_cov * 100:.1f}%)"
-                if bottom_cov >= max_bottom:
-                    return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)"
-                if total_cov >= max_total:
-                    return True, total_cov, bottom_cov, f"Teks promosi dominan menutupi frame (coverage {total_cov * 100:.1f}%)"
+                # ── Ambang Batas Ketat Per-Zona ──
+                # Sudut TL / TR / BL / BR: >= 2.0% zona sudah dianggap watermark
+                if tl_cov >= 0.020:
+                    return True, total_cov, bottom_cov, f"Watermark di pojok kiri atas / TL (coverage {tl_cov * 100:.1f}%)", corner_activations
+                if tr_cov >= 0.020:
+                    return True, total_cov, bottom_cov, f"Watermark di pojok kanan atas / TR (coverage {tr_cov * 100:.1f}%)", corner_activations
+                if bl_cov >= 0.020:
+                    return True, total_cov, bottom_cov, f"Watermark di pojok kiri bawah / BL (coverage {bl_cov * 100:.1f}%)", corner_activations
+                if br_cov >= 0.020:
+                    return True, total_cov, bottom_cov, f"Watermark di pojok kanan bawah / BR (coverage {br_cov * 100:.1f}%)", corner_activations
 
-                # DBNet PP-OCRv4 terverifikasi bersih bebas teks
-                return False, total_cov, bottom_cov, "Teks dalam batas wajar (DBNet bersih)"
+                if bottom_cov >= self.max_bottom_coverage:
+                    return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)", corner_activations
+                if top_cov >= 0.032:
+                    return True, total_cov, bottom_cov, f"Teks headline / overlay di area atas (coverage {top_cov * 100:.1f}%)", corner_activations
+                if total_cov >= self.max_total_coverage:
+                    return True, total_cov, bottom_cov, f"Teks mendominasi frame (coverage {total_cov * 100:.1f}%)", corner_activations
+
+                return False, total_cov, bottom_cov, "Teks dalam batas aman (DBNet bersih)", corner_activations
             except Exception as e:
                 pass
 
-        # ── Jalur 2: Fast Sobel Horizontal Gradient Check (Fallback HANYA jika DBNet tidak aktif) ──
+        # ── Jalur 2: Sobel Horizontal Gradient Fallback (4-Corner Inspection) ──
         gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
         grad_x = cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3)
         abs_grad_x = cv2.convertScaleAbs(grad_x)
 
-        # Morphological horizontal connection to form text line blobs
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 3))
         connected = cv2.morphologyEx(abs_grad_x, cv2.MORPH_CLOSE, kernel)
         _, connected = cv2.threshold(connected, 55, 255, cv2.THRESH_BINARY)
 
         total_cov = float(cv2.countNonZero(connected)) / float(crop_area)
-
-        # Top 35% zone fallback
         top_y = int(h * 0.35)
-        top_roi = connected[:top_y, :]
-        top_zone_area = float(top_y * w)
-        top_cov = float(cv2.countNonZero(top_roi)) / top_zone_area if top_zone_area > 0 else 0.0
+        bottom_y = int(h * 0.65)
+        left_x = int(w * 0.45)
+        right_x = int(w * 0.55)
 
-        left_top_roi = connected[:top_y, :int(w * 0.60)]
-        left_top_area = float(top_y * int(w * 0.60))
-        left_top_cov = float(cv2.countNonZero(left_top_roi)) / left_top_area if left_top_area > 0 else 0.0
+        tl_sobel = float(cv2.countNonZero(connected[:top_y, :left_x])) / float(top_y * left_x) if (top_y * left_x) > 0 else 0.0
+        tr_sobel = float(cv2.countNonZero(connected[:top_y, right_x:])) / float(top_y * (w - right_x)) if (top_y * (w - right_x)) > 0 else 0.0
+        bl_sobel = float(cv2.countNonZero(connected[bottom_y:, :left_x])) / float((h - bottom_y) * left_x) if ((h - bottom_y) * left_x) > 0 else 0.0
+        br_sobel = float(cv2.countNonZero(connected[bottom_y:, right_x:])) / float((h - bottom_y) * (w - right_x)) if ((h - bottom_y) * (w - right_x)) > 0 else 0.0
+        bottom_cov = float(cv2.countNonZero(connected[bottom_y:, :])) / float((h - bottom_y) * w) if ((h - bottom_y) * w) > 0 else 0.0
 
-        right_top_roi = connected[:top_y, int(w * 0.40):]
-        right_top_area = float(top_y * (w - int(w * 0.40)))
-        right_top_cov = float(cv2.countNonZero(right_top_roi)) / right_top_area if right_top_area > 0 else 0.0
+        corner_activations = {"TL": round(tl_sobel, 4), "TR": round(tr_sobel, 4), "BL": round(bl_sobel, 4), "BR": round(br_sobel, 4)}
 
-        bottom_roi = connected[bottom_y:, :]
-        bottom_zone_area = float((h - bottom_y) * w)
-        bottom_cov = float(cv2.countNonZero(bottom_roi)) / bottom_zone_area if bottom_zone_area > 0 else 0.0
+        if tl_sobel >= 0.035 or tr_sobel >= 0.035 or bl_sobel >= 0.035 or br_sobel >= 0.035:
+            c_name = "TL" if tl_sobel >= 0.035 else ("TR" if tr_sobel >= 0.035 else ("BL" if bl_sobel >= 0.035 else "BR"))
+            return True, total_cov, bottom_cov, f"Watermark terdeteksi di sudut {c_name} (Sobel)", corner_activations
+        if bottom_cov >= 0.045:
+            return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (Sobel)", corner_activations
+        if total_cov >= 0.055:
+            return True, total_cov, bottom_cov, f"Densitas teks/grafis dominan (Sobel)", corner_activations
 
-        bottom_right_roi = connected[bottom_y:, int(w * 0.45):]
-        bottom_right_area = float((h - bottom_y) * (w - int(w * 0.45)))
-        bottom_right_cov = float(cv2.countNonZero(bottom_right_roi)) / bottom_right_area if bottom_right_area > 0 else 0.0
-
-        sobel_bottom_thresh = 0.08 if niche == "gadget_smartphone" else 0.06
-        sobel_total_thresh = 0.10 if niche == "gadget_smartphone" else 0.07
-
-        if left_top_cov >= 0.075 or right_top_cov >= 0.075 or top_cov >= 0.080:
-            return True, total_cov, bottom_cov, f"Teks overlay / watermark di area atas (densitas {max(top_cov, left_top_cov, right_top_cov) * 100:.1f}%)"
-        if bottom_right_cov >= 0.070:
-            return True, total_cov, bottom_cov, f"Watermark sudut bawah terdeteksi (densitas {bottom_right_cov * 100:.1f}%)"
-        if bottom_cov >= sobel_bottom_thresh:
-            return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (densitas {bottom_cov * 100:.1f}%)"
-        if total_cov >= sobel_total_thresh:
-            return True, total_cov, bottom_cov, f"Densitas teks/grafis dominan ({total_cov * 100:.1f}%)"
-
-        return False, total_cov, bottom_cov, "Teks dalam batas wajar"
+        return False, total_cov, bottom_cov, "Teks dalam batas aman (Sobel)", corner_activations
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. TAHAP 3: SCENE & OVERLAY CLASSIFIER (Custom MobileNetV3 + Visual Variance)
 # ─────────────────────────────────────────────────────────────────────────────
 class SceneGatekeeper:
+    """
+    Klasifikasi adegan dengan 3 status:
+    - 'rejected'   : jika p_reject >= 0.50 atau p_clean < 0.62
+    - 'uncertain'  : jika 0.62 <= p_clean < 0.78 (memerlukan konfirmasi temporal)
+    - 'valid_real' : jika p_clean >= 0.78 (clean candidate)
+    
+    Alasan pemilihan threshold:
+    Nilai 0.78 dipilih karena frame dengan p_clean antara 0.50 - 0.77 sering kali memuat
+    elemen unboxing yang berantakan, logo transparan, atau framing produk yang kurang fokus.
+    Nilai 0.62 menjadi batas pemisah zona uncertain vs reject.
+    """
+    CLEAN_CONF_THRESHOLD = 0.78
+    UNCERTAIN_CONF_THRESHOLD = 0.62
+
     def __init__(self):
         self.ort_session = None
         self.is_custom_model = False
@@ -353,7 +365,6 @@ class SceneGatekeeper:
             opts = ort.SessionOptions()
             opts.intra_op_num_threads = 2
 
-            # Prioritas 1: Model Custom Hasil Training (scene_filter_v2.onnx)
             if os.path.exists(custom_model_path):
                 try:
                     self.ort_session = ort.InferenceSession(
@@ -363,11 +374,10 @@ class SceneGatekeeper:
                     )
                     self.is_custom_model = True
                     self.backend = "custom_scene_filter_v2"
-                    print("  [SceneGatekeeper] 🎯 AI Custom Model (scene_filter_v2.onnx) AKTIF (Class 0: rejected, Class 1: valid_real).")
+                    print("  [SceneGatekeeper] 🎯 AI Custom Model (scene_filter_v2.onnx) AKTIF (Strict 3-State Policy).")
                 except Exception as e:
                     print(f"  [SceneGatekeeper] ⚠️ Gagal memuat custom scene_filter_v2.onnx: {e}")
 
-            # Prioritas 2: Generic ImageNet Pretrained Fallback
             if not self.ort_session and os.path.exists(generic_model_path):
                 try:
                     self.ort_session = ort.InferenceSession(
@@ -393,25 +403,22 @@ class SceneGatekeeper:
     def evaluate(self, crop_bgr):
         h, w = crop_bgr.shape[:2]
         if h < 50 or w < 50:
-            return False, 0.99, "Dimensi crop terlalu kecil"
+            return "rejected", 0.99, "Dimensi crop terlalu kecil"
 
-        # 1. Color Quantization Check (Detects 2D vector graphic cards, flat slide bumpers)
+        # 1. Color Quantization Check (Bumper datar / kartu grafis 2D)
         small = cv2.resize(crop_bgr, (64, 64), interpolation=cv2.INTER_AREA)
         quantized = (small >> 5).reshape(-1, 3)
         unique_colors = len(np.unique(quantized, axis=0))
-
-        # Real live camera footage has rich color gradients (> 40 unique colors at 64x64)
-        # Flat vector graphics, solid color slide bumpers, and intro cards have very few colors (< 22)
         if unique_colors < 22:
-            return False, 0.90, f"Terdeteksi kartu bumper statis / grafis 2D datar ({unique_colors} kluster warna)"
+            return "rejected", 0.90, f"Kartu bumper statis / grafis 2D datar ({unique_colors} warna)"
 
-        # 2. Laplacian Texture Variance (Detects solid color / blank screen)
+        # 2. Laplacian Texture Variance (Frame polos tanpa tekstur / blank screen)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
         laplacian_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
         if laplacian_var < 15.0:
-            return False, 0.85, f"Frame polos tanpa tekstur / slide bumper (laplacian: {laplacian_var:.1f})"
+            return "rejected", 0.85, f"Frame polos tanpa tekstur (laplacian: {laplacian_var:.1f})"
 
-        # 3. AI Scene Classification (Custom Fine-tuned or Generic ImageNet)
+        # 3. AI Scene Classification (Strict Confidence Policy)
         if self.ort_session:
             try:
                 resized = cv2.resize(crop_bgr, (224, 224), interpolation=cv2.INTER_LINEAR)
@@ -425,40 +432,36 @@ class SceneGatekeeper:
                 outputs = self.ort_session.run(None, {input_name: blob})
                 raw_logits = outputs[0][0]
 
-                # ── Custom Model Fine-Tuned (Uses labels mapping) ──
                 if self.is_custom_model:
+                    # Stabilized Softmax
                     exp_l = np.exp(raw_logits - np.max(raw_logits))
                     probs = exp_l / np.sum(exp_l)
-                    pred_class = int(np.argmax(probs))
-                    conf = float(probs[pred_class])
-                    label_name = self.labels[pred_class] if pred_class < len(self.labels) else str(pred_class)
+                    # Class 0: rejected, Class 1: valid_real
+                    p_reject = float(probs[0])
+                    p_clean = float(probs[1]) if len(probs) > 1 else (1.0 - p_reject)
 
-                    if label_name == "rejected" and conf > 0.55:
-                        return False, conf, f"Custom AI: Terdeteksi grafis/kartun/slide non-produk (confidence: {conf * 100:.1f}%)"
-                    elif label_name == "valid_real":
-                        return True, conf, f"Custom AI: Peragaan produk fisik nyata valid (confidence: {conf * 100:.1f}%)"
-
-                # ── Generic ImageNet Model Fallback ──
+                    if p_clean >= self.CLEAN_CONF_THRESHOLD:
+                        return "valid_real", p_clean, f"Custom AI: Peragaan produk fisik valid ({p_clean * 100:.1f}%)"
+                    elif p_clean >= self.UNCERTAIN_CONF_THRESHOLD:
+                        return "uncertain", p_clean, f"Custom AI: Zona uncertain ({p_clean * 100:.1f}%), perlu bukti temporal"
+                    else:
+                        return "rejected", p_reject, f"Custom AI: Grafis/kartun/overlay terdeteksi ({p_reject * 100:.1f}%)"
                 else:
                     top_class = int(np.argmax(raw_logits))
                     graphic_classes = {918, 919, 921, 664, 782, 916, 922}
                     if top_class in graphic_classes:
-                        return False, 0.80, f"MobileNetV3 mengklasifikasikan sebagai grafis/kartun/layar (class #{top_class})"
+                        return "rejected", 0.85, f"MobileNetV3 mengklasifikasikan sebagai grafis/kartun/layar (#{top_class})"
+                    return "valid_real", 0.80, "Adegan natural produk valid (ImageNet)"
             except Exception:
                 pass
 
-        return True, 0.95, "Adegan natural produk valid"
+        return "valid_real", 0.90, "Adegan natural produk valid (heuristic variance)"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. ORCHESTRATOR PIPELINE
 # ─────────────────────────────────────────────────────────────────────────────
 def detect_pillarbox(image_bgr):
-    """
-    Mendeteksi video vertikal yang di-pillarbox (strip hitam di sisi kiri dan kanan)
-    atau di-letterbox (strip hitam di atas dan bawah).
-    Video 9:16 yang valid tidak boleh memiliki pilar/bar hitam vertikal/horizontal.
-    """
     h, w = image_bgr.shape[:2]
     if w < 50 or h < 50:
         return False, 0.0, "Dimensi terlalu kecil"
@@ -481,7 +484,6 @@ def detect_pillarbox(image_bgr):
     if total_pillar >= 0.16 and (left_pct >= 0.07 or right_pct >= 0.07):
         return True, total_pillar, f"Pillarbox hitam di sisi samping ({total_pillar * 100:.1f}% frame)"
 
-    # Letterbox check (top/bottom horizontal bars)
     row_means = np.mean(gray, axis=1)
     top_black = 0
     while top_black < h and row_means[top_black] < black_thresh:
@@ -497,12 +499,6 @@ def detect_pillarbox(image_bgr):
 
 
 def detect_paper_manual(image_bgr):
-    """
-    Mendeteksi kertas buku panduan manual / kartu garansi cetak:
-    Kertas putih murni (val > 215), hampir tanpa saturasi warna (sat < 22), 
-    dan memiliki densitas teks cetak paragraf tinggi (edge_cov > 0.065).
-    Produk plastik putih, mangkuk, atau alat dapur memiliki gradien bayangan dan bentuk melengkung.
-    """
     h, w = image_bgr.shape[:2]
     if h < 60 or w < 60:
         return False, "Dimensi terlalu kecil"
@@ -513,20 +509,12 @@ def detect_paper_manual(image_bgr):
     edges = cv2.Canny(gray, 50, 150)
     edge_cov = float(np.count_nonzero(edges)) / float(h * w)
 
-    # Hanya anggap buku manual jika benar-benar kertas dokumen putih datar dengan teks rapat
     if val_mean > 215 and sat_mean < 22 and edge_cov > 0.065:
-        return True, f"Buku panduan / dokumen kertas manual terdeteksi (val={val_mean:.0f}, sat={sat_mean:.0f}, edges={edge_cov*100:.1f}%)"
+        return True, f"Buku panduan / dokumen kertas manual terdeteksi (val={val_mean:.0f}, edges={edge_cov*100:.1f}%)"
     return False, "Bukan dokumen kertas"
 
 
 def detect_synthetic_graphic_overlay(crop_bgr):
-    """
-    Mendeteksi elemen grafis non-teks buatan editor video YouTube:
-    - Panah merah/kuning penunjuk produk
-    - Lingkaran merah / kotak penanda highlight
-    - Tombol subscribe / follow / badge harga animasi
-    - Stiker emoji / grafis digital vektor berlatar solid
-    """
     h, w = crop_bgr.shape[:2]
     if h < 60 or w < 60:
         return False, "Crop terlalu kecil"
@@ -534,39 +522,27 @@ def detect_synthetic_graphic_overlay(crop_bgr):
     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
     _, s_channel, v_channel = cv2.split(hsv)
 
-    # 1. Mask piksel dengan saturasi & kecerahan ultra-tinggi (warna buatan/neon)
-    # Red range 1 & 2 (panah / lingkaran merah YouTube)
     red_mask1 = cv2.inRange(hsv, np.array([0, 190, 160]), np.array([10, 255, 255]))
     red_mask2 = cv2.inRange(hsv, np.array([170, 190, 160]), np.array([180, 255, 255]))
-    # Bright pure yellow / neon (kotak penanda / tombol highlight)
     yellow_mask = cv2.inRange(hsv, np.array([22, 210, 180]), np.array([34, 255, 255]))
-    # Neon green / cyan / magenta
     neon_mask = cv2.inRange(hsv, np.array([35, 220, 180]), np.array([160, 255, 255]))
 
     synthetic_mask = cv2.bitwise_or(cv2.bitwise_or(red_mask1, red_mask2), cv2.bitwise_or(yellow_mask, neon_mask))
-
-    # Bersihkan noise kecil (titik-titik bintik) dengan morfologi opening
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
     opened = cv2.morphologyEx(synthetic_mask, cv2.MORPH_OPEN, kernel)
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(opened)
-
     total_area = float(h * w)
     for i in range(1, num_labels):
         comp_area = stats[i, cv2.CC_STAT_AREA]
-        # Panah, badge, atau lingkaran biasanya berukuran antara 0.3% hingga 15% frame
         comp_ratio = comp_area / total_area
         if 0.003 <= comp_ratio <= 0.15:
             comp_mask = (labels == i).astype(np.uint8)
-            # Periksa kehalusan warna (flatness / standard deviation): grafis buatan warnanya datar tanpa bayangan alami
             comp_v = v_channel[comp_mask > 0]
             v_std = float(np.std(comp_v)) if len(comp_v) > 0 else 99.0
-
-            # Grafis vektor buatan editor memiliki v_std sangat rendah (< 14.0)
             if v_std < 14.0:
-                return True, f"Terdeteksi grafis overlay buatan (panah/lingkaran/stiker vektor, area {comp_ratio*100:.1f}%, std={v_std:.1f})"
+                return True, f"Terdeteksi grafis overlay buatan (panah/lingkaran/stiker vektor, area {comp_ratio*100:.1f}%)"
 
-    # 2. Deteksi watermark box / badge putih terang datar di area sudut (top 30% atau bottom 30%)
     white_mask = cv2.inRange(hsv, np.array([0, 0, 235]), np.array([180, 25, 255]))
     opened_w = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
     num_labels_w, labels_w, stats_w, _ = cv2.connectedComponentsWithStats(opened_w)
@@ -575,13 +551,12 @@ def detect_synthetic_graphic_overlay(crop_bgr):
         comp_ratio = comp_area / total_area
         top_y = stats_w[i, cv2.CC_STAT_TOP]
         height_c = stats_w[i, cv2.CC_STAT_HEIGHT]
-        # Jika badge putih berukuran 0.4% - 10% dan berada di area atas (< 35% h) atau bawah (> 65% h)
         if 0.004 <= comp_ratio <= 0.10 and (top_y < int(h * 0.35) or (top_y + height_c) > int(h * 0.65)):
             comp_mask = (labels_w == i).astype(np.uint8)
             comp_v = v_channel[comp_mask > 0]
             v_std = float(np.std(comp_v)) if len(comp_v) > 0 else 99.0
             if v_std < 10.0:
-                return True, f"Terdeteksi watermark / badge grafis putih di sudut frame (area {comp_ratio*100:.1f}%, std={v_std:.1f})"
+                return True, f"Terdeteksi watermark / badge grafis putih di sudut frame (area {comp_ratio*100:.1f}%)"
 
     return False, "Tidak ada grafis sintetis"
 
@@ -604,13 +579,22 @@ class FrameGatekeeper:
         return image[:, x_start:x_start + target_w]
 
     def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools"):
+        """
+        Mengevaluasi satu frame secara independen dan mengembalikan hasil lengkap:
+        - status: 'clean' | 'uncertain' | 'discarded'
+        - stage: tahap rejection
+        - cornerActivations: skor watermark 4 sudut (TL, TR, BL, BR)
+        """
         if not os.path.exists(file_path):
             return {
                 "filePath": file_path,
                 "timestamp": timestamp,
                 "status": "discarded",
                 "stage": "io_error",
-                "reason": "File frame tidak ditemukan di disk"
+                "reason": "File frame tidak ditemukan di disk",
+                "confidence": 0.0,
+                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                "decision": "REJECT"
             }
 
         img = cv2.imread(file_path)
@@ -620,10 +604,13 @@ class FrameGatekeeper:
                 "timestamp": timestamp,
                 "status": "discarded",
                 "stage": "io_error",
-                "reason": "Format gambar corrupt / gagal dibaca cv2"
+                "reason": "Format gambar corrupt / gagal dibaca cv2",
+                "confidence": 0.0,
+                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                "decision": "REJECT"
             }
 
-        # ── TAHAP 0: Pemeriksaan Pillarbox / Black Bars pada Full Frame ──
+        # ── TAHAP 0: Pemeriksaan Pillarbox / Black Bars ──
         has_pb, pb_ratio, pb_reason = detect_pillarbox(img)
         if has_pb:
             return {
@@ -632,12 +619,14 @@ class FrameGatekeeper:
                 "status": "discarded",
                 "stage": "orientation",
                 "reason": pb_reason,
-                "pillarboxRatio": round(pb_ratio, 3)
+                "confidence": round(pb_ratio, 3),
+                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                "decision": "REJECT"
             }
 
         crop = self.crop_9_16(img)
 
-        # ── TAHAP 0B: Pemeriksaan Buku Panduan / Dokumen Kertas Manual ──
+        # ── TAHAP 0B: Pemeriksaan Buku Panduan / Dokumen Kertas ──
         has_manual, manual_reason = detect_paper_manual(crop)
         if has_manual:
             return {
@@ -645,10 +634,13 @@ class FrameGatekeeper:
                 "timestamp": timestamp,
                 "status": "discarded",
                 "stage": "unboxing_manual",
-                "reason": manual_reason
+                "reason": manual_reason,
+                "confidence": 0.90,
+                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                "decision": "REJECT"
             }
 
-        # ── TAHAP 1A: Face Detection pada Crop 9:16 (Area Tengah Fokus Klip) ──
+        # ── TAHAP 1A: Face Detection pada Crop 9:16 ──
         has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = self.face_gate.detect(crop, niche=niche)
         if has_face_crop:
             return {
@@ -657,12 +649,13 @@ class FrameGatekeeper:
                 "status": "discarded",
                 "stage": "face",
                 "reason": face_reason_crop,
-                "confidence": face_conf_crop,
-                "box": face_box_crop
+                "confidence": round(face_conf_crop, 3),
+                "box": face_box_crop,
+                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                "decision": "REJECT"
             }
 
-        # ── TAHAP 1B: Face Detection pada Full 16:9 Frame (Presenter di Sisi Kiri / Kanan Video) ──
-        # Mencegah vlogger/presenter yang berdiri di pinggir layar lolos ke Gemini Vision
+        # ── TAHAP 1B: Face Detection pada Full Frame 16:9 ──
         has_face_full, face_conf_full, face_box_full, face_reason_full = self.face_gate.detect(img, niche=niche)
         if has_face_full:
             return {
@@ -670,13 +663,15 @@ class FrameGatekeeper:
                 "timestamp": timestamp,
                 "status": "discarded",
                 "stage": "face",
-                "reason": f"Presenter terdeteksi di video (area samping): {face_reason_full}",
-                "confidence": face_conf_full,
-                "box": face_box_full
+                "reason": f"Presenter terdeteksi di video: {face_reason_full}",
+                "confidence": round(face_conf_full, 3),
+                "box": face_box_full,
+                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                "decision": "REJECT"
             }
 
-        # ── TAHAP 2: Text Detection ──
-        has_text, total_cov, bottom_cov, text_reason = self.text_gate.detect(crop, niche=niche)
+        # ── TAHAP 2: Text & 4-Corner Watermark Detection ──
+        has_text, total_cov, bottom_cov, text_reason, corner_acts = self.text_gate.detect(crop, niche=niche)
         if has_text:
             return {
                 "filePath": file_path,
@@ -684,11 +679,14 @@ class FrameGatekeeper:
                 "status": "discarded",
                 "stage": "text",
                 "reason": text_reason,
+                "confidence": round(max(total_cov, bottom_cov), 3),
                 "totalCoverage": round(total_cov, 3),
-                "bottomCoverage": round(bottom_cov, 3)
+                "bottomCoverage": round(bottom_cov, 3),
+                "cornerActivations": corner_acts,
+                "decision": "REJECT"
             }
 
-        # ── TAHAP 2B: Deteksi Grafis Sintetis Non-Teks (Panah, Stiker, Badge, Lingkaran Merah) ──
+        # ── TAHAP 2B: Deteksi Grafis Sintetis (Panah / Stiker) ──
         has_graphic, graphic_reason = detect_synthetic_graphic_overlay(crop)
         if has_graphic:
             return {
@@ -696,145 +694,307 @@ class FrameGatekeeper:
                 "timestamp": timestamp,
                 "status": "discarded",
                 "stage": "graphic_overlay",
-                "reason": graphic_reason
+                "reason": graphic_reason,
+                "confidence": 0.85,
+                "cornerActivations": corner_acts,
+                "decision": "REJECT"
             }
 
-        # ── TAHAP 3: Scene Classifier ──
-        is_natural, scene_conf, scene_reason = self.scene_gate.evaluate(crop)
-        if not is_natural:
+        # ── TAHAP 3: Scene Classifier (Strict 3-State: valid_real, uncertain, rejected) ──
+        scene_state, scene_conf, scene_reason = self.scene_gate.evaluate(crop)
+        if scene_state == "rejected":
             return {
                 "filePath": file_path,
                 "timestamp": timestamp,
                 "status": "discarded",
                 "stage": "scene",
                 "reason": scene_reason,
-                "confidence": scene_conf
+                "confidence": round(scene_conf, 3),
+                "cornerActivations": corner_acts,
+                "decision": "REJECT"
+            }
+        elif scene_state == "uncertain":
+            return {
+                "filePath": file_path,
+                "timestamp": timestamp,
+                "status": "uncertain",
+                "stage": "uncertain_scene",
+                "reason": scene_reason,
+                "confidence": round(scene_conf, 3),
+                "cornerActivations": corner_acts,
+                "decision": "UNCERTAIN"
             }
 
-        # ── Lolos Seluruh Tahap: Frame Bersih ──
+        # ── Lolos Sebagai Clean Candidate (memerlukan verifikasi segmen temporal) ──
         return {
             "filePath": file_path,
             "timestamp": timestamp,
             "status": "clean",
             "stage": "passed",
-            "reason": "Lolos seluruh filter (Faceless, Tanpa Pillarbox, Bebas Teks, Adegan Natural)",
+            "reason": "Lolos seluruh filter per-frame (Faceless, Bebas Teks & Watermark, Scene Produk Valid)",
+            "confidence": round(scene_conf, 3),
             "totalCoverage": round(total_cov, 3),
-            "bottomCoverage": round(bottom_cov, 3)
+            "bottomCoverage": round(bottom_cov, 3),
+            "cornerActivations": corner_acts,
+            "decision": "CANDIDATE_CLEAN"
         }
 
-    def process_batch(self, frame_items, niche="kitchen_tools"):
-        results = []
+    def process_batch(self, frame_items, niche="kitchen_tools",
+                      min_consecutive_clean=3, min_clean_duration=4.0):
+        """
+        Memproses batch frame dengan logika:
+        1. Static frame detection (MAD & edge difference)
+        2. Per-frame evaluation
+        3. Multi-frame temporal watermark persistence aggregation (deteksi watermark berulang di sudut yang sama)
+        4. Clean Temporal Segment Validation (HANYA segmen kontinu >= 3 frame / >= 4.0s yang dinyatakan VERIFIED_CLEAN)
+        """
+        start_time = time.time()
+        if not frame_items:
+            return {
+                "status": "success", "eligible": False, "reason": "Frame items kosong",
+                "totalFrames": 0, "cleanFramesCount": 0, "discardedFramesCount": 0,
+                "verifiedSegments": [], "allFrames": [], "cleanFrames": [], "discardedFrames": []
+            }
+
+        # Normalisasi list items
+        normalized_items = []
+        for idx, item in enumerate(frame_items):
+            p = item.get("filePath") if isinstance(item, dict) else str(item)
+            t = float(item.get("timestamp", idx * 2.5)) if isinstance(item, dict) else float(idx * 2.5)
+            normalized_items.append({"filePath": p, "timestamp": t, "originalIndex": idx})
+
+        # Urutkan berdasarkan timestamp kronologis untuk analisa temporal
+        time_sorted = sorted(normalized_items, key=lambda x: x["timestamp"])
+
+        # ── 1. Inter-Frame Motion & Static Frame Detection (MAD + Edge Variance) ──
+        static_indices = set()
+        static_transitions = 0
+        consecutive_pairs = 0
+        motion_scores = {}
+
+        for i in range(len(time_sorted) - 1):
+            f1 = time_sorted[i]
+            f2 = time_sorted[i + 1]
+            dt = abs(f2["timestamp"] - f1["timestamp"])
+
+            # Bandingkan frame jika selisih waktu <= 3.5 detik
+            if dt <= 3.5 and os.path.exists(f1["filePath"]) and os.path.exists(f2["filePath"]):
+                consecutive_pairs += 1
+                try:
+                    img1 = cv2.imread(f1["filePath"])
+                    img2 = cv2.imread(f2["filePath"])
+                    if img1 is not None and img2 is not None:
+                        s1 = cv2.resize(img1, (80, 144))
+                        s2 = cv2.resize(img2, (80, 144))
+                        mad = float(cv2.absdiff(s1, s2).mean())
+
+                        g1 = cv2.cvtColor(s1, cv2.COLOR_BGR2GRAY)
+                        g2 = cv2.cvtColor(s2, cv2.COLOR_BGR2GRAY)
+                        e1 = cv2.Canny(g1, 50, 150)
+                        e2 = cv2.Canny(g2, 50, 150)
+                        edge_diff = float(cv2.absdiff(e1, e2).mean())
+
+                        motion_scores[f1["filePath"]] = round(mad, 2)
+                        # Gambar diam / beku jika MAD < 3.2 dan edge_diff < 4.0
+                        if mad < 3.2 and edge_diff < 4.0:
+                            static_transitions += 1
+                            static_indices.add(f1["filePath"])
+                            static_indices.add(f2["filePath"])
+                except Exception:
+                    pass
+
+        # ── 2. Evaluasi Single Frame ──
+        single_verdicts = []
+        for item in time_sorted:
+            path = item["filePath"]
+            ts = item["timestamp"]
+            v = self.process_single_frame(path, ts, niche=niche)
+
+            # Jika terdeteksi statis dan berada di badan video (> 3.0s):
+            if path in static_indices and ts > 3.0 and v["status"] != "discarded":
+                v["status"] = "discarded"
+                v["stage"] = "static_frame"
+                v["decision"] = "REJECT"
+                v["reason"] = f"Frame foto statis diam / freeze frame (MAD: {motion_scores.get(path, 0.0)})"
+
+            v["motionScore"] = motion_scores.get(path, 0.0)
+            single_verdicts.append(v)
+
+        # ── 3. Temporal Watermark Aggregation (Multi-Frame Persistence Tracker) ──
+        # Watermark biasanya berada di sudut yang sama persisten lintas >= 2 frame.
+        corner_hits = {"TL": [], "TR": [], "BL": [], "BR": []}
+        for idx, v in enumerate(single_verdicts):
+            c_acts = v.get("cornerActivations") or {}
+            for c_name in ["TL", "TR", "BL", "BR"]:
+                # Ambang aktivasi sudut yang mencurigakan (>= 0.012 atau 1.2% zona sudut)
+                if c_acts.get(c_name, 0.0) >= 0.012:
+                    corner_hits[c_name].append(idx)
+
+        persistent_watermark_corners = []
+        for c_name, hit_indices in corner_hits.items():
+            # Jika terdeteksi di >= 2 frame yang terpisah, probabilitas watermark pojok statis sangat tinggi!
+            if len(hit_indices) >= 2:
+                persistent_watermark_corners.append(c_name)
+                for h_idx in hit_indices:
+                    f_item = single_verdicts[h_idx]
+                    if f_item["status"] != "discarded" or f_item.get("stage") in ("passed", "scene", "uncertain_scene"):
+                        f_item["status"] = "discarded"
+                        f_item["stage"] = "persistent_watermark"
+                        f_item["decision"] = "REJECT"
+                        f_item["reason"] = f"Watermark statis konsisten terdeteksi di sudut {c_name} lintas {len(hit_indices)} frame"
+
+        # ── 4. Clean Temporal Segment Validation ──
+        # Menerapkan aturan ketat: '1 CLEAN FRAME != AMAN', 'CLEAN TEMPORAL SEGMENT = AMAN'.
+        # Hanya rangkaian frame berurutan (status == clean) yang memenuhi:
+        # - streak >= min_consecutive_clean (default: 3)
+        # - duration >= min_clean_duration (default: 4.0s)
+        # yang diizinkan menjadi VERIFIED_CLEAN.
+        verified_segments = []
+        current_streak = []
+
+        for idx, v in enumerate(single_verdicts):
+            is_clean = (v["status"] == "clean")
+            if is_clean:
+                current_streak.append(idx)
+            else:
+                # Tutup segmen yang sedang berjalan
+                if len(current_streak) >= min_consecutive_clean:
+                    start_ts = single_verdicts[current_streak[0]]["timestamp"]
+                    end_ts = single_verdicts[current_streak[-1]]["timestamp"]
+                    duration = round(end_ts - start_ts, 2)
+                    if duration >= min_clean_duration or len(current_streak) >= 4:
+                        verified_segments.append({
+                            "startIndex": current_streak[0],
+                            "endIndex": current_streak[-1],
+                            "startSec": start_ts,
+                            "endSec": end_ts,
+                            "durationSec": duration,
+                            "frameCount": len(current_streak),
+                            "frameIndices": list(current_streak),
+                            "cleanTimestamps": [single_verdicts[i]["timestamp"] for i in current_streak]
+                        })
+                current_streak = []
+
+        # Cek sisa streak di akhir video
+        if len(current_streak) >= min_consecutive_clean:
+            start_ts = single_verdicts[current_streak[0]]["timestamp"]
+            end_ts = single_verdicts[current_streak[-1]]["timestamp"]
+            duration = round(end_ts - start_ts, 2)
+            if duration >= min_clean_duration or len(current_streak) >= 4:
+                verified_segments.append({
+                    "startIndex": current_streak[0],
+                    "endIndex": current_streak[-1],
+                    "startSec": start_ts,
+                    "endSec": end_ts,
+                    "durationSec": duration,
+                    "frameCount": len(current_streak),
+                    "frameIndices": list(current_streak),
+                    "cleanTimestamps": [single_verdicts[i]["timestamp"] for i in current_streak]
+                })
+
+        # Himpunan indeks frame yang masuk dalam verified segment
+        verified_clean_indices = set()
+        for seg in verified_segments:
+            for fi in seg["frameIndices"]:
+                verified_clean_indices.add(fi)
+
+        # ── 5. Final Status Assignment Per Frame & Structured Logging ──
+        final_all_frames = []
         clean_frames = []
         discarded_frames = []
 
-        start_time = time.time()
+        for idx, v in enumerate(single_verdicts):
+            frame_name = os.path.basename(v["filePath"])
+            ts = v["timestamp"]
+            cls_name = "valid_real" if v.get("confidence", 0) >= 0.78 else (v.get("stage") or "uncertain")
+            mot = v.get("motionScore", 0.0)
 
-        # ── 1. Inter-Frame Motion & Static Frame Detection (MAD < 6.0) ──
-        prev_small = None
-        prev_ts = None
-        consecutive_pairs = 0
-        static_transitions = 0
-        static_indices = set()
-
-        for idx, item in enumerate(frame_items):
-            path = item.get("filePath") if isinstance(item, dict) else str(item)
-            ts = float(item.get("timestamp", 0.0)) if isinstance(item, dict) else 0.0
-            if path and os.path.exists(path):
-                img = cv2.imread(path)
-                if img is not None:
-                    small = cv2.resize(img, (80, 144))
-                    # Deteksi frame statis HANYA valid jika membandingkan frame yang bersebelahan waktu (<= 2.5 detik)
-                    # Pada sampling jarang (selisih 20-75s), frame TIDAK boleh dibandingkan karena kamera meja bisa statis
-                    # meskipun di antaranya terdapat aksi peragaan nyata!
-                    if prev_small is not None and prev_ts is not None and abs(ts - prev_ts) <= 2.5:
-                        consecutive_pairs += 1
-                        diff = float(cv2.absdiff(small, prev_small).mean())
-                        if diff < 6.0:
-                            static_transitions += 1
-                            static_indices.add(idx)
-                    prev_small = small
-                    prev_ts = ts
-
-        # ── 2. Per-Frame Gatekeeper Evaluation ──
-        for idx, item in enumerate(frame_items):
-            path = item.get("filePath") if isinstance(item, dict) else str(item)
-            ts = item.get("timestamp", 0.0) if isinstance(item, dict) else 0.0
-            verdict = self.process_single_frame(path, ts, niche=niche)
-
-            # Jika frame terdeteksi statis diam di badan video:
-            if idx in static_indices and ts > 3.0 and verdict["status"] == "clean":
-                verdict["status"] = "discarded"
-                verdict["stage"] = "static_frame"
-                verdict["reason"] = "Frame foto statis diam tanpa gerakan fisik peragaan"
-
-            results.append(verdict)
-
-            if verdict["status"] == "clean":
-                clean_frames.append(verdict)
+            if idx in verified_clean_indices:
+                v["status"] = "clean"
+                v["decision"] = "VERIFIED_CLEAN"
+                clean_frames.append(v)
+                print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} text=clean face=clean motion={mot:>4.2f} decision=VERIFIED_CLEAN ✅")
             else:
-                discarded_frames.append(verdict)
+                if v["status"] == "clean":
+                    # Frame bersih terisolasi tanpa segmen temporal kontinu
+                    v["status"] = "discarded"
+                    v["stage"] = "temporal_inconsistency"
+                    v["decision"] = "ISOLATED_CLEAN_REJECT"
+                    v["reason"] = f"Frame bersih terisolasi ({ts:.1f}s), tidak memenuhi syarat segmen kontinu minimal 3 frame berurutan / 4.0s"
+                elif v["status"] == "uncertain":
+                    v["status"] = "discarded"
+                    v["stage"] = "uncertain_scene"
+                    v["decision"] = "UNCERTAIN_REJECT"
+                    v["reason"] = f"Keyakinan model lokal di zona uncertain ({v.get('confidence', 0)*100:.1f}%) tanpa konfirmasi segmen temporal"
+                else:
+                    v["decision"] = "REJECT"
+
+                discarded_frames.append(v)
+                print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} stage={v.get('stage','none'):<16} decision={v.get('decision')} ⛔ ({v.get('reason')})")
+
+            final_all_frames.append(v)
+
+        # Kembalikan ke urutan asli jika diperlukan pemetaan ulang
+        path_to_final = {f["filePath"]: f for f in final_all_frames}
+        ordered_results = [path_to_final.get(item["filePath"], single_verdicts[0]) for item in normalized_items]
 
         elapsed_ms = (time.time() - start_time) * 1000.0
-        avg_ms_per_frame = elapsed_ms / max(1, len(frame_items))
+        avg_ms = elapsed_ms / max(1, len(frame_items))
 
-        # Check for opening intro cutoff
+        # Check opening intro cutoff
         intro_cutoff_sec = 0.0
-        if len(results) >= 2 and results[0]["status"] == "discarded" and results[0]["stage"] in ("text", "scene", "static_frame", "unboxing_manual", "orientation"):
-            intro_cutoff_sec = max(3.0, results[0].get("timestamp", 3.0))
-            if results[1]["status"] == "discarded" and results[1]["stage"] in ("text", "scene", "static_frame", "unboxing_manual", "orientation"):
-                intro_cutoff_sec = max(intro_cutoff_sec, results[1].get("timestamp", 5.0))
+        if len(ordered_results) >= 2 and ordered_results[0]["status"] == "discarded":
+            intro_cutoff_sec = max(3.0, ordered_results[0].get("timestamp", 3.0))
+            if ordered_results[1]["status"] == "discarded":
+                intro_cutoff_sec = max(intro_cutoff_sec, ordered_results[1].get("timestamp", 5.0))
 
-        total_count = max(1, len(frame_items))
-        static_ratio = float(static_transitions) / max(1, consecutive_pairs) if consecutive_pairs > 0 else 0.0
-        
-        face_discards = sum(1 for d in discarded_frames if d["stage"] == "face")
-        text_discards = sum(1 for d in discarded_frames if d["stage"] == "text")
-        scene_discards = sum(1 for d in discarded_frames if d["stage"] == "scene")
-        static_discards = sum(1 for d in discarded_frames if d["stage"] == "static_frame")
-        orient_discards = sum(1 for d in discarded_frames if d["stage"] == "orientation")
-        manual_discards = sum(1 for d in discarded_frames if d["stage"] == "unboxing_manual")
+        # ── Keputusan Kelayakan Video (Strict Gatekeeper Policy) ──
+        # Video HANYA eligible jika memiliki MINIMAL 1 Clean Temporal Segment yang terverifikasi!
+        has_verified_segment = len(verified_segments) > 0
+        total_clean_count = len(clean_frames)
+        total_f_count = max(1, len(frame_items))
 
-        # Toleransi Granular Sesuai Arahan Pengguna:
-        # Jangan tolak video hanya karena 1-2 frame tidak sesuai filter (frame tersebut dibuang per-frame).
-        # Tolak seluruh video HANYA jika:
-        # 1. Wajah seluruhnya / dominan vlogger (>= 80% frame wajah atau < 2 frame bersih)
-        # 2. Subtitle / teks promosi seluruhnya (>= 80% frame teks atau < 2 frame bersih)
-        # 3. Slideshow diam / beku seluruhnya (>= 80% transisi statis)
-        # 4. Tidak ada frame bersih sama sekali (< 2 frame)
-        is_entirely_faces = (face_discards / total_count >= 0.80) or (len(clean_frames) < 2 and face_discards >= 3)
-        is_entirely_text = (text_discards / total_count >= 0.80) or (len(clean_frames) < 2 and text_discards >= 3)
-        is_entirely_static = (static_ratio >= 0.80) or (static_discards / total_count >= 0.80)
+        face_count = sum(1 for d in discarded_frames if d.get("stage") == "face")
+        text_count = sum(1 for d in discarded_frames if d.get("stage") in ("text", "persistent_watermark"))
+        static_count = sum(1 for d in discarded_frames if d.get("stage") == "static_frame")
 
-        eligible = (len(clean_frames) >= 2) and (not is_entirely_faces) and (not is_entirely_text) and (not is_entirely_static)
+        eligible = has_verified_segment and (total_clean_count >= min_consecutive_clean)
 
-        summary_reason = "Visual video bersih dan fokus pada produk natural."
-        if not eligible:
-            if is_entirely_static:
-                summary_reason = f"Ditolak AI Gatekeeper: Video terdeteksi seluruhnya berupa slideshow foto statis ({static_transitions} transisi beku). Wajib video dengan peragaan fisik nyata."
-            elif is_entirely_faces:
-                summary_reason = f"Ditolak AI Gatekeeper: Video seluruhnya/dominan menampilkan wajah manusia ({face_discards}/{total_count} frame wajah). Wajib fokus pada produk."
-            elif is_entirely_text:
-                summary_reason = f"Ditolak AI Gatekeeper: Video seluruhnya dipenuhi subtitle / teks promosi dominan ({text_discards}/{total_count} frame teks)."
+        if eligible:
+            summary_reason = f"Visual video valid: Ditemukan {len(verified_segments)} segmen temporal bersih kontinu ({total_clean_count}/{total_f_count} frame VERIFIED_CLEAN)."
+        else:
+            if face_count >= 3 and face_count / total_f_count >= 0.40:
+                summary_reason = f"Ditolak AI Gatekeeper: Video menampilkan wajah presenter ({face_count}/{total_f_count} frame). Wajib 100% faceless."
+            elif text_count >= 3 and text_count / total_f_count >= 0.40:
+                summary_reason = f"Ditolak AI Gatekeeper: Video dipenuhi teks/watermark ({text_count}/{total_f_count} frame). Wajib footage produk bersih."
+            elif static_count >= 3 and static_count / total_f_count >= 0.40:
+                summary_reason = f"Ditolak AI Gatekeeper: Video berupa slideshow statis ({static_count}/{total_f_count} frame beku). Wajib video aksi gerak fisik."
+            elif not has_verified_segment:
+                summary_reason = f"Ditolak AI Gatekeeper: Tidak ditemukan Clean Temporal Segment kontinu (frame bersih sporadis terisolasi, tidak ada {min_consecutive_clean} frame berurutan)."
             else:
-                summary_reason = f"Ditolak AI Gatekeeper: Hanya {len(clean_frames)} frame bersih ditemukan (kurang dari syarat minimal 2 frame)."
+                summary_reason = f"Ditolak AI Gatekeeper: Hanya {total_clean_count} frame bersih (kurang dari syarat minimal)."
+
+        print(f"\n[Gatekeeper] 🏁 Batch Summary: {len(verified_segments)} verified segments, {total_clean_count}/{total_f_count} clean frames. Eligible: {eligible}. Waktu: {elapsed_ms:.1f}ms ({avg_ms:.1f}ms/frame)")
 
         return {
             "status": "success",
             "eligible": eligible,
             "reason": summary_reason,
             "totalFrames": len(frame_items),
-            "cleanFramesCount": len(clean_frames),
+            "cleanFramesCount": total_clean_count,
             "discardedFramesCount": len(discarded_frames),
             "introCutoffSec": intro_cutoff_sec,
             "hasOpeningIntro": intro_cutoff_sec > 0.0,
+            "verifiedSegments": verified_segments,
+            "persistentWatermarkCorners": persistent_watermark_corners,
             "benchmarks": {
                 "totalMs": round(elapsed_ms, 1),
-                "avgMsPerFrame": round(avg_ms_per_frame, 1),
-                "fps": round(1000.0 / max(1.0, avg_ms_per_frame), 1)
+                "avgMsPerFrame": round(avg_ms, 1),
+                "fps": round(1000.0 / max(1.0, avg_ms), 1)
             },
             "cleanFrames": clean_frames,
             "discardedFrames": discarded_frames,
-            "allFrames": results
+            "allFrames": ordered_results
         }
 
 
@@ -858,12 +1018,18 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
         if self.path in ("/health", "/"):
             self._send_json(200, {
                 "status": "online",
-                "service": "AI Local Frame Gatekeeper",
-                "version": "1.0.0",
+                "service": "AI Local Frame Gatekeeper (Temporal Segment Edition)",
+                "version": "2.0.0",
+                "policy": {
+                    "minConsecutiveClean": 3,
+                    "minCleanDurationSec": 4.0,
+                    "cleanConfidenceThreshold": SceneGatekeeper.CLEAN_CONF_THRESHOLD,
+                    "uncertainThreshold": SceneGatekeeper.UNCERTAIN_CONF_THRESHOLD
+                },
                 "models": {
-                    "face": GATEKEEPER.face_gate.backend,
-                    "text": GATEKEEPER.text_gate.backend,
-                    "scene": GATEKEEPER.scene_gate.backend
+                    "face": GATEKEEPER.face_gate.backend if GATEKEEPER else "unknown",
+                    "text": GATEKEEPER.text_gate.backend if GATEKEEPER else "unknown",
+                    "scene": GATEKEEPER.scene_gate.backend if GATEKEEPER else "unknown"
                 }
             })
         else:
@@ -877,12 +1043,18 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 payload = json.loads(raw_body)
                 frames = payload.get("frames", [])
                 niche = payload.get("niche", "kitchen_tools")
+                min_consec = int(payload.get("minConsecutiveClean", 3))
+                min_dur = float(payload.get("minCleanDuration", 4.0))
 
                 if not frames:
                     self._send_json(400, {"error": "Array 'frames' kosong atau tidak ditemukan"})
                     return
 
-                res = GATEKEEPER.process_batch(frames, niche=niche)
+                res = GATEKEEPER.process_batch(
+                    frames, niche=niche,
+                    min_consecutive_clean=min_consec,
+                    min_clean_duration=min_dur
+                )
                 self._send_json(200, res)
             except Exception as err:
                 self._send_json(500, {"error": str(err)})
@@ -898,7 +1070,7 @@ def run_server(port=5050):
     GATEKEEPER = FrameGatekeeper()
     server_address = ("127.0.0.1", port)
     httpd = ThreadingHTTPServer(server_address, GatekeeperHTTPHandler)
-    print(f"📡 [AI Gatekeeper Server] Mendengarkan pada http://127.0.0.1:{port}")
+    print(f"📡 [AI Gatekeeper Server v2.0] Mendengarkan pada http://127.0.0.1:{port}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -907,7 +1079,7 @@ def run_server(port=5050):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="AI Local Frame Gatekeeper Service")
+    parser = argparse.ArgumentParser(description="AI Local Frame Gatekeeper Service v2.0")
     parser.add_argument("--port", type=int, default=5050, help="HTTP server port (default: 5050)")
     parser.add_argument("--download-models", action="store_true", help="Download ONNX models before start")
     args = parser.parse_args()
