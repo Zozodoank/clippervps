@@ -1975,8 +1975,8 @@ export async function runStage1Pipeline({
 
       if (candidateResults.length === 1) {
         const singleCleanCount = candidateResults[0].cleanFrames?.length || 0;
-        if (singleCleanCount < 5) {
-          throw new Error(`Hanya ditemukan 1 video kandidat untuk "${productTitle}" dan frame bersihnya terlalu sedikit (${singleCleanCount} frame). Dibutuhkan minimal 5 frame peragaan bersih.`);
+        if (singleCleanCount < 2) {
+          throw new Error(`Hanya ditemukan 1 video kandidat untuk "${productTitle}" dan frame bersihnya terlalu sedikit (${singleCleanCount} frame). Dibutuhkan minimal 2 frame peragaan bersih.`);
         }
         console.warn(`[Job ${jobId}] ℹ️ Beroperasi dalam mode Single-Source Kaya Adegan (${singleCleanCount} frame bersih dari 1 video). Melanjutkan proses storyboard...`);
       }
@@ -1985,7 +1985,7 @@ export async function runStage1Pipeline({
       const pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 });
       console.log(`[Job ${jobId}] 🎯 Pool Multi-Kandidat Terbentuk: ${pooledFrames.length} frame bersih gabungan dari ${candidateResults.length} video kandidat.`);
 
-      if (pooledFrames.length < 4) {
+      if (pooledFrames.length < 2) {
         throw new Error(`Semua kandidat video YouTube (${candidatesToProcess.length} video) tidak memiliki cukup frame bersih peragaan produk untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'terlalu banyak wajah / video rusak'}.`);
       }
 
@@ -2339,14 +2339,14 @@ export async function runStage1Pipeline({
         }
 
         // 2. Replenish durasi jika klip bersih tersisa < 6 atau durasi < 28s
-        if (cleanAuditedClips.length >= 3) {
+        if (cleanAuditedClips.length >= 1) {
           highlight.clips = cleanAuditedClips;
           const currentDuration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
           if (cleanAuditedClips.length < 6 || currentDuration < 28.0) {
             console.log(`[ClipAudit] ℹ️ Klip bersih pasca-audit berjumlah ${cleanAuditedClips.length} (${currentDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai minimal 6-7 klip (30-35s)...`);
             const baseClips = [...cleanAuditedClips];
             let expRound = 1;
-            while (cleanAuditedClips.length < 7 && expRound <= 4) {
+            while (cleanAuditedClips.length < 7 && expRound <= 6) {
               for (const base of baseClips) {
                 if (cleanAuditedClips.length >= 7) break;
                 const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
@@ -2367,11 +2367,63 @@ export async function runStage1Pipeline({
           highlight.clips = cleanAuditedClips;
           highlight.duration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
         } else {
-          console.warn(`[ClipAudit] Klip bersih tersisa terlalu sedikit (${cleanAuditedClips.length}). Menolak video untuk mencari kandidat lain...`);
-          const auditErr = new Error('Video ditolak pada audit pasca-download: klip terpilih terdeteksi mengandung teks overlay promosi, bumper statis, atau wajah manusia.');
-          auditErr.isAiRejection = true;
-          auditErr.rejectionReason = 'Mengandung teks overlay promosi, bumper statis, atau wajah manusia pada klip terpilih.';
-          throw auditErr;
+          // USER MANDATE: Jika klip terpilih terbuang seluruhnya pada audit, JANGAN buang video!
+          // Ambil frame peragaan bersih yang tersimpan di pooledFrames dari video yang sama!
+          console.warn(`[ClipAudit] ⚠️ Seluruh klip awal terbuang pada audit. Memulihkan klip dari frame bersih alternatif pada video yang sama...`);
+          const fallbackCleanTimestamps = (pooledFrames || [])
+            .map(f => f.timestamp)
+            .filter(t => t !== undefined && t > 0);
+
+          const recoveryClips = [];
+          const usedStarts = new Set();
+          for (let rIdx = 0; rIdx < Math.min(7, fallbackCleanTimestamps.length); rIdx++) {
+            const ts = fallbackCleanTimestamps[rIdx];
+            if (!usedStarts.has(ts)) {
+              usedStarts.add(ts);
+              recoveryClips.push({
+                startSeconds: ts,
+                endSeconds: ts + sceneDuration,
+                duration: sceneDuration,
+                startTime: formatSeconds(ts),
+                endTime: formatSeconds(ts + sceneDuration),
+                storyboardSlot: recoveryClips.length + 1,
+                reason: `Recovered Clean Segment #${rIdx + 1}`,
+                candidateIndex: 0,
+                videoPath: rawVideoPath,
+              });
+            }
+          }
+
+          if (recoveryClips.length > 0) {
+            let expRound = 1;
+            const baseClips = [...recoveryClips];
+            while (recoveryClips.length < 7 && expRound <= 6) {
+              for (const base of baseClips) {
+                if (recoveryClips.length >= 7) break;
+                const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
+                recoveryClips.push({
+                  ...base,
+                  startSeconds: newStart,
+                  endSeconds: newStart + sceneDuration,
+                  duration: sceneDuration,
+                  startTime: formatSeconds(newStart),
+                  endTime: formatSeconds(newStart + sceneDuration),
+                  storyboardSlot: recoveryClips.length + 1,
+                  reason: `${base.reason} (Recovery Expansion #${expRound})`,
+                });
+              }
+              expRound++;
+            }
+            highlight.clips = recoveryClips;
+            highlight.duration = recoveryClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+            console.log(`[ClipAudit] 🛡️ Berhasil memulihkan ${highlight.clips.length} klip bersih (${highlight.duration.toFixed(1)}s) dari video yang sama!`);
+          } else {
+            console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
+            const auditErr = new Error('Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi, bumper statis, atau wajah.');
+            auditErr.isAiRejection = true;
+            auditErr.rejectionReason = 'Mengandung teks overlay promosi, bumper statis, atau wajah manusia.';
+            throw auditErr;
+          }
         }
       } else {
         console.log(`[ClipAudit] ✅ Seluruh ${highlight.clips.length} klip terverifikasi 100% bersih bebas teks overlay, bumper statis, dan wajah.`);

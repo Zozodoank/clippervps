@@ -368,13 +368,10 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
         'haul with me', 'watch me'
       ];
 
-  // Honorific/persona standalone words must use word boundaries (\b) so "memasang", "memasak", "kemasan" don't falsely match "mas"
-  const personaRegex = /\b(mas|mbak|abang|bunda|mamah|teteh|kakak|host|creator)\b/i;
-
   const descPreview = descLower.slice(0, 500);
-  const isFaceTitle = faceAndVlogKeywords.some(kw => titleLower.includes(kw)) || (!isGadget && personaRegex.test(titleLower));
-  // Jangan tolak video sebelum diinspeksi visual hanya karena sapaan santai ("Halo guys", "Halo teman") di deskripsi.
-  // Hanya tolak jika deskripsi secara tegas menyatakan format podcast atau daily vlog pribadi.
+  // Jangan tolak video sebelum diinspeksi visual hanya karena sapaan santai ("Halo guys", "bunda", "kakak") di judul atau deskripsi.
+  // Hanya tolak jika judul atau deskripsi secara tegas menyatakan format vlog personal, podcast, atau facecam.
+  const isFaceTitle = faceAndVlogKeywords.some(kw => titleLower.includes(kw));
   const isFaceDesc = /\b(daily vlog|podcast|facecam|live stream|a day in my life)\b/i.test(descPreview);
 
   if (isFaceTitle || isFaceDesc) {
@@ -811,14 +808,14 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       }));
 
     const verifiedSegments = aiResult.verifiedSegments || [];
-    // Syarat ketat: Video HANYA eligible jika microservice menyetujui, terdapat minimal 1 Clean Temporal Segment,
-    // dan jumlah frame VERIFIED_CLEAN mencukupi minimal segmen temporal kontinu!
-    const isEligible = (aiResult.eligible === true) && (verifiedSegments.length > 0) && (cleanFrames.length >= (allowPartialClean ? 2 : GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES));
+    // USER MANDATE: Video eligible jika terdapat frame peragaan bersih (cleanFrames >= 1)
+    // Frame kotor disingkirkan, frame bersih disimpan untuk diekspansi dinamis menjadi klip utuh!
+    const isEligible = cleanFrames.length > 0;
 
     if (isEligible) {
-      console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame VERIFIED_CLEAN dalam ${verifiedSegments.length} segmen kontinu (${aiResult.benchmarks?.totalMs || 0}ms).`);
+      console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame VERIFIED_CLEAN (${verifiedSegments.length} segmen kontinu, ${aiResult.benchmarks?.totalMs || 0}ms).`);
     } else {
-      console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper menolak video: ${aiResult.reason} (${cleanFrames.length}/${frames.length} frame bersih, ${verifiedSegments.length} segmen).`);
+      console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper: 0/${frames.length} frame bersih (${aiResult.reason || 'seluruh frame tidak layak'}).`);
     }
 
     const discardedFaceTimestamps = discardedFrames
@@ -1172,19 +1169,15 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     if (verifiedTimestamps.has(f.timestamp)) {
       finalClean.push({ ...f, status: 'clean', decision: 'VERIFIED_CLEAN' });
     } else {
-      discardedFrames.push({
-        ...f,
-        status: 'discarded',
-        stage: 'temporal_inconsistency',
-        decision: 'ISOLATED_CLEAN_REJECT',
-        reason: 'Frame bersih terisolasi tanpa konsistensi temporal (kurang dari syarat minimal 3 frame berurutan)'
-      });
+      // USER MANDATE: JANGAN buang frame bersih sebagai ISOLATED_CLEAN_REJECT!
+      // Setiap frame yang lolos deteksi wajah, teks, dan bukan bumper statis adalah frame aksi produk yang valid.
+      finalClean.push({ ...f, status: 'clean', decision: 'CLEAN_ACTION_FRAME' });
     }
   }
 
   const totalBumperFrames = openingBumperCount + bodyBumperCount;
   const bumperRatio = totalBumperFrames / Math.max(1, frameBuffers.length - 1);
-  if (bodyBumperCount >= 3 || bumperRatio >= 0.35) {
+  if (bodyBumperCount >= 3 || bumperRatio >= 0.50) {
     return {
       eligible: false,
       cleanFrames: [],
@@ -1205,11 +1198,11 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     };
   }
 
-  const isEligible = verifiedSegments.length > 0 && finalClean.length >= (allowPartialClean ? 2 : GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES);
+  const isEligible = finalClean.length > 0;
 
   return {
     eligible: isEligible,
-    reason: isEligible ? undefined : 'Tidak ditemukan Clean Temporal Segment kontinu (minimal 3 frame berurutan / 4.0s bebas watermark/wajah/subtitle).',
+    reason: isEligible ? undefined : 'Tidak ditemukan frame peragaan produk yang bersih (bebas watermark/wajah/subtitle).',
     cleanFrames: finalClean,
     discardedFrames,
     verifiedSegments,
@@ -1230,13 +1223,10 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
 
 /**
  * Memfilter frame visual dari 1 kandidat secara granular per frame:
- * Hanya mengembalikan kandidat yang memiliki Clean Temporal Segments yang terverifikasi.
+ * Membuang frame yang tidak sesuai (wajah/bumper/teks), dan MENYIMPAN seluruh frame peragaan produk yang bersih!
  */
 export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null, niche = 'kitchen_tools' } = {}) {
-  const result = await inspectFramesLocally(frames, { allowPartialClean: false, niche });
-  if (!result.eligible) {
-    return { candidateIndex, candidate, cleanFrames: [], eligible: false, reason: result.reason, verifiedSegments: [] };
-  }
+  const result = await inspectFramesLocally(frames, { allowPartialClean: true, niche });
 
   const clean = (result.cleanFrames || []).map(f => ({
     ...f,
@@ -1247,14 +1237,16 @@ export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0
     candidate,
   }));
 
+  const isEligible = clean.length > 0;
   return {
     candidateIndex,
     candidate,
-    eligible: clean.length >= GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES,
+    eligible: isEligible,
     cleanFrames: clean,
     verifiedSegments: result.verifiedSegments || [],
     discardedCount: frames.length - clean.length,
     totalFrames: frames.length,
+    reason: isEligible ? undefined : (result.reason || 'Tidak ada frame peragaan bersih yang terdeteksi.'),
   };
 }
 

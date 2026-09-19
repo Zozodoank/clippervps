@@ -494,7 +494,7 @@ export function buildFaceAndMotionCriterion(niche = 'kitchen_tools', clipSec = 4
   * Klip WAJIB memiliki gerakan fisik dinamis dan nyata (tangan mengoperasikan produk, bahan terpotong/terkupas, cairan mengalir, tombol ditekan, motor berputar).
 - REJECT IMMEDIATELY (status: 'reject') IF:
   * The video is a personal vlog, cooking recipe vlog, food show, talking-head, mukbang, or presenter-led show where a person is speaking or presenting in the kitchen.
-  * The video does NOT contain at least 10 distinct, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
+  * The video does NOT contain at least 5 clean, satisfying, 100% faceless hands-only tabletop action clips (${clipSec}s each).
   * In rejection output, set reason to: "Menampilkan wajah atau presenter manusia (wajib 100% faceless peragaan tangan)"`;
 }
 
@@ -801,8 +801,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   const mentionsLogoInFrame = (isRejectStatus || hasStaticLogo) && (reasonLower.includes('logo') || reasonLower.includes('tiktok') || reasonLower.includes('channel') || reasonLower.includes('identitas') || reasonLower.includes('sosmed')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
   const mentionsSubtitlesInReason = reasonLower.includes('subtitle') || reasonLower.includes('caption') || reasonLower.includes('teks berjalan') || reasonLower.includes('terjemahan') || reasonLower.includes('teks mengambang') || reasonLower.includes('floating text') || reasonLower.includes('stiker teks') || reasonLower.includes('teks promo') || reasonLower.includes('tulisan');
 
-  const shouldReject = isRejectStatus || isMatchFalse || hasFace || hasWatermarkInFrame || hasSocialOrChannelInFrame || hasSubtitles || hasFloatingText || hasGraphic || hasBumper || hasStaticLogo || isSynthetic ||
-    mentionsFaceInReason || mentionsGraphicInReason || mentionsBumperInReason || mentionsWatermarkInFrame || mentionsLogoInFrame || mentionsSubtitlesInReason;
+  // USER MANDATE: Jangan tolak seluruh video jika ada bagian intro/frame yang memiliki wajah/teks.
+  // Hanya tolak jika terjadi fatal mismatch (produk berbeda, CGI/animasi, atau perabot besar).
+  const isFatalMismatch = isMatchFalse || isSynthetic || isBulky;
+  const hasUsableClipsOrTimestamps = (Array.isArray(parsed.timestamps) && parsed.timestamps.length >= 2) ||
+                                     (Array.isArray(parsed.clips) && parsed.clips.length >= 2);
+  const shouldReject = isFatalMismatch || (isRejectStatus && !hasUsableClipsOrTimestamps && !allowFallbackClips);
 
   if (shouldReject) {
     let rejectionMsg = reasonText;
@@ -1217,8 +1221,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     const mentionsLogoInFrame = (isRejectStatus || hasStaticLogo) && (reasonLower.includes('logo') || reasonLower.includes('tiktok') || reasonLower.includes('channel') || reasonLower.includes('identitas') || reasonLower.includes('sosmed')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
     const mentionsSubtitlesInReason = reasonLower.includes('subtitle') || reasonLower.includes('caption') || reasonLower.includes('teks berjalan') || reasonLower.includes('terjemahan') || reasonLower.includes('teks mengambang') || reasonLower.includes('floating text') || reasonLower.includes('stiker teks') || reasonLower.includes('teks promo') || reasonLower.includes('tulisan');
 
-    const shouldReject = isRejectStatus || isMatchFalse || hasFace || hasWatermarkInFrame || hasSocialOrChannelInFrame || hasSubtitles || hasFloatingText || hasGraphic || hasBumper || hasStaticLogo || isSynthetic ||
-      mentionsFaceInReason || mentionsGraphicInReason || mentionsBumperInReason || mentionsWatermarkInFrame || mentionsLogoInFrame || mentionsSubtitlesInReason;
+    // USER MANDATE: Jangan tolak seluruh video jika ada bagian intro/frame yang memiliki wajah/teks.
+    // Hanya tolak jika terjadi fatal mismatch (produk berbeda, CGI/animasi, atau perabot besar).
+    const isFatalMismatch = isMatchFalse || isSynthetic || isBulky;
+    const hasUsableClipsOrTimestamps = (Array.isArray(parsed.timestamps) && parsed.timestamps.length >= 2) ||
+                                       (Array.isArray(parsed.clips) && parsed.clips.length >= 2);
+    const shouldReject = isFatalMismatch || (isRejectStatus && !hasUsableClipsOrTimestamps && !allowFallbackClips);
 
     if (shouldReject) {
       let rejectionMsg = reasonText;
