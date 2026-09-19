@@ -71,6 +71,7 @@ function startServerProcess() {
     env: {
       ...process.env,
       PORT: String(serverPort),
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --no-deprecation`.trim(),
     },
     stdio: 'inherit',
     shell: true,
@@ -108,6 +109,9 @@ async function startGatekeeperProcess() {
       OMP_NUM_THREADS: '1',
       OPENBLAS_NUM_THREADS: '1',
       MKL_NUM_THREADS: '1',
+      ORT_LOGGING_LEVEL: '3',
+      ONNXRUNTIME_LOG_LEVEL: '3',
+      CUDA_VISIBLE_DEVICES: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -121,9 +125,12 @@ async function startGatekeeperProcess() {
 
   gatekeeperProcess.stderr.on('data', (d) => {
     const text = d.toString().trim();
-    if (text) {
-      console.error(`[Gatekeeper ERR] ${text}`);
+    if (!text) return;
+    // Suppress harmless GPU device discovery warnings on Android/Termux where /sys/class/drm is permission-denied
+    if (text.includes('device_discovery.cc') || text.includes('GPU device discovery failed') || text.includes('/sys/class/drm')) {
+      return;
     }
+    console.error(`[Gatekeeper ERR] ${text}`);
   });
 
   gatekeeperProcess.on('exit', (code) => {
@@ -142,6 +149,7 @@ const clientProcess = spawn(clientCmd, {
   env: {
     ...process.env,
     VITE_API_TARGET: `http://localhost:${serverPort}`,
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --no-deprecation`.trim(),
   },
   stdio: 'inherit',
   shell: true,

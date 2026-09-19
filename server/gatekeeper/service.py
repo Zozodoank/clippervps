@@ -30,6 +30,9 @@ from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("ORT_LOGGING_LEVEL", "3")
+os.environ.setdefault("ONNXRUNTIME_LOG_LEVEL", "3")
+os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 try:
     import cv2  # type: ignore
