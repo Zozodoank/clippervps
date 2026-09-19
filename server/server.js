@@ -1077,7 +1077,7 @@ async function runAutoRetryWorker(jobId, run) {
                   break;
                 }
               }
-            }            } else {
+            } else {
               consecutiveIpBlocks = 0;
             }
 
