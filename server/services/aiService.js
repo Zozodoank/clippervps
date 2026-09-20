@@ -612,15 +612,14 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GR
 
 ${buildFaceAndMotionCriterion(niche, clipSec)}
 
-CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
-- JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
-  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, mengeluarkan barang dari kotak): Video TETAP DITERIMA (status: 'accept').
-- MANDAT PEMBUANGAN PROSES UNBOXING:
-  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, KARTU GARANSI, ATAU BUSA PACKAGING!
-  * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing, buku panduan manual kertas, atau menyorot kotak kardus/kemasan!
-  * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
-- TOLAK (status: 'reject') HANYA JIKA:
-  * 100% seluruh isi video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun demonstrasi fungsi fisik produk.
+CRITERION 4B: ZERO UNBOXING / ZERO PACKAGING IN SELECTED FOOTAGE
+- PROSES UNBOXING BUKAN FOOTAGE AFFILIATE YANG BOLEH DIPILIH.
+- DILARANG KERAS memilih atau memasukkan ke timestamps/storyboard frame/scene yang menampilkan:
+  * kardus, cardboard box, bubble wrap, plastik pembungkus, paket, label pengiriman, kemasan retail, buku manual kertas, kartu garansi, atau busa packaging sebagai subjek utama/terlihat jelas.
+  * membuka paket, merobek bubble wrap, mengeluarkan barang dari kotak, membongkar packing, atau memegang kotak kosong.
+- Jika video memiliki unboxing di awal, ABAIKAN bagian tersebut dan pilih hanya segmen setelah produk benar-benar sudah keluar dari kemasan dan sedang dipakai/didemonstrasikan.
+- Jika tidak ada cukup segmen aktif setelah packaging dibuang, WAJIB REJECT video. Jangan mengisi slot dengan frame kardus/kemasan hanya untuk memenuhi 7 slot.
+- Slot 1 WAJIB berupa beauty shot / produk fisik yang sudah keluar dari kemasan; ZERO unboxing, ZERO kardus, ZERO bubble wrap.
 
 CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOOTAGE
 - ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FOOTAGE (MIRING / ROTATE 90 DERAJAT):
@@ -656,6 +655,7 @@ If ACCEPTED:
   "status": "accept",
   "detectedProduct": "<nama produk>",
   "isExactProductMatch": true,
+  "hasTargetProductInEverySelectedFrame": true,
   "isFacelessIn916Frame": true,
   "hasHumanOrFaceAnywhereInVideo": false,
   "hasFaceIn916Frame": false,
@@ -679,6 +679,7 @@ If REJECTED:
   "status": "reject",
   "detectedProduct": "<nama produk di video>",
   "isExactProductMatch": true,
+  "hasTargetProductInEverySelectedFrame": false,
   "isFacelessIn916Frame": false,
   "hasHumanOrFaceAnywhereInVideo": false,
   "hasFaceIn916Frame": false,
@@ -777,9 +778,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   const rawStatus = String(parsed.status || '').toLowerCase().trim();
   const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
   const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
-  const isMatchFalse = isVideoFirstMode
-    ? (isBulky || parsed.isUsableSourceVideo === false)
-    : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky);
+  const isMatchFalse =
+    parsed.isProductMatch === false ||
+    parsed.isExactProductMatch === false ||
+    parsed.hasTargetProductInEverySelectedFrame === false ||
+    isBulky ||
+    parsed.isUsableSourceVideo === false;
   const hasFace = parsed.hasFaceIn916Frame === true ||
     parsed.hasFaceOrHumanInSelectedFrames === true ||
     parsed.hasFaceInSelectedClips === true;
@@ -1643,8 +1647,14 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - Jika ada watermark di tengah pada satu frame, abaikan frame tersebut dan pilih frame lain yang bersih dari video yang sama!
 5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
    Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
-   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / unboxing rapi / penampakan fisik produk). DILARANG KERAS frame sedang digosok, diperas, dipotong, atau aksi ekstrem di Slot 1!
+   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / produk yang sudah keluar dari kemasan). DILARANG KERAS kardus, bubble wrap, paket, proses membuka kemasan, frame tanpa produk, atau aksi ekstrem di Slot 1!
    ${preset.storyboardInstructions}
+5B. TARGET PRODUCT MUST BE VISIBLY PRESENT IN EVERY SELECTED FRAME:
+   - Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.
+   - REJECT frame yang hanya menampilkan tangan, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus, bubble wrap, kemasan, atau mesin/peralatan lain tanpa produk target.
+   - Untuk kitchen_tools: jangan pernah menganggap aktivitas memasak sebagai bukti produk. Jika produk target tidak terlihat dan dioperasikan, frame TIDAK valid.
+   - Set hasTargetProductInEverySelectedFrame menjadi true HANYA bila setiap frame yang dipilih lolos bukti visual tersebut; bila satu saja tidak memenuhi, set false.
+
 6. 100% PRODUCT VISUAL CONSISTENCY & DYNAMIC SCENE DIVERSITY:
    - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh 7 adegan yang dipilih (Slot 1 sampai Slot 7) WAJIB menampakkan MODEL PRODUK FISIK YANG SAMA PERSIS (model, bentuk, material, warna, dan fungsi identik dengan produk target: "${coreNoun}").
    - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! (Contoh TERLARANG: Slot 1 chopper hijau 3 pisau, Slot 2 chopper putih 2 pisau; atau Slot 1 toples kaca, Slot 2 panci masak). Jika ada kandidat video yang produk fisiknya berbeda tipe/warna/model dengan produk target, JANGAN pilih frame dari video tersebut!
@@ -1656,7 +1666,9 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 7. Output Format:
    - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
    - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
-   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "storyboard": {"clip1_full_product": N1, "clip2_feature": N2, "clip3_action_demo": N3, "clip4_action_demo_diff": N4, "clip5_action_demo": N5, "clip6_full_product": N6, "clip7_full_product": N7}, "frames": [N1, N2, N3, N4, N5, N6, N7], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
+   - Isi "frameAudit" untuk SETIAP frame yang dipilih: [{"frameIndex": N, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}].
+   - Jangan pernah menandai frame tanpa produk target sebagai containsTargetProduct=true.
+   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "hasTargetProductInEverySelectedFrame": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "storyboard": {"clip1_full_product": N1, "clip2_feature": N2, "clip3_action_demo": N3, "clip4_action_demo_diff": N4, "clip5_action_demo": N5, "clip6_full_product": N6, "clip7_full_product": N7}, "frames": [N1, N2, N3, N4, N5, N6, N7], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
 
   const messageContent = [
     { type: 'text', text: userPrompt },
@@ -1859,6 +1871,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 
       const clips = normalizeClipPlan(candidateClips, totalDuration, {
         allowFallback: allowFallbackClips,
+        frameAudit: Array.isArray(parsed.frameAudit) ? parsed.frameAudit : [],
         hasProductBrand,
         allowHflip,
         sceneDuration: clipSec,
