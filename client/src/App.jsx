@@ -19,6 +19,7 @@ export default function App() {
     shopeeLink: '',
     productTitle: '',
     productDescription: '',
+    oemUrls: [''],
   }));
 
   const [settings, setSettings] = useState({
@@ -145,6 +146,7 @@ export default function App() {
           shopeeLink: currentForm.shopeeLink,
           productTitle: currentForm.productTitle,
           productDescription: currentForm.productDescription,
+          oemUrls: (Array.isArray(currentForm.oemUrls) ? currentForm.oemUrls : []).map((url) => String(url || '').trim()).filter(Boolean),
           aiProvider: settings.aiProvider || engineStatus?.activeAiEngine || 'gemini',
           options: {
             ...settings,
@@ -212,6 +214,7 @@ export default function App() {
       shopeeLink: job.shopeeLink || formData.shopeeLink,
       productTitle: job.productTitle || formData.productTitle,
       productDescription: job.productDescription || formData.productDescription,
+      oemUrls: Array.isArray(job.oemUrls) ? job.oemUrls : (formData.oemUrls || ['']),
     };
     setFormData(restoredForm);
     lastFormDataRef.current = restoredForm;
