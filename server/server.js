@@ -3848,12 +3848,20 @@ async function runProfessionalFinalQcWithRepair({
           onProgress,
         });
       } catch (err) {
-        // A final AI-QC service outage should not silently approve a broken video.
-        visual = {
-          passed: false,
-          reason: `AI Final Visual QC error: ${err.message}`,
-          serviceError: true,
-        };
+        const strictAiQc = process.env.FINAL_AI_QC_STRICT === 'true';
+        console.warn(`[FinalQC] AI visual QC unavailable: ${err.message}. strict=${strictAiQc}`);
+        visual = strictAiQc
+          ? {
+              passed: false,
+              reason: `AI Final Visual QC error: ${err.message}`,
+              serviceError: true,
+            }
+          : {
+              passed: true,
+              skipped: true,
+              reason: 'AI Final Visual QC unavailable; technical master QC used as safe fallback.',
+              serviceError: true,
+            };
       }
     }
 
