@@ -3331,35 +3331,73 @@ async function runAutoStage1Worker(run) {
       const keyword = keywordQueue.shift();
       if (!keyword) continue;
 
+      // ── AUTO IDENTITY GATE ──
+      // Generic/OEM keywords are discovery seeds only. They MUST NOT be sent
+      // to YouTube/Bing. First resolve a real marketplace listing, then extract
+      // its brand + product type/model and search videos using that identity.
+      const shopeeCandidate = await discoverSingleShopeeProduct(keyword, seenShopeeUrls);
+      if (!shopeeCandidate || !shopeeCandidate.title || !shopeeCandidate.url) {
+        run.skippedProducts++;
+        updateAutoRun(run, { message: `[Auto] Skip "${keyword}": listing produk nyata tidak ditemukan.` });
+        continue;
+      }
+
+      const productInfo = extractCoreProductInfo(
+        shopeeCandidate.title,
+        shopeeCandidate.description || '',
+        shopeeCandidate.url
+      );
+      const brand = String(productInfo?.brand || '').trim();
+      const productType = String(productInfo?.coreProductNoun || '').trim();
+      const model = String(productInfo?.model || '').trim();
+
+      // Auto Mode requires a real brand + product type. OEM/unbranded products
+      // are intentionally skipped here; OEM is supported only by manual URLs.
+      if (!brand || !productType || productType === 'Produk Praktis' || !Array.isArray(productInfo?.searchQueries) || productInfo.searchQueries.length === 0) {
+        run.skippedProducts++;
+        updateAutoRun(run, {
+          message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": brand/type tidak terdeteksi (OEM/manual only).`,
+        });
+        continue;
+      }
+
+      const searchKeyword = productInfo.searchQueries[0];
+      if (!searchKeyword || !searchKeyword.toLowerCase().includes(brand.toLowerCase())) {
+        run.skippedProducts++;
+        updateAutoRun(run, {
+          message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": query brand + type tidak valid.`,
+        });
+        continue;
+      }
+
       // ── DEDUPLIKASI PRODUK HARIAN ──
-      // Hindari membuat video produk sejenis berulang kali pada hari yang sama (misal 2x atau 3x crepes maker)
-      const keywordCoreInfo = extractCoreProductInfo(keyword);
-      const coreNoun = (keywordCoreInfo.coreProductNoun || '').toLowerCase().trim();
+      const coreNoun = productType.toLowerCase().trim();
       const usedNouns = getAllUsedProductNounsToday();
       if (coreNoun && usedNouns.has(coreNoun)) {
-        console.log(`[Auto] Skip "${keyword}": Produk dasar sejenis ("${coreNoun}") sudah pernah dibuat hari ini.`);
+        console.log(`[Auto] Skip "${shopeeCandidate.title}": Produk dasar sejenis ("${coreNoun}") sudah pernah dibuat hari ini.`);
         continue;
       }
 
       const currentTargetIndex = run.successfulJobs + 1;
-      const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${dailyStats.limit})`;
+      const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${run.maxJobs})`;
 
       updateAutoRun(run, {
-        message: `[${targetLabel}] Mencari video di mesin telusur (YouTube & Bing) untuk: "${keyword}"...`,
+        message: `[${targetLabel}] Cari video: "${searchKeyword}" (brand/type)...`,
         progress: isUnlimited ? 10 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 2),
       });
 
-      // ── STRATEGI VIDEO-FIRST: Cari video demonstrasi produk langsung di multi-engine ──
-      let candidates = await searchMultiEngineVideos(keyword, {
+      // ── STRATEGI VIDEO-FIRST: identity-only search ──
+      let candidates = await searchMultiEngineVideos(searchKeyword, {
         limit: 16,
         excludeVideoIds: usedYouTubeVideoIds,
+        strictIdentity: true,
         onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
       });
 
-      // Jika pencarian teks multi-engine kosong, coba temukan produk Shopee dan cari video via gambar produknya!
+      // Jika pencarian teks multi-engine kosong, cari video via gambar listing
+      // yang sama. Manual/OEM verification bypass remains separate from Auto Mode.
       if (!candidates || candidates.length === 0) {
         try {
-          const shopeeCandidate = await discoverSingleShopeeProduct(keyword, seenShopeeUrls);
           if (shopeeCandidate && shopeeCandidate.imageUrl) {
             updateAutoRun(run, { message: `[${targetLabel}] Mencoba pencarian video via gambar produk Shopee: "${shopeeCandidate.title.slice(0, 30)}..."` });
             const visualCandidates = await searchVideosByProductImage({
@@ -3390,7 +3428,7 @@ async function runAutoStage1Worker(run) {
 
       const autoJobId = `auto_${crypto.randomBytes(5).toString('hex')}`;
       run.currentJobId = autoJobId;
-      const currentCandidateTitle = keyword || candidates[0]?.title;
+      const currentCandidateTitle = shopeeCandidate.title || candidates[0]?.title || searchKeyword;
 
       for (const cand of candidates) {
         const candidateVid = extractVideoId(cand.url) || cand.id;
@@ -3404,14 +3442,14 @@ async function runAutoStage1Worker(run) {
           progress: isUnlimited ? 25 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 5),
         });
 
-        const candidateShopeeLink = buildShopeeSearchUrl(keyword || currentCandidateTitle);
+        const candidateShopeeLink = shopeeCandidate.url || buildShopeeSearchUrl(currentCandidateTitle, brand);
         const completedResult = await runStage1Pipeline({
           jobId: autoJobId,
           youtubeUrl: null, // Mode Multi-Video Harvesting!
           targetCandidates: candidates,
           shopeeLink: candidateShopeeLink || '',
           productTitle: currentCandidateTitle,
-          productDescription: candidates[0]?.description || '',
+          productDescription: shopeeCandidate.description || candidates[0]?.description || '',
           apiKey: undefined,
           options: {
             ...run.options,
@@ -3423,7 +3461,7 @@ async function runAutoStage1Worker(run) {
             sceneDuration: 3.3,
             minDuration: 30.0,
           },
-          extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true, isVideoFirst: true, searchKeyword: keyword },
+          extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true, isVideoFirst: true, searchKeyword, sourceKeyword: keyword, brand, model, productType },
           requireCleanGeminiPlan: true,
           onProgress: (p) => {
             if (isUnlimited) {
