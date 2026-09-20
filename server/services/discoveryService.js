@@ -2840,53 +2840,86 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '')
 }
 
 /** Generic identity extraction; no fixed brand database is required. */
+function isMeasurementOrVariantToken(value = '') {
+  const compact = String(value || '').trim().toLowerCase().replace(/\s+/g, '');
+  if (!compact) return false;
+
+  // Marketplace sizes/capacities/specs are product attributes, not model numbers.
+  if (/^\d+(?:[.,]\d+)?(?:ml|ltr|liter|litre|l|gr|g|kg|mg|cm|mm|m|in|inch|oz|w|kw|v|mah|ah|hz|pcs?|pc)$/i.test(compact)) {
+    return true;
+  }
+  if (/^\d+(?:[x×]\d+){1,2}(?:cm|mm|m|in|inch)?$/i.test(compact)) {
+    return true;
+  }
+  return false;
+}
+
 function extractDynamicProductIdentity(title = '', description = '') {
   const source = String(title || '').replace(/\s+/g, ' ').trim();
   const desc = String(description || '').replace(/\s+/g, ' ').trim();
+
   const modelMatches = source.match(/\b(?=[A-Z0-9-]{3,}\b)(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:[-/][A-Z0-9]+){1,3}\b/gi) || [];
   const compactModelMatches = source.match(/\b[A-Z]{1,5}\d{2,}[A-Z0-9-]*\b/gi) || [];
   const numericSeriesMatches = source.match(/\b\d{2,}[A-Z]{1,5}[-]?[A-Z0-9]*\b/gi) || [];
   const model = Array.from(new Set([...modelMatches, ...compactModelMatches, ...numericSeriesMatches]))
-    .map(v => v.replace(/[.,;:!?]+$/g, '')).find(v => !/^\d+$/.test(v)) || '';
+    .map(v => v.replace(/[.,;:!?]+$/g, ''))
+    .find(v => !/^\d+$/.test(v) && !isMeasurementOrVariantToken(v)) || '';
 
   const tokens = source.split(/\s+/).map(v => v.replace(/^[^\w]+|[^\w-]+$/g, '')).filter(Boolean);
   const brandBlacklist = new Set([
     'original','official','store','shop','mall','promo','murah','viral','terbaru','terlaris',
     'premium','portable','multifungsi','serbaguna','electric','elektrik','manual','mini',
     'besar','kecil','set','paket','bundle','new','sale','ready','stock','import','indonesia',
-    'review','demo','test','unboxing','produk','alat','barang'
+    'review','demo','test','unboxing','produk','alat','barang','tanpa','merek','brand','no','merk'
   ]);
+  const genericProductWords = new Set([
+    'chopper','pencacah','blender','mixer','panci','wajan','pan','pot','kompor','dispenser',
+    'vacuum','cleaner','mop','pel','brush','sikat','knife','pisau','gunting','slicer','cutter',
+    'pemotong','peeler','pengupas','grater','parutan','press','crusher','penggiling','juicer',
+    'pemeras','kettle','cooker','fryer','rak','rack','shelf','sepatu','shoe','organizer',
+    'storage','tempat','wadah','box','kotak','botol','bottle','gelas','cup','mug','piring',
+    'plate','mangkok','bowl','sendok','spoon','garpu','fork','tongs','capitan','lampu','light',
+    'kipas','fan','humidifier','sealer','timbangan','scale','thermometer','termometer',
+    'kitchen','dapur','tools','tool','holder','stand','lipat','foldable','tarik','putar',
+    'tekan','rotary','rechargeable','usb','cordless','isi','pcs','buah','food'
+  ]);
+
+  const isPossibleBrand = (candidate) => {
+    if (!candidate || candidate.length < 2) return false;
+    const lower = candidate.toLowerCase();
+    return /^[A-Za-z][A-Za-z0-9&.-]{1,}$/.test(candidate) &&
+      !brandBlacklist.has(lower) &&
+      !genericProductWords.has(lower) &&
+      !isMeasurementOrVariantToken(candidate) &&
+      !/^\d/.test(candidate);
+  };
+
   let brand = '';
   if (model) {
     const mi = tokens.findIndex(t => t.toLowerCase() === model.toLowerCase());
     if (mi > 0) {
-      const candidate = tokens[mi - 1];
-      if (candidate && candidate.length >= 2 && !brandBlacklist.has(candidate.toLowerCase()) &&
-          /^[A-Za-z][A-Za-z0-9&.-]{1,}$/.test(candidate)) brand = candidate;
+      // Search backwards because titles often place the product noun between brand and model:
+      // "Philips Blender HR7301" -> Philips, not Blender.
+      for (let i = mi - 1; i >= 0 && i >= mi - 4; i--) {
+        const candidate = tokens[i];
+        if (isPossibleBrand(candidate) && /^[A-Z]/.test(candidate)) {
+          brand = candidate;
+          break;
+        }
+      }
     }
   }
+
   if (!brand) {
-    const generic = new Set([
-      'chopper','panci','blender','mixer','wajan','kompor','dispenser','vacuum','cleaner',
-      'air','fryer','rice','cooker','kettle','pot','pan','knife','gunting','slicer','peeler',
-      'alat','dapur','portable','multifungsi','serbaguna','elektrik','electric','manual',
-      'kitchen','tools','set','isi','pcs','buah'
-    ]);
-    brand = tokens.find(t =>
-      /^[A-Z][A-Za-z0-9&.-]{1,}$/.test(t) && !generic.has(t.toLowerCase()) &&
-      !brandBlacklist.has(t.toLowerCase()) && !/^\d/.test(t)
-    ) || '';
+    // Conservative fallback: only inspect the beginning of the listing title.
+    // This avoids treating capitalized generic words such as "Rak" as a brand.
+    brand = tokens.slice(0, 4).find(t => /^[A-Z][A-Za-z0-9&.-]{1,}$/.test(t) && isPossibleBrand(t)) || '';
   }
+
   const identityParts = [];
   if (brand) identityParts.push(brand);
   if (model && !identityParts.some(p => p.toLowerCase() === model.toLowerCase())) identityParts.push(model);
-  if (identityParts.length === 1 && brand) {
-    const firstMeaningful = tokens.find(t =>
-      t.toLowerCase() !== brand.toLowerCase() &&
-      !brandBlacklist.has(t.toLowerCase()) && t.length >= 3
-    );
-    if (firstMeaningful) identityParts.push(firstMeaningful);
-  }
+
   const identity = identityParts.join(' ').trim();
   const words = Array.from(new Set([
     ...identity.split(/\s+/).filter(Boolean),
@@ -2895,21 +2928,80 @@ function extractDynamicProductIdentity(title = '', description = '') {
   return { brand, model, identity, words, source: desc ? source + ' ' + desc : source };
 }
 
+function extractDynamicSearchAttributes(title = '') {
+  const normalized = normalizeText(title);
+  const attributes = [];
+
+  const add = (value) => {
+    if (value && !attributes.includes(value)) attributes.push(value);
+  };
+
+  if (/\b(?:manual\s+tarik|tali\s+tarik|tarik\s+tali|pull\s+cord|pull\s+string|rope\s+pull)\b/i.test(normalized)) {
+    add('manual pull cord');
+  } else if (/\b(?:manual\s+putar|putar\s+manual|rotary|hand\s+crank)\b/i.test(normalized)) {
+    add('manual rotary');
+  } else if (/\b(?:tekan\s+manual|press\s+manual|hand\s+press|push\s+press)\b/i.test(normalized)) {
+    add('manual press');
+  } else if (/\b(?:elektrik|electric|listrik|rechargeable|usb|cordless)\b/i.test(normalized)) {
+    add('electric rechargeable');
+  }
+
+  if (/\b(?:lipat|foldable|collapsible)\b/i.test(normalized)) add('foldable');
+  if (/\b(?:vakum|vacuum|suction)\b/i.test(normalized)) add('vacuum suction');
+
+  const capacity = String(title || '').match(/\b(\d+(?:[.,]\d+)?)\s*(ml|ltr|liter|litre|l|g|gr|kg)\b/i);
+  if (capacity) add(`${capacity[1]}${capacity[2].toLowerCase()}`);
+
+  return attributes.slice(0, 3);
+}
+
 function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun = '', brand = '', model = '', identity = '' } = {}) {
-  const exact = [identity, [brand, model].filter(Boolean).join(' ')].filter(Boolean);
-  const queries = [
-    ...exact.map(q => '"' + q + '" review'),
-    ...exact.map(q => '"' + q + '" demo'),
-    ...exact.map(q => '"' + q + '" demonstration'),
-    ...exact.map(q => '"' + q + '" hands on'),
-    ...exact.map(q => '"' + q + '" test'),
-    ...exact.map(q => '"' + q + '" b-roll'),
-    brand && model ? '"' + brand + ' ' + model + '"' : '',
-    title ? '"' + title.slice(0, 100) + '"' : '',
-    noun ? '"' + noun + '" review' : '',
-    englishNoun ? '"' + englishNoun + '" demo' : ''
-  ];
-  return Array.from(new Set(queries.map(q => String(q).trim()).filter(Boolean))).slice(0, 16);
+  const queries = [];
+  const add = (query) => {
+    const clean = String(query || '').replace(/\s+/g, ' ').trim();
+    if (clean && !queries.includes(clean)) queries.push(clean);
+  };
+
+  const attributes = extractDynamicSearchAttributes(title);
+  const mechanismAttributes = attributes.filter(a => !/^\d/.test(a));
+  const capacityAttributes = attributes.filter(a => /^\d/.test(a));
+  const mechanism = mechanismAttributes.join(' ').trim();
+  const capacity = capacityAttributes.join(' ').trim();
+  const hasStrongIdentity = Boolean(brand || model);
+
+  if (hasStrongIdentity) {
+    const exactIdentity = [brand, model].filter(Boolean).join(' ').trim() || identity;
+    if (exactIdentity) {
+      add(`"${exactIdentity}" demo`);
+      add(`"${exactIdentity}" demonstration`);
+      add(`"${exactIdentity}" hands on`);
+      add(`"${exactIdentity}" review`);
+      add(`"${exactIdentity}" b-roll`);
+    }
+    if (brand && noun) add(`${brand} ${noun} demo`);
+    if (brand && englishNoun) add(`${brand} ${englishNoun} demonstration`);
+  } else {
+    // Unbranded/OEM products: search by product type + mechanism + distinguishing attributes.
+    // Do not quote the whole marketplace title because that over-constrains discovery.
+    if (englishNoun && mechanism) {
+      add(`${mechanism} ${englishNoun} demo`);
+      add(`${englishNoun} ${mechanism} demonstration`);
+    }
+    if (noun && mechanism) {
+      add(`${noun} ${mechanism} demo`);
+    }
+    if (englishNoun) add(`${englishNoun} demo`);
+    if (noun) add(`${noun} demo`);
+    if (englishNoun && capacity) add(`${englishNoun} ${capacity} demo`);
+    if (noun && capacity) add(`${noun} ${capacity} demo`);
+  }
+
+  // Broad fallbacks come last so retries can still find footage when listing wording is unusual.
+  if (englishNoun) add(`${englishNoun} hands on`);
+  if (noun) add(`${noun} demonstration`);
+  if (hasStrongIdentity && title) add(`"${title.slice(0, 100)}"`);
+
+  return queries.slice(0, 16);
 }
 
 export function isTitleMatchingProduct(candidateTitle, productWords = [], extraMeta = {}) {
