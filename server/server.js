@@ -2381,34 +2381,16 @@ export async function runStage1Pipeline({
           cleanAuditedClips[0].storyboardRole = 'full_product';
         }
 
-        // 2. Replenish durasi jika klip bersih tersisa < 6 atau durasi < 28s
-        if (cleanAuditedClips.length >= 1) {
-          highlight.clips = cleanAuditedClips;
-          const currentDuration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
-          if (cleanAuditedClips.length < 6 || currentDuration < 28.0) {
-            console.log(`[ClipAudit] ℹ️ Klip bersih pasca-audit berjumlah ${cleanAuditedClips.length} (${currentDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai minimal 6-7 klip (30-35s)...`);
-            const baseClips = [...cleanAuditedClips];
-            let expRound = 1;
-            while (cleanAuditedClips.length < 7 && expRound <= 6) {
-              for (const base of baseClips) {
-                if (cleanAuditedClips.length >= 7) break;
-                const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
-                cleanAuditedClips.push({
-                  ...base,
-                  startSeconds: newStart,
-                  endSeconds: newStart + sceneDuration,
-                  duration: sceneDuration,
-                  startTime: formatSeconds(newStart),
-                  endTime: formatSeconds(newStart + sceneDuration),
-                  storyboardSlot: cleanAuditedClips.length + 1,
-                  reason: `${base.reason} (Safe Clean Re-stride #${expRound})`,
-                });
-              }
-              expRound++;
-            }
-          }
-          highlight.clips = cleanAuditedClips;
-          highlight.duration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+        // HARD RULE: never replenish by copying/offsetting an existing clip.
+        // If audit leaves too few unique scenes, reject rather than manufacture repeats.
+        if (cleanAuditedClips.length >= 5) {
+          highlight.clips = cleanAuditedClips.map(c => ({
+            ...c,
+            duration: 3.5,
+            endSeconds: Number(c.startSeconds) + 3.5,
+            endTime: formatSeconds(Number(c.startSeconds) + 3.5),
+          }));
+          highlight.duration = highlight.clips.length * 3.5;
         } else {
           // USER MANDATE: Jika klip terpilih terbuang seluruhnya pada audit, JANGAN buang video!
           // Ambil frame peragaan bersih yang tersimpan di pooledFrames dari video yang sama!
