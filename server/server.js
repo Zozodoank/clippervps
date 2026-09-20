@@ -288,6 +288,48 @@ function resolveOutputVideoPath(filename) {
   return resolved.startsWith(outputRoot) ? resolved : null;
 }
 
+/**
+ * Strict motion audit for selected footage.
+ * Rejects frozen photos and Ken-Burns-like still images that only zoom/pan slowly.
+ * Returns the SSIM similarity of consecutive sampled frames; real physical action should
+ * create materially different frames, while a held photo remains highly similar.
+ */
+function auditRealMotionFromFrames(framePaths = []) {
+  const paths = Array.isArray(framePaths) ? framePaths.filter(Boolean) : [];
+  if (paths.length < 4) return { checked: false, likelyStatic: false, similarities: [] };
+
+  const ffmpegPath = getFFmpegPath();
+  const similarities = [];
+  for (let i = 1; i < paths.length; i++) {
+    try {
+      const res = spawnSync(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error',
+        '-i', paths[i - 1],
+        '-i', paths[i],
+        '-lavfi', 'ssim=stats_file=-',
+        '-f', 'null', '-'
+      ], { encoding: 'utf8', timeout: 5000 });
+
+      const text = String(res.stderr || '') + '\n' + String(res.stdout || '');
+      const matches = [...text.matchAll(/All:([0-9.]+)/g)];
+      const last = matches.length ? Number(matches[matches.length - 1][1]) : NaN;
+      if (Number.isFinite(last)) similarities.push(last);
+    } catch {}
+  }
+
+  if (similarities.length < 3) return { checked: false, likelyStatic: false, similarities };
+
+  const sorted = [...similarities].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const verySimilarCount = similarities.filter(v => v >= 0.985).length;
+
+  // A clip where almost every sampled pair is nearly identical is a photo/slideshow/slow
+  // Ken-Burns effect, not a genuine hands-on product demonstration.
+  const likelyStatic = verySimilarCount >= Math.max(3, Math.ceil(similarities.length * 0.70));
+
+  return { checked: true, likelyStatic, similarities, median };
+}
+
 function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 4000) {
   return new Promise((resolve) => {
     const ffmpegPath = getFFmpegPath();
@@ -2334,6 +2376,21 @@ export async function runStage1Pipeline({
 
         const testFrames = (await Promise.all(frameExtractTasks)).filter(Boolean);
 
+        // HARD MOTION GATE: a valid affiliate clip must contain real physical motion.
+        // Reject still photos with zoom/pan effects before any AI Gatekeeper result can
+        // accidentally classify the moving pixels as a legitimate video.
+        const motionAudit = auditRealMotionFromFrames(testFrames.map(f => f.filePath));
+        if (motionAudit.likelyStatic) {
+          console.warn(
+            `[ClipAudit] ⛔ Segment klip #${cIdx + 1} ditolak: kemungkinan foto/slideshow/Ken Burns (SSIM median=${motionAudit.median?.toFixed(4)}).`
+          );
+          discardedDirtyClips.push({
+            clip: c,
+            reason: 'STATIC_PHOTO_OR_KEN_BURNS',
+          });
+          continue;
+        }
+
         let hasDirtyContent = false;
         let dirtyReason = '';
         if (testFrames.length > 0) {
@@ -2341,6 +2398,22 @@ export async function runStage1Pipeline({
           try {
             gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 12, niche: options?.niche || 'kitchen_tools' });
           } catch (e) {}
+
+          // Run the local heuristic as a SECOND safety layer even when the AI
+          // Gatekeeper says clean. This catches moving text, stickers and static cards
+          // that can otherwise masquerade as "video".
+          let heuristicRes = null;
+          try {
+            heuristicRes = await inspectFramesLocally(testFrames, { niche: options?.niche || 'kitchen_tools' });
+          } catch (e) {}
+
+          const heuristicDirty = heuristicRes?.discardedFrames?.find(f =>
+            ['floating_text', 'animated_graphic', 'subtitle', 'watermark', 'static_frame', 'intro_bumper'].includes(f.stage)
+          );
+          if (heuristicDirty) {
+            hasDirtyContent = true;
+            dirtyReason = `[HEURISTIC-${String(heuristicDirty.stage).toUpperCase()}] ${heuristicDirty.reason || 'Elemen grafis/teks terdeteksi'}`;
+          }
 
           if (gkRes && Array.isArray(gkRes.allFrames)) {
             const dirtyDet = gkRes.allFrames.find(f => f.status !== 'clean');
