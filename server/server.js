@@ -2599,7 +2599,22 @@ export async function runStage1Pipeline({
     } catch (scriptErr) {
       const isGadget = (options.niche === 'gadget_smartphone');
       console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah ${isGadget ? 'Smartphone Shorts' : 'Shopee'}...`);
-      const fallbackHook = highlight.productHook || getDynamicProductHookFallback(productTitle, options.niche || 'kitchen_tools');
+      const fallbackProductName = (highlight.detectedProduct || productTitle || videoMeta?.title || 'produk ini').trim();
+      const mechanismLabels = {
+        manual_pull_cord: 'mekanisme tali tarik manual',
+        manual_rotary: 'mekanisme putar manual',
+        manual_press: 'mekanisme tekan manual',
+        vacuum_suction: 'mekanisme vakum',
+        pump: 'mekanisme pompa',
+        gravity_feed: 'mekanisme aliran gravitasi',
+        electric_motor: 'mekanisme motor elektrik',
+      };
+      const mechanismPhrase = mechanismLabels[productFingerprint?.mechanism] || 'mekanisme utamanya';
+      const fallbackHook = highlight.productHook || (
+        isGadget
+          ? `Lihat detail fisik dan penggunaan ${fallbackProductName} ini.`
+          : `Lihat langsung cara kerja ${fallbackProductName} ini.`
+      );
       const stepSec = Math.max(3.0, actualSilentDuration / 5);
       const ts0 = '00:00';
       const ts1 = formatSeconds(Math.round(stepSec));
@@ -2609,73 +2624,82 @@ export async function runStage1Pipeline({
 
       const fallbackVoiceScript = isGadget
         ? `[${ts0}] [excited] ${fallbackHook}
-[${ts1}] [emphasis] Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam.
-[${ts2}] [neutral] Layar seratus dua puluh Hertz bikin scrolling sosmed super mulus.
-[${ts3}] [excited] Hasil jepretan kamera dan rekaman videonya jernih serta stabil.
-[${ts4}] [excited] Di kisaran harga terjangkau ini, menurut kalian worth it gak? Komen di bawah ya!`
+[${ts1}] [emphasis] Di sini bentuk bodi dan bagian utamanya terlihat jelas.
+[${ts2}] [neutral] Berikut tampilan saat perangkat benar-benar digunakan.
+[${ts3}] [neutral] Perhatikan detail fisik dan hasil yang memang terlihat di video.
+[${ts4}] [soft] Cek spesifikasi resmi produknya sebelum menentukan pilihan.`
         : `[${ts0}] [excited] ${fallbackHook}
-[${ts1}] [emphasis] Begini cara penggunaan produk ini.
-[${ts2}] [neutral] Lihat langkah penggunaannya secara langsung.
-[${ts3}] [excited] Perhatikan hasil yang terlihat di adegan ini.
-[${ts4}] [excited] Cek produk di bawah sekarang sebelum kehabisan!`;
+[${ts1}] [emphasis] Bentuk produk dan bagian utamanya terlihat jelas di sini.
+[${ts2}] [neutral] Sekarang perhatikan ${mechanismPhrase} saat digunakan.
+[${ts3}] [neutral] Ini hasil penggunaan yang benar-benar tampak di video.
+[${ts4}] [excited] Cek detail produk di bawah dan sesuaikan dengan kebutuhanmu.`;
 
       scriptData = {
         sampleContext: {
-          productName: productTitle || videoMeta?.title || (isGadget ? 'Smartphone Pilihan' : 'Produk Pilihan'),
+          productName: fallbackProductName,
           videoDuration: `${Math.round(actualSilentDuration)} detik`,
-          targetAudience: isGadget ? 'Pencari smartphone, tech enthusiast, dan penonton YouTube Shorts' : 'Pengguna harian dan pembeli online',
-          coreProblem: isGadget ? 'HP lama lemot, kamera buram, dan baterai boros' : 'Cara konvensional yang merepotkan dan memakan waktu',
-          keyFeatures: isGadget ? ['Layar AMOLED 120Hz', 'Chipset Kencang & RAM Lega', 'Kamera Jernih 4K'] : ['Praktis & Ringkas', 'Kualitas Teruji', 'Mudah Digunakan'],
-          buyingTrigger: isGadget ? 'Spek gahar di harga terjangkau' : 'Kemudahan pemakaian dan hasil presisi',
+          targetAudience: isGadget ? 'Penonton yang ingin melihat demonstrasi fisik perangkat' : 'Pengguna yang ingin melihat cara kerja produk secara langsung',
+          coreProblem: 'Tidak disimpulkan otomatis saat fallback; fokus pada bukti visual demonstrasi.',
+          keyFeatures: isGadget
+            ? ['Bentuk fisik terlihat', 'Penggunaan nyata terlihat', 'Detail visual produk terlihat']
+            : ['Bentuk fisik terlihat', `${mechanismPhrase} terlihat`, 'Hasil penggunaan terlihat'],
+          buyingTrigger: 'Bukti visual demonstrasi tanpa klaim spesifikasi tambahan',
         },
         scenes: [
           {
             sceneNumber: 1,
             timeRange: `00:00 - ${ts1}`,
-            visualDescription: isGadget ? 'Tampilan bodi belakang dan modul kamera smartphone' : 'Demonstrasi pembuka produk',
+            visualDescription: 'Tampilan pembuka produk yang terlihat di video',
             voiceover: fallbackHook,
-            adAdvisorNotes: 'Hook visual pembuka',
+            adAdvisorNotes: 'Hook berbasis visual, tanpa klaim spesifikasi',
           },
           {
             sceneNumber: 2,
             timeRange: `${ts1} - ${ts2}`,
-            visualDescription: 'Peragaan aksi awal produk',
-            voiceover: isGadget ? 'Bodi belakangnya mewah dan nyaman digenggam.' : 'Untung ada inovasi praktis ini, cara pakainya simpel dan efisien.',
-            adAdvisorNotes: 'Pengenalan manfaat',
+            visualDescription: 'Tampilan bentuk fisik dan bagian utama produk',
+            voiceover: isGadget
+              ? 'Di sini bentuk bodi dan bagian utamanya terlihat jelas.'
+              : 'Bentuk produk dan bagian utamanya terlihat jelas di sini.',
+            adAdvisorNotes: 'Deskripsi bukti visual',
           },
           {
             sceneNumber: 3,
             timeRange: `${ts2} - ${ts3}`,
-            visualDescription: 'Fitur dan kemudahan pengoperasian',
-            voiceover: isGadget ? 'Layar mulus dan navigasi responsif.' : 'Tinggal gunakan dengan santai, cepat tanpa perlu repot.',
-            adAdvisorNotes: 'Bukti kemudahan',
+            visualDescription: 'Peragaan penggunaan produk',
+            voiceover: isGadget
+              ? 'Berikut tampilan saat perangkat benar-benar digunakan.'
+              : `Sekarang perhatikan ${mechanismPhrase} saat digunakan.`,
+            adAdvisorNotes: 'Fokus mekanisme/aksi yang tampak',
           },
           {
             sceneNumber: 4,
             timeRange: `${ts3} - ${ts4}`,
-            visualDescription: 'Hasil nyata peragaan',
-            voiceover: isGadget ? 'Kamera jernih dan rekaman video stabil.' : 'Lihat peragaannya, hasilnya rapi dan memuaskan.',
-            adAdvisorNotes: 'Hasil nyata',
+            visualDescription: 'Detail atau hasil yang tampak di video',
+            voiceover: isGadget
+              ? 'Perhatikan detail fisik dan hasil yang memang terlihat di video.'
+              : 'Ini hasil penggunaan yang benar-benar tampak di video.',
+            adAdvisorNotes: 'Bukti visual, tanpa mengarang hasil',
           },
           {
             sceneNumber: 5,
             timeRange: `${ts4} - ${formatSeconds(Math.round(actualSilentDuration))}`,
-            visualDescription: isGadget ? 'Tampilan display penutup' : 'Ajakan cek keranjang pojok kiri bawah',
-            voiceover: isGadget ? 'Di kisaran harga ini, worth it gak? Komen di bawah!' : 'Yuk buruan cek produk di keranjang pojok kiri bawah sekarang!',
-            adAdvisorNotes: 'CTA penutup',
+            visualDescription: 'Tampilan penutup produk',
+            voiceover: isGadget
+              ? 'Cek spesifikasi resmi produknya sebelum menentukan pilihan.'
+              : 'Cek detail produk di bawah dan sesuaikan dengan kebutuhanmu.',
+            adAdvisorNotes: 'CTA aman tanpa klaim promo/stok/harga',
           },
         ],
         voiceoverScript: fallbackVoiceScript,
         aiStudioPrompt: fallbackVoiceScript,
         caption: formatEnrichedCaption({
           caption: '',
-          productTitle,
+          productTitle: fallbackProductName,
           productDescription,
           platform: 'clipper'
         }),
         lexicon_to_replace: {},
       };
-    }
 
     cleanupTempFiles([], [rawFramesDir, trimmedFramesDir]);
 
