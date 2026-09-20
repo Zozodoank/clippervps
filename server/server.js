@@ -3153,17 +3153,38 @@ app.post('/api/generate', async (req, res) => {
     options = {},
     aiProvider,
     jobId: clientJobId,
+    oemUrl1,
+    oemUrl2,
+    oemUrls,
   } = req.body;
 
   if (aiProvider) {
     options.aiProvider = aiProvider;
   }
 
-  if (!youtubeUrl) {
-    return res.status(400).json({ error: 'YouTube Video URL is required.' });
+  // OEM manual URLs are optional. They can be used when automatic discovery
+  // does not provide enough visual variety. At least one source is required.
+  const manualOemUrls = Array.from(new Set([
+    ...(Array.isArray(oemUrls) ? oemUrls : []),
+    oemUrl1,
+    oemUrl2,
+    ...(Array.isArray(options.oemUrls) ? options.oemUrls : []),
+    options.oemUrl1,
+    options.oemUrl2,
+  ].map(v => String(v || '').trim()).filter(Boolean)));
+
+  options.oemUrls = manualOemUrls;
+
+  if (!youtubeUrl && manualOemUrls.length === 0) {
+    return res.status(400).json({ error: 'YouTube Video URL atau minimal satu URL OEM manual diperlukan.' });
   }
-  if (!isValidHttpUrl(youtubeUrl) || !extractVideoId(youtubeUrl)) {
+  if (youtubeUrl && (!isValidHttpUrl(youtubeUrl) || !extractVideoId(youtubeUrl))) {
     return res.status(400).json({ error: 'URL YouTube tidak valid. Gunakan URL youtube.com atau youtu.be yang berisi video ID.' });
+  }
+  for (const oemUrl of manualOemUrls) {
+    if (!isValidHttpUrl(oemUrl) || !extractVideoId(oemUrl)) {
+      return res.status(400).json({ error: `OEM URL tidak valid: ${oemUrl}. Gunakan URL YouTube/youtu.be yang berisi video ID.` });
+    }
   }
   if (shopeeLink && !isValidHttpUrl(shopeeLink)) {
     return res.status(400).json({ error: 'Link produk harus berupa URL http/https yang valid.' });
