@@ -2700,6 +2700,7 @@ export async function runStage1Pipeline({
         }),
         lexicon_to_replace: {},
       };
+    }
 
     cleanupTempFiles([], [rawFramesDir, trimmedFramesDir]);
 
