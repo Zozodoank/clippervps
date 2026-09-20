@@ -1900,6 +1900,33 @@ export async function runStage1Pipeline({
 
       let searchIteration = 0;
       let candidatePool = Array.isArray(targetCandidates) ? [...targetCandidates] : [];
+
+      // Manual OEM sources are an explicit user override. They MUST still pass
+      // the local frame/scene gate, but NEVER enter Gemini product-match verification.
+      const manualOemUrls = Array.from(new Set([
+        ...(Array.isArray(options.oemUrls) ? options.oemUrls : []),
+        options.oemUrl1,
+        options.oemUrl2,
+        extraJobMeta?.oemUrl1,
+        extraJobMeta?.oemUrl2,
+      ].map(v => String(v || '').trim()).filter(Boolean)));
+
+      for (const oemUrl of manualOemUrls) {
+        if (!isValidHttpUrl(oemUrl) || !extractVideoId(oemUrl)) {
+          console.warn(`[Job ${jobId}] ⚠️ OEM URL manual diabaikan karena bukan URL YouTube yang valid: ${oemUrl}`);
+          continue;
+        }
+        if (!candidatePool.some(c => c?.url === oemUrl)) {
+          candidatePool.push({
+            url: oemUrl,
+            title: productTitle || 'OEM Manual',
+            source: 'manual_oem',
+            manualOem: true,
+            skipGeminiProductMatch: true,
+          });
+        }
+      }
+
       if (currentYoutubeUrl && !candidatePool.some(c => c.url === currentYoutubeUrl)) {
         candidatePool.unshift({
           url: currentYoutubeUrl,
@@ -1907,38 +1934,9 @@ export async function runStage1Pipeline({
         });
       }
 
-      // 1. Prioritas Visual Search: Jika URL foto produk tersedia, cari video berbasis gambar!
-      if (effectiveProductImage && candidatePool.length < 3) {
-        try {
-          updateProgress({
-            step: 'auto_search_fallback',
-            message: `Mencari video pengganti via pencarian visual gambar produk...`,
-            progress: 18,
-            status: 'running',
-            coreProductNoun,
-          });
-          console.log(`[Job ${jobId}] Mencari kandidat video via Visual Image Search: ${effectiveProductImage}`);
-          const visualCandidates = await searchVideosByProductImage({
-            imageUrl: effectiveProductImage,
-            productTitle,
-            productDescription,
-            limit: 10,
-            excludeVideoIds: usedVids,
-            onProgress: (p) => updateProgress({ ...p, status: 'running' }),
-          });
-          if (visualCandidates && visualCandidates.length > 0) {
-            for (const cand of visualCandidates) {
-              if (!candidatePool.some(t => (t.url && t.url === cand.url) || (t.id && t.id === cand.id))) {
-                candidatePool.push(cand);
-              }
-            }
-            console.log(`[Job ${jobId}] ✅ Ditemukan ${visualCandidates.length} kandidat video dari pencarian visual gambar!`);
-          }
-        } catch (vErr) {
-          console.warn(`[Job ${jobId}] Pencarian visual gambar dilewati: ${vErr.message}`);
-        }
-      }
-
+      // Identity-first discovery: do NOT automatically search by product image.
+      // Visual/image search is intentionally reserved for future explicit modes.
+      // Automatic candidates now come only from Brand + Model/Type identity queries.
       // 2. Multi-Engine Keyword Search jika belum mencapai target minimal 10 kandidat
       while (searchIteration < 3 && candidatePool.length < 10) {
         const fresh = await discoverYouTubeCandidatesForProduct({
