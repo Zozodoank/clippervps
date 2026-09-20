@@ -1420,7 +1420,13 @@ export async function runStage1Pipeline({
       ? 'openrouter'
       : (geminiKeySet ? 'gemini' : (openRouterKeySet ? 'openrouter' : 'gemini'));
     const aiProvider = options.aiProvider || jobMeta.aiProvider || defaultProvider;
-    const sceneDuration = Number(options.sceneDuration) || 4.8;
+    // Hard production rule: change the visual scene at least every 3.5s.
+    // User-provided values above 3.5s are capped so the renderer cannot hold one scene too long.
+    const requestedSceneDuration = Number(options.sceneDuration);
+    const sceneDuration = Math.max(
+      3.0,
+      Math.min(3.5, Number.isFinite(requestedSceneDuration) && requestedSceneDuration > 0 ? requestedSceneDuration : 3.5)
+    );
 
     currentYoutubeUrl = youtubeUrl || '';
     highlight = null;
@@ -1909,14 +1915,26 @@ export async function runStage1Pipeline({
           return acc + Math.min(cr.videoMeta?.duration || 60, cleanCount * 4.0);
         }, 0);
 
-        const hasEnoughFootage = (candidateResults.length >= 2 && (totalCleanCount >= 8 || totalUsableDuration >= 35.0)) ||
-                                 (candidateResults.length >= 1 && (totalCleanCount >= 10 || totalUsableDuration >= 45.0) && (candidateResults[0].videoMeta?.duration || 0) >= 90) ||
-                                 (candidateResults.length >= 3 && totalCleanCount >= 8) ||
-                                 (candidateResults.length >= 4) ||
-                                 (totalCleanCount >= 14);
+        // Multi-source is mandatory whenever at least 2 viable candidates are available.
+        // Do NOT stop after one rich video: that was the root cause of the "always 1 URL" behavior.
+        const maxTargetSources = Math.min(3, candidatesToProcess.length);
+        const minimumTargetSources = Math.min(2, maxTargetSources);
+        const reachedPreferredSourceCount = candidateResults.length >= maxTargetSources;
+        const reachedMinimumSourceCount = candidateResults.length >= minimumTargetSources;
+
+        const enoughFootageAfterMinimumSources =
+          totalCleanCount >= 8 ||
+          totalUsableDuration >= 35.0 ||
+          candidateResults.length >= 3;
+
+        const hasEnoughFootage =
+          (reachedPreferredSourceCount && enoughFootageAfterMinimumSources) ||
+          (reachedMinimumSourceCount && enoughFootageAfterMinimumSources);
 
         if (hasEnoughFootage) {
-          console.log(`[Job ${jobId}] ✅ Target footage budget terpenuhi (~${totalUsableDuration.toFixed(1)}s usable footage dari ${candidateResults.length} video kandidat). Menghentikan pencarian awal, langsung ke AI Vision!`);
+          console.log(
+            `[Job ${jobId}] ✅ Target footage budget terpenuhi (~${totalUsableDuration.toFixed(1)}s usable footage dari ${candidateResults.length} video kandidat; target multi-source=${minimumTargetSources}-${maxTargetSources}). Menghentikan pencarian awal, langsung ke AI Vision!`
+          );
           break;
         }
 
