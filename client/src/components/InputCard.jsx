@@ -1,5 +1,5 @@
 import React from 'react';
-import { Youtube, ShoppingBag, Key, Sparkles, Shield, Sliders, Zap, Tag, AlignLeft } from 'lucide-react';
+import { Youtube, ShoppingBag, Key, Sparkles, Shield, Sliders, Zap, Tag, AlignLeft, Plus, Minus, Link2 } from 'lucide-react';
 
 const CLIENT_PRODUCT_ANCHORS = [
   { pattern: /\b(?:chopper|blender\s+mini|food\s+chopper)\b/i, noun: 'Chopper Mini Elektrik' },
