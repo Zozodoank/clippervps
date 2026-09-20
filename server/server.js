@@ -1746,6 +1746,7 @@ export async function runStage1Pipeline({
         introCutoffSec: candidateIntroCutoff,
         isVideoFirst: Boolean(options.isVideoFirst),
         niche: options.niche || 'kitchen_tools',
+        creativePlan,
         onProgress: updateProgress,
       });
 
@@ -1816,6 +1817,7 @@ export async function runStage1Pipeline({
           allowFallbackClips: !requireCleanGeminiPlan,
           isVideoFirst: Boolean(options.isVideoFirst),
           niche: options.niche || 'kitchen_tools',
+          creativePlan,
           onProgress: updateProgress,
         });
         if (!highlight || !Array.isArray(highlight.clips) || highlight.clips.length === 0) {
@@ -1836,8 +1838,8 @@ export async function runStage1Pipeline({
       }
     }
 
-    // Evaluasi video YouTube awal jika belum disetujui dari cache
-    // Multi-Video Harvesting: WAJIB default TRUE untuk affiliate faceless (multi-source clipper profesional)
+    // Candidate harvesting may inspect multiple sources, but final editing does NOT require multi-source.
+    // The verified-source selector prefers one consistent source whenever it already has rich footage.
     const preferMultiVideo = options.singleVideoOnly === true ? false : true;
 
     if (!approved && currentYoutubeUrl && !preferMultiVideo) {
@@ -2130,6 +2132,7 @@ export async function runStage1Pipeline({
           introCutoffSec: 0,
           isVideoFirst: Boolean(options.isVideoFirst),
           niche: options.niche || 'kitchen_tools',
+          creativePlan,
           onProgress: updateProgress,
         });
       } catch (aiErr) {
@@ -2261,21 +2264,6 @@ export async function runStage1Pipeline({
       // A copied clip with a shifted timestamp can produce the exact visual repetition
       // reported by users (Scene 1 == Scene 3, Scene 2 == Scene 4).
       const currentHlDuration = hl.clips.reduce((sum, c) => sum + (c.duration || 3.5), 0);
-      const downloadedSourceIds = new Set(
-        hl.clips
-          .map(c => c?.candidateIndex)
-          .filter(v => v !== null && v !== undefined)
-      );
-
-      if (downloadedCandidatesMap.size >= 2 && downloadedSourceIds.size < 2) {
-        const sourceErr = new Error(
-          `AI Vision menghasilkan klip dari satu sumber padahal ${downloadedCandidatesMap.size} sumber video sudah tersedia. Job dihentikan untuk mencegah pengulangan adegan.`
-        );
-        sourceErr.isAiRejection = true;
-        sourceErr.rejectionReason = 'Final clip plan collapse ke satu URL video.';
-        throw sourceErr;
-      }
-
       if (hl.clips.length < 6) {
         const clipErr = new Error(
           `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik (<6 / 21 detik). Tidak akan menggandakan adegan untuk mengejar durasi.`
@@ -2285,13 +2273,20 @@ export async function runStage1Pipeline({
         throw clipErr;
       }
 
-      hl.clips = hl.clips.map(c => ({
-        ...c,
-        duration: 3.5,
-        endSeconds: Number(c.startSeconds) + 3.5,
-        endTime: formatSeconds(Number(c.startSeconds) + 3.5),
-      }));
-      hl.duration = hl.clips.length * 3.5;
+      hl.clips = hl.clips.map((c, clipIndex) => {
+        const planShot = creativePlan?.shots?.[clipIndex];
+        const duration = Number(planShot?.targetSec) || Number(c.duration) || 3.0;
+        return {
+          ...c,
+          duration,
+          endSeconds: Number(c.startSeconds) + duration,
+          endTime: formatSeconds(Number(c.startSeconds) + duration),
+          storyboardRole: c.storyboardRole || planShot?.role || `scene_${clipIndex + 1}`,
+          creativePurpose: planShot?.purpose || '',
+        };
+      });
+      hl.duration = hl.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
+      console.log(`[Job ${jobId}] 🎬 Story-first pacing aktif:\n${describeCreativePlan(creativePlan)}`);
 
       // Keperluan backward compatibility: inputVideo tetap diisi, tetapi setiap clip
       // wajib mempunyai videoPath sumbernya sendiri dan renderer tidak boleh memakai
@@ -2473,13 +2468,19 @@ export async function runStage1Pipeline({
         // HARD RULE: never replenish by copying/offsetting an existing clip.
         // If audit leaves too few unique scenes, reject rather than manufacture repeats.
         if (cleanAuditedClips.length >= 6) {
-          highlight.clips = cleanAuditedClips.map(c => ({
-            ...c,
-            duration: 3.5,
-            endSeconds: Number(c.startSeconds) + 3.5,
-            endTime: formatSeconds(Number(c.startSeconds) + 3.5),
-          }));
-          highlight.duration = highlight.clips.length * 3.5;
+          highlight.clips = cleanAuditedClips.map((c, clipIndex) => {
+            const planShot = creativePlan?.shots?.[clipIndex];
+            const duration = Number(planShot?.targetSec) || Number(c.duration) || 3.0;
+            return {
+              ...c,
+              duration,
+              endSeconds: Number(c.startSeconds) + duration,
+              endTime: formatSeconds(Number(c.startSeconds) + duration),
+              storyboardRole: c.storyboardRole || planShot?.role || `scene_${clipIndex + 1}`,
+              creativePurpose: c.creativePurpose || planShot?.purpose || '',
+            };
+          });
+          highlight.duration = highlight.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
         } else {
           // USER MANDATE: Jika klip terpilih terbuang seluruhnya pada audit, JANGAN buang video!
           // Ambil frame peragaan bersih yang tersimpan di pooledFrames dari video yang sama!
@@ -2512,20 +2513,20 @@ export async function runStage1Pipeline({
             });
           }
 
-          const recoverySourceCount = new Set(recoveryClips.map(c => c.candidateIndex)).size;
-          if (downloadedCandidatesMap.size >= 2 && recoverySourceCount < 2) {
-            console.warn('[ClipAudit] ⛔ Recovery hanya memakai satu sumber; menolak daripada mengulang video yang sama.');
-            recoveryClips.length = 0;
-          }
-
           if (recoveryClips.length >= 6) {
-            highlight.clips = recoveryClips.slice(0, 8).map(c => ({
-              ...c,
-              duration: 3.5,
-              endSeconds: Number(c.startSeconds) + 3.5,
-              endTime: formatSeconds(Number(c.startSeconds) + 3.5),
-            }));
-            highlight.duration = highlight.clips.length * 3.5;
+            highlight.clips = recoveryClips.slice(0, 8).map((c, clipIndex) => {
+              const planShot = creativePlan?.shots?.[clipIndex];
+              const duration = Number(planShot?.targetSec) || 3.0;
+              return {
+                ...c,
+                duration,
+                endSeconds: Number(c.startSeconds) + duration,
+                endTime: formatSeconds(Number(c.startSeconds) + duration),
+                storyboardRole: planShot?.role || c.storyboardRole || `scene_${clipIndex + 1}`,
+                creativePurpose: planShot?.purpose || '',
+              };
+            });
+            highlight.duration = highlight.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
             console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi (minimal 21 detik).`);
           } else {
             console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
@@ -2594,6 +2595,7 @@ export async function runStage1Pipeline({
         segmentDuration: actualSilentDuration,
         sceneDuration,
         niche: options.niche || 'kitchen_tools',
+        creativePlan,
         onProgress: updateProgress,
       });
     } catch (scriptErr) {
@@ -3249,7 +3251,7 @@ async function runAutoStage1Worker(run) {
             autoSearchFallback: true,
             multiVideoHarvesting: true,
             isVideoFirst: true,
-            sceneDuration: 4.8,
+            sceneDuration: 3.3,
             minDuration: 30.0,
           },
           extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true, isVideoFirst: true, searchKeyword: keyword },
