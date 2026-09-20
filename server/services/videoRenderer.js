@@ -109,6 +109,7 @@ export async function renderSilentAntiDetectionVideo({
           hflip,
           ptsFactor,
           isSourceVertical: isClipVertical,
+          clipDuration: clip.duration,
         });
       });
 
@@ -326,7 +327,7 @@ export async function mergeVoiceoverAndBurnSubtitles({
   });
 }
 
-function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFactor, isSourceVertical = false }) {
+function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFactor, isSourceVertical = false, clipDuration = 3.0 }) {
   const isFlipDisabled = reframe.allowHflip === false || reframe.hasProductBrand === true;
   const clipHflip = isFlipDisabled ? false : (reframe.hflip !== undefined ? reframe.hflip : hflip);
   const rawMode = reframe.renderMode;
@@ -335,16 +336,25 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
   const preFlip = clipHflip ? 'hflip,' : '';
   const finish = `setsar=1,setpts=${ptsFactor}*(PTS-STARTPTS),eq=contrast=1.05:saturation=1.05:brightness=0.01,unsharp=5:5:0.8:5:5:0.0`;
 
-  // 1. Explicit Full 9:16 Crop (Tanpa Blur) - only if user specifically requested 'vertical_crop'
+  const baseFocusX = clampNumber(reframe.focusX, 0, 1, 0.5);
+  const baseFocusY = clampNumber(reframe.focusY, 0, 1, isSourceVertical ? 0.75 : 0.55);
+  const focusXStart = clampNumber(reframe.focusXStart, 0, 1, baseFocusX);
+  const focusXEnd = clampNumber(reframe.focusXEnd, 0, 1, baseFocusX);
+  const focusYStart = clampNumber(reframe.focusYStart, 0, 1, baseFocusY);
+  const focusYEnd = clampNumber(reframe.focusYEnd, 0, 1, baseFocusY);
+  const dur = Math.max(0.5, Number(clipDuration) || 3.0).toFixed(3);
+  const progress = `min(max(t/${dur},0),1)`;
+  const xFocusExpr = `(${focusXStart.toFixed(4)}+(${(focusXEnd - focusXStart).toFixed(4)})*${progress})`;
+  const yFocusExpr = `(${focusYStart.toFixed(4)}+(${(focusYEnd - focusYStart).toFixed(4)})*${progress})`;
+
+  // Full-screen vertical crop with time-varying focus trajectory.
   if (renderMode === 'vertical_crop') {
-    const focusX = clampNumber(reframe.focusX, 0, 1, 0.5).toFixed(3);
-    const focusY = clampNumber(reframe.focusY, 0, 1, 0.55).toFixed(3);
     return [
-      `[${inputIndex}:v]${preFlip}scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920:(iw-1080)*${focusX}:(ih-1920)*${focusY},${finish}[${outputLabel}]`
+      `[${inputIndex}:v]${preFlip}scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920:x='(iw-1080)*${xFocusExpr}':y='(ih-1920)*${yFocusExpr}',${finish}[${outputLabel}]`
     ];
   }
 
-  // 2. Fit 16:9 Utuh (0% Crop over 9:16 blurred background)
+  // Fit whole source over blurred canvas. No crop tracking needed.
   if (renderMode === 'fit_canvas') {
     return [
       `[${inputIndex}:v]${preFlip}split=2[bgsrc${inputIndex}][fgsrc${inputIndex}]`,
@@ -354,38 +364,26 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
     ];
   }
 
-  // 3. Smart Stage 1:1 Square (1080x1080 over 9:16 blurred background)
   if (renderMode === 'square_stage') {
-    const focusX = clampNumber(reframe.focusX, 0, 1, 0.5).toFixed(3);
-    const focusY = clampNumber(reframe.focusY, 0, 1, 0.55).toFixed(3);
     return [
       `[${inputIndex}:v]${preFlip}split=2[bgsrc${inputIndex}][fgsrc${inputIndex}]`,
       `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
-      `[fgsrc${inputIndex}]scale=1080:1080:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1080:(iw-1080)*${focusX}:(ih-1080)*${focusY},setsar=1[fg${inputIndex}]`,
+      `[fgsrc${inputIndex}]scale=1080:1080:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1080:x='(iw-1080)*${xFocusExpr}':y='(ih-1080)*${yFocusExpr}',setsar=1[fg${inputIndex}]`,
       `[bg${inputIndex}][fg${inputIndex}]overlay=(W-w)/2:(H-h)/2,${finish}[${outputLabel}]`,
     ];
   }
 
-  // 4. Default & Recommended: Smart Stage 80% (1080x1536) dengan Blur Atas-Bawah
-  // - Tinggi video 1536px (tepat 80% dari kanvas 1920px).
-  // - Bagian atas blur 192px & bagian bawah blur 192px.
-  // - Untuk video vertikal (Shorts/Reels): fokus diarahkan ke bawah (default focusY=0.75)
-  //   sehingga watermark/logo kreator di sudut atas (misal 'RONALD') terpotong bersih.
-  // - Untuk video landscape: crop diperluas dan tidak terlalu zoom.
-  const focusX = clampNumber(reframe.focusX, 0, 1, 0.5).toFixed(3);
-  const defaultFocusY = isSourceVertical ? 0.75 : 0.55;
-  const focusY = clampNumber(reframe.focusY, 0, 1, defaultFocusY).toFixed(3);
-
+  // Default Smart Stage 80% with subtle time-varying reframe.
   return [
     `[${inputIndex}:v]${preFlip}split=2[bgsrc${inputIndex}][fgsrc${inputIndex}]`,
     `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
-    `[fgsrc${inputIndex}]scale=1080:1536:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1536:(iw-1080)*${focusX}:(ih-1536)*${focusY},setsar=1[fg${inputIndex}]`,
+    `[fgsrc${inputIndex}]scale=1080:1536:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1536:x='(iw-1080)*${xFocusExpr}':y='(ih-1536)*${yFocusExpr}',setsar=1[fg${inputIndex}]`,
     `[bg${inputIndex}][fg${inputIndex}]overlay=(W-w)/2:(H-h)/2,${finish}[${outputLabel}]`,
   ];
 }
 
 export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, fallbackReframe = {}) {
-  const defaultClipLength = 4.8;
+  const defaultClipLength = 3.0;
   const sourceClips = Array.isArray(clips) ? clips : [];
   const normalized = [];
 
@@ -402,7 +400,7 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
 
       normalized.push({
         startSeconds,
-        duration: Math.max(3.5, Math.min(5.0, clipDuration)),
+        duration: Math.max(1.5, Math.min(4.5, clipDuration)),
         videoPath: clip?.videoPath || clip?.sourceVideo || null,
         candidateIndex: clip?.candidateIndex !== undefined ? clip.candidateIndex : null,
         reframe: {
