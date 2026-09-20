@@ -26,28 +26,63 @@ Aplikasi selalu aktif di background server VPS dan dapat diakses dari browser ma
 
 ---
 
-## 🌟 2-Stage Workflow Overview
+## 🌟 Professional Story-First Workflow
 
 ```mermaid
 flowchart TD
-    subgraph TAHAP 1: Clipping & Scripting AI
-        A[Judul & Deskripsi Produk + URL YouTube + Link Shopee] --> B[yt-dlp: Unduh Ringan 360p]
-        B --> C[FFmpeg: Ekstraksi 36 Frame Sumber]
-        C --> D[Google Gemini 2.5 Flash: Pilih Highlight Faceless + Fokus Crop Produk]
-        D --> E[yt-dlp: Unduh 1080p Full HD + FFmpeg Render Crop 9:16]
-        E --> F[FFmpeg: Ekstraksi Frame Video Potongan]
-        F --> G[Google Gemini 2.5 Flash: Buat Kotak Scene, Context & Naskah Akurat]
-        G --> H[Preview 9:16 Muted Clip + Kotak Scene + Naskah]
-    end
-
-    subgraph TAHAP 2: Upload Voiceover & Burn Subtitle
-        H --> I[User Generate TTS di Google AI Studio]
-        I --> J[User Upload File .mp3 ke Aplikasi]
-        J --> K[Backend: Generate Subtitle Sinkron .ass]
-        K --> L[FFmpeg: Gabung Audio + Bakar Subtitle Kontras]
-        L --> M[Video Final 9:16 Siap Upload + Download Button]
-    end
+    A[Judul + Deskripsi + Foto Produk] --> B[Product Fingerprint]
+    B --> C[Text + Visual Candidate Discovery]
+    C --> D[Metadata Filter]
+    D --> E[Local Cleanliness + Motion Filter]
+    E --> F[Per-Video Exact Product Verification]
+    F --> G[Verified Footage Library]
+    G --> H[Story-First Creative Shot Plan]
+    H --> I[AI Storyboard Solver]
+    I --> J[Download Hanya Source 1080p Terpilih]
+    J --> K[HD Clip Audit]
+    K --> L[Adaptive 9:16 Reframe + Silent Edit]
+    L --> M[Grounded Script + TTS]
+    M --> N[Conform Visual Cut ke Timing Voiceover Nyata]
+    N --> O[Subtitle ASS + Optional Music Ducking + SFX]
+    O --> P[Final Technical Master QC]
+    P --> Q[AI Final Visual QC]
+    Q -->|Crop gagal| R[Auto Repair: Fit Canvas + Render Ulang]
+    R --> P
+    Q -->|PASS| S[Final 1080x1920 Siap Upload]
 ```
+
+### Prinsip kualitas utama
+
+- **Exact product sebelum pooling:** frame yang bersih belum tentu produknya benar. Setiap kandidat harus lolos verifikasi jenis, mekanisme, konstruksi, dan brand/model bila memang diketahui.
+- **Konsistensi lebih penting daripada banyak sumber:** satu video exact-product yang kaya adegan diprioritaskan. Sumber tambahan hanya dipakai jika benar-benar diperlukan dan sudah lolos verifikasi.
+- **Story-first:** sistem membuat kebutuhan shot (hook, hero, mekanisme, aksi, hasil, CTA) lalu memilih footage yang memenuhi peran tersebut.
+- **Pacing adaptif:** durasi scene tidak lagi dipaksa sama. Hook bisa pendek, demonstrasi bisa lebih panjang sesuai kebutuhan.
+- **Voiceover mengontrol final timing:** setelah TTS selesai, visual dikonform ulang ke durasi suara aktual. Video tidak di-loop untuk menutupi voiceover yang terlalu panjang.
+- **Final Master QC wajib:** job baru dianggap selesai setelah lolos pemeriksaan resolusi, durasi, audio, black/freeze frame, subtitle safe-zone, dan visual composition final.
+
+### Konfigurasi finishing opsional
+
+Tambahkan ke `server/.env` bila aset tersedia:
+
+```bash
+# Musik latar lokal. Kosong = tanpa musik.
+BACKGROUND_MUSIC_PATH=/path/to/background_music.mp3
+BACKGROUND_MUSIC_VOLUME=0.10
+
+# SFX lokal opsional pada pergantian shot.
+SFX_CLICK_PATH=/path/to/click.wav
+SFX_WHOOSH_PATH=/path/to/whoosh.wav
+
+# Final AI visual QC aktif secara default.
+# false = hanya gunakan Technical Master QC.
+FINAL_AI_QC=true
+
+# Jika true, outage/error AI Final QC membuat job gagal.
+# Default false: outage AI QC fallback ke Technical Master QC.
+FINAL_AI_QC_STRICT=false
+```
+
+> Musik/SFX tidak wajib. Pipeline tetap menghasilkan final video dengan voiceover, subtitle, loudness normalization, dan Master QC tanpa aset tersebut.
 
 ---
 
@@ -95,7 +130,7 @@ npm run dev
 
 ---
 
-## 📱 Panduan Penggunaan 2-Tahap
+## 📱 Panduan Penggunaan & Finalisasi
 
 1. **Tahap 1 (Clipping & Scripting)**:
    - Pastikan `GEMINI_API_KEY` sudah terisi di file `server/.env` (Dapatkan gratis di [aistudio.google.com](https://aistudio.google.com)).
@@ -103,14 +138,17 @@ npm run dev
    - Masukkan **Deskripsi & Spesifikasi Produk** (Poin penting & keunggulan barang).
    - Masukkan **YouTube Video URL** dan **Shopee Affiliate Link**.
    - Klik **"Generate Kotak Scene & Video 9:16"**.
-   - **Google Gemini 2.5 Flash** menganalisis 36 frame visual, memilih cuplikan peragaan produk tanpa wajah, dan membuat Kotak Scene & Naskah Ad Advisor.
-   - **FFmpeg** merender video 9:16 bersih tanpa audio bawaan YouTube.
+   - Pipeline menyaring kandidat, memverifikasi exact-product per video, lalu memilih source paling konsisten.
+   - AI menyusun storyboard berdasarkan peran shot dan FFmpeg merender edit 9:16 dengan pacing adaptif.
+   - Backend dapat membuat TTS otomatis; jika TTS berhasil, visual dikonform ulang ke timing suara sebelum final render.
 2. **Tahap 2 (Upload Voiceover & Finalisasi)**:
    - Buka tab **Prompt Google AI Studio** atau **Naskah Voiceover** dan copy teksnya.
    - Generate audio TTS di [Google AI Studio](https://aistudio.google.com) lalu download file `.mp3`.
    - Drag & drop file `.mp3` ke kotak **Tahap 2: Upload Voiceover AI Studio**.
    - Klik **"Gabungkan Voiceover & Bakar Subtitle (Final Video)"**.
-   - Preview video final dengan subtitle dan klik **Download Video .mp4 (Final with Subtitles)**.
+   - Backend menolak looping footage, melakukan loudness normalization, lalu menjalankan Technical + AI Final Master QC.
+   - Jika AI menemukan crop terlalu agresif, sistem mencoba auto-repair `fit_canvas` dan QC ulang.
+   - Video hanya ditandai **completed** setelah lolos QC.
 
 ---
 
