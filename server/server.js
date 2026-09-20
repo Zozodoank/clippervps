@@ -2030,35 +2030,66 @@ export async function runStage1Pipeline({
           console.log(`[Job ${jobId}] [${candLabel}] Hasil filter frame: ${frameFilterRes.cleanFrames.length} frame peragaan tangan disimpan (${frameFilterRes.discardedCount} frame wajah/intro disingkirkan).`);
 
           if (frameFilterRes.cleanFrames.length > 0) {
-            updateProgress({
-              step: 'product_verification',
-              message: `[${candLabel}] Memastikan jenis, bentuk, dan mekanisme produk sama dengan target...`,
-              progress: 34,
-              status: 'running',
-            });
-
-            const productVerification = await verifyProductCandidateWithAI({
-              apiKey,
-              aiProvider,
-              frames: frameFilterRes.cleanFrames,
-              productTitle,
-              productDescription,
-              productImage: effectiveProductImage,
-              productFingerprint,
-              niche: options.niche || 'kitchen_tools',
-              onProgress: updateProgress,
-            });
-
-            if (!productVerification?.verified) {
-              console.warn(
-                `[Job ${jobId}] ⛔ [${candLabel}] Produk tidak lolos verifikasi identitas (confidence=${Number(productVerification?.confidence || 0).toFixed(2)}): ${productVerification?.reason || 'mismatch'}`
-              );
-              continue;
-            }
-
-            console.log(
-              `[Job ${jobId}] ✅ [${candLabel}] Produk terverifikasi cocok (confidence=${Number(productVerification.confidence || 0).toFixed(2)}).`
+            const isManualOem = Boolean(
+              candidate?.manualOem ||
+              candidate?.source === 'manual_oem' ||
+              candidate?.skipGeminiProductMatch
             );
+
+            let productVerification;
+
+            if (isManualOem) {
+              // MANUAL OEM POLICY:
+              // User explicitly supplied this source because automatic discovery
+              // lacked visual variety. Local QC remains mandatory, but Gemini
+              // must NOT decide whether the physical product matches.
+              productVerification = {
+                verified: true,
+                confidence: 1,
+                manualOverride: true,
+                method: 'local_qc_only',
+                reason: 'OEM manual URL; Gemini product-match verification intentionally bypassed.',
+              };
+              updateProgress({
+                step: 'product_verification',
+                message: `[${candLabel}] OEM manual: lolos berdasarkan filter lokal; Gemini product-match dilewati.`,
+                progress: 34,
+                status: 'running',
+              });
+              console.log(
+                `[Job ${jobId}] ✅ [${candLabel}] OEM manual diterima setelah Filter Lokal. Gemini product-match DILEWATI.`
+              );
+            } else {
+              updateProgress({
+                step: 'product_verification',
+                message: `[${candLabel}] Memastikan jenis, bentuk, dan mekanisme produk sama dengan target...`,
+                progress: 34,
+                status: 'running',
+              });
+
+              productVerification = await verifyProductCandidateWithAI({
+                apiKey,
+                aiProvider,
+                frames: frameFilterRes.cleanFrames,
+                productTitle,
+                productDescription,
+                productImage: effectiveProductImage,
+                productFingerprint,
+                niche: options.niche || 'kitchen_tools',
+                onProgress: updateProgress,
+              });
+
+              if (!productVerification?.verified) {
+                console.warn(
+                  `[Job ${jobId}] ⛔ [${candLabel}] Produk tidak lolos verifikasi identitas (confidence=${Number(productVerification?.confidence || 0).toFixed(2)}): ${productVerification?.reason || 'mismatch'}`
+                );
+                continue;
+              }
+
+              console.log(
+                `[Job ${jobId}] ✅ [${candLabel}] Produk terverifikasi cocok (confidence=${Number(productVerification.confidence || 0).toFixed(2)}).`
+              );
+            }
 
             candidateResults.push({
               candidateIndex: i,
