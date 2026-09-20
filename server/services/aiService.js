@@ -2204,6 +2204,124 @@ Verify ONLY product identity. Do not accept a candidate merely because it is vis
 }
 
 /**
+ * Final rendered-frame QC. Unlike source QC, burned affiliate subtitles are expected here.
+ * This verifies that the final crop still presents the target product professionally.
+ */
+export async function verifyFinalRenderedFramesWithAI({
+  apiKey,
+  aiProvider,
+  frames = [],
+  productTitle = '',
+  productFingerprint = null,
+  niche = 'kitchen_tools',
+  onProgress = () => {},
+} = {}) {
+  if (!Array.isArray(frames) || frames.length < 3) {
+    return { passed: false, reason: 'Frame final terlalu sedikit untuk QC visual.' };
+  }
+
+  const selectedEngine = (aiProvider || process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
+  const { client, models, provider } = getAiClientConfig({ apiKeyOverride: apiKey, aiProvider: selectedEngine });
+  const sampleFrames = frames.length <= 10
+    ? frames
+    : Array.from({ length: 10 }, (_, i) => frames[Math.round(i * (frames.length - 1) / 9)]);
+
+  const systemPrompt = `You are the FINAL MASTER QC director for a finished 9:16 affiliate video.
+These are frames from the already-rendered final output, so clean Indonesian burned subtitles are EXPECTED and must NOT be treated as source contamination.
+
+Check:
+1. Target product remains clearly visible and not severely cropped off-screen.
+2. Product identity/form/mechanism is visually consistent across the final video.
+3. No obvious repeated/frozen scene dominates the edit.
+4. Subtitle block is legible and stays in a reasonable lower-middle safe zone; it must not cover the product's key mechanism in most frames.
+5. No black/blank frame or broken render.
+6. Composition looks intentional for vertical 9:16.
+
+Be conservative but do not reject for normal hard cuts, minor color differences, hands, or our own subtitles.
+Return strict JSON:
+{
+  "passed": true,
+  "productVisible": true,
+  "productConsistent": true,
+  "severeCropIssue": false,
+  "duplicateSceneRisk": false,
+  "subtitleSafe": true,
+  "brokenFrame": false,
+  "confidence": 0.0,
+  "reason": ""
+}`;
+
+  const userPrompt = `Target product: "${productTitle}"
+Product fingerprint: ${JSON.stringify(productFingerprint || {})}
+Niche: ${niche}
+Review these final rendered frames as one finished short-form edit.`;
+
+  const content = [{ type: 'text', text: userPrompt }];
+  for (const frame of sampleFrames) {
+    let imgUrl = frame?.base64;
+    if (!imgUrl && frame?.filePath && fs.existsSync(frame.filePath)) {
+      try {
+        const mime = frame.filePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        imgUrl = `data:${mime};base64,${fs.readFileSync(frame.filePath).toString('base64')}`;
+      } catch {}
+    }
+    if (typeof imgUrl === 'string' && imgUrl.startsWith('data:image/')) {
+      content.push({ type: 'image_url', image_url: { url: imgUrl, detail: 'low' } });
+    }
+  }
+
+  let lastError = null;
+  for (const model of models) {
+    try {
+      onProgress({
+        step: 'final_visual_qc',
+        message: `AI Final Visual QC dengan ${provider} (${model})...`,
+        progress: 99,
+        status: 'running',
+      });
+
+      const response = await client.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.05,
+        max_tokens: 700,
+      }, { timeout: 45000, maxRetries: 0 });
+
+      const msg = response.choices?.[0]?.message;
+      const raw = (msg?.content && msg.content.trim()) ? msg.content : (msg?.reasoning || '{}');
+      const parsed = repairJson(raw);
+      const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
+      const passed =
+        parsed.passed === true &&
+        parsed.productVisible !== false &&
+        parsed.productConsistent !== false &&
+        parsed.severeCropIssue !== true &&
+        parsed.duplicateSceneRisk !== true &&
+        parsed.subtitleSafe !== false &&
+        parsed.brokenFrame !== true &&
+        confidence >= 0.70;
+
+      return {
+        ...parsed,
+        passed,
+        confidence,
+        reason: String(parsed.reason || (passed ? 'Final visual QC passed.' : 'Final visual QC tidak cukup meyakinkan.')),
+        model,
+        provider,
+      };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  throw new Error(`AI Final Visual QC gagal: ${lastError?.message || 'semua model gagal'}`);
+}
+
+/**
  * Stage 1, Step B: Calls Alibaba Qwen API (or Google Gemini)
  * using explicit user provided Product Title and Product Description to generate:
  * - Kotak Scene (Scene Breakdown)
