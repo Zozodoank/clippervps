@@ -3336,7 +3336,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     normalized.push({
       startSeconds,
       endSeconds,
-      duration: defaultClipLength,
+      duration: clipLength,
       startTime: formatSeconds(startSeconds),
       endTime: formatSeconds(endSeconds),
       candidateIndex: rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : null,
@@ -3440,7 +3440,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     fallbackClips.push({
       startSeconds,
       endSeconds: startSeconds + defaultClipLength,
-      duration: clipLength,
+      duration: defaultClipLength,
       startTime: formatSeconds(startSeconds),
       endTime: formatSeconds(startSeconds + defaultClipLength),
       reason: `Fallback ${defaultClipLength}s product shot.`,
