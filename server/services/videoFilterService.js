@@ -288,7 +288,12 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
 
   // 2B. Filter Kata Kunci Terlarang pada Judul Video
-  // IZINKAN unboxing (karena AI visual memiliki filter Criterion 4B untuk membuang frame kardus/kertas dan hanya mengambil demonstrasi produk).
+  // Packaging/unboxing tidak pernah menjadi sumber footage affiliate yang valid.
+  const packagingRegex = /\b(unboxing|unbox|unpack|unpacking|bubble\s*wrap|kardus|cardboard|packaging|package\s+opening|box\s+opening|open\s+box|buka\s+paket|paket\s+dibuka)\b/i;
+  if (packagingRegex.test(titleLower) || packagingRegex.test(descLower.slice(0, 700))) {
+    return { eligible: false, reason: 'Video terindikasi unboxing/packaging (kardus, bubble wrap, atau pembukaan paket), bukan demo produk aktif.' };
+  }
+
   const bannedKeywordRegex = isGadget
     ? /\b(cara|tutorial|diy|how\s+to|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti lcd|ganti baterai|repair|reparasi|bongkar mesin|mati total|matot|bypass|bootloop)\b/i
     : /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
@@ -328,11 +333,18 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     }
   }
 
-  // 2G. Filter Mesin Alat Berat & Pertanian Skala Raksasa (Hanya blokir alat berat/traktor/pakan ternak raksasa)
-  // JANGAN blokir 'pemipil jagung' (karena ada pemipil jagung manual mini), dan jangan blokir kata 'pabrik'/'usaha'/'umkm'
-  const heavyMachineryRegex = /\b(alat\s+berat|traktor|perontok\s+padi|chopper\s+pakan\s+ternak|chopper\s+rumput|cacah\s+rumput|mesin\s+selep\s+gabah|silase|mesin\s+industri\s+berat)\b/i;
-  if (heavyMachineryRegex.test(titleLower)) {
-    return { eligible: false, reason: 'Judul video mengindikasikan alat berat / mesin pertanian raksasa (bukan alat rumah tangga praktis).' };
+  // 2G. Blacklist mesin/factory/industrial footage at metadata stage.
+  // Compact countertop appliances remain allowed only when the TARGET explicitly describes
+  // a compact machine/appliance; generic machine footage is noise for ordinary hand-tools.
+  const targetCompactMachine =
+    /\b(mesin|machine|appliance|alat\s+elektrik|elektrik)\b/i.test(productTitle) &&
+    /\b(mini|portable|compact|countertop|kitchen|dapur|handheld|usb|electric|elektrik|chopper|blender|mixer|frother|sealer|toaster|waffle|food\s+processor)\b/i.test(productTitle);
+
+  const machineTitleRegex =
+    /\b(?:industrial\s+machine|factory\s+machine|production\s+machine|packing\s+machine|packaging\s+machine|commercial\s+machine|industrial|machinery|mesin\s+industri|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|mesin\s+komersial|mesin\s+besar|mesin\s+raksasa|cnc|conveyor|hydraulic\s+press|lathe\s+machine|milling\s+machine|washing\s+machine|mesin\s+cuci|\bmesin\b|\bmachine\b|\bmachinery\b)\b/i;
+
+  if (machineTitleRegex.test(titleLower) && !targetCompactMachine) {
+    return { eligible: false, reason: 'Video terindikasi footage mesin/machinery, bukan demonstrasi alat rumah tangga yang sesuai.' };
   }
 
   // 3. Filter Iklan & Sponsor Komersial
