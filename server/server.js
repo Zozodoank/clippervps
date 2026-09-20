@@ -2847,22 +2847,35 @@ export async function runStage1Pipeline({
           onProgress: updateProgress,
         });
 
-        updateProgress({
-          step: 'final_master_qc',
-          message: 'Final Master QC: memeriksa resolusi, black frame, freeze, loudness, durasi, dan subtitle safe-zone...',
-          progress: 98,
-          status: 'running',
-        });
-
-        const finalQc = await runFinalMasterQc({
-          videoPath: finalOutputPath,
+        const finalQc = await runProfessionalFinalQcWithRepair({
+          jobId,
+          finalOutputPath,
+          silentVideoPath: silentOutputPath,
+          voiceoverAudioPath: autoVoiceoverPath,
+          srtPath,
           expectedDurationSec: finalSilentDurationSec,
-          subtitlePath: srtPath,
+          productTitle: highlight.detectedProduct || productTitle || videoMeta.title,
+          productFingerprint,
+          aiProvider,
+          apiKey,
+          niche: options.niche || 'kitchen_tools',
+          renderSourcePath: rawVideoPath,
+          clips: highlight.clips,
+          hflip: effectiveHflip,
+          reframe: effectiveReframe,
+          backgroundMusicPath,
+          musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
+          sfxEvents,
+          onProgress: updateProgress,
         });
 
         if (!finalQc.passed) {
           try { fs.unlinkSync(finalOutputPath); } catch {}
-          const qcError = new Error(`FINAL_MASTER_QC_FAILED: ${finalQc.issues.join(', ')}`);
+          const issues = [
+            ...(finalQc.technical?.issues || []),
+            ...(finalQc.visual?.reason ? [finalQc.visual.reason] : []),
+          ];
+          const qcError = new Error(`FINAL_MASTER_QC_FAILED: ${issues.join(', ')}`);
           qcError.isFinalQcFailure = true;
           qcError.finalQc = finalQc;
           throw qcError;
@@ -3965,14 +3978,36 @@ app.post('/api/upload-voiceover', upload.single('audio'), async (req, res) => {
       onProgress: updateProgress,
     });
 
-    const finalQc = await runFinalMasterQc({
-      videoPath: finalOutputPath,
+    const manualRenderSource = (job.downloadedVideoPath && fs.existsSync(job.downloadedVideoPath))
+      ? job.downloadedVideoPath
+      : job.highlight?.clips?.find(c => c?.videoPath && fs.existsSync(c.videoPath))?.videoPath;
+
+    const finalQc = await runProfessionalFinalQcWithRepair({
+      jobId,
+      finalOutputPath,
+      silentVideoPath: silentPath,
+      voiceoverAudioPath: audioFile.path,
+      srtPath,
       expectedDurationSec: silentDurationSec,
-      subtitlePath: srtPath,
+      productTitle: job.productTitle || '',
+      productFingerprint: job.productFingerprint || null,
+      aiProvider: job.aiProvider,
+      apiKey: undefined,
+      niche: job.niche || 'kitchen_tools',
+      renderSourcePath: manualRenderSource || '',
+      clips: job.highlight?.clips || [],
+      hflip: job.hasProductBrand ? false : Boolean(job.highlight?.allowHflip),
+      reframe: job.highlight?.reframe || {},
+      backgroundMusicPath: process.env.BACKGROUND_MUSIC_PATH || '',
+      musicVolume: Number(process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
+      onProgress: updateProgress,
     });
     if (!finalQc.passed) {
       try { fs.unlinkSync(finalOutputPath); } catch {}
-      throw new Error(`FINAL_MASTER_QC_FAILED: ${finalQc.issues.join(', ')}`);
+      throw new Error(`FINAL_MASTER_QC_FAILED: ${[
+        ...(finalQc.technical?.issues || []),
+        ...(finalQc.visual?.reason ? [finalQc.visual.reason] : []),
+      ].join(', ')}`);
     }
 
     cleanupTempFiles([audioFile.path, srtPath]);
@@ -4153,14 +4188,36 @@ async function processJobVoiceover(jobId, customScript = null, options = {}) {
       onProgress: updateProgress,
     });
 
-    const finalQc = await runFinalMasterQc({
-      videoPath: finalOutputPath,
+    const retryRenderSource = (job.downloadedVideoPath && fs.existsSync(job.downloadedVideoPath))
+      ? job.downloadedVideoPath
+      : job.highlight?.clips?.find(c => c?.videoPath && fs.existsSync(c.videoPath))?.videoPath;
+
+    const finalQc = await runProfessionalFinalQcWithRepair({
+      jobId,
+      finalOutputPath,
+      silentVideoPath: silentPath,
+      voiceoverAudioPath,
+      srtPath,
       expectedDurationSec: finalSilentDurationSec,
-      subtitlePath: srtPath,
+      productTitle: job.productTitle || '',
+      productFingerprint: job.productFingerprint || null,
+      aiProvider: job.aiProvider,
+      apiKey: options.geminiApiKey,
+      niche: job.niche || 'kitchen_tools',
+      renderSourcePath: retryRenderSource || '',
+      clips: job.highlight?.clips || [],
+      hflip: job.hasProductBrand ? false : Boolean(job.highlight?.allowHflip),
+      reframe: job.highlight?.reframe || {},
+      backgroundMusicPath: options.backgroundMusicPath || process.env.BACKGROUND_MUSIC_PATH || '',
+      musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
+      onProgress: updateProgress,
     });
     if (!finalQc.passed) {
       try { fs.unlinkSync(finalOutputPath); } catch {}
-      throw new Error(`FINAL_MASTER_QC_FAILED: ${finalQc.issues.join(', ')}`);
+      throw new Error(`FINAL_MASTER_QC_FAILED: ${[
+        ...(finalQc.technical?.issues || []),
+        ...(finalQc.visual?.reason ? [finalQc.visual.reason] : []),
+      ].join(', ')}`);
     }
 
     cleanupTempFiles([srtPath]);
