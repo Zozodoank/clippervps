@@ -2863,44 +2863,51 @@ export function build7SlotStoryboardClips({
     ? candIndices.slice(0, Math.min(3, candIndices.length))
     : candIndices;
 
+  const isUsableDistinctFrame = (f) => {
+    if (!f || isForbiddenFrame(f)) return false;
+
+    const key = getFrameKey(f);
+    if (selectedFrameKeys.has(key)) return false;
+
+    const cand = f?.candidateIndex !== undefined ? f.candidateIndex : 0;
+    const ts = Number(f?.timestamp) || 0;
+    const previous = selectedTimestampsByCandidate.get(cand) || [];
+
+    // Same-source scenes must be separated by at least one full scene duration.
+    if (previous.some((p) => Math.abs(p - ts) < Math.max(clipSec, 3.5))) return false;
+
+    return true;
+  };
+
   const chooseDistinctFrame = (preferred, preferredCandidate = null) => {
-    const ordered = [];
-
-    // First obey the required source for this scene.
-    if (preferred && (preferredCandidate === null || (preferred.candidateIndex ?? 0) === preferredCandidate)) {
-      ordered.push(preferred);
-    }
-
+    // Phase 1: strictly try the required source for this scene.
     if (preferredCandidate !== null) {
+      const required = [];
+      if (preferred && (preferred.candidateIndex ?? 0) === preferredCandidate) {
+        required.push(preferred);
+      }
       for (const f of validFrames) {
         const cand = f?.candidateIndex !== undefined ? f.candidateIndex : 0;
-        if (cand === preferredCandidate && f !== preferred) ordered.push(f);
+        if (cand === preferredCandidate && f !== preferred) required.push(f);
+      }
+
+      for (const f of required) {
+        if (isUsableDistinctFrame(f)) return f;
       }
     }
 
-    // Only use other candidates if the required source has no usable frame.
-    if (ordered.length === 0) {
-      if (preferred) ordered.push(preferred);
-      for (const f of validFrames) {
-        if (f !== preferred) ordered.push(f);
-      }
+    // Phase 2: if that source has no valid frame left, use another source rather than
+    // producing a duplicate/empty slot. This is only a fallback for missing footage.
+    const fallback = [];
+    if (preferred) fallback.push(preferred);
+    for (const f of validFrames) {
+      if (f !== preferred) fallback.push(f);
     }
 
-    for (const f of ordered) {
-      if (isForbiddenFrame(f)) continue;
-
-      const key = getFrameKey(f);
-      if (selectedFrameKeys.has(key)) continue;
-
-      const cand = f?.candidateIndex !== undefined ? f.candidateIndex : 0;
-      const ts = Number(f?.timestamp) || 0;
-      const previous = selectedTimestampsByCandidate.get(cand) || [];
-
-      // Same-source scenes must be separated by at least one full scene duration.
-      if (previous.some((p) => Math.abs(p - ts) < Math.max(clipSec, 3.5))) continue;
-
-      return f;
+    for (const f of fallback) {
+      if (isUsableDistinctFrame(f)) return f;
     }
+
     return null;
   };
 
