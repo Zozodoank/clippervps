@@ -3758,6 +3758,148 @@ async function conformExistingJobEditToAudio({
   };
 }
 
+
+async function runProfessionalFinalQcWithRepair({
+  jobId,
+  finalOutputPath,
+  silentVideoPath,
+  voiceoverAudioPath,
+  srtPath,
+  expectedDurationSec,
+  productTitle,
+  productFingerprint,
+  aiProvider,
+  apiKey,
+  niche = 'kitchen_tools',
+  renderSourcePath = '',
+  clips = [],
+  hflip = false,
+  reframe = {},
+  backgroundMusicPath = '',
+  musicVolume = 0.10,
+  sfxEvents = [],
+  onProgress = () => {},
+} = {}) {
+  const finalQcFramesDir = path.join(tempDir, `job_${jobId}`, 'final_qc_frames');
+  if (!fs.existsSync(finalQcFramesDir)) fs.mkdirSync(finalQcFramesDir, { recursive: true });
+
+  const evaluate = async () => {
+    const technical = await runFinalMasterQc({
+      videoPath: finalOutputPath,
+      expectedDurationSec,
+      subtitlePath: srtPath,
+    });
+
+    let visual = {
+      passed: true,
+      skipped: true,
+      reason: 'FINAL_AI_QC disabled',
+    };
+
+    if (process.env.FINAL_AI_QC !== 'false' && technical.passed) {
+      try {
+        const duration = (await getMediaDurationSec(finalOutputPath)) || expectedDurationSec || 20;
+        const { frames } = await extractFrames(finalOutputPath, finalQcFramesDir, () => {}, {
+          sampleIntervalSec: Math.max(1.2, duration / 8),
+          maxSampleFrames: 9,
+          duration,
+        });
+
+        visual = await verifyFinalRenderedFramesWithAI({
+          apiKey,
+          aiProvider,
+          frames,
+          productTitle,
+          productFingerprint,
+          niche,
+          onProgress,
+        });
+      } catch (err) {
+        // A final AI-QC service outage should not silently approve a broken video.
+        visual = {
+          passed: false,
+          reason: `AI Final Visual QC error: ${err.message}`,
+          serviceError: true,
+        };
+      }
+    }
+
+    return {
+      passed: technical.passed && visual.passed,
+      technical,
+      visual,
+    };
+  };
+
+  onProgress({
+    step: 'final_master_qc',
+    message: 'Final Master QC: teknis + visual composition check...',
+    progress: 98,
+    status: 'running',
+  });
+
+  let report = await evaluate();
+  if (report.passed) return report;
+
+  const canRepairCrop =
+    report.technical?.passed === true &&
+    report.visual?.severeCropIssue === true &&
+    renderSourcePath &&
+    fs.existsSync(renderSourcePath) &&
+    Array.isArray(clips) &&
+    clips.length > 0;
+
+  if (canRepairCrop) {
+    onProgress({
+      step: 'final_auto_repair',
+      message: 'Final QC menemukan crop terlalu agresif. Auto-repair ke fit-canvas lalu render ulang...',
+      progress: 98,
+      status: 'running',
+    });
+
+    const repairedClips = clips.map((clip) => ({
+      ...clip,
+      reframe: {
+        ...(clip.reframe || {}),
+        renderMode: 'fit_canvas',
+        dynamicTracking: false,
+      },
+    }));
+
+    await renderSilentAntiDetectionVideo({
+      inputVideo: renderSourcePath,
+      startTime: repairedClips[0]?.startTime,
+      endTime: repairedClips[repairedClips.length - 1]?.endTime,
+      outputVideo: silentVideoPath,
+      clips: repairedClips,
+      hflip,
+      speedMultiplier: 1,
+      reframe: { ...(reframe || {}), renderMode: 'fit_canvas' },
+      onProgress,
+    });
+
+    const repairedDuration = (await getMediaDurationSec(silentVideoPath)) || expectedDurationSec;
+    await mergeVoiceoverAndBurnSubtitles({
+      silentVideoPath,
+      voiceoverAudioPath,
+      srtPath,
+      outputVideoPath: finalOutputPath,
+      targetDurationSec: repairedDuration,
+      backgroundMusicPath,
+      musicVolume,
+      sfxEvents,
+      onProgress,
+    });
+
+    report = await evaluate();
+    report.autoRepairAttempted = true;
+    report.autoRepairMode = 'fit_canvas';
+    return report;
+  }
+
+  return report;
+}
+
 // 6. STAGE 2: Upload Voiceover & Merge Subtitles
 app.post('/api/upload-voiceover', upload.single('audio'), async (req, res) => {
   reloadEnvironment();
