@@ -2743,6 +2743,59 @@ export function build7SlotStoryboardClips({
 
   let slot1Clip = null;
 
+  // Anti-repetition / packaging guard:
+  // Never reuse the exact source frame, and never reuse overlapping moments from the same source video.
+  const selectedFrameKeys = new Set();
+  const selectedTimestampsByCandidate = new Map();
+  const frameAuditByIndex = new Map(
+    (Array.isArray(parsed?.frameAudit) ? parsed.frameAudit : [])
+      .map((a) => [Number(a?.frameIndex), a])
+      .filter(([idx]) => Number.isFinite(idx) && idx > 0)
+  );
+
+  const getFrameKey = (f) =>
+    f?.filePath ||
+    `${f?.videoId || f?.candidate?.id || f?.candidateUrl || 'candidate'}:${Math.round((Number(f?.timestamp) || 0) * 10) / 10}`;
+
+  const isForbiddenFrame = (f) => {
+    if (!f) return true;
+    const idx = validFrames.indexOf(f) + 1;
+    const audit = frameAuditByIndex.get(idx);
+    if (audit) {
+      if (audit.containsTargetProduct === false || audit.isPackaging === true || audit.isMachine === true || audit.isActiveProductDemo === false) {
+        return true;
+      }
+    }
+    const text = [
+      f.reason, f.detectedAction, f.category, f.datasetTag, f.displayLabel
+    ].filter(Boolean).join(' ').toLowerCase();
+    return /unbox|unpack|bubble\s*wrap|kardus|cardboard|packaging|package opening|open box|box opening|industrial machine|factory machine|machinery|mesin industri|mesin pabrik|mesin produksi/.test(text);
+  };
+
+  const chooseDistinctFrame = (preferred) => {
+    const ordered = [];
+    if (preferred) ordered.push(preferred);
+    for (const f of validFrames) {
+      if (f !== preferred) ordered.push(f);
+    }
+
+    for (const f of ordered) {
+      if (isForbiddenFrame(f)) continue;
+
+      const key = getFrameKey(f);
+      if (selectedFrameKeys.has(key)) continue;
+
+      const cand = f?.candidateIndex !== undefined ? f.candidateIndex : 0;
+      const ts = Number(f?.timestamp) || 0;
+      const previous = selectedTimestampsByCandidate.get(cand) || [];
+      // A new clip from the same source must not overlap the previous clip.
+      if (previous.some((p) => Math.abs(p - ts) < Math.max(clipSec, 4.0))) continue;
+
+      return f;
+    }
+    return null;
+  };
+
   for (let sIdx = 0; sIdx < slotsConfig.length; sIdx++) {
     const config = slotsConfig[sIdx];
     let frameObj = null;
@@ -2806,27 +2859,20 @@ export function build7SlotStoryboardClips({
         frameObj = getFrameByIdx(resultCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 8)];
       }
     } else if (config.slot === 6 || config.slot === 7) {
-      // Slot 6 & 7: WAJIB Visual Produk Utuh!
+      // Slot 6 & 7: cari hero/closing frame yang BENAR-BENAR berbeda.
       if (!frameObj) {
-        const lateCleanHero = validFrames.find((f, i) => i >= Math.floor(totalFramesCount * 0.82) && (f.timestamp || 0) > 0);
-        if (lateCleanHero && config.slot === 6) {
-          frameObj = lateCleanHero;
-        } else if (slot1Clip) {
-          frameObj = {
-            candidateIndex: slot1Clip.candidateIndex,
-            candidateTitle: slot1Clip.candidateTitle,
-            candidateUrl: slot1Clip.candidateUrl,
-            videoId: slot1Clip.videoId,
-            candidate: slot1Clip.candidate,
-            timestamp: config.slot === 6 ? slot1Clip.startSeconds : Math.min(totalDuration - clipSec, slot1Clip.startSeconds + 2.5)
-          };
-        } else {
-          frameObj = validFrames[0];
-        }
+        const lateHeroCandidates = validFrames
+          .filter((f, i) => i >= Math.floor(totalFramesCount * 0.70) && (f.timestamp || 0) > 0);
+        frameObj = lateHeroCandidates[config.slot === 6 ? 0 : 1] || lateHeroCandidates[0] || null;
       }
     }
 
-    if (!frameObj) frameObj = validFrames[0] || {};
+    const distinctFrame = chooseDistinctFrame(frameObj);
+    if (!distinctFrame) {
+      console.warn(`[build7SlotStoryboardClips] Tidak ada frame unik yang cukup untuk Slot #${config.slot}; slot dilewati agar tidak mengulang visual.`);
+      continue;
+    }
+    frameObj = distinctFrame;
 
     const candIdx = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : 0;
     const candDuration = frameObj?.candidate?.duration || totalDuration;
@@ -2837,30 +2883,14 @@ export function build7SlotStoryboardClips({
       startSec = minSafeStart;
     }
 
-    // Jika slot 2 sampai 5 bertabrakan (< 2.0s) dengan klip sebelumnya di kandidat yang sama, sebarkan
-    if (config.slot >= 2 && config.slot <= 5) {
-      const collides = storyboardClips.some(sc =>
-        sc.candidateIndex === candIdx && Math.abs(sc.startSeconds - startSec) < 2.0
-      );
-      if (collides) {
-        const span = Math.max(0, candDuration - clipSec - minSafeStart);
-        const proportionalSec = minSafeStart + ((sIdx / 6) * span);
-        startSec = Math.round(Math.min(candDuration - clipSec, Math.max(minSafeStart, proportionalSec)) * 10) / 10;
-        while (storyboardClips.some(sc => sc.candidateIndex === candIdx && Math.abs(sc.startSeconds - startSec) < 1.5) && startSec + 1.5 <= candDuration - clipSec) {
-          startSec = Math.round((startSec + 1.5) * 10) / 10;
-        }
-      }
-    }
-
-    if (config.slot === 7 && storyboardClips.length >= 6) {
-      const slot6 = storyboardClips[5];
-      if (slot6.candidateIndex === candIdx && Math.abs(slot6.startSeconds - startSec) < 2.0) {
-        if (slot6.startSeconds + 2.5 <= candDuration - clipSec) {
-          startSec = slot6.startSeconds + 2.5;
-        } else {
-          startSec = Math.max(0, slot6.startSeconds - 2.5);
-        }
-      }
+    // Universal anti-overlap rule: same source video must use non-overlapping clips.
+    const collides = storyboardClips.some(sc =>
+      sc.candidateIndex === candIdx &&
+      Math.abs(sc.startSeconds - startSec) < Math.max(clipSec, 4.0)
+    );
+    if (collides) {
+      console.warn(`[build7SlotStoryboardClips] Slot #${config.slot} bentrok dengan clip sebelumnya pada video yang sama; slot dilewati.`);
+      continue;
     }
 
     const endSec = Math.round((startSec + clipSec) * 10) / 10;
@@ -2890,6 +2920,16 @@ export function build7SlotStoryboardClips({
     };
 
     if (config.slot === 1) slot1Clip = clipObj;
+
+    const selectedKey = getFrameKey(frameObj);
+    selectedFrameKeys.add(selectedKey);
+    const selectedCand = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : candIdx;
+    const selectedTs = Number(frameObj?.timestamp) || startSec;
+    if (!selectedTimestampsByCandidate.has(selectedCand)) {
+      selectedTimestampsByCandidate.set(selectedCand, []);
+    }
+    selectedTimestampsByCandidate.get(selectedCand).push(selectedTs);
+
     storyboardClips.push(clipObj);
   }
 
