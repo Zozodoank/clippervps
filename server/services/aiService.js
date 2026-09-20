@@ -1619,6 +1619,10 @@ If ACCEPTED:
     "clip6_full_product": 25,
     "clip7_full_product": 28
   },
+  "reframeBySlot": {
+    "clip1_full_product": {"focusXStart": 0.50, "focusYStart": 0.55, "focusXEnd": 0.52, "focusYEnd": 0.55},
+    "clip2_feature": {"focusXStart": 0.48, "focusYStart": 0.55, "focusXEnd": 0.53, "focusYEnd": 0.57}
+  },
   "frames": [2, 5, 9, 14, 19, 25, 28],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
@@ -1736,6 +1740,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
        Boleh kombinasikan klip di antara video-video tersebut untuk variasi sudut pandang. Namun jika produk di video lain berbeda model/warna/bentuk, AMBIL SELURUH KLIP DARI 1 VIDEO YANG PALING SESUAI!
 7. Output Format:
    - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
+   - Isi "reframeBySlot" untuk setiap slot dengan focusXStart/focusYStart/focusXEnd/focusYEnd (semua 0.0-1.0) berdasarkan posisi produk pada awal dan akhir momen yang dipilih. Gunakan perubahan kecil dan natural; tujuan utamanya menjaga produk di safe-zone vertikal, bukan membuat gerakan kamera palsu berlebihan.
    - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
    - Isi "frameAudit" untuk SETIAP frame yang dipilih: [{"frameIndex": N, "timestamp": 10.0, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}].
    - Jangan pernah menandai frame tanpa produk target sebagai containsTargetProduct=true.
@@ -2235,7 +2240,9 @@ Check:
 3. No obvious repeated/frozen scene dominates the edit.
 4. Subtitle block is legible and stays in a reasonable lower-middle safe zone; it must not cover the product's key mechanism in most frames.
 5. No black/blank frame or broken render.
-6. Composition looks intentional for vertical 9:16.
+6. No talking-head/visible face that violates the faceless edit policy.
+7. No third-party creator watermark, social handle, channel logo, or source identity remains visible in the final 9:16 frame. Physical branding printed on the target product is allowed.
+8. Composition looks intentional for vertical 9:16.
 
 Be conservative but do not reject for normal hard cuts, minor color differences, hands, or our own subtitles.
 Return strict JSON:
@@ -2246,6 +2253,8 @@ Return strict JSON:
   "severeCropIssue": false,
   "duplicateSceneRisk": false,
   "subtitleSafe": true,
+  "faceOrTalkingHead": false,
+  "sourceWatermarkOrCreatorLogo": false,
   "brokenFrame": false,
   "confidence": 0.0,
   "reason": ""
@@ -2302,6 +2311,8 @@ Review these final rendered frames as one finished short-form edit.`;
         parsed.severeCropIssue !== true &&
         parsed.duplicateSceneRisk !== true &&
         parsed.subtitleSafe !== false &&
+        parsed.faceOrTalkingHead !== true &&
+        parsed.sourceWatermarkOrCreatorLogo !== true &&
         parsed.brokenFrame !== true &&
         confidence >= 0.70;
 
@@ -3334,17 +3345,24 @@ export function build7SlotStoryboardClips({
       reframe: (() => {
         const baseY = config.slot === 7 ? 0.60 : (config.slot === 4 ? 0.65 : 0.55);
         const panDirection = config.slot % 2 === 0 ? -1 : 1;
+        const aiTrack = parsed?.reframeBySlot?.[config.key] || parsed?.reframeBySlot?.[config.fallbackKey] || {};
+        const clampTrack = (value, fallback) => {
+          const n = Number(value);
+          return Number.isFinite(n) ? Math.max(0.05, Math.min(0.95, n)) : fallback;
+        };
         return {
           ...DEFAULT_REFRAME,
           renderMode: 'stage_80',
           focusX: 0.50,
           focusY: baseY,
-          focusXStart: Math.max(0.38, Math.min(0.62, 0.50 - (0.025 * panDirection))),
-          focusXEnd: Math.max(0.38, Math.min(0.62, 0.50 + (0.025 * panDirection))),
-          focusYStart: Math.max(0.35, Math.min(0.80, baseY - 0.015)),
-          focusYEnd: Math.max(0.35, Math.min(0.80, baseY + 0.015)),
+          focusXStart: clampTrack(aiTrack.focusXStart, Math.max(0.38, Math.min(0.62, 0.50 - (0.025 * panDirection)))),
+          focusXEnd: clampTrack(aiTrack.focusXEnd, Math.max(0.38, Math.min(0.62, 0.50 + (0.025 * panDirection)))),
+          focusYStart: clampTrack(aiTrack.focusYStart, Math.max(0.35, Math.min(0.80, baseY - 0.015))),
+          focusYEnd: clampTrack(aiTrack.focusYEnd, Math.max(0.35, Math.min(0.80, baseY + 0.015))),
           dynamicTracking: true,
-          notes: 'Subtle motion-aware reframe trajectory; keep product inside center safe zone.'
+          notes: Object.keys(aiTrack).length
+            ? 'AI product-aware reframe trajectory from selected source frames.'
+            : 'Subtle fallback reframe trajectory; keep product inside center safe zone.'
         };
       })()
     };
