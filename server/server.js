@@ -20,7 +20,8 @@ import {
   formatEnrichedCaption,
   formatSeconds,
   getDynamicProductHookFallback,
-  build7SlotStoryboardClips
+  build7SlotStoryboardClips,
+  verifyProductCandidateWithAI
 } from './services/aiService.js';
 import { generateSrtSubtitles } from './services/subtitleService.js';
 import { loadEnglishDictionary, saveToEnglishDictionary } from './services/dictionaryService.js';
@@ -87,6 +88,13 @@ import {
   clearUsedKeywords
 } from './services/discoveryService.js';
 import { getAllNiches, getNichePreset } from './config/nichePresets.js';
+import {
+  buildProductFingerprint,
+  buildCreativeShotPlan,
+  describeCreativePlan,
+  conformClipsToVoiceover,
+  choosePreferredCandidateSet
+} from './services/professionalPipelineService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1346,6 +1354,15 @@ export async function runStage1Pipeline({
   const productInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreProductNoun = productInfo.coreProductNoun || productTitle || 'Produk Praktis';
   const cleanProductTitle = productInfo.cleanTitle || productTitle || '';
+  const productFingerprint = buildProductFingerprint({
+    title: productTitle,
+    description: productDescription,
+    productInfo,
+  });
+  const creativePlan = buildCreativeShotPlan({
+    fingerprint: productFingerprint,
+    niche: options.niche || 'kitchen_tools',
+  });
 
   if (isBulkyOrUnsuitableProduct(productTitle, { niche: options.niche }) || isBulkyOrUnsuitableProduct(coreProductNoun, { niche: options.niche }) || isBulkyOrUnsuitableProduct(cleanProductTitle, { niche: options.niche })) {
     const rejectReason = options.niche === 'gadget_smartphone'
@@ -1379,6 +1396,8 @@ export async function runStage1Pipeline({
     cleanProductTitle,
     coreProductNoun,
     productCategory: productInfo.category || 'general_gadget',
+    productFingerprint,
+    creativePlan,
     productDescription: productDescription || '',
     productImage: effectiveProductImage || '',
     youtubeUrl: youtubeUrl || '',
