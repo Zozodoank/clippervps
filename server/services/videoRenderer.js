@@ -256,15 +256,20 @@ export async function mergeVoiceoverAndBurnSubtitles({
     }
 
     // Normalize voice to a predictable social-video loudness target.
-    filterChains.push('[1:a]highpass=f=70,loudnorm=I=-16:TP=-1.5:LRA=7[vo]');
+    // When music exists, split voice into a main mix path and a side-chain detector path.
+    if (hasMusic) {
+      filterChains.push('[1:a]highpass=f=70,loudnorm=I=-16:TP=-1.5:LRA=7,asplit=2[vo_main][vo_sc]');
+    } else {
+      filterChains.push('[1:a]highpass=f=70,loudnorm=I=-16:TP=-1.5:LRA=7[vo]');
+    }
 
-    let baseAudioLabel = '[vo]';
+    let baseAudioLabel = hasMusic ? '[vo_main]' : '[vo]';
     if (hasMusic) {
       const safeMusicVolume = clampNumber(musicVolume, 0.02, 0.30, 0.10).toFixed(3);
       filterChains.push(`[${musicInputIndex}:a]volume=${safeMusicVolume}[bgm]`);
       // Duck music under narration, then mix it back with the untouched voiceover.
-      filterChains.push('[bgm][vo]sidechaincompress=threshold=0.020:ratio=8:attack=20:release=260[duckedbgm]');
-      filterChains.push('[vo][duckedbgm]amix=inputs=2:duration=first:normalize=0[baseaudio]');
+      filterChains.push('[bgm][vo_sc]sidechaincompress=threshold=0.020:ratio=8:attack=20:release=260[duckedbgm]');
+      filterChains.push('[vo_main][duckedbgm]amix=inputs=2:duration=first:normalize=0[baseaudio]');
       baseAudioLabel = '[baseaudio]';
     }
 
