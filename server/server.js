@@ -2419,29 +2419,15 @@ export async function runStage1Pipeline({
             }
           }
 
-          if (recoveryClips.length > 0) {
-            let expRound = 1;
-            const baseClips = [...recoveryClips];
-            while (recoveryClips.length < 7 && expRound <= 6) {
-              for (const base of baseClips) {
-                if (recoveryClips.length >= 7) break;
-                const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
-                recoveryClips.push({
-                  ...base,
-                  startSeconds: newStart,
-                  endSeconds: newStart + sceneDuration,
-                  duration: sceneDuration,
-                  startTime: formatSeconds(newStart),
-                  endTime: formatSeconds(newStart + sceneDuration),
-                  storyboardSlot: recoveryClips.length + 1,
-                  reason: `${base.reason} (Recovery Expansion #${expRound})`,
-                });
-              }
-              expRound++;
-            }
-            highlight.clips = recoveryClips;
-            highlight.duration = recoveryClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
-            console.log(`[ClipAudit] 🛡️ Berhasil memulihkan ${highlight.clips.length} klip bersih (${highlight.duration.toFixed(1)}s) dari video yang sama!`);
+          if (recoveryClips.length >= 5) {
+            highlight.clips = recoveryClips.slice(0, 8).map(c => ({
+              ...c,
+              duration: 3.5,
+              endSeconds: Number(c.startSeconds) + 3.5,
+              endTime: formatSeconds(Number(c.startSeconds) + 3.5),
+            }));
+            highlight.duration = highlight.clips.length * 3.5;
+            console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi.`);
           } else {
             console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
             const auditErr = new Error('Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi, bumper statis, atau wajah.');
