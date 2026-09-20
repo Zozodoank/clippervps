@@ -2978,13 +2978,24 @@ function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun =
   // Do NOT expand discovery with marketplace adjectives, dimensions, capacity,
   // generic attributes, or the full seller title: those queries create unrelated footage.
   const type = String(noun || englishNoun || '').replace(/\s+/g, ' ').trim();
-  const exactIdentity = [brand, model].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim() || String(identity || '').trim();
+  // Auto/video discovery must keep brand + product type together.
+  // If a model exists, include it as an additional identity signal rather than
+  // replacing the product type.
+  const exactIdentity = brand && type
+    ? [brand, model, type].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
+    : '';
+  const fallbackIdentity = String(identity || '').trim();
 
   if (exactIdentity) {
     add(`"${exactIdentity}" demo`);
     add(`"${exactIdentity}" review`);
     add(`"${exactIdentity}" demonstration`);
     add(`"${exactIdentity}" hands on`);
+  } else if (fallbackIdentity && !brand) {
+    // Kept for non-auto/manual callers. Auto Mode validates brand + type before
+    // reaching video search, so this cannot create generic Auto Mode queries.
+    add(`"${fallbackIdentity}" demo`);
+    add(`"${fallbackIdentity}" review`);
   }
 
   if (brand && type) {
@@ -2997,20 +3008,9 @@ function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun =
     add(`${model} ${type} review`);
   }
 
-  // Truly unbranded/OEM listing: only the product type is used.
-  if (!brand && !model && type) {
-    add(`${type} demo`);
-    add(`${type} review`);
-    add(`${type} demonstration`);
-    add(`${type} hands on`);
-  }
-
-  // Keep one final exact-type query for unusual wording, but never fall back
-  // to broad attributes or the entire marketplace title.
-  if (queries.length === 0 && title) {
-    const compactType = String(title).replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
-    if (compactType) add(`${compactType} demo`);
-  }
+  // Never generate type-only or full-title discovery queries here.
+  // Unbranded/OEM products are handled exclusively through the manual URL flow.
+  return queries.slice(0, 12);
 
   return queries.slice(0, 12);
 }
