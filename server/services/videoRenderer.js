@@ -190,88 +190,106 @@ export async function mergeVoiceoverAndBurnSubtitles({
   srtPath,
   outputVideoPath,
   targetDurationSec,
+  backgroundMusicPath = '',
+  musicVolume = 0.10,
+  sfxEvents = [],
   onProgress = () => {}
 }) {
   const ffmpegPath = getFFmpegPath();
   const outDir = path.dirname(outputVideoPath);
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
-  const rawVideoDur = await getMediaDurationSec(silentVideoPath, ffmpegPath) || Number(targetDurationSec) || 33;
+  const rawVideoDur = await getMediaDurationSec(silentVideoPath, ffmpegPath) || Number(targetDurationSec) || 24;
   const audioDuration = await getMediaDurationSec(voiceoverAudioPath, ffmpegPath);
 
-  // Natural video duration alignment:
-  // 1. If audio is longer than raw video: loop video to cover audio (+0.4s buffer)
-  // 2. If audio finishes significantly earlier than raw video (> 1.8s gap):
-  //    trim the video to audioDuration + 1.2s so the video concludes energetically right after
-  //    the spoken CTA, eliminating awkward dead silence!
-  // 3. Otherwise, use rawVideoDur.
-  let videoDuration = rawVideoDur;
-  if (audioDuration && audioDuration > 0) {
-    if (audioDuration > rawVideoDur) {
-      videoDuration = +(audioDuration + 0.4).toFixed(3);
-    } else if (rawVideoDur - audioDuration > 1.8) {
-      videoDuration = Math.min(rawVideoDur, +(audioDuration + 1.2).toFixed(3));
-    }
+  // Professional policy: NEVER loop visual footage just to cover an oversized voiceover.
+  // The caller must conform the edit to actual TTS timing before final merge.
+  if (audioDuration && audioDuration > rawVideoDur + 0.40) {
+    throw new Error(
+      `VOICEOVER_LONGER_THAN_VIDEO_REQUIRES_CONFORM: audio=${audioDuration.toFixed(2)}s video=${rawVideoDur.toFixed(2)}s`
+    );
   }
-  videoDuration = Math.max(15.0, videoDuration);
 
-  // Keep voiceover at 100% natural conversational tempo (1.0x normal speed).
-  // Video duration already dynamically extends/loops to cover audio duration seamlessly.
-  let atempoFactor = 1.0;
-
-  // If audio is sped up via atempo, rescale ASS subtitle timestamps to match 100%
-  // and keep the final CTA subtitle pinned to the exact video duration!
-  if (srtPath && fs.existsSync(srtPath) && atempoFactor > 1.005) {
-    scaleAssSubtitles(srtPath, 1 / atempoFactor, videoDuration);
-  }
+  const videoDuration = audioDuration && audioDuration > 0
+    ? Math.max(3, Math.min(rawVideoDur, audioDuration + 0.30))
+    : rawVideoDur;
 
   onProgress({
     step: 'merge_final',
     message: srtPath
-      ? 'Burning dual-color animated subtitles & merging Voiceover AI...'
-      : 'Merging Voiceover AI into final video...',
+      ? 'Final mix: Voiceover loudness-normalized, subtitle safe-zone, music ducking & render...'
+      : 'Final mix: Voiceover loudness-normalized & render...',
     progress: 92
   });
 
   return new Promise((resolve, reject) => {
-    let filterChains = [];
-    let mapArgs = [];
+    const inputArgs = ['-i', silentVideoPath, '-i', voiceoverAudioPath];
+    let nextInputIndex = 2;
 
-    // Subtitle burning filter
+    const hasMusic = Boolean(backgroundMusicPath && fs.existsSync(backgroundMusicPath));
+    let musicInputIndex = null;
+    if (hasMusic) {
+      musicInputIndex = nextInputIndex++;
+      inputArgs.push('-stream_loop', '-1', '-i', backgroundMusicPath);
+    }
+
+    const validSfx = (Array.isArray(sfxEvents) ? sfxEvents : [])
+      .filter(e => e?.path && fs.existsSync(e.path) && Number(e.atSec) >= 0)
+      .slice(0, 8)
+      .map((event) => ({ ...event, inputIndex: nextInputIndex++ }));
+    for (const event of validSfx) {
+      inputArgs.push('-i', event.path);
+    }
+
+    const filterChains = [];
+    let videoMap = '0:v';
+
     if (srtPath && fs.existsSync(srtPath)) {
       const sanitizedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
       const isAss = sanitizedSrtPath.endsWith('.ass');
-      // For native ASS files, use ass= to retain full 2-tone styling and MarginV=380 safe zone.
       const subFilter = isAss
         ? `ass='${sanitizedSrtPath}'`
         : `subtitles='${sanitizedSrtPath}':force_style='Fontname=Arial,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=3,Shadow=1.5,MarginV=120,Alignment=2,Bold=1'`;
       filterChains.push(`[0:v]${subFilter}[vsub]`);
-      mapArgs.push('-map', '[vsub]');
-    } else {
-      mapArgs.push('-map', '0:v');
+      videoMap = '[vsub]';
     }
 
-    // Audio filter: atempo if needed + normalize audio
-    if (atempoFactor > 1.02) {
-      const atempoFilters = buildAtempoFilters(atempoFactor);
-      filterChains.push(`[1:a]${atempoFilters.join(',')},volume=1.05[aout]`);
-      mapArgs.push('-map', '[aout]');
-    } else {
-      mapArgs.push('-map', '1:a');
+    // Normalize voice to a predictable social-video loudness target.
+    filterChains.push('[1:a]highpass=f=70,loudnorm=I=-16:TP=-1.5:LRA=7[vo]');
+
+    let baseAudioLabel = '[vo]';
+    if (hasMusic) {
+      const safeMusicVolume = clampNumber(musicVolume, 0.02, 0.30, 0.10).toFixed(3);
+      filterChains.push(`[${musicInputIndex}:a]volume=${safeMusicVolume}[bgm]`);
+      // Duck music under narration, then mix it back with the untouched voiceover.
+      filterChains.push('[bgm][vo]sidechaincompress=threshold=0.020:ratio=8:attack=20:release=260[duckedbgm]');
+      filterChains.push('[vo][duckedbgm]amix=inputs=2:duration=first:normalize=0[baseaudio]');
+      baseAudioLabel = '[baseaudio]';
     }
 
-    // If audio is longer than raw video, loop video smoothly so speech and video finish naturally together
-    const needsLoop = Boolean(audioDuration && rawVideoDur < audioDuration + 0.2);
-    const videoInputArgs = needsLoop
-      ? ['-stream_loop', '-1', '-i', silentVideoPath]
-      : ['-i', silentVideoPath];
+    const sfxLabels = [];
+    validSfx.forEach((event, i) => {
+      const atMs = Math.max(0, Math.round(Number(event.atSec) * 1000));
+      const volume = clampNumber(event.volume, 0.02, 0.35, 0.10).toFixed(3);
+      const label = `sfx${i}`;
+      filterChains.push(`[${event.inputIndex}:a]volume=${volume},adelay=${atMs}|${atMs}[${label}]`);
+      sfxLabels.push(`[${label}]`);
+    });
+
+    if (sfxLabels.length > 0) {
+      filterChains.push(
+        `${baseAudioLabel}${sfxLabels.join('')}amix=inputs=${1 + sfxLabels.length}:duration=first:normalize=0,alimiter=limit=0.95[aout]`
+      );
+    } else {
+      filterChains.push(`${baseAudioLabel}alimiter=limit=0.95[aout]`);
+    }
 
     const args = [
       '-y',
-      ...videoInputArgs,
-      '-i', voiceoverAudioPath,
+      ...inputArgs,
       '-filter_complex', filterChains.join(';'),
-      ...mapArgs,
+      '-map', videoMap,
+      '-map', '[aout]',
       '-c:v', 'libx264',
       '-preset', 'fast',
       '-crf', '18',
@@ -288,20 +306,17 @@ export async function mergeVoiceoverAndBurnSubtitles({
 
     const timeoutMs = Math.max(240000, Math.ceil(videoDuration * 15000));
     const timer = setTimeout(() => {
-      try {
-        console.error(`[VideoRenderer Final] ⚠️ FFmpeg final merge timed out after ${Math.round(timeoutMs / 1000)}s! Terminating process...`);
-        proc.kill('SIGKILL');
-      } catch {}
+      try { proc.kill('SIGKILL'); } catch {}
     }, timeoutMs);
 
     proc.stderr.on('data', d => stderr += d.toString());
     proc.on('close', code => {
       clearTimeout(timer);
       if (code === 0 && fs.existsSync(outputVideoPath)) {
-        onProgress({ step: 'merge_final', message: 'Final video rendered successfully!', progress: 100 });
-        resolve({ finalPath: outputVideoPath });
+        onProgress({ step: 'merge_final', message: 'Final video rendered successfully!', progress: 97 });
+        resolve({ finalPath: outputVideoPath, duration: videoDuration, hasMusic, sfxCount: validSfx.length });
       } else {
-        reject(new Error(`Final merge failed: ${stderr.slice(-300)}`));
+        reject(new Error(`Final merge failed: ${stderr.slice(-500)}`));
       }
     });
     proc.on('error', err => {
