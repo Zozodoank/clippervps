@@ -66,6 +66,7 @@ import {
 } from './services/cleaner.js';
 import {
   discoverShopeeProducts,
+  discoverBrandedShopeeProduct,
   discoverSingleShopeeProduct,
   discoverYouTubeCandidatesForProduct,
   searchMultiEngineVideos,
@@ -3283,7 +3284,6 @@ async function runAutoStage1Worker(run) {
 
     const seenShopeeUrls = new Set();
     const usedYouTubeVideoIds = getAllUsedYouTubeVideoIds();
-    let keywordQueue = getAutoKeywords(200, { niche: run.niche, excludeUsed: true, shuffle: true });
     let emptyKeywordRetryCount = 0;
     let quotaExhausted = false;
     let quotaErrorMessage = '';
@@ -3312,30 +3312,29 @@ async function runAutoStage1Worker(run) {
         break;
       }
 
-      if (keywordQueue.length === 0) {
-        const freshKeywords = getAutoKeywords(200, { niche: run.niche, excludeUsed: true, shuffle: true });
-        if (freshKeywords && freshKeywords.length > 0) {
-          keywordQueue = freshKeywords;
-          emptyKeywordRetryCount = 0;
-        } else {
-          emptyKeywordRetryCount++;
-          if (emptyKeywordRetryCount > 3) {
-            console.log('[Auto] Tidak ada kata kunci baru yang tersedia setelah 3x percobaan.');
-            break;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 5000));
-          continue;
+      // ── DIRECT BRANDED PRODUCT DISCOVERY ──
+      // AutoRun does not consume DEFAULT_AUTO_KEYWORDS or OEM/generic generators.
+      // It searches marketplace results for branded listings directly.
+      const shopeeCandidate = await discoverBrandedShopeeProduct({
+        niche: run.niche,
+        seen: seenShopeeUrls,
+      });
+
+      if (!shopeeCandidate) {
+        emptyKeywordRetryCount++;
+        updateAutoRun(run, {
+          message: `[Auto] Belum menemukan produk bermerek untuk niche "${run.niche}". Percobaan ${emptyKeywordRetryCount}/3...`,
+        });
+        if (emptyKeywordRetryCount >= 3) {
+          console.log('[Auto] Tidak ada produk bermerek yang ditemukan setelah 3 percobaan.');
+          break;
         }
+        await new Promise((resolve) => setTimeout(resolve, 2500));
+        continue;
       }
+      emptyKeywordRetryCount = 0;
 
-      const keyword = keywordQueue.shift();
-      if (!keyword) continue;
-
-      // ── AUTO IDENTITY GATE ──
-      // Generic/OEM keywords are discovery seeds only. They MUST NOT be sent
-      // to YouTube/Bing. First resolve a real marketplace listing, then extract
-      // its brand + product type/model and search videos using that identity.
-      const shopeeCandidate = await discoverSingleShopeeProduct(keyword, seenShopeeUrls);
+      const keyword = shopeeCandidate.keyword || `${shopeeCandidate.brand} ${shopeeCandidate.productType}`;
       if (!shopeeCandidate || !shopeeCandidate.title || !shopeeCandidate.url) {
         run.skippedProducts++;
         updateAutoRun(run, { message: `[Auto] Skip "${keyword}": listing produk nyata tidak ditemukan.` });
