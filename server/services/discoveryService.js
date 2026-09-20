@@ -2785,68 +2785,131 @@ export const PRODUCT_ANCHORS = [
   },
 ];
 
+/**
+ * Extracts a dynamic product identity from any marketplace title.
+ * No hard-coded brand database is required: brand/model signals are learned
+ * from the actual Shopee title and preserved for downstream video search.
+ */
 export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '') {
   const cleaned = cleanTitle(rawTitle, rawUrl) || String(rawTitle || '').trim();
   const normalized = normalizeText(cleaned);
-
   for (const anchor of PRODUCT_ANCHORS) {
     if (anchor.pattern.test(normalized)) {
-      const allWords = Array.from(new Set([
-        ...(anchor.core || []),
-        ...(anchor.multilingual || []),
-      ]));
+      const allWords = Array.from(new Set([...(anchor.core || []), ...(anchor.multilingual || [])]));
       const englishNoun = anchor.englishNoun || anchor.noun;
-
+      const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc);
       return {
-        cleanTitle: cleaned,
-        coreProductNoun: anchor.noun,
-        englishNoun,
-        category: anchor.category,
-        coreWords: allWords,
-        multilingualWords: allWords,
-        searchQueries: [
-          `"${anchor.noun}" review`,
-          `"${englishNoun}" review`,
-          `"${anchor.noun}" demo produk`,
-          `"${anchor.noun}" test pemakaian`,
-          `"${englishNoun}" demo`,
-          `"${englishNoun}" hands on`,
-          `"${anchor.noun}" unboxing review`,
-          `"${englishNoun}" "b-roll"`,
-          anchor.noun,
-          englishNoun,
-        ]
+        cleanTitle: cleaned, coreProductNoun: anchor.noun, englishNoun,
+        category: anchor.category, brand: dynamicIdentity.brand, model: dynamicIdentity.model,
+        productIdentity: dynamicIdentity.identity, identityWords: dynamicIdentity.words,
+        coreWords: Array.from(new Set([...allWords, ...dynamicIdentity.words])),
+        multilingualWords: Array.from(new Set([...allWords, ...dynamicIdentity.words])),
+        searchQueries: buildDynamicProductSearchQueries({
+          title: cleaned, noun: anchor.noun, englishNoun,
+          brand: dynamicIdentity.brand, model: dynamicIdentity.model, identity: dynamicIdentity.identity,
+        })
       };
     }
   }
 
-  // Fallback: Smart token extraction from title
   const stopWords = [
-    'dan', 'yang', 'untuk', 'dengan', 'dari', 'bisa', 'anti', 'super', 'termurah',
-    'viral', 'original', 'promo', 'murah', 'ready', 'stock', 'import', 'impor',
-    'terlaris', 'terbaru', 'terpercaya', 'kualitas', 'garansi', 'resmi', 'official',
-    'bisa', 'cod', 'gratis', 'ongkir', 'diskon', 'terlengkap', 'store', 'shop', 'indonesia'
+    'dan','yang','untuk','dengan','dari','bisa','anti','super','termurah','viral','original',
+    'promo','murah','ready','stock','import','impor','terlaris','terbaru','terpercaya',
+    'kualitas','garansi','resmi','official','cod','gratis','ongkir','diskon','terlengkap',
+    'store','shop','indonesia','free','shipping','sale','best','seller','new','limited','edition'
   ];
-  const words = normalized.split(/\s+/).filter(w => w.length >= 3 && !stopWords.includes(w));
-  const fallbackNoun = words.slice(0, 3).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') || cleaned.slice(0, 30) || 'Produk Praktis';
-  const fallbackWords = words.slice(0, 3);
-
+  const words = normalized.split(/\s+/).filter(w => w.length >= 2 && !stopWords.includes(w));
+  const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc);
+  const fallbackTokens = words.slice(0, 6);
+  const fallbackNoun = dynamicIdentity.identity ||
+    fallbackTokens.slice(0, 4).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') ||
+    cleaned.slice(0, 40) || 'Produk Praktis';
+  const fallbackWords = Array.from(new Set([...fallbackTokens, ...dynamicIdentity.words]));
   return {
-    cleanTitle: cleaned,
-    coreProductNoun: fallbackNoun,
-    category: 'general_gadget',
+    cleanTitle: cleaned, coreProductNoun: fallbackNoun, englishNoun: fallbackNoun,
+    category: 'general_gadget', brand: dynamicIdentity.brand, model: dynamicIdentity.model,
+    productIdentity: dynamicIdentity.identity || fallbackNoun, identityWords: dynamicIdentity.words,
     coreWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
     multilingualWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
-    searchQueries: [
-      `"${fallbackNoun}" review`,
-      `"${fallbackNoun}" demo produk`,
-      `"${fallbackNoun}" test pemakaian`,
-      `"${fallbackNoun}" hands on`,
-      `"${fallbackNoun}" unboxing review`,
-      `"${fallbackNoun}" "b-roll"`,
-      fallbackNoun,
-    ]
+    searchQueries: buildDynamicProductSearchQueries({
+      title: cleaned, noun: fallbackNoun, englishNoun: fallbackNoun,
+      brand: dynamicIdentity.brand, model: dynamicIdentity.model,
+      identity: dynamicIdentity.identity || fallbackNoun,
+    })
   };
+}
+
+/** Generic identity extraction; no fixed brand database is required. */
+function extractDynamicProductIdentity(title = '', description = '') {
+  const source = String(title || '').replace(/\s+/g, ' ').trim();
+  const desc = String(description || '').replace(/\s+/g, ' ').trim();
+  const modelMatches = source.match(/\b(?=[A-Z0-9-]{3,}\b)(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:[-/][A-Z0-9]+){1,3}\b/gi) || [];
+  const compactModelMatches = source.match(/\b[A-Z]{1,5}\d{2,}[A-Z0-9-]*\b/gi) || [];
+  const numericSeriesMatches = source.match(/\b\d{2,}[A-Z]{1,5}[-]?[A-Z0-9]*\b/gi) || [];
+  const model = Array.from(new Set([...modelMatches, ...compactModelMatches, ...numericSeriesMatches]))
+    .map(v => v.replace(/[.,;:!?]+$/g, '')).find(v => !/^\d+$/.test(v)) || '';
+
+  const tokens = source.split(/\s+/).map(v => v.replace(/^[^\w]+|[^\w-]+$/g, '')).filter(Boolean);
+  const brandBlacklist = new Set([
+    'original','official','store','shop','mall','promo','murah','viral','terbaru','terlaris',
+    'premium','portable','multifungsi','serbaguna','electric','elektrik','manual','mini',
+    'besar','kecil','set','paket','bundle','new','sale','ready','stock','import','indonesia',
+    'review','demo','test','unboxing','produk','alat','barang'
+  ]);
+  let brand = '';
+  if (model) {
+    const mi = tokens.findIndex(t => t.toLowerCase() === model.toLowerCase());
+    if (mi > 0) {
+      const candidate = tokens[mi - 1];
+      if (candidate && candidate.length >= 2 && !brandBlacklist.has(candidate.toLowerCase()) &&
+          /^[A-Za-z][A-Za-z0-9&.-]{1,}$/.test(candidate)) brand = candidate;
+    }
+  }
+  if (!brand) {
+    const generic = new Set([
+      'chopper','panci','blender','mixer','wajan','kompor','dispenser','vacuum','cleaner',
+      'air','fryer','rice','cooker','kettle','pot','pan','knife','gunting','slicer','peeler',
+      'alat','dapur','portable','multifungsi','serbaguna','elektrik','electric','manual',
+      'kitchen','tools','set','isi','pcs','buah'
+    ]);
+    brand = tokens.find(t =>
+      /^[A-Z][A-Za-z0-9&.-]{1,}$/.test(t) && !generic.has(t.toLowerCase()) &&
+      !brandBlacklist.has(t.toLowerCase()) && !/^\d/.test(t)
+    ) || '';
+  }
+  const identityParts = [];
+  if (brand) identityParts.push(brand);
+  if (model && !identityParts.some(p => p.toLowerCase() === model.toLowerCase())) identityParts.push(model);
+  if (identityParts.length === 1 && brand) {
+    const firstMeaningful = tokens.find(t =>
+      t.toLowerCase() !== brand.toLowerCase() &&
+      !brandBlacklist.has(t.toLowerCase()) && t.length >= 3
+    );
+    if (firstMeaningful) identityParts.push(firstMeaningful);
+  }
+  const identity = identityParts.join(' ').trim();
+  const words = Array.from(new Set([
+    ...identity.split(/\s+/).filter(Boolean),
+    ...(model ? model.split(/[-/]/).filter(Boolean) : [])
+  ]));
+  return { brand, model, identity, words, source: desc ? source + ' ' + desc : source };
+}
+
+function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun = '', brand = '', model = '', identity = '' } = {}) {
+  const exact = [identity, [brand, model].filter(Boolean).join(' ')].filter(Boolean);
+  const queries = [
+    ...exact.map(q => '"' + q + '" review'),
+    ...exact.map(q => '"' + q + '" demo'),
+    ...exact.map(q => '"' + q + '" demonstration'),
+    ...exact.map(q => '"' + q + '" hands on'),
+    ...exact.map(q => '"' + q + '" test'),
+    ...exact.map(q => '"' + q + '" b-roll'),
+    brand && model ? '"' + brand + ' ' + model + '"' : '',
+    title ? '"' + title.slice(0, 100) + '"' : '',
+    noun ? '"' + noun + '" review' : '',
+    englishNoun ? '"' + englishNoun + '" demo' : ''
+  ];
+  return Array.from(new Set(queries.map(q => String(q).trim()).filter(Boolean))).slice(0, 16);
 }
 
 export function isTitleMatchingProduct(candidateTitle, productWords = [], extraMeta = {}) {
