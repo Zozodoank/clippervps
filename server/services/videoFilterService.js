@@ -1319,70 +1319,73 @@ export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30
   const perCand = Math.max(4, Math.floor(maxTotalFrames / valid.length));
   const pooled = [];
 
-  // 1. Ambil porsi berimbang dari masing-masing kandidat
-  for (const item of valid) {
+  // 1. Ambil porsi berimbang, tetapi INTERLEAVE sumber video.
+  // Tujuan: AI Vision menerima frame dari Video 1 -> Video 2 -> Video 3,
+  // bukan blok panjang Video 1 yang membuatnya cenderung memilih satu sumber saja.
+  const prepared = valid.map((item) => {
     const cand = item.candidate || {};
     const idx = item.candidateIndex;
-    const frames = item.cleanFrames;
-
     const candTitle = cand.title || '';
     const candUrl = cand.url || '';
     const vidId = cand.id || candUrl || '';
+    const frames = Array.isArray(item.cleanFrames) ? item.cleanFrames : [];
+    const selected = frames.length <= perCand
+      ? [...frames]
+      : Array.from({ length: perCand }, (_, s) => {
+          const frameIdx = Math.min(frames.length - 1, Math.floor((s * frames.length) / perCand));
+          return frames[frameIdx];
+        });
+    return {
+      idx,
+      cand,
+      candTitle,
+      candUrl,
+      vidId,
+      selected,
+    };
+  });
 
-    if (frames.length <= perCand) {
-      for (const f of frames) {
-        pooled.push({
-          ...f,
-          candidateIndex: idx,
-          candidate: cand,
-          candidateTitle: candTitle,
-          candidateUrl: candUrl,
-          videoId: vidId,
-          displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
-        });
-      }
-    } else {
-      const step = frames.length / perCand;
-      for (let s = 0; s < perCand; s++) {
-        const frameIdx = Math.min(frames.length - 1, Math.floor(s * step));
-        const f = frames[frameIdx];
-        pooled.push({
-          ...f,
-          candidateIndex: idx,
-          candidate: cand,
-          candidateTitle: candTitle,
-          candidateUrl: candUrl,
-          videoId: vidId,
-          displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
-        });
-      }
+  const maxRounds = Math.max(0, ...prepared.map((x) => x.selected.length));
+  for (let round = 0; round < maxRounds && pooled.length < maxTotalFrames; round++) {
+    for (const item of prepared) {
+      if (round >= item.selected.length || pooled.length >= maxTotalFrames) continue;
+      const f = item.selected[round];
+      if (!f) continue;
+      pooled.push({
+        ...f,
+        candidateIndex: item.idx,
+        candidate: item.cand,
+        candidateTitle: item.candTitle,
+        candidateUrl: item.candUrl,
+        videoId: item.vidId,
+        displayLabel: `Video #${item.idx + 1} (${formatSecondsLocal(f.timestamp)})`,
+      });
     }
   }
 
-  // 2. Jika total belum mencapai maxTotalFrames, isi sisa kuota dari kandidat yang memiliki banyak frame bersih
+  // 2. Isi sisa kuota tetap dengan round-robin, bukan mengosongkan seluruh slot ke Video #1.
   if (pooled.length < maxTotalFrames) {
-    for (const item of valid) {
-      const cand = item.candidate || {};
-      const idx = item.candidateIndex;
-      const candTitle = cand.title || '';
-      const candUrl = cand.url || '';
-      const vidId = cand.id || candUrl || '';
-
-      for (const f of item.cleanFrames) {
-        if (!pooled.some(p => p.filePath === f.filePath)) {
-          pooled.push({
-            ...f,
-            candidateIndex: idx,
-            candidate: cand,
-            candidateTitle: candTitle,
-            candidateUrl: candUrl,
-            videoId: vidId,
-            displayLabel: `Video #${idx + 1} (${formatSecondsLocal(f.timestamp)})`,
-          });
-          if (pooled.length >= maxTotalFrames) break;
-        }
+    let cursor = 0;
+    while (pooled.length < maxTotalFrames && prepared.some((item) => item.selected.length > 0)) {
+      let addedThisRound = false;
+      for (let offset = 0; offset < prepared.length && pooled.length < maxTotalFrames; offset++) {
+        const item = prepared[(cursor + offset) % prepared.length];
+        const usedPaths = new Set(pooled.map((x) => x.filePath));
+        const next = item.selected.find((f) => f && !usedPaths.has(f.filePath));
+        if (!next) continue;
+        pooled.push({
+          ...next,
+          candidateIndex: item.idx,
+          candidate: item.cand,
+          candidateTitle: item.candTitle,
+          candidateUrl: item.candUrl,
+          videoId: item.vidId,
+          displayLabel: `Video #${item.idx + 1} (${formatSecondsLocal(next.timestamp)})`,
+        });
+        addedThisRound = true;
       }
-      if (pooled.length >= maxTotalFrames) break;
+      cursor++;
+      if (!addedThisRound) break;
     }
   }
 
