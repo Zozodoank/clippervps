@@ -2260,12 +2260,12 @@ export async function runStage1Pipeline({
         throw sourceErr;
       }
 
-      if (hl.clips.length < 5) {
+      if (hl.clips.length < 6) {
         const clipErr = new Error(
-          `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik. Tidak akan menggandakan adegan untuk mengejar durasi.`
+          `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik (<6 / 21 detik). Tidak akan menggandakan adegan untuk mengejar durasi.`
         );
         clipErr.isAiRejection = true;
-        clipErr.rejectionReason = 'Adegan unik tidak mencukupi; tidak memakai duplikasi sintetis.';
+        clipErr.rejectionReason = 'Adegan unik kurang dari 6 (21 detik). Tidak memakai duplikasi sintetis.';
         throw clipErr;
       }
 
@@ -2456,7 +2456,7 @@ export async function runStage1Pipeline({
 
         // HARD RULE: never replenish by copying/offsetting an existing clip.
         // If audit leaves too few unique scenes, reject rather than manufacture repeats.
-        if (cleanAuditedClips.length >= 5) {
+        if (cleanAuditedClips.length >= 6) {
           highlight.clips = cleanAuditedClips.map(c => ({
             ...c,
             duration: 3.5,
@@ -2502,7 +2502,7 @@ export async function runStage1Pipeline({
             recoveryClips.length = 0;
           }
 
-          if (recoveryClips.length >= 5) {
+          if (recoveryClips.length >= 6) {
             highlight.clips = recoveryClips.slice(0, 8).map(c => ({
               ...c,
               duration: 3.5,
@@ -2510,7 +2510,7 @@ export async function runStage1Pipeline({
               endTime: formatSeconds(Number(c.startSeconds) + 3.5),
             }));
             highlight.duration = highlight.clips.length * 3.5;
-            console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi.`);
+            console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi (minimal 21 detik).`);
           } else {
             console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
             const auditErr = new Error('Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi, bumper statis, atau wajah.');
