@@ -1792,9 +1792,33 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 
       const selectedIndices = Array.isArray(parsed.frames) ? parsed.frames : [];
       const hasValidFrames = selectedIndices.length >= 1;
+      const selectedFrameAudit = Array.isArray(parsed.frameAudit) ? parsed.frameAudit : [];
+      const auditByFrameIndex = new Map(
+        selectedFrameAudit
+          .map((a) => [Number(a?.frameIndex), a])
+          .filter(([idx]) => Number.isFinite(idx) && idx > 0)
+      );
+      const hasCompleteSelectedFrameAudit = selectedIndices.length === 0
+        ? true
+        : selectedIndices.every((rawIdx) => {
+            const idx = typeof rawIdx === 'object'
+              ? Number(rawIdx?.frameIndex ?? rawIdx?.frame ?? rawIdx?.index)
+              : Number(rawIdx);
+            const audit = auditByFrameIndex.get(idx);
+            return Boolean(
+              audit &&
+              audit.containsTargetProduct === true &&
+              audit.isPackaging !== true &&
+              audit.isMachine !== true &&
+              audit.isActiveProductDemo === true
+            );
+          });
+      const selectedFrameProofFailure =
+        selectedIndices.length >= 3 &&
+        (parsed.hasTargetProductInEverySelectedFrame !== true || !hasCompleteSelectedFrameAudit);
 
       // Penolakan FATAL video HANYA jika produk benar-benar salah/berbeda, buatan AI/CGI, atau perabot dilarang
-      const isFatalMismatch = isMatchFalse || isSynthetic || isBulky || (isRejectStatus && (reasonLower.includes('tidak cocok') || reasonLower.includes('pasar barat') || reasonLower.includes('bukan produk')));
+      const isFatalMismatch = isMatchFalse || selectedFrameProofFailure || isSynthetic || isBulky || (isRejectStatus && (reasonLower.includes('tidak cocok') || reasonLower.includes('pasar barat') || reasonLower.includes('bukan produk')));
 
       if (isFatalMismatch) {
         let rejectionMsg = reasonText || 'Produk di video tidak cocok dengan produk target.';
@@ -1830,35 +1854,53 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       // Fallback ke legacy loop jika build7SlotStoryboardClips kosong
       if ((!candidateClips || candidateClips.length === 0) && selectedIndices.length > 0) {
         candidateClips = [];
+        const fallbackFrameKeys = new Set();
         for (const rawIdx of selectedIndices) {
-          const idx = parseInt(rawIdx, 10);
+          const idx = typeof rawIdx === 'object'
+            ? Number(rawIdx?.frameIndex ?? rawIdx?.frame ?? rawIdx?.index)
+            : parseInt(rawIdx, 10);
           if (isNaN(idx) || idx < 1 || idx > evalFrames.length) continue;
           const frameObj = evalFrames[idx - 1];
+          const audit = auditByFrameIndex.get(idx);
+          if (
+            audit &&
+            (
+              audit.containsTargetProduct !== true ||
+              audit.isPackaging === true ||
+              audit.isMachine === true ||
+              audit.isActiveProductDemo !== true
+            )
+          ) {
+            continue;
+          }
           const ts = frameObj ? frameObj.timestamp : (idx * (totalDuration / evalFrames.length));
           const minSafeStart = Math.max(introCutoffSec || 0, 0);
           const rawStart = Math.max(0, Math.min(totalDuration - clipSec, Math.round(ts * 10) / 10));
-          if (rawStart < minSafeStart) {
-            continue; // Lewati frame yang berada di area intro bumper
-          }
-          const startSec = rawStart;
-          // Cegah memasukkan frame dengan timestamp berdekatan (< 2.5s) pada kandidat video yang sama
+          if (rawStart < minSafeStart) continue;
+
           const candIdx = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : null;
-          if (candidateClips.some(c => (c.candidateIndex === candIdx || (!c.candidateIndex && !candIdx)) && Math.abs(c.startSeconds - startSec) < 2.5)) {
-            continue;
-          }
-          const endSec = Math.round((startSec + clipSec) * 10) / 10;
+          const frameKey = frameObj?.filePath || `${frameObj?.videoId || frameObj?.candidate?.id || candIdx}:${Math.round(ts * 10) / 10}`;
+          if (fallbackFrameKeys.has(frameKey)) continue;
+
+          const collides = candidateClips.some(c =>
+            (c.candidateIndex === candIdx || (!c.candidateIndex && !candIdx)) &&
+            Math.abs(c.startSeconds - rawStart) < Math.max(clipSec, 4.0)
+          );
+          if (collides) continue;
+
+          const endSec = Math.round((rawStart + clipSec) * 10) / 10;
           candidateClips.push({
-            startSeconds: startSec,
+            startSeconds: rawStart,
             endSeconds: endSec,
             duration: clipSec,
-            startTime: formatSeconds(startSec),
+            startTime: formatSeconds(rawStart),
             endTime: formatSeconds(endSec),
             candidateIndex: frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : null,
             candidateTitle: frameObj?.candidateTitle || '',
             candidateUrl: frameObj?.candidateUrl || '',
             videoId: frameObj?.videoId || '',
             candidate: frameObj?.candidate || null,
-            reason: `Frame #${idx} (${frameObj?.displayLabel || formatSeconds(startSec)}) peragaan produk memuaskan`,
+            reason: `Frame #${idx} (${frameObj?.displayLabel || formatSeconds(rawStart)}) peragaan produk memuaskan`,
             isCleanAffiliateShot: true,
             hasProductBrand: Boolean(parsed.hasProductBrand),
             reframe: {
@@ -1866,6 +1908,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
               renderMode: 'stage_80',
             }
           });
+          fallbackFrameKeys.add(frameKey);
         }
       }
 
@@ -3075,7 +3118,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       }
       return (
         (e.candidateIndex === c.candidateIndex || (!e.candidateIndex && !c.candidateIndex)) &&
-        Math.abs(e.startSeconds - c.startSeconds) < 2.0
+        Math.abs(e.startSeconds - c.startSeconds) < Math.max(clipLength, 4.0)
       );
     });
     if (!isDup) {
