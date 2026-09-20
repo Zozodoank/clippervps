@@ -1203,9 +1203,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     const rawStatus = String(parsed.status || '').toLowerCase().trim();
     const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
     const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
-    const isMatchFalse = isVideoFirstMode
-      ? (isBulky || parsed.isUsableSourceVideo === false)
-      : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky);
+    const isMatchFalse =
+      parsed.isProductMatch === false ||
+      parsed.isExactProductMatch === false ||
+      parsed.hasTargetProductInEverySelectedFrame === false ||
+      isBulky ||
+      parsed.isUsableSourceVideo === false;
     const hasFace = parsed.hasFaceIn916Frame === true ||
       parsed.hasFaceOrHumanInSelectedFrames === true ||
       parsed.hasFaceInSelectedClips === true;
@@ -1759,6 +1762,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const isMatchFalse =
         parsed.isProductMatch === false ||
         parsed.isExactProductMatch === false ||
+        parsed.hasTargetProductInEverySelectedFrame === false ||
         isBulky ||
         parsed.isUsableSourceVideo === false;
       const hasFace = parsed.hasFaceIn916Frame === true ||
