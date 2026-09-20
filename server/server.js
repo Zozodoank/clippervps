@@ -2977,6 +2977,8 @@ export async function runStage1Pipeline({
       cleanScript: cleanScriptForTTS(rawVoiceScript),
       caption: scriptData.caption,
       lexicon: scriptData.lexicon_to_replace || {},
+      productFingerprint,
+      creativePlan,
       videoTitle: videoMeta.title,
       isOrphan: false,
     };
@@ -3670,6 +3672,91 @@ app.get('/api/auto/progress/:runId', (req, res) => {
   req.on('close', () => clearInterval(interval));
 });
 
+async function conformExistingJobEditToAudio({
+  job,
+  silentPath,
+  audioPath,
+  script,
+  onProgress = () => {},
+} = {}) {
+  const silentDurationSec = (await getMediaDurationSec(silentPath)) || job?.highlight?.duration || 20;
+  const audioDurationSec = (await getMediaDurationSec(audioPath)) || silentDurationSec;
+
+  const clips = Array.isArray(job?.highlight?.clips) ? job.highlight.clips : [];
+  const firstSourcePath = clips.find(c => c?.videoPath && fs.existsSync(c.videoPath))?.videoPath;
+  const rawSourcePath = (job?.downloadedVideoPath && fs.existsSync(job.downloadedVideoPath))
+    ? job.downloadedVideoPath
+    : firstSourcePath;
+
+  // Old jobs may no longer have source footage. They can still finalize when audio fits;
+  // but looping is forbidden, so an oversized voiceover must be regenerated shorter.
+  if (!rawSourcePath || clips.length === 0) {
+    if (audioDurationSec > silentDurationSec + 0.40) {
+      throw new Error(
+        `Voiceover ${audioDurationSec.toFixed(1)}s lebih panjang dari video ${silentDurationSec.toFixed(1)}s dan source footage tidak tersedia untuk conform ulang. Regenerate voiceover lebih pendek atau generate ulang Stage 1.`
+      );
+    }
+    return { silentDurationSec, audioDurationSec, conformed: false };
+  }
+
+  const fingerprint = job.productFingerprint || buildProductFingerprint({
+    title: job.productTitle || '',
+    description: job.productDescription || '',
+    productInfo: extractCoreProductInfo(job.productTitle || '', job.productDescription || ''),
+  });
+  const creativePlan = job.creativePlan || buildCreativeShotPlan({
+    fingerprint,
+    niche: job.niche || job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools',
+  });
+
+  const conformedClips = conformClipsToVoiceover({
+    clips,
+    script,
+    audioDurationSec,
+    creativePlan,
+  });
+  if (!conformedClips.length) {
+    return { silentDurationSec, audioDurationSec, conformed: false };
+  }
+
+  onProgress({
+    step: 'edit_conform',
+    message: `Conform ulang visual ke voiceover nyata (${audioDurationSec.toFixed(1)}s), tanpa loop footage...`,
+    progress: 45,
+    status: 'running',
+  });
+
+  const hasBrand = job.hasProductBrand === true || job.highlight?.hasProductBrand === true;
+  await renderSilentAntiDetectionVideo({
+    inputVideo: rawSourcePath,
+    startTime: job.highlight?.startTime,
+    endTime: job.highlight?.endTime,
+    outputVideo: silentPath,
+    clips: conformedClips,
+    hflip: hasBrand ? false : Boolean(job.highlight?.allowHflip),
+    speedMultiplier: 1,
+    reframe: job.highlight?.reframe || { renderMode: 'stage_80' },
+    onProgress,
+  });
+
+  const finalSilentDurationSec = (await getMediaDurationSec(silentPath)) ||
+    conformedClips.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
+
+  job.highlight = {
+    ...(job.highlight || {}),
+    clips: conformedClips,
+    duration: finalSilentDurationSec,
+  };
+  job.productFingerprint = fingerprint;
+  job.creativePlan = creativePlan;
+
+  return {
+    silentDurationSec: finalSilentDurationSec,
+    audioDurationSec,
+    conformed: true,
+  };
+}
+
 // 6. STAGE 2: Upload Voiceover & Merge Subtitles
 app.post('/api/upload-voiceover', upload.single('audio'), async (req, res) => {
   reloadEnvironment();
@@ -3701,30 +3788,49 @@ app.post('/api/upload-voiceover', upload.single('audio'), async (req, res) => {
   updateProgress({ step: 'merge_start', message: 'Merging voiceover & burning subtitles...', progress: 20, status: 'running' });
 
   try {
-    const silentDurationSec = await getMediaDurationSec(silentPath) || job.highlight?.duration || 45;
-    const audioDurationSec = await getMediaDurationSec(audioFile.path);
-
-    const subtitleTargetDuration = Math.max(silentDurationSec, audioDurationSec || 0);
-
     const scriptToUse = (req.body?.customScript && req.body.customScript.trim())
       ? req.body.customScript.trim()
       : (job.aiStudioPrompt || job.voiceoverScript || '');
 
-    updateProgress({ step: 'subtitles', message: `Generating synchronized subtitle captions for ${silentDurationSec.toFixed(1)}s video...`, progress: 40, status: 'running' });
+    const conformResult = await conformExistingJobEditToAudio({
+      job,
+      silentPath,
+      audioPath: audioFile.path,
+      script: scriptToUse,
+      onProgress: updateProgress,
+    });
+    const silentDurationSec = conformResult.silentDurationSec;
+    const audioDurationSec = conformResult.audioDurationSec;
+    const subtitleTargetDuration = audioDurationSec || silentDurationSec;
+
+    updateProgress({ step: 'subtitles', message: `Generating synchronized subtitle captions for ${silentDurationSec.toFixed(1)}s video...`, progress: 55, status: 'running' });
     generateSrtSubtitles(scriptToUse, subtitleTargetDuration, srtPath, {
       wordBoundaries: job?.wordBoundaries || [],
       videoDurationSec: silentDurationSec,
       lexicon: job?.lexicon || {},
     });
 
-    updateProgress({ step: 'render_final', message: 'Rendering final 9:16 video with Voiceover & Subtitles...', progress: 60, status: 'running' });
+    updateProgress({ step: 'render_final', message: 'Rendering final 9:16 video with Voiceover & Subtitles...', progress: 75, status: 'running' });
     await mergeVoiceoverAndBurnSubtitles({
-      silentVideoPath: silentPath, voiceoverAudioPath: audioFile.path,
+      silentVideoPath: silentPath,
+      voiceoverAudioPath: audioFile.path,
       srtPath,
       outputVideoPath: finalOutputPath,
       targetDurationSec: silentDurationSec,
+      backgroundMusicPath: process.env.BACKGROUND_MUSIC_PATH || '',
+      musicVolume: Number(process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
       onProgress: updateProgress,
     });
+
+    const finalQc = await runFinalMasterQc({
+      videoPath: finalOutputPath,
+      expectedDurationSec: silentDurationSec,
+      subtitlePath: srtPath,
+    });
+    if (!finalQc.passed) {
+      try { fs.unlinkSync(finalOutputPath); } catch {}
+      throw new Error(`FINAL_MASTER_QC_FAILED: ${finalQc.issues.join(', ')}`);
+    }
 
     cleanupTempFiles([audioFile.path, srtPath]);
 
@@ -3741,6 +3847,7 @@ app.post('/api/upload-voiceover', upload.single('audio'), async (req, res) => {
       finalLocalPath: finalOutputPath,
       downloadedVideoPath: null,
       hasDownloadedVideo: false,
+      finalQc,
     };
 
     activeJobs.set(jobId, finalResult);
@@ -3873,13 +3980,21 @@ async function processJobVoiceover(jobId, customScript = null, options = {}) {
       lexicon: effectiveLexicon,
     });
 
-    const audioDurationSec = await getMediaDurationSec(voiceoverAudioPath);
-    const subtitleTargetDuration = Math.max(silentDurationSec, audioDurationSec || 0);
+    const conformResult = await conformExistingJobEditToAudio({
+      job,
+      silentPath,
+      audioPath: voiceoverAudioPath,
+      script: scriptToUse,
+      onProgress: updateProgress,
+    });
+    const finalSilentDurationSec = conformResult.silentDurationSec;
+    const audioDurationSec = conformResult.audioDurationSec;
+    const subtitleTargetDuration = audioDurationSec || finalSilentDurationSec;
 
-    updateProgress({ step: 'subtitles', message: `Menyinkronkan subtitle narasi (${silentDurationSec.toFixed(1)}s)...`, progress: 55, status: 'running' });
+    updateProgress({ step: 'subtitles', message: `Menyinkronkan subtitle narasi (${finalSilentDurationSec.toFixed(1)}s)...`, progress: 55, status: 'running' });
     generateSrtSubtitles(scriptToUse, subtitleTargetDuration, srtPath, {
       wordBoundaries: ttsResult.wordBoundaries,
-      videoDurationSec: silentDurationSec,
+      videoDurationSec: finalSilentDurationSec,
       lexicon: effectiveLexicon,
     });
 
@@ -3889,9 +4004,21 @@ async function processJobVoiceover(jobId, customScript = null, options = {}) {
       voiceoverAudioPath,
       srtPath,
       outputVideoPath: finalOutputPath,
-      targetDurationSec: silentDurationSec,
+      targetDurationSec: finalSilentDurationSec,
+      backgroundMusicPath: options.backgroundMusicPath || process.env.BACKGROUND_MUSIC_PATH || '',
+      musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
       onProgress: updateProgress,
     });
+
+    const finalQc = await runFinalMasterQc({
+      videoPath: finalOutputPath,
+      expectedDurationSec: finalSilentDurationSec,
+      subtitlePath: srtPath,
+    });
+    if (!finalQc.passed) {
+      try { fs.unlinkSync(finalOutputPath); } catch {}
+      throw new Error(`FINAL_MASTER_QC_FAILED: ${finalQc.issues.join(', ')}`);
+    }
 
     cleanupTempFiles([srtPath]);
 
@@ -3914,6 +4041,7 @@ async function processJobVoiceover(jobId, customScript = null, options = {}) {
       cleanScript: ttsResult.cleanScript,
       lexicon: effectiveLexicon,
       wordBoundaries: ttsResult.wordBoundaries || [],
+      finalQc,
       hasFinalVideo: true,
       hasSilentVideo: true,
       updatedAt: new Date().toISOString(),
