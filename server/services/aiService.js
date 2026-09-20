@@ -2037,6 +2037,159 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 }
 
 /**
+ * Lightweight product identity gate used BEFORE frames enter the multi-video pool.
+ * Cleanliness is intentionally not enough: this gate verifies type, mechanism and
+ * distinctive physical construction for each candidate independently.
+ */
+export async function verifyProductCandidateWithAI({
+  apiKey,
+  aiProvider,
+  frames = [],
+  productTitle = '',
+  productDescription = '',
+  productImage = '',
+  productFingerprint = null,
+  niche = 'kitchen_tools',
+  onProgress = () => {},
+} = {}) {
+  if (!Array.isArray(frames) || frames.length < 2) {
+    return { verified: false, confidence: 0, reason: 'Frame kandidat terlalu sedikit untuk verifikasi produk.' };
+  }
+
+  const selectedEngine = (aiProvider || process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
+  const { client, models, provider } = getAiClientConfig({ apiKeyOverride: apiKey, aiProvider: selectedEngine });
+  const prodInfo = extractCoreProductInfo(productTitle, productDescription);
+  const coreNoun = prodInfo.coreProductNoun || productTitle || 'Produk';
+  const effectiveTitle = prodInfo.cleanTitle || productTitle || coreNoun;
+  const fingerprintText = productFingerprint
+    ? JSON.stringify(productFingerprint)
+    : JSON.stringify({
+        productType: coreNoun,
+        brand: prodInfo.brand || '',
+        model: prodInfo.model || '',
+      });
+
+  let resolvedRefImage = null;
+  if (productImage) {
+    try {
+      resolvedRefImage = await resolveImageBufferAndBase64(productImage);
+    } catch (err) {
+      console.warn(`[ProductVerify] Foto referensi tidak dapat dimuat: ${err.message}`);
+    }
+  }
+
+  const sampleFrames = frames.length <= 12
+    ? frames
+    : Array.from({ length: 12 }, (_, i) => frames[Math.round(i * (frames.length - 1) / 11)]);
+
+  const systemPrompt = `You are a strict product identity verifier for short-form affiliate video sourcing.
+Your ONLY task is deciding whether the candidate frames show the same target physical product or a legitimate OEM-equivalent variant.
+
+HARD MATCH RULES:
+- Product type/category must match.
+- Operating mechanism must match. Same function is NOT enough.
+- Distinctive construction/form factor must match.
+- If target brand/model is explicitly known, it is a hard match unless the reference is clearly generic/OEM.
+- Brand/logo is optional for unbranded/OEM products.
+- Capacity, color and small cosmetic differences are soft attributes only when mechanism and construction remain the same.
+- Manual pull-cord != electric motor.
+- Hand-crank/rotary != push-press.
+- Vacuum/suction != non-vacuum.
+- Foldable != rigid when foldability is a defining construction.
+- If evidence is ambiguous, REJECT. Never guess true.
+
+Return strict JSON only:
+{
+  "verified": true,
+  "confidence": 0.0,
+  "detectedProduct": "",
+  "productTypeMatch": true,
+  "mechanismMatch": true,
+  "constructionMatch": true,
+  "brandModelMatch": true,
+  "reason": ""
+}`;
+
+  const userPrompt = `Target listing: "${effectiveTitle}"
+Target description: "${String(productDescription || '').slice(0, 700)}"
+Target fingerprint: ${fingerprintText}
+Niche: ${niche}
+${resolvedRefImage ? 'Image #1 is the official product reference. Remaining images are candidate video frames.' : 'No official reference image is available; use listing text/fingerprint conservatively.'}
+
+Verify ONLY product identity. Do not accept a candidate merely because it is visually clean or has the same general use.`;
+
+  const messageContent = [{ type: 'text', text: userPrompt }];
+  if (resolvedRefImage) {
+    messageContent.push({
+      type: 'image_url',
+      image_url: { url: resolvedRefImage.dataUri, detail: 'low' },
+    });
+  }
+
+  for (const frame of sampleFrames) {
+    let imgUrl = frame?.base64;
+    if (!imgUrl && frame?.filePath && fs.existsSync(frame.filePath)) {
+      try {
+        const mime = frame.filePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        imgUrl = `data:${mime};base64,${fs.readFileSync(frame.filePath).toString('base64')}`;
+      } catch {}
+    }
+    if (typeof imgUrl === 'string' && (imgUrl.startsWith('data:image/') || imgUrl.startsWith('http'))) {
+      messageContent.push({ type: 'image_url', image_url: { url: imgUrl, detail: 'low' } });
+    }
+  }
+
+  let lastError = null;
+  for (const model of models) {
+    try {
+      onProgress({
+        step: 'product_verification',
+        message: `Verifikasi produk kandidat dengan ${provider} (${model})...`,
+        progress: 35,
+        status: 'running',
+      });
+
+      const response = await client.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: messageContent },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.05,
+        max_tokens: 900,
+      }, { timeout: 45000, maxRetries: 0 });
+
+      const msg = response.choices?.[0]?.message;
+      const raw = (msg?.content && msg.content.trim()) ? msg.content : (msg?.reasoning || '{}');
+      const parsed = repairJson(raw);
+      const confidence = Math.max(0, Math.min(1, Number(parsed.confidence) || 0));
+      const hardMatch =
+        parsed.productTypeMatch !== false &&
+        parsed.mechanismMatch !== false &&
+        parsed.constructionMatch !== false &&
+        parsed.brandModelMatch !== false;
+
+      const verified = parsed.verified === true && hardMatch && confidence >= 0.72;
+      return {
+        ...parsed,
+        verified,
+        confidence,
+        reason: String(parsed.reason || (verified ? 'Produk terverifikasi cocok.' : 'Identitas produk tidak cukup meyakinkan.')),
+        model,
+        provider,
+      };
+    } catch (err) {
+      lastError = err;
+      const status = err?.status || err?.statusCode;
+      if (status === 401 || status === 402) break;
+    }
+  }
+
+  throw new Error(`Verifikasi produk kandidat gagal: ${lastError?.message || 'semua model AI gagal'}`);
+}
+
+/**
  * Stage 1, Step B: Calls Alibaba Qwen API (or Google Gemini)
  * using explicit user provided Product Title and Product Description to generate:
  * - Kotak Scene (Scene Breakdown)
