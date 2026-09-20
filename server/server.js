@@ -3342,27 +3342,37 @@ async function runAutoStage1Worker(run) {
         continue;
       }
 
-      const productInfo = extractCoreProductInfo(
-        shopeeCandidate.title,
-        shopeeCandidate.description || '',
-        shopeeCandidate.url
-      );
-      const brand = String(productInfo?.brand || '').trim();
-      const productType = String(productInfo?.coreProductNoun || '').trim();
-      const model = String(productInfo?.model || '').trim();
-
+      // discoverSingleShopeeProduct already enforced the branded-product gate
+      // and returns the verified identity extracted from the listing metadata.
+      const brand = String(shopeeCandidate.brand || '').trim();
+      const productType = String(shopeeCandidate.productType || '').trim();
+      const model = String(shopeeCandidate.model || '').trim();
+      const searchQueries = Array.isArray(shopeeCandidate.searchQueries)
+        ? shopeeCandidate.searchQueries
+        : [];
+      
       // Auto Mode requires a real brand + product type. OEM/unbranded products
-      // are intentionally skipped here; OEM is supported only by manual URLs.
-      if (!brand || !productType || productType === 'Produk Praktis' || !Array.isArray(productInfo?.searchQueries) || productInfo.searchQueries.length === 0) {
+      // never reach the video-search stage; OEM is supported only by manual URLs.
+      if (
+        !shopeeCandidate.brandedVerified ||
+        !brand ||
+        !productType ||
+        productType === 'Produk Praktis' ||
+        searchQueries.length === 0
+      ) {
         run.skippedProducts++;
         updateAutoRun(run, {
-          message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": brand/type tidak terdeteksi (OEM/manual only).`,
+          message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": listing tidak memiliki brand + type yang terverifikasi.`,
         });
         continue;
       }
 
-      const searchKeyword = productInfo.searchQueries[0];
-      if (!searchKeyword || !searchKeyword.toLowerCase().includes(brand.toLowerCase())) {
+      const searchKeyword = searchQueries[0];
+      if (
+        !searchKeyword ||
+        !normalizeText(searchKeyword).includes(normalizeText(brand)) ||
+        !normalizeText(searchKeyword).includes(normalizeText(productType).split(' ')[0])
+      ) {
         run.skippedProducts++;
         updateAutoRun(run, {
           message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": query brand + type tidak valid.`,
