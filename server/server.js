@@ -3706,7 +3706,7 @@ async function conformExistingJobEditToAudio({
   });
   const creativePlan = job.creativePlan || buildCreativeShotPlan({
     fingerprint,
-    niche: job.niche || job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools',
+    niche: job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools'),
   });
 
   const conformedClips = conformClipsToVoiceover({
