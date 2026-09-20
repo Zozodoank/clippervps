@@ -1669,7 +1669,10 @@ Image #1 is the OFFICIAL REFERENCE PHOTO of the target product from the Shopee l
 The subsequent ${evalFrames.length} images are sampled frames from the candidate video(s).
 Carefully compare the candidate video frames directly against the reference product in Image #1:
 - The physical item demonstrated in the video frames MUST match or be the same product / OEM equivalent as shown in Image #1.
-- Minor variations in brand logo on chassis, color accent, or button placement are 100% ACCEPTABLE.
+- Brand is OPTIONAL for generic/OEM household products. A missing or different logo is acceptable when the physical construction and operating mechanism match.
+- Minor variations in brand logo on chassis, color accent, or button placement are ACCEPTABLE only when they do NOT change the product's mechanism, form factor, or core construction.
+- OPERATING MECHANISM IS A HARD MATCH REQUIREMENT: manual pull-cord vs electric motor, manual rotary vs push-press, suction/vacuum vs non-suction, foldable vs rigid, pump vs gravity-feed, etc. are DIFFERENT product variants and MUST NOT be treated as the same product merely because they perform the same general function.
+- Capacity/size differences (for example 500ml vs 700ml) may be acceptable only when the body design and mechanism are visibly the same OEM family; mechanism differences are never acceptable.
 - If the video shows a completely DIFFERENT product or category, output:
   {"status": "reject", "detectedProduct": "<nama produk>", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan foto produk target"}
 ` : ''}
@@ -1680,7 +1683,10 @@ ${evalFrames.map((f, i) => `#${i + 1} (${f.displayLabel || f.timeFormatted || fo
 Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 1. Exact Product Match & Shopee Regional Market Compatibility:
    - Does the physical item in the video match "${effectiveTitle}" and is it compatible with products sold across Shopee (Shopee Indonesia, Malaysia, Thailand, Vietnam, Philippines, Taiwan)? Hands-on tabletop demos of Asian OEM items are 100% WELCOME.
-   - If DIFFERENT product, compilation, or US/Western-exclusive retail item (prominent Amazon, Walmart, Target packaging not found on Shopee): output {"status": "reject", "detectedProduct": "<nama produk>", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan ekosistem produk Shopee (eksklusif pasar barat/Amazon)"}
+   - For UNBRANDED / NO-BRAND / OEM products, do NOT require a brand name. Judge the match from product type, physical form, distinctive parts, and especially the operating mechanism.
+   - SAME FUNCTION IS NOT ENOUGH. Example: a manual pull-cord food chopper is NOT an exact match for an electric chopper; a hand-crank slicer is NOT an exact match for a push-down slicer; a vacuum sealer mechanism is NOT interchangeable with a simple heat sealer.
+   - If the title/reference photo shows a distinctive mechanism or construction, the candidate video MUST visibly demonstrate that same mechanism/construction before isExactProductMatch can be true.
+   - If DIFFERENT product, compilation, mechanism variant, or US/Western-exclusive retail item (prominent Amazon, Walmart, Target packaging not found on Shopee): output {"status": "reject", "detectedProduct": "<nama produk>", "isExactProductMatch": false, "reason": "Produk di video tidak cocok dengan produk target atau mekanisme fisiknya berbeda"}
 2. Granular Frame-Level Discard QC (CRITICAL POLICY - DO NOT REJECT WHOLE VIDEO):
    - JANGAN PERNAH MENOLAK SELURUH VIDEO hanya karena 1 atau beberapa frame terdapat wajah vlogger, subtitle ucapan, intro bumper, atau watermark!
    - HANYA BUANG FRAME YANG TIDAK SESUAI TERSEBUT (abaikan nomor indeks frame yang ada wajah/ada teks ucapan).
