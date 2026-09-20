@@ -1415,6 +1415,80 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
   return null;
 }
 
+export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', seen = new Set() } = {}) {
+  const preset = getNichePreset(niche);
+  const isGadget = preset?.id === 'gadget_smartphone';
+  const category = isGadget ? 'smartphone' : 'alat dapur';
+  const queries = [
+    `"official store" ${category} site:shopee.co.id`,
+    `"brand" ${category} site:shopee.co.id`,
+    `"merek" ${category} site:shopee.co.id`,
+    `"${isGadget ? 'garansi resmi' : 'official store'}" ${category} site:shopee.co.id`,
+  ];
+
+  for (const query of queries) {
+    try {
+      const engines = [
+        () => searchBingShopee(query),
+        () => searchBraveShopee(query),
+        () => searchDuckDuckGoShopee(query),
+      ];
+
+      for (const searchEngine of engines) {
+        let results = [];
+        try { results = await searchEngine(); } catch { results = []; }
+        results = (results || []).filter(r =>
+          r?.url &&
+          !seen.has(r.url) &&
+          !isBundleOrSetProduct(r.title)
+        );
+        results.forEach(r => seen.add(r.url));
+
+        const batch = results.slice(0, 12);
+        const metas = await Promise.allSettled(batch.map(r => fetchShopeePageMeta(r.url)));
+
+        for (let i = 0; i < batch.length; i++) {
+          const result = batch[i];
+          const meta = metas[i].status === 'fulfilled' ? metas[i].value : {};
+          const rawTitle = meta.title || result.title || '';
+          if (!rawTitle || isGenericShopeeTitle(rawTitle) || isBundleOrSetProduct(rawTitle)) continue;
+
+          const title = cleanTitle(rawTitle, result.url);
+          const description = cleanDescription(meta.description || result.snippet || '');
+          if (!title || isGenericShopeeTitle(title)) continue;
+
+          const info = extractCoreProductInfo(title, description, result.url, meta.brand || '');
+          const brand = String(info?.brand || meta.brand || '').trim();
+          const productType = String(info?.coreProductNoun || '').trim();
+          const model = String(info?.model || '').trim();
+          const searchQueries = Array.isArray(info?.searchQueries)
+            ? info.searchQueries.filter(q => /\S/.test(String(q || '')))
+            : [];
+
+          if (!brand || !productType || productType === 'Produk Praktis' || !searchQueries.length) continue;
+
+          return {
+            keyword: query,
+            title,
+            description,
+            url: result.url,
+            imageUrl: meta.imageUrl || result.thumbnail || '',
+            brand,
+            model,
+            productType,
+            searchQueries,
+            brandedVerified: true,
+          };
+        }
+      }
+    } catch (err) {
+      console.warn(`[BrandedDiscovery] Query failed "${query}": ${err.message}`);
+    }
+  }
+
+  return null;
+}
+
 export async function discoverShopeeProducts({
   keywords = DEFAULT_AUTO_KEYWORDS,
   limit = 5,
