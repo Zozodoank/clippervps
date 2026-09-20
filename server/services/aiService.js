@@ -1428,6 +1428,7 @@ export async function selectHighlightWithAI({
   introCutoffSec = 0,
   isVideoFirst = false,
   niche = 'kitchen_tools',
+  creativePlan = null,
   onProgress = () => { }
 }) {
   const reqProvider = (aiProvider || '').trim().toLowerCase();
@@ -1662,6 +1663,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     evalFrames = sampled;
   }
 
+  const creativeDirection = creativePlan && Array.isArray(creativePlan.shots)
+    ? creativePlan.shots.map((shot, i) =>
+        `${i + 1}. ${shot.role}: ${shot.purpose} (ideal ${shot.targetSec}s, range ${shot.minSec}-${shot.maxSec}s)`
+      ).join('\n')
+    : '';
+
   const userPrompt = `Target Shopee Product: "${effectiveTitle}"
 ${effectiveDesc ? `Product Description: "${effectiveDesc}"` : ''}
 ${resolvedRefImage ? `[OFFICIAL REFERENCE PRODUCT PHOTO (SHOPEE LISTING) ATTACHED AS IMAGE #1]:
@@ -1679,6 +1686,13 @@ Carefully compare the candidate video frames directly against the reference prod
 Total Duration: ${totalDuration}s
 Sampled Frames:
 ${evalFrames.map((f, i) => `#${i + 1} (${f.displayLabel || f.timeFormatted || formatSeconds(f.timestamp)})`).join(', ')}
+
+${creativeDirection ? `PROFESSIONAL STORY-FIRST SHOT PLAN:
+${creativeDirection}
+- Prefer one visually consistent exact-product source when it can satisfy the roles.
+- Use additional sources only when they are independently exact-product verified and materially improve missing shot roles.
+- Do not force equal-length scenes. Pick the strongest moment for each role; timing will be conformed to voiceover later.
+` : ''}
 
 Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 1. Exact Product Match & Shopee Regional Market Compatibility:
