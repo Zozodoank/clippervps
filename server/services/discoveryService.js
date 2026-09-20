@@ -1377,21 +1377,10 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
     console.warn(`[Discovery] Search engine lookup failed for "${keyword}":`, err.message);
   }
 
-  // Instant Resilient Fallback: If Brave/Google/DuckDuckGo throw 429 or are blocked,
-  // directly generate a clean Shopee product candidate from our curated viral keyword list.
-  // This guarantees 0-second lag and completely bypasses 429 rate limit errors!
-  const formattedTitle = formatKeywordToProductTitle(keyword);
-  const shopeeUrl = `https://shopee.co.id/search?keyword=${encodeURIComponent(keyword)}`;
-  
-  if (seen.has(shopeeUrl)) return null;
-  seen.add(shopeeUrl);
-
-  return {
-    keyword,
-    title: formattedTitle,
-    description: `Produk alat dapur praktis: ${formattedTitle}. Kualitas terjamin, multifungsi dan sangat cocok untuk kebutuhan masak sehari-hari.`,
-    url: shopeeUrl,
-  };
+  // IMPORTANT: Auto Mode must never fabricate a product from a generic keyword.
+  // If the marketplace lookup is unavailable, return null so Auto Mode can skip
+  // the item instead of spending video/AI quota on an OEM/generic product.
+  return null;
 }
 
 export async function discoverShopeeProducts({
@@ -1633,6 +1622,7 @@ export async function searchMultiEngineVideos(query, {
   limit = 20,
   excludeVideoIds = new Set(),
   onProgress = () => {},
+  strictIdentity = false,
 } = {}) {
   const excludeSet = excludeVideoIds instanceof Set ? excludeVideoIds : new Set(excludeVideoIds || []);
   const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
@@ -1678,8 +1668,9 @@ export async function searchMultiEngineVideos(query, {
     console.warn(`[MultiEngineVideo] Bing Video search error: ${err.message}`);
   }
 
-  // 2B. Jika query awal panjang dan belum ada hasil, coba query ringkas dari Core Product Noun
-  if (allCandidates.length === 0) {
+  // 2B. Generic core-noun fallback is forbidden in strict identity mode.
+  // It can turn a branded query back into broad OEM/generic searches.
+  if (allCandidates.length === 0 && !strictIdentity) {
     try {
       const coreInfo = extractCoreProductInfo(query);
       const coreQuery = coreInfo?.coreProductNoun;
@@ -1709,6 +1700,23 @@ export async function searchMultiEngineVideos(query, {
   const queryWords = (queryInfo?.coreWords || normalizeText(query).split(' '))
     .map((w) => normalizeText(w))
     .filter((w) => w.length >= 3 && !ignoredQueryWords.has(w));
+
+  // In strict identity mode, preserve the exact brand/model/type signal in the
+  // query and never allow a broad product-family fallback to pass.
+  if (strictIdentity) {
+    const identityInfo = extractDynamicProductIdentity(query);
+    const identityTokens = [identityInfo.brand, identityInfo.model]
+      .filter(Boolean)
+      .map((v) => normalizeText(v))
+      .filter((v) => v.length >= 2);
+    if (identityTokens.length === 0) return [];
+    const strictCandidates = allCandidates.filter((candidate) => {
+      const text = normalizeText(`${candidate.title || ''} ${candidate.description || ''}`);
+      return identityTokens.some((token) => text.includes(token));
+    });
+    allCandidates.length = 0;
+    allCandidates.push(...strictCandidates);
+  }
 
   // 4. Filter through Stage 1 Metadata Pre-filter.
   const metadataClean = allCandidates.filter((candidate) => isLikelyCleanYouTubeCandidate(candidate, queryWords));
