@@ -71,6 +71,23 @@ export default function InputCard({
     : `OpenRouter: ${selectedProviderReady ? '.env Active' : 'Missing in .env'}`;
 
   const detectedNoun = getDetectedProductNoun(formData.productTitle);
+  const oemUrls = Array.isArray(formData.oemUrls) ? formData.oemUrls : [''];
+
+  const updateOemUrl = (index, value) => {
+    const next = [...oemUrls];
+    next[index] = value;
+    setFormData({ ...formData, oemUrls: next });
+  };
+
+  const addOemUrl = () => {
+    if (oemUrls.length >= 2) return;
+    setFormData({ ...formData, oemUrls: [...oemUrls, ''] });
+  };
+
+  const removeOemUrl = (index) => {
+    const next = oemUrls.filter((_, i) => i !== index);
+    setFormData({ ...formData, oemUrls: next.length ? next : [''] });
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -173,7 +190,52 @@ export default function InputCard({
           />
         </div>
 
-        {/* 4. Shopee Affiliate Link Input */}
+        {/* 4. URL OEM / Video Tambahan */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Link2 className="w-4 h-4 text-cyan-400" />
+              URL OEM / Video Tambahan
+              <span className="text-[10px] font-normal normal-case text-slate-500">(opsional)</span>
+            </span>
+            <span className="text-[11px] font-normal text-cyan-300">Local QC aktif • Gemini match dilewati</span>
+          </label>
+          <div className="space-y-2">
+            {oemUrls.map((url, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <span className="w-7 h-9 flex items-center justify-center rounded-lg bg-slate-800 border border-slate-700 text-[10px] font-bold text-slate-400">
+                  {index + 1}
+                </span>
+                <input
+                  type="url"
+                  placeholder={`https://www.youtube.com/watch?v=... (OEM ${index + 1})`}
+                  value={url}
+                  onChange={(e) => updateOemUrl(index, e.target.value)}
+                  className="flex-1 bg-slate-900/90 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all font-mono"
+                />
+                {oemUrls.length > 1 && (
+                  <button type="button" onClick={() => removeOemUrl(index)}
+                    className="w-9 h-9 flex-shrink-0 rounded-lg bg-slate-800 border border-slate-700 text-slate-400 hover:text-red-300 hover:border-red-500/50 transition-colors"
+                    title={`Hapus URL OEM ${index + 1}`} aria-label={`Hapus URL OEM ${index + 1}`}>
+                    <Minus className="w-4 h-4 mx-auto" />
+                  </button>
+                )}
+                {index === oemUrls.length - 1 && oemUrls.length < 2 && (
+                  <button type="button" onClick={addOemUrl}
+                    className="w-9 h-9 flex-shrink-0 rounded-lg bg-cyan-500/10 border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-400 transition-colors"
+                    title="Tambah URL OEM" aria-label="Tambah URL OEM">
+                    <Plus className="w-4 h-4 mx-auto" />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[10px] text-slate-500">
+            Tambahkan sampai 2 URL OEM jika video utama kurang variasi. Semua URL OEM tetap melewati filter lokal; verifikasi kecocokan produk oleh Gemini tidak dilakukan.
+          </p>
+        </div>
+
+        {/* 5. Shopee Affiliate Link Input */}
         <div>
           <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
             <span className="flex items-center gap-1.5">
