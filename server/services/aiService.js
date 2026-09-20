@@ -2754,7 +2754,7 @@ export function build7SlotStoryboardClips({
   parsed,
   frames = [],
   totalDuration = 60,
-  clipSec = 4.8,
+  clipSec = 3.5,
   introCutoffSec = 0,
   niche = 'kitchen_tools'
 }) {
@@ -2855,11 +2855,35 @@ export function build7SlotStoryboardClips({
     return /unbox|unpack|bubble\s*wrap|kardus|cardboard|packaging|package opening|open box|box opening|industrial machine|factory machine|machinery|mesin industri|mesin pabrik|mesin produksi/.test(text);
   };
 
-  const chooseDistinctFrame = (preferred) => {
+  // HARD MULTI-SOURCE ROTATION:
+  // With >=2 candidate URLs, each scene alternates to another source.
+  // With >=3 candidate URLs, use Video 1 -> Video 2 -> Video 3 -> Video 1...
+  // This is independent of what the AI happened to put in storyboard slots.
+  const sourceRotation = candIndices.length >= 2
+    ? candIndices.slice(0, Math.min(3, candIndices.length))
+    : candIndices;
+
+  const chooseDistinctFrame = (preferred, preferredCandidate = null) => {
     const ordered = [];
-    if (preferred) ordered.push(preferred);
-    for (const f of validFrames) {
-      if (f !== preferred) ordered.push(f);
+
+    // First obey the required source for this scene.
+    if (preferred && (preferredCandidate === null || (preferred.candidateIndex ?? 0) === preferredCandidate)) {
+      ordered.push(preferred);
+    }
+
+    if (preferredCandidate !== null) {
+      for (const f of validFrames) {
+        const cand = f?.candidateIndex !== undefined ? f.candidateIndex : 0;
+        if (cand === preferredCandidate && f !== preferred) ordered.push(f);
+      }
+    }
+
+    // Only use other candidates if the required source has no usable frame.
+    if (ordered.length === 0) {
+      if (preferred) ordered.push(preferred);
+      for (const f of validFrames) {
+        if (f !== preferred) ordered.push(f);
+      }
     }
 
     for (const f of ordered) {
@@ -2871,8 +2895,9 @@ export function build7SlotStoryboardClips({
       const cand = f?.candidateIndex !== undefined ? f.candidateIndex : 0;
       const ts = Number(f?.timestamp) || 0;
       const previous = selectedTimestampsByCandidate.get(cand) || [];
-      // A new clip from the same source must not overlap the previous clip.
-      if (previous.some((p) => Math.abs(p - ts) < Math.max(clipSec, 4.0))) continue;
+
+      // Same-source scenes must be separated by at least one full scene duration.
+      if (previous.some((p) => Math.abs(p - ts) < Math.max(clipSec, 3.5))) continue;
 
       return f;
     }
@@ -2880,6 +2905,9 @@ export function build7SlotStoryboardClips({
   };
 
   for (let sIdx = 0; sIdx < slotsConfig.length; sIdx++) {
+    const requiredCandidate = sourceRotation.length > 0
+      ? sourceRotation[sIdx % sourceRotation.length]
+      : null;
     const config = slotsConfig[sIdx];
     let frameObj = null;
     let chosenIdx = rawSlotIndices[sIdx];
@@ -2950,7 +2978,9 @@ export function build7SlotStoryboardClips({
       }
     }
 
-    const distinctFrame = chooseDistinctFrame(frameObj);
+    // Override the AI's source choice when multiple matching URLs are available.
+    // The selected scene must rotate through candidateIndex 0/1/2 instead of staying on Video #1.
+    const distinctFrame = chooseDistinctFrame(frameObj, requiredCandidate);
     if (!distinctFrame) {
       console.warn(`[build7SlotStoryboardClips] Tidak ada frame unik yang cukup untuk Slot #${config.slot}; slot dilewati agar tidak mengulang visual.`);
       continue;
@@ -2969,7 +2999,7 @@ export function build7SlotStoryboardClips({
     // Universal anti-overlap rule: same source video must use non-overlapping clips.
     const collides = storyboardClips.some(sc =>
       sc.candidateIndex === candIdx &&
-      Math.abs(sc.startSeconds - startSec) < Math.max(clipSec, 4.0)
+      Math.abs(sc.startSeconds - startSec) < Math.max(clipSec, 3.5)
     );
     if (collides) {
       console.warn(`[build7SlotStoryboardClips] Slot #${config.slot} bentrok dengan clip sebelumnya pada video yang sama; slot dilewati.`);
@@ -3019,8 +3049,9 @@ export function build7SlotStoryboardClips({
   return storyboardClips;
 }
 
-export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 4.8 } = {}) {
-  const clipLength = Math.max(3.5, Math.min(5.0, Number(sceneDuration) || 4.8));
+export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.5 } = {}) {
+  // Hard production cadence: no scene may exceed 3.5 seconds.
+  const clipLength = Math.max(3.0, Math.min(3.5, Number(sceneDuration) || 3.5));
   const sourceClips = Array.isArray(rawClips) ? rawClips : [];
   const normalized = [];
   let previousEnd = -1;
