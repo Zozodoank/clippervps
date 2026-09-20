@@ -3379,7 +3379,7 @@ async function runAutoStage1Worker(run) {
       }
 
       const currentTargetIndex = run.successfulJobs + 1;
-      const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${run.maxJobs})`;
+      const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${dailyStats.limit})`;
 
       updateAutoRun(run, {
         message: `[${targetLabel}] Cari video: "${searchKeyword}" (brand/type)...`,
