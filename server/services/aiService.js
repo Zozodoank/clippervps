@@ -648,6 +648,8 @@ CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
     4. Phase 4 (Satisfying Result): Clear view of the final completed outcome.
 - Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.
 - If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.
+- For EVERY selected timestamp, return a matching "frameAudit" row containing timestamp + containsTargetProduct/isPackaging/isMachine/isActiveProductDemo.
+- A selected timestamp is invalid if the target product is not visibly present and actively demonstrated, or if packaging/unboxing/machine footage dominates.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -669,6 +671,9 @@ If ACCEPTED:
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
   "timestamps": [10, 22, 35, 48, 62, 75, 90, 105, 120, 135],
+  "frameAudit": [
+    {"timestamp": 10, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}
+  ],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
@@ -813,7 +818,32 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   const isFatalMismatch = isMatchFalse || isSynthetic || isBulky;
   const hasUsableClipsOrTimestamps = (Array.isArray(parsed.timestamps) && parsed.timestamps.length >= 2) ||
                                      (Array.isArray(parsed.clips) && parsed.clips.length >= 2);
-  const shouldReject = isFatalMismatch || (isRejectStatus && !hasUsableClipsOrTimestamps && !allowFallbackClips);
+
+  const rawTimestampsForAudit = Array.isArray(parsed.timestamps)
+    ? parsed.timestamps.map((t) => typeof t === 'number' ? t : parseTimeToSeconds(t)).filter((t) => Number.isFinite(t))
+    : (Array.isArray(parsed.clips)
+      ? parsed.clips.map((c) => Number(c?.startSeconds ?? parseTimeToSeconds(c?.startTime))).filter((t) => Number.isFinite(t))
+      : []);
+
+  const streamFrameAudit = Array.isArray(parsed.frameAudit) ? parsed.frameAudit : [];
+  const auditEntriesValid = rawTimestampsForAudit.length === 0 || rawTimestampsForAudit.every((ts) =>
+    streamFrameAudit.some((a) =>
+      Number.isFinite(Number(a?.timestamp)) &&
+      Math.abs(Number(a.timestamp) - ts) <= 1.5 &&
+      a.containsTargetProduct === true &&
+      a.isPackaging !== true &&
+      a.isMachine !== true &&
+      a.isActiveProductDemo === true
+    )
+  );
+  const selectedProductProofFailure =
+    rawTimestampsForAudit.length >= 2 &&
+    (parsed.hasTargetProductInEverySelectedFrame !== true || !auditEntriesValid);
+
+  const shouldReject =
+    isFatalMismatch ||
+    selectedProductProofFailure ||
+    (isRejectStatus && !hasUsableClipsOrTimestamps && !allowFallbackClips);
 
   if (shouldReject) {
     let rejectionMsg = reasonText;
@@ -840,6 +870,8 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         rejectionMsg = 'Video ditolak oleh AI: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
       } else if (isBulky) {
         rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar / produk set'}) tergolong perabot/rak besar atau paket/set/bundle yang dilarang.`;
+      } else if (selectedProductProofFailure) {
+        rejectionMsg = 'Video ditolak oleh AI: Ada timestamp terpilih yang tidak membuktikan produk target terlihat aktif, atau mengandung packaging/mesin.';
       } else if (isMatchFalse) {
         rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
       } else {
@@ -861,6 +893,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   }
 
   let candidateClips = [];
+  const acceptedStarts = [];
   if (rawTimestamps.length > 0) {
     for (const rawTs of rawTimestamps) {
       const sec = typeof rawTs === 'number' ? rawTs : parseTimeToSeconds(rawTs);
@@ -875,6 +908,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       if (startSec < minSafeStart) {
         startSec = Math.min(totalDuration - clipSec, minSafeStart);
       }
+      // Never turn several nearby timestamps into repeated copies of the same scene.
+      if (acceptedStarts.some((prev) => Math.abs(prev - startSec) < Math.max(clipSec, 4.0))) {
+        continue;
+      }
+      acceptedStarts.push(startSec);
+
       const endSec = Math.round((startSec + clipSec) * 10) / 10;
       candidateClips.push({
         startSeconds: startSec,
@@ -899,6 +938,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
   const clips = normalizeClipPlan(candidateClips, totalDuration, {
     allowFallback: allowFallbackClips,
+    frameAudit: streamFrameAudit,
     hasProductBrand,
     allowHflip,
     sceneDuration: clipSec,
@@ -1669,7 +1709,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 7. Output Format:
    - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
    - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
-   - Isi "frameAudit" untuk SETIAP frame yang dipilih: [{"frameIndex": N, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}].
+   - Isi "frameAudit" untuk SETIAP frame yang dipilih: [{"frameIndex": N, "timestamp": 10.0, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}].
    - Jangan pernah menandai frame tanpa produk target sebagai containsTargetProduct=true.
    - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "hasTargetProductInEverySelectedFrame": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "storyboard": {"clip1_full_product": N1, "clip2_feature": N2, "clip3_action_demo": N3, "clip4_action_demo_diff": N4, "clip5_action_demo": N5, "clip6_full_product": N6, "clip7_full_product": N7}, "frames": [N1, N2, N3, N4, N5, N6, N7], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
 
