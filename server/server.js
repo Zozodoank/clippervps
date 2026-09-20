@@ -2468,28 +2468,38 @@ export async function runStage1Pipeline({
           // USER MANDATE: Jika klip terpilih terbuang seluruhnya pada audit, JANGAN buang video!
           // Ambil frame peragaan bersih yang tersimpan di pooledFrames dari video yang sama!
           console.warn(`[ClipAudit] ⚠️ Seluruh klip awal terbuang pada audit. Memulihkan klip dari frame bersih alternatif pada video yang sama...`);
-          const fallbackCleanTimestamps = (pooledFrames || [])
-            .map(f => f.timestamp)
-            .filter(t => t !== undefined && t > 0);
+          const recoveryFrames = (pooledFrames || [])
+            .filter(f => f && Number(f.timestamp) > 0)
+            .filter(f => f.candidateIndex !== undefined && f.candidateIndex !== null);
 
           const recoveryClips = [];
-          const usedStarts = new Set();
-          for (let rIdx = 0; rIdx < Math.min(7, fallbackCleanTimestamps.length); rIdx++) {
-            const ts = fallbackCleanTimestamps[rIdx];
-            if (!usedStarts.has(ts)) {
-              usedStarts.add(ts);
-              recoveryClips.push({
-                startSeconds: ts,
-                endSeconds: ts + sceneDuration,
-                duration: sceneDuration,
-                startTime: formatSeconds(ts),
-                endTime: formatSeconds(ts + sceneDuration),
-                storyboardSlot: recoveryClips.length + 1,
-                reason: `Recovered Clean Segment #${rIdx + 1}`,
-                candidateIndex: 0,
-                videoPath: rawVideoPath,
-              });
-            }
+          const usedRecoveryKeys = new Set();
+          for (let rIdx = 0; rIdx < Math.min(8, recoveryFrames.length); rIdx++) {
+            const frame = recoveryFrames[rIdx];
+            const candIdx = Number(frame.candidateIndex);
+            const ts = Number(frame.timestamp);
+            const key = `${candIdx}:${Math.round(ts * 10) / 10}`;
+            const sourcePath = downloadedCandidatesMap.get(candIdx);
+            if (!sourcePath || usedRecoveryKeys.has(key)) continue;
+
+            usedRecoveryKeys.add(key);
+            recoveryClips.push({
+              startSeconds: ts,
+              endSeconds: ts + 3.5,
+              duration: 3.5,
+              startTime: formatSeconds(ts),
+              endTime: formatSeconds(ts + 3.5),
+              storyboardSlot: recoveryClips.length + 1,
+              reason: `Recovered Clean Segment #${rIdx + 1}`,
+              candidateIndex: candIdx,
+              videoPath: sourcePath,
+            });
+          }
+
+          const recoverySourceCount = new Set(recoveryClips.map(c => c.candidateIndex)).size;
+          if (downloadedCandidatesMap.size >= 2 && recoverySourceCount < 2) {
+            console.warn('[ClipAudit] ⛔ Recovery hanya memakai satu sumber; menolak daripada mengulang video yang sama.');
+            recoveryClips.length = 0;
           }
 
           if (recoveryClips.length >= 5) {
