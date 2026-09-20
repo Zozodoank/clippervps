@@ -2896,18 +2896,15 @@ export function build7SlotStoryboardClips({
       }
     }
 
-    // Phase 2: if that source has no valid frame left, use another source rather than
-    // producing a duplicate/empty slot. This is only a fallback for missing footage.
-    const fallback = [];
-    if (preferred) fallback.push(preferred);
-    for (const f of validFrames) {
-      if (f !== preferred) fallback.push(f);
-    }
+    // HARD RULE: when multiple source videos are available, NEVER fall back to another
+    // source here. A missing frame in the required source must leave the slot empty rather
+    // than silently reusing Video #1. This prevents A/B/A/B turning into A/A/A/A.
+    if (preferredCandidate !== null) return null;
 
-    for (const f of fallback) {
+    if (preferred && isUsableDistinctFrame(preferred)) return preferred;
+    for (const f of validFrames) {
       if (isUsableDistinctFrame(f)) return f;
     }
-
     return null;
   };
 
@@ -3169,6 +3166,26 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   }
 
   console.log(`[normalizeClipPlan] Accepted ${normalized.length} valid clips from AI vision`);
+
+  // HARD MULTI-SOURCE GUARANTEE:
+  // If the pool actually contains 2+ source identities, do not allow a final plan
+  // to collapse back to one source. Repetition is worse than rejecting the job.
+  const availableSourceIds = new Set(
+    sourceClips
+      .map(c => c?.candidateIndex)
+      .filter(v => v !== null && v !== undefined)
+  );
+  const selectedSourceIds = new Set(
+    normalized
+      .map(c => c?.candidateIndex)
+      .filter(v => v !== null && v !== undefined)
+  );
+  if (availableSourceIds.size >= 2 && selectedSourceIds.size < 2) {
+    const sourceErr = new Error('AI menolak video: pool memiliki beberapa sumber video, tetapi rencana klip hanya memakai satu sumber. Mencegah pengulangan adegan.');
+    sourceErr.isAiRejection = true;
+    sourceErr.rejectionReason = 'Multi-source collapse: hanya satu URL video yang dipakai.';
+    throw sourceErr;
+  }
 
   // Urutkan klip berdasarkan storyboard slot atau urutan waktu alami
   if (!hasStoryboardSlots) {

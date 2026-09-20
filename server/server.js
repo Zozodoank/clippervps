@@ -288,6 +288,48 @@ function resolveOutputVideoPath(filename) {
   return resolved.startsWith(outputRoot) ? resolved : null;
 }
 
+/**
+ * Strict motion audit for selected footage.
+ * Rejects frozen photos and Ken-Burns-like still images that only zoom/pan slowly.
+ * Returns the SSIM similarity of consecutive sampled frames; real physical action should
+ * create materially different frames, while a held photo remains highly similar.
+ */
+function auditRealMotionFromFrames(framePaths = []) {
+  const paths = Array.isArray(framePaths) ? framePaths.filter(Boolean) : [];
+  if (paths.length < 4) return { checked: false, likelyStatic: false, similarities: [] };
+
+  const ffmpegPath = getFFmpegPath();
+  const similarities = [];
+  for (let i = 1; i < paths.length; i++) {
+    try {
+      const res = spawnSync(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error',
+        '-i', paths[i - 1],
+        '-i', paths[i],
+        '-lavfi', 'ssim=stats_file=-',
+        '-f', 'null', '-'
+      ], { encoding: 'utf8', timeout: 5000 });
+
+      const text = String(res.stderr || '') + '\n' + String(res.stdout || '');
+      const matches = [...text.matchAll(/All:([0-9.]+)/g)];
+      const last = matches.length ? Number(matches[matches.length - 1][1]) : NaN;
+      if (Number.isFinite(last)) similarities.push(last);
+    } catch {}
+  }
+
+  if (similarities.length < 3) return { checked: false, likelyStatic: false, similarities };
+
+  const sorted = [...similarities].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const verySimilarCount = similarities.filter(v => v >= 0.985).length;
+
+  // A clip where almost every sampled pair is nearly identical is a photo/slideshow/slow
+  // Ken-Burns effect, not a genuine hands-on product demonstration.
+  const likelyStatic = verySimilarCount >= Math.max(3, Math.ceil(similarities.length * 0.70));
+
+  return { checked: true, likelyStatic, similarities, median };
+}
+
 function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 4000) {
   return new Promise((resolve) => {
     const ffmpegPath = getFFmpegPath();
@@ -2188,46 +2230,56 @@ export async function runStage1Pipeline({
         const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
         let vPath = downloadedCandidatesMap.get(candIdx);
         if (!vPath) {
-          const altCand = [...downloadedCandidatesMap.entries()][0];
-          console.warn(`[Job ${jobId}] ⚠️ Video kandidat #${candIdx + 1} tidak tersedia di 1080p. Mengalihkan ke kandidat #${altCand ? altCand[0] + 1 : 1}...`);
-          return {
-            ...c,
-            candidateIndex: altCand ? altCand[0] : candIdx,
-            videoPath: altCand ? altCand[1] : null,
-          };
+          // NEVER remap a missing source to Video #1. That silently turns a multi-source
+          // storyboard into repeated footage.
+          console.warn(`[Job ${jobId}] ⛔ Video kandidat #${candIdx + 1} tidak tersedia di 1080p. Klip sumber ini dibuang, bukan dialihkan ke video lain.`);
+          return null;
         }
         return {
           ...c,
           videoPath: vPath,
         };
-      });
+      }).filter(Boolean);
 
-      // Jaminan klip minimal 6-8 klip (30-35s) dengan adegan berganti dinamis:
-      const currentHlDuration = hl.clips.reduce((sum, c) => sum + (c.duration || sceneDuration), 0);
-      if (hl.clips.length < 6 || currentHlDuration < 30.0) {
-        console.log(`[Job ${jobId}] ⚠️ AI Vision memilih ${hl.clips.length} klip (${currentHlDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai durasi standar minimal 30-35s...`);
-        const baseClips = [...hl.clips];
-        let expRound = 1;
-        while (hl.clips.length < 7 && expRound <= 4) {
-          for (const base of baseClips) {
-            if (hl.clips.length >= 7) break;
-            const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 4.0));
-            hl.clips.push({
-              ...base,
-              startSeconds: newStart,
-              endSeconds: newStart + sceneDuration,
-              duration: sceneDuration,
-              startTime: formatSeconds(newStart),
-              endTime: formatSeconds(newStart + sceneDuration),
-              storyboardSlot: hl.clips.length + 1,
-              reason: `${base.reason} (Dynamic Scene Cut #${expRound})`,
-            });
-          }
-          expRound++;
-        }
-        hl.duration = hl.clips.reduce((sum, c) => sum + (c.duration || sceneDuration), 0);
+      // NEVER manufacture extra scenes by copying an existing clip.
+      // A copied clip with a shifted timestamp can produce the exact visual repetition
+      // reported by users (Scene 1 == Scene 3, Scene 2 == Scene 4).
+      const currentHlDuration = hl.clips.reduce((sum, c) => sum + (c.duration || 3.5), 0);
+      const downloadedSourceIds = new Set(
+        hl.clips
+          .map(c => c?.candidateIndex)
+          .filter(v => v !== null && v !== undefined)
+      );
+
+      if (downloadedCandidatesMap.size >= 2 && downloadedSourceIds.size < 2) {
+        const sourceErr = new Error(
+          `AI Vision menghasilkan klip dari satu sumber padahal ${downloadedCandidatesMap.size} sumber video sudah tersedia. Job dihentikan untuk mencegah pengulangan adegan.`
+        );
+        sourceErr.isAiRejection = true;
+        sourceErr.rejectionReason = 'Final clip plan collapse ke satu URL video.';
+        throw sourceErr;
       }
 
+      if (hl.clips.length < 5) {
+        const clipErr = new Error(
+          `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik. Tidak akan menggandakan adegan untuk mengejar durasi.`
+        );
+        clipErr.isAiRejection = true;
+        clipErr.rejectionReason = 'Adegan unik tidak mencukupi; tidak memakai duplikasi sintetis.';
+        throw clipErr;
+      }
+
+      hl.clips = hl.clips.map(c => ({
+        ...c,
+        duration: 3.5,
+        endSeconds: Number(c.startSeconds) + 3.5,
+        endTime: formatSeconds(Number(c.startSeconds) + 3.5),
+      }));
+      hl.duration = hl.clips.length * 3.5;
+
+      // Keperluan backward compatibility: inputVideo tetap diisi, tetapi setiap clip
+      // wajib mempunyai videoPath sumbernya sendiri dan renderer tidak boleh memakai
+      // rawVideoPath sebagai pengganti sumber klip multi-video.
       rawVideoPath = [...downloadedCandidatesMap.values()][0];
       highlight = hl;
       approved = true;
@@ -2324,6 +2376,21 @@ export async function runStage1Pipeline({
 
         const testFrames = (await Promise.all(frameExtractTasks)).filter(Boolean);
 
+        // HARD MOTION GATE: a valid affiliate clip must contain real physical motion.
+        // Reject still photos with zoom/pan effects before any AI Gatekeeper result can
+        // accidentally classify the moving pixels as a legitimate video.
+        const motionAudit = auditRealMotionFromFrames(testFrames.map(f => f.filePath));
+        if (motionAudit.likelyStatic) {
+          console.warn(
+            `[ClipAudit] ⛔ Segment klip #${cIdx + 1} ditolak: kemungkinan foto/slideshow/Ken Burns (SSIM median=${motionAudit.median?.toFixed(4)}).`
+          );
+          discardedDirtyClips.push({
+            clip: c,
+            reason: 'STATIC_PHOTO_OR_KEN_BURNS',
+          });
+          continue;
+        }
+
         let hasDirtyContent = false;
         let dirtyReason = '';
         if (testFrames.length > 0) {
@@ -2331,6 +2398,22 @@ export async function runStage1Pipeline({
           try {
             gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 12, niche: options?.niche || 'kitchen_tools' });
           } catch (e) {}
+
+          // Run the local heuristic as a SECOND safety layer even when the AI
+          // Gatekeeper says clean. This catches moving text, stickers and static cards
+          // that can otherwise masquerade as "video".
+          let heuristicRes = null;
+          try {
+            heuristicRes = await inspectFramesLocally(testFrames, { niche: options?.niche || 'kitchen_tools' });
+          } catch (e) {}
+
+          const heuristicDirty = heuristicRes?.discardedFrames?.find(f =>
+            ['floating_text', 'animated_graphic', 'subtitle', 'watermark', 'static_frame', 'intro_bumper'].includes(f.stage)
+          );
+          if (heuristicDirty) {
+            hasDirtyContent = true;
+            dirtyReason = `[HEURISTIC-${String(heuristicDirty.stage).toUpperCase()}] ${heuristicDirty.reason || 'Elemen grafis/teks terdeteksi'}`;
+          }
 
           if (gkRes && Array.isArray(gkRes.allFrames)) {
             const dirtyDet = gkRes.allFrames.find(f => f.status !== 'clean');
@@ -2371,85 +2454,63 @@ export async function runStage1Pipeline({
           cleanAuditedClips[0].storyboardRole = 'full_product';
         }
 
-        // 2. Replenish durasi jika klip bersih tersisa < 6 atau durasi < 28s
-        if (cleanAuditedClips.length >= 1) {
-          highlight.clips = cleanAuditedClips;
-          const currentDuration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
-          if (cleanAuditedClips.length < 6 || currentDuration < 28.0) {
-            console.log(`[ClipAudit] ℹ️ Klip bersih pasca-audit berjumlah ${cleanAuditedClips.length} (${currentDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai minimal 6-7 klip (30-35s)...`);
-            const baseClips = [...cleanAuditedClips];
-            let expRound = 1;
-            while (cleanAuditedClips.length < 7 && expRound <= 6) {
-              for (const base of baseClips) {
-                if (cleanAuditedClips.length >= 7) break;
-                const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
-                cleanAuditedClips.push({
-                  ...base,
-                  startSeconds: newStart,
-                  endSeconds: newStart + sceneDuration,
-                  duration: sceneDuration,
-                  startTime: formatSeconds(newStart),
-                  endTime: formatSeconds(newStart + sceneDuration),
-                  storyboardSlot: cleanAuditedClips.length + 1,
-                  reason: `${base.reason} (Safe Clean Re-stride #${expRound})`,
-                });
-              }
-              expRound++;
-            }
-          }
-          highlight.clips = cleanAuditedClips;
-          highlight.duration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+        // HARD RULE: never replenish by copying/offsetting an existing clip.
+        // If audit leaves too few unique scenes, reject rather than manufacture repeats.
+        if (cleanAuditedClips.length >= 5) {
+          highlight.clips = cleanAuditedClips.map(c => ({
+            ...c,
+            duration: 3.5,
+            endSeconds: Number(c.startSeconds) + 3.5,
+            endTime: formatSeconds(Number(c.startSeconds) + 3.5),
+          }));
+          highlight.duration = highlight.clips.length * 3.5;
         } else {
           // USER MANDATE: Jika klip terpilih terbuang seluruhnya pada audit, JANGAN buang video!
           // Ambil frame peragaan bersih yang tersimpan di pooledFrames dari video yang sama!
           console.warn(`[ClipAudit] ⚠️ Seluruh klip awal terbuang pada audit. Memulihkan klip dari frame bersih alternatif pada video yang sama...`);
-          const fallbackCleanTimestamps = (pooledFrames || [])
-            .map(f => f.timestamp)
-            .filter(t => t !== undefined && t > 0);
+          const recoveryFrames = (pooledFrames || [])
+            .filter(f => f && Number(f.timestamp) > 0)
+            .filter(f => f.candidateIndex !== undefined && f.candidateIndex !== null);
 
           const recoveryClips = [];
-          const usedStarts = new Set();
-          for (let rIdx = 0; rIdx < Math.min(7, fallbackCleanTimestamps.length); rIdx++) {
-            const ts = fallbackCleanTimestamps[rIdx];
-            if (!usedStarts.has(ts)) {
-              usedStarts.add(ts);
-              recoveryClips.push({
-                startSeconds: ts,
-                endSeconds: ts + sceneDuration,
-                duration: sceneDuration,
-                startTime: formatSeconds(ts),
-                endTime: formatSeconds(ts + sceneDuration),
-                storyboardSlot: recoveryClips.length + 1,
-                reason: `Recovered Clean Segment #${rIdx + 1}`,
-                candidateIndex: 0,
-                videoPath: rawVideoPath,
-              });
-            }
+          const usedRecoveryKeys = new Set();
+          for (let rIdx = 0; rIdx < Math.min(8, recoveryFrames.length); rIdx++) {
+            const frame = recoveryFrames[rIdx];
+            const candIdx = Number(frame.candidateIndex);
+            const ts = Number(frame.timestamp);
+            const key = `${candIdx}:${Math.round(ts * 10) / 10}`;
+            const sourcePath = downloadedCandidatesMap.get(candIdx);
+            if (!sourcePath || usedRecoveryKeys.has(key)) continue;
+
+            usedRecoveryKeys.add(key);
+            recoveryClips.push({
+              startSeconds: ts,
+              endSeconds: ts + 3.5,
+              duration: 3.5,
+              startTime: formatSeconds(ts),
+              endTime: formatSeconds(ts + 3.5),
+              storyboardSlot: recoveryClips.length + 1,
+              reason: `Recovered Clean Segment #${rIdx + 1}`,
+              candidateIndex: candIdx,
+              videoPath: sourcePath,
+            });
           }
 
-          if (recoveryClips.length > 0) {
-            let expRound = 1;
-            const baseClips = [...recoveryClips];
-            while (recoveryClips.length < 7 && expRound <= 6) {
-              for (const base of baseClips) {
-                if (recoveryClips.length >= 7) break;
-                const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
-                recoveryClips.push({
-                  ...base,
-                  startSeconds: newStart,
-                  endSeconds: newStart + sceneDuration,
-                  duration: sceneDuration,
-                  startTime: formatSeconds(newStart),
-                  endTime: formatSeconds(newStart + sceneDuration),
-                  storyboardSlot: recoveryClips.length + 1,
-                  reason: `${base.reason} (Recovery Expansion #${expRound})`,
-                });
-              }
-              expRound++;
-            }
-            highlight.clips = recoveryClips;
-            highlight.duration = recoveryClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
-            console.log(`[ClipAudit] 🛡️ Berhasil memulihkan ${highlight.clips.length} klip bersih (${highlight.duration.toFixed(1)}s) dari video yang sama!`);
+          const recoverySourceCount = new Set(recoveryClips.map(c => c.candidateIndex)).size;
+          if (downloadedCandidatesMap.size >= 2 && recoverySourceCount < 2) {
+            console.warn('[ClipAudit] ⛔ Recovery hanya memakai satu sumber; menolak daripada mengulang video yang sama.');
+            recoveryClips.length = 0;
+          }
+
+          if (recoveryClips.length >= 5) {
+            highlight.clips = recoveryClips.slice(0, 8).map(c => ({
+              ...c,
+              duration: 3.5,
+              endSeconds: Number(c.startSeconds) + 3.5,
+              endTime: formatSeconds(Number(c.startSeconds) + 3.5),
+            }));
+            highlight.duration = highlight.clips.length * 3.5;
+            console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi.`);
           } else {
             console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
             const auditErr = new Error('Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi, bumper statis, atau wajah.');

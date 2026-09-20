@@ -63,6 +63,22 @@ export async function renderSilentAntiDetectionVideo({
   return new Promise(async (resolve, reject) => {
     try {
       const selectedClips = normalizeRenderClips(clips, startTime, endTime, reframe);
+
+      // Multi-source render safety: never substitute the first input video when a clip's
+      // own source path is missing. That fallback can turn a correct A/B/A/B storyboard
+      // into A/A/A/A at the final FFmpeg stage.
+      const renderSourceIds = new Set(
+        selectedClips
+          .map(c => c?.candidateIndex)
+          .filter(v => v !== null && v !== undefined)
+      );
+      if (renderSourceIds.size >= 2 && selectedClips.some(c => !c.videoPath)) {
+        throw new Error('Render dibatalkan: ada klip multi-source tanpa videoPath sumber. Mencegah pengulangan video pertama.');
+      }
+      if (renderSourceIds.size >= 2 && selectedClips.length < 2) {
+        throw new Error('Render dibatalkan: storyboard multi-source kehilangan klip unik.');
+      }
+
       const safeSpeedMultiplier = clampNumber(speedMultiplier, 0.5, 2, 1);
       const ptsFactor = (1 / safeSpeedMultiplier).toFixed(4);
       const args = ['-y'];
