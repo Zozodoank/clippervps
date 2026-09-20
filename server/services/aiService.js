@@ -439,6 +439,7 @@ ${effectiveDesc ? `- Product Description: "${effectiveDesc}"` : ''}
   }
 
   return `CRITERION 1: FUNCTIONAL & PHYSICAL PRODUCT MATCH (STRICT COMPACT KITCHEN TOOLS NICHE)
+- Target Product Identity: "${productIdentity}"${productBrand ? ` | Brand: "${productBrand}"` : ''}${productModel ? ` | Model/Type: "${productModel}"` : ''}
 - Target Product Category / Model: "${coreNoun}" (Listing: "${effectiveTitle}")
 ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
 - Does the item demonstrated in the video physically and functionally match this product category/tool?
@@ -531,6 +532,9 @@ export async function analyzeYouTubeVideoWithGemini({
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
   const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
+  const productIdentity = prodInfo.productIdentity || coreNoun;
+  const productBrand = prodInfo.brand || '';
+  const productModel = prodInfo.model || '';
   const effectiveDesc = (productDescription || '').trim().slice(0, 500);
 
   let refImageInlineData = null;
