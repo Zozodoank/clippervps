@@ -2910,6 +2910,11 @@ function normalizeReframe(reframe = {}) {
   return {
     focusX,
     focusY,
+    focusXStart: clampNumber(reframe.focusXStart, 0, 1, focusX),
+    focusXEnd: clampNumber(reframe.focusXEnd, 0, 1, focusX),
+    focusYStart: clampNumber(reframe.focusYStart, 0, 1, focusY),
+    focusYEnd: clampNumber(reframe.focusYEnd, 0, 1, focusY),
+    dynamicTracking: reframe.dynamicTracking !== false,
     renderMode,
     cropStrategy: (reframe.cropStrategy || DEFAULT_REFRAME.cropStrategy).toString().slice(0, 80),
     avoidTextZones,
@@ -3208,11 +3213,22 @@ export function build7SlotStoryboardClips({
       reason: `${config.label} [Slot #${config.slot} | ${config.datasetTag}]`,
       isCleanAffiliateShot: true,
       hasProductBrand: Boolean(parsed?.hasProductBrand),
-      reframe: {
-        ...DEFAULT_REFRAME,
-        renderMode: 'stage_80',
-        focusY: config.slot === 7 ? 0.60 : (config.slot === 4 ? 0.65 : 0.55)
-      }
+      reframe: (() => {
+        const baseY = config.slot === 7 ? 0.60 : (config.slot === 4 ? 0.65 : 0.55);
+        const panDirection = config.slot % 2 === 0 ? -1 : 1;
+        return {
+          ...DEFAULT_REFRAME,
+          renderMode: 'stage_80',
+          focusX: 0.50,
+          focusY: baseY,
+          focusXStart: Math.max(0.38, Math.min(0.62, 0.50 - (0.025 * panDirection))),
+          focusXEnd: Math.max(0.38, Math.min(0.62, 0.50 + (0.025 * panDirection))),
+          focusYStart: Math.max(0.35, Math.min(0.80, baseY - 0.015)),
+          focusYEnd: Math.max(0.35, Math.min(0.80, baseY + 0.015)),
+          dynamicTracking: true,
+          notes: 'Subtle motion-aware reframe trajectory; keep product inside center safe zone.'
+        };
+      })()
     };
 
     if (config.slot === 1) slot1Clip = clipObj;
@@ -3320,7 +3336,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     normalized.push({
       startSeconds,
       endSeconds,
-      duration: clipLength,
+      duration: defaultClipLength,
       startTime: formatSeconds(startSeconds),
       endTime: formatSeconds(endSeconds),
       candidateIndex: rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : null,
@@ -3419,14 +3435,14 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   for (let i = 0; i < fallbackTargetClips; i++) {
     const rawStart = Math.round(fallbackStart + (i * stepSize));
     const startSeconds = Math.min(maxStart, Math.max(lastStart + defaultClipLength, rawStart));
-    if (startSeconds + clipLength > totalDuration) break;
+    if (startSeconds + defaultClipLength > totalDuration) break;
 
     fallbackClips.push({
       startSeconds,
-      endSeconds: startSeconds + clipLength,
+      endSeconds: startSeconds + defaultClipLength,
       duration: clipLength,
       startTime: formatSeconds(startSeconds),
-      endTime: formatSeconds(startSeconds + clipLength),
+      endTime: formatSeconds(startSeconds + defaultClipLength),
       reason: `Fallback ${defaultClipLength}s product shot.`,
       hasProductBrand,
       allowHflip,
