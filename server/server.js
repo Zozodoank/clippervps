@@ -95,6 +95,7 @@ import {
   conformClipsToVoiceover,
   choosePreferredCandidateSet
 } from './services/professionalPipelineService.js';
+import { runFinalMasterQc } from './services/finalMasterQcService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2759,9 +2760,46 @@ export async function runStage1Pipeline({
 
         const audioDurationSec = (await getMediaDurationSec(autoVoiceoverPath)) || silentDurationSec;
 
+        // EDIT CONFORM: actual speech timing controls the visual cut lengths.
+        // This prevents looping/repeating footage when TTS runs longer than the first silent edit.
+        const conformedClips = conformClipsToVoiceover({
+          clips: highlight.clips,
+          script: scriptData.voiceoverScript || rawVoiceScript,
+          audioDurationSec,
+          creativePlan,
+        });
+        const conformedDuration = conformedClips.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
+
+        if (conformedClips.length > 0) {
+          updateProgress({
+            step: 'edit_conform',
+            message: `Menyesuaikan cut visual ke timing voiceover nyata (${audioDurationSec.toFixed(1)}s)...`,
+            progress: 89,
+            status: 'running',
+          });
+
+          highlight.clips = conformedClips;
+          highlight.duration = conformedDuration;
+
+          await renderSilentAntiDetectionVideo({
+            inputVideo: rawVideoPath,
+            startTime: highlight.startTime,
+            endTime: highlight.endTime,
+            outputVideo: silentOutputPath,
+            clips: highlight.clips,
+            hflip: effectiveHflip,
+            speedMultiplier: options.speedMultiplier || 1,
+            reframe: effectiveReframe,
+            onProgress: updateProgress,
+          });
+        }
+
+        const finalSilentDurationSec = (await getMediaDurationSec(silentOutputPath)) || conformedDuration || silentDurationSec;
+        highlight.duration = finalSilentDurationSec;
+
         updateProgress({
           step: 'subtitles',
-          message: `Menyinkronkan subtitle narasi (${audioDurationSec.toFixed(1)}s / video ${silentDurationSec.toFixed(1)}s)...`,
+          message: `Menyinkronkan subtitle narasi (${audioDurationSec.toFixed(1)}s / video ${finalSilentDurationSec.toFixed(1)}s)...`,
           progress: 93,
           status: 'running',
         });
@@ -2769,7 +2807,7 @@ export async function runStage1Pipeline({
         const scriptForSubtitles = scriptData.voiceoverScript || rawVoiceScript || ttsResult.cleanScript;
         generateSrtSubtitles(scriptForSubtitles, audioDurationSec, srtPath, {
           wordBoundaries: ttsResult.wordBoundaries,
-          videoDurationSec: silentDurationSec,
+          videoDurationSec: finalSilentDurationSec,
           lexicon: scriptData.lexicon_to_replace || {},
         });
 
@@ -2779,14 +2817,55 @@ export async function runStage1Pipeline({
           progress: 95,
           status: 'running',
         });
+        const backgroundMusicPath = options.backgroundMusicPath || process.env.BACKGROUND_MUSIC_PATH || '';
+        const clickSfxPath = options.clickSfxPath || process.env.SFX_CLICK_PATH || '';
+        const whooshSfxPath = options.whooshSfxPath || process.env.SFX_WHOOSH_PATH || '';
+        const sfxEvents = [];
+        let cutCursor = 0;
+        for (let i = 0; i < Math.max(0, highlight.clips.length - 1); i++) {
+          cutCursor += Number(highlight.clips[i]?.duration) || 0;
+          const sfxPath = i % 2 === 0 ? whooshSfxPath : clickSfxPath;
+          if (sfxPath && fs.existsSync(sfxPath)) {
+            sfxEvents.push({
+              path: sfxPath,
+              atSec: Math.max(0, cutCursor - 0.05),
+              volume: i === 0 ? 0.08 : 0.06,
+            });
+          }
+        }
+
         await mergeVoiceoverAndBurnSubtitles({
           silentVideoPath: silentOutputPath,
           voiceoverAudioPath: autoVoiceoverPath,
           srtPath,
           outputVideoPath: finalOutputPath,
-          targetDurationSec: silentDurationSec,
+          targetDurationSec: finalSilentDurationSec,
+          backgroundMusicPath,
+          musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
+          sfxEvents,
           onProgress: updateProgress,
         });
+
+        updateProgress({
+          step: 'final_master_qc',
+          message: 'Final Master QC: memeriksa resolusi, black frame, freeze, loudness, durasi, dan subtitle safe-zone...',
+          progress: 98,
+          status: 'running',
+        });
+
+        const finalQc = await runFinalMasterQc({
+          videoPath: finalOutputPath,
+          expectedDurationSec: finalSilentDurationSec,
+          subtitlePath: srtPath,
+        });
+
+        if (!finalQc.passed) {
+          try { fs.unlinkSync(finalOutputPath); } catch {}
+          const qcError = new Error(`FINAL_MASTER_QC_FAILED: ${finalQc.issues.join(', ')}`);
+          qcError.isFinalQcFailure = true;
+          qcError.finalQc = finalQc;
+          throw qcError;
+        }
 
         cleanupTempFiles([srtPath]);
         deleteJobTempDirectory(jobId, tempDir);
@@ -2838,6 +2917,9 @@ export async function runStage1Pipeline({
           aiStudioPrompt: scriptData.aiStudioPrompt,
           caption: scriptData.caption,
           lexicon: scriptData.lexicon_to_replace || {},
+          finalQc,
+          productFingerprint,
+          creativePlan,
           videoTitle: videoMeta.title,
           isOrphan: false,
         };
