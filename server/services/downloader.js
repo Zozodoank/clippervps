@@ -270,6 +270,31 @@ export const DIRTY_NEGATIVE_OPERATORS = [
   '-"alat berat"',
   '-"mesin pabrik besar"',
   '-"industrial machine"',
+  '-"factory machine"',
+  '-"production machine"',
+  '-"packing machine"',
+  '-"packaging machine"',
+  '-industrial',
+  '-machinery',
+  '-"mesin industri"',
+  '-"mesin pabrik"',
+  '-"mesin produksi"',
+  '-"mesin packing"',
+  '-"mesin pengemas"',
+  '-"mesin besar"',
+  '-"mesin raksasa"',
+  '-"conveyor"',
+  '-"cnc machine"',
+  '-unboxing',
+  '-unbox',
+  '-unpacking',
+  '-"bubble wrap"',
+  '-kardus',
+  '-cardboard',
+  '-packaging',
+  '-"open box"',
+  '-"package opening"',
+  '-"box opening"',
   '-slideshow',
   '-traktor',
   '-"pakan ternak"',
@@ -305,8 +330,8 @@ export function buildCleanYouTubeQuery(baseQuery) {
 
   // 1. Bersihkan kata-kata sampah tanpa mematikan kata cara/tutorial jika mencari alat dapur
   const stripRegex = isMoldOrFoodTool
-    ? /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|mukbang|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
-    : /\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
+    ? /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|mukbang|unboxing|unbox|unpacking|bubble\s*wrap|kardus|cardboard|packaging|open\s+box|package\s+opening|box\s+opening|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
+    : /\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|unboxing|unbox|unpacking|bubble\s*wrap|kardus|cardboard|packaging|open\s+box|package\s+opening|box\s+opening|pabrik|factory|manufacturing|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
 
   let cleaned = String(baseQuery)
     .replace(stripRegex, '')

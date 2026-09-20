@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
+import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -287,7 +288,12 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
 
   // 2B. Filter Kata Kunci Terlarang pada Judul Video
-  // IZINKAN unboxing (karena AI visual memiliki filter Criterion 4B untuk membuang frame kardus/kertas dan hanya mengambil demonstrasi produk).
+  // Packaging/unboxing tidak pernah menjadi sumber footage affiliate yang valid.
+  const packagingRegex = /\b(unboxing|unbox|unpack|unpacking|bubble\s*wrap|kardus|cardboard|packaging|package\s+opening|box\s+opening|open\s+box|buka\s+paket|paket\s+dibuka)\b/i;
+  if (packagingRegex.test(titleLower) || packagingRegex.test(descLower.slice(0, 700))) {
+    return { eligible: false, reason: 'Video terindikasi unboxing/packaging (kardus, bubble wrap, atau pembukaan paket), bukan demo produk aktif.' };
+  }
+
   const bannedKeywordRegex = isGadget
     ? /\b(cara|tutorial|diy|how\s+to|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti lcd|ganti baterai|repair|reparasi|bongkar mesin|mati total|matot|bypass|bootloop)\b/i
     : /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
@@ -327,11 +333,18 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     }
   }
 
-  // 2G. Filter Mesin Alat Berat & Pertanian Skala Raksasa (Hanya blokir alat berat/traktor/pakan ternak raksasa)
-  // JANGAN blokir 'pemipil jagung' (karena ada pemipil jagung manual mini), dan jangan blokir kata 'pabrik'/'usaha'/'umkm'
-  const heavyMachineryRegex = /\b(alat\s+berat|traktor|perontok\s+padi|chopper\s+pakan\s+ternak|chopper\s+rumput|cacah\s+rumput|mesin\s+selep\s+gabah|silase|mesin\s+industri\s+berat)\b/i;
-  if (heavyMachineryRegex.test(titleLower)) {
-    return { eligible: false, reason: 'Judul video mengindikasikan alat berat / mesin pertanian raksasa (bukan alat rumah tangga praktis).' };
+  // 2G. Blacklist mesin/factory/industrial footage at metadata stage.
+  // Compact countertop appliances remain allowed only when the TARGET explicitly describes
+  // a compact machine/appliance; generic machine footage is noise for ordinary hand-tools.
+  const targetCompactMachine =
+    /\b(mesin|machine|appliance|alat\s+elektrik|elektrik)\b/i.test(productTitle) &&
+    /\b(mini|portable|compact|countertop|kitchen|dapur|handheld|usb|electric|elektrik|chopper|blender|mixer|frother|sealer|toaster|waffle|food\s+processor)\b/i.test(productTitle);
+
+  const machineTitleRegex =
+    /\b(?:industrial\s+machine|factory\s+machine|production\s+machine|packing\s+machine|packaging\s+machine|commercial\s+machine|industrial|machinery|mesin\s+industri|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|mesin\s+komersial|mesin\s+besar|mesin\s+raksasa|cnc|conveyor|hydraulic\s+press|lathe\s+machine|milling\s+machine|washing\s+machine|mesin\s+cuci|\bmesin\b|\bmachine\b|\bmachinery\b)\b/i;
+
+  if (machineTitleRegex.test(titleLower) && !targetCompactMachine) {
+    return { eligible: false, reason: 'Video terindikasi footage mesin/machinery, bukan demonstrasi alat rumah tangga yang sesuai.' };
   }
 
   // 3. Filter Iklan & Sponsor Komersial
@@ -548,8 +561,9 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
-  // Fast seek each timestamp with adaptive concurrency (2 parallel workers on mobile/Termux to prevent CPU heating)
-  const concurrency = isMobile ? 2 : 4;
+  // On Termux/mobile, use a single sequential worker because output-side stream seek
+  // is intentionally used to avoid repeated nearest-keyframe frames.
+  const concurrency = isMobile ? 1 : 4;
   const executing = [];
   for (const point of samplePoints) {
     // Micro pacing delay (human-like pacing)
@@ -559,18 +573,22 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     const outputPath = path.join(outputDir, frameFile);
 
     const p = new Promise((resolve) => {
-      // Input seeking (-ss before -i) fetches only the keyframe near timestamp via HTTP Range headers
-      // -an -sn -dn omits audio and subtitle parsing for maximum keyframe seek speed
-      // scale=-2:270 provides optimal balance of speed and visual clarity for AI gatekeeper
+      // IMPORTANT:
+      // Termux/mobile must seek AFTER opening the stream (-i ... -ss ...).
+      // Input-side seeking can repeatedly land on the same nearest keyframe for HLS/remote
+      // streams, which is exactly the "same frame repeated several times" failure mode.
+      const seekArgs = isMobile
+        ? ['-i', streamUrl, '-ss', String(point.timestamp)]
+        : ['-ss', String(point.timestamp), '-i', streamUrl];
+
       const proc = spawn(ffmpegPath, [
         '-y',
         '-user_agent', browserUserAgent,
         '-headers', browserHeaders,
         '-reconnect', '1',
         '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '2',
-        '-ss', String(point.timestamp),
-        '-i', streamUrl,
+        '-reconnect_delay_max', isMobile ? '4' : '2',
+        ...seekArgs,
         '-an',
         '-sn',
         '-dn',
@@ -614,6 +632,34 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   let frameFiles = fs.readdirSync(outputDir)
     .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
     .sort();
+
+  // Hard de-duplicate the actual extracted image content.  This is intentionally
+  // done AFTER FFmpeg writes the files: timestamps alone cannot prove that two
+  // frames are visually different when a remote stream keeps returning the same keyframe.
+  const uniqueFrameFiles = [];
+  const seenFrameHashes = new Set();
+  for (const filename of frameFiles) {
+    const filePath = path.join(outputDir, filename);
+    try {
+      const buf = fs.readFileSync(filePath);
+      const hash = crypto.createHash('sha256').update(buf).digest('hex');
+      if (seenFrameHashes.has(hash)) {
+        try { fs.unlinkSync(filePath); } catch {}
+        console.warn(`[VideoFilterService] ♻️ Drop duplicate visual frame: ${filename}`);
+        continue;
+      }
+      seenFrameHashes.add(hash);
+      uniqueFrameFiles.push(filename);
+    } catch {
+      // Keep unreadable/partial files out of the downstream AI pool.
+      try { fs.unlinkSync(filePath); } catch {}
+    }
+  }
+  frameFiles = uniqueFrameFiles;
+
+  if (frameFiles.length < 5) {
+    throw new Error(`Frame visual unik tidak mencukupi setelah deduplikasi (${frameFiles.length}/5). Candidate ditolak agar sistem tidak mengulang frame yang sama.`);
+  }
 
   // Percobaan kedua internal: Jika fast input seek menghasilkan 0 frame, coba mode output seek
   if (frameFiles.length === 0) {

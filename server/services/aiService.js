@@ -612,15 +612,14 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GR
 
 ${buildFaceAndMotionCriterion(niche, clipSec)}
 
-CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES)
-- JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
-  * Jika video memiliki proses unboxing (membuka kardus, merobek bubble wrap/plastik, mengeluarkan barang dari kotak): Video TETAP DITERIMA (status: 'accept').
-- MANDAT PEMBUANGAN PROSES UNBOXING:
-  * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, KARTU GARANSI, ATAU BUSA PACKAGING!
-  * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing, buku panduan manual kertas, atau menyorot kotak kardus/kemasan!
-  * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
-- TOLAK (status: 'reject') HANYA JIKA:
-  * 100% seluruh isi video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun demonstrasi fungsi fisik produk.
+CRITERION 4B: ZERO UNBOXING / ZERO PACKAGING IN SELECTED FOOTAGE
+- PROSES UNBOXING BUKAN FOOTAGE AFFILIATE YANG BOLEH DIPILIH.
+- DILARANG KERAS memilih atau memasukkan ke timestamps/storyboard frame/scene yang menampilkan:
+  * kardus, cardboard box, bubble wrap, plastik pembungkus, paket, label pengiriman, kemasan retail, buku manual kertas, kartu garansi, atau busa packaging sebagai subjek utama/terlihat jelas.
+  * membuka paket, merobek bubble wrap, mengeluarkan barang dari kotak, membongkar packing, atau memegang kotak kosong.
+- Jika video memiliki unboxing di awal, ABAIKAN bagian tersebut dan pilih hanya segmen setelah produk benar-benar sudah keluar dari kemasan dan sedang dipakai/didemonstrasikan.
+- Jika tidak ada cukup segmen aktif setelah packaging dibuang, WAJIB REJECT video. Jangan mengisi slot dengan frame kardus/kemasan hanya untuk memenuhi 7 slot.
+- Slot 1 WAJIB berupa beauty shot / produk fisik yang sudah keluar dari kemasan; ZERO unboxing, ZERO kardus, ZERO bubble wrap.
 
 CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOOTAGE
 - ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FOOTAGE (MIRING / ROTATE 90 DERAJAT):
@@ -649,6 +648,8 @@ CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
     4. Phase 4 (Satisfying Result): Clear view of the final completed outcome.
 - Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.
 - If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.
+- For EVERY selected timestamp, return a matching "frameAudit" row containing timestamp + containsTargetProduct/isPackaging/isMachine/isActiveProductDemo.
+- A selected timestamp is invalid if the target product is not visibly present and actively demonstrated, or if packaging/unboxing/machine footage dominates.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -656,6 +657,7 @@ If ACCEPTED:
   "status": "accept",
   "detectedProduct": "<nama produk>",
   "isExactProductMatch": true,
+  "hasTargetProductInEverySelectedFrame": true,
   "isFacelessIn916Frame": true,
   "hasHumanOrFaceAnywhereInVideo": false,
   "hasFaceIn916Frame": false,
@@ -669,6 +671,9 @@ If ACCEPTED:
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
   "timestamps": [10, 22, 35, 48, 62, 75, 90, 105, 120, 135],
+  "frameAudit": [
+    {"timestamp": 10, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}
+  ],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
@@ -679,6 +684,7 @@ If REJECTED:
   "status": "reject",
   "detectedProduct": "<nama produk di video>",
   "isExactProductMatch": true,
+  "hasTargetProductInEverySelectedFrame": false,
   "isFacelessIn916Frame": false,
   "hasHumanOrFaceAnywhereInVideo": false,
   "hasFaceIn916Frame": false,
@@ -777,9 +783,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   const rawStatus = String(parsed.status || '').toLowerCase().trim();
   const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
   const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
-  const isMatchFalse = isVideoFirstMode
-    ? (isBulky || parsed.isUsableSourceVideo === false)
-    : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky);
+  const isMatchFalse =
+    parsed.isProductMatch === false ||
+    parsed.isExactProductMatch === false ||
+    parsed.hasTargetProductInEverySelectedFrame === false ||
+    isBulky ||
+    parsed.isUsableSourceVideo === false;
   const hasFace = parsed.hasFaceIn916Frame === true ||
     parsed.hasFaceOrHumanInSelectedFrames === true ||
     parsed.hasFaceInSelectedClips === true;
@@ -809,7 +818,32 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   const isFatalMismatch = isMatchFalse || isSynthetic || isBulky;
   const hasUsableClipsOrTimestamps = (Array.isArray(parsed.timestamps) && parsed.timestamps.length >= 2) ||
                                      (Array.isArray(parsed.clips) && parsed.clips.length >= 2);
-  const shouldReject = isFatalMismatch || (isRejectStatus && !hasUsableClipsOrTimestamps && !allowFallbackClips);
+
+  const rawTimestampsForAudit = Array.isArray(parsed.timestamps)
+    ? parsed.timestamps.map((t) => typeof t === 'number' ? t : parseTimeToSeconds(t)).filter((t) => Number.isFinite(t))
+    : (Array.isArray(parsed.clips)
+      ? parsed.clips.map((c) => Number(c?.startSeconds ?? parseTimeToSeconds(c?.startTime))).filter((t) => Number.isFinite(t))
+      : []);
+
+  const streamFrameAudit = Array.isArray(parsed.frameAudit) ? parsed.frameAudit : [];
+  const auditEntriesValid = rawTimestampsForAudit.length === 0 || rawTimestampsForAudit.every((ts) =>
+    streamFrameAudit.some((a) =>
+      Number.isFinite(Number(a?.timestamp)) &&
+      Math.abs(Number(a.timestamp) - ts) <= 1.5 &&
+      a.containsTargetProduct === true &&
+      a.isPackaging !== true &&
+      a.isMachine !== true &&
+      a.isActiveProductDemo === true
+    )
+  );
+  const selectedProductProofFailure =
+    rawTimestampsForAudit.length >= 2 &&
+    (parsed.hasTargetProductInEverySelectedFrame !== true || !auditEntriesValid);
+
+  const shouldReject =
+    isFatalMismatch ||
+    selectedProductProofFailure ||
+    (isRejectStatus && !hasUsableClipsOrTimestamps && !allowFallbackClips);
 
   if (shouldReject) {
     let rejectionMsg = reasonText;
@@ -836,6 +870,8 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         rejectionMsg = 'Video ditolak oleh AI: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
       } else if (isBulky) {
         rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar / produk set'}) tergolong perabot/rak besar atau paket/set/bundle yang dilarang.`;
+      } else if (selectedProductProofFailure) {
+        rejectionMsg = 'Video ditolak oleh AI: Ada timestamp terpilih yang tidak membuktikan produk target terlihat aktif, atau mengandung packaging/mesin.';
       } else if (isMatchFalse) {
         rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
       } else {
@@ -857,6 +893,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   }
 
   let candidateClips = [];
+  const acceptedStarts = [];
   if (rawTimestamps.length > 0) {
     for (const rawTs of rawTimestamps) {
       const sec = typeof rawTs === 'number' ? rawTs : parseTimeToSeconds(rawTs);
@@ -871,6 +908,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       if (startSec < minSafeStart) {
         startSec = Math.min(totalDuration - clipSec, minSafeStart);
       }
+      // Never turn several nearby timestamps into repeated copies of the same scene.
+      if (acceptedStarts.some((prev) => Math.abs(prev - startSec) < Math.max(clipSec, 4.0))) {
+        continue;
+      }
+      acceptedStarts.push(startSec);
+
       const endSec = Math.round((startSec + clipSec) * 10) / 10;
       candidateClips.push({
         startSeconds: startSec,
@@ -895,6 +938,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
   const clips = normalizeClipPlan(candidateClips, totalDuration, {
     allowFallback: allowFallbackClips,
+    frameAudit: streamFrameAudit,
     hasProductBrand,
     allowHflip,
     sceneDuration: clipSec,
@@ -1199,9 +1243,12 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     const rawStatus = String(parsed.status || '').toLowerCase().trim();
     const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
     const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
-    const isMatchFalse = isVideoFirstMode
-      ? (isBulky || parsed.isUsableSourceVideo === false)
-      : (parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky);
+    const isMatchFalse =
+      parsed.isProductMatch === false ||
+      parsed.isExactProductMatch === false ||
+      parsed.hasTargetProductInEverySelectedFrame === false ||
+      isBulky ||
+      parsed.isUsableSourceVideo === false;
     const hasFace = parsed.hasFaceIn916Frame === true ||
       parsed.hasFaceOrHumanInSelectedFrames === true ||
       parsed.hasFaceInSelectedClips === true;
@@ -1643,8 +1690,14 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - Jika ada watermark di tengah pada satu frame, abaikan frame tersebut dan pilih frame lain yang bersih dari video yang sama!
 5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
    Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
-   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / unboxing rapi / penampakan fisik produk). DILARANG KERAS frame sedang digosok, diperas, dipotong, atau aksi ekstrem di Slot 1!
+   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / produk yang sudah keluar dari kemasan). DILARANG KERAS kardus, bubble wrap, paket, proses membuka kemasan, frame tanpa produk, atau aksi ekstrem di Slot 1!
    ${preset.storyboardInstructions}
+5B. TARGET PRODUCT MUST BE VISIBLY PRESENT IN EVERY SELECTED FRAME:
+   - Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.
+   - REJECT frame yang hanya menampilkan tangan, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus, bubble wrap, kemasan, atau mesin/peralatan lain tanpa produk target.
+   - Untuk kitchen_tools: jangan pernah menganggap aktivitas memasak sebagai bukti produk. Jika produk target tidak terlihat dan dioperasikan, frame TIDAK valid.
+   - Set hasTargetProductInEverySelectedFrame menjadi true HANYA bila setiap frame yang dipilih lolos bukti visual tersebut; bila satu saja tidak memenuhi, set false.
+
 6. 100% PRODUCT VISUAL CONSISTENCY & DYNAMIC SCENE DIVERSITY:
    - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh 7 adegan yang dipilih (Slot 1 sampai Slot 7) WAJIB menampakkan MODEL PRODUK FISIK YANG SAMA PERSIS (model, bentuk, material, warna, dan fungsi identik dengan produk target: "${coreNoun}").
    - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! (Contoh TERLARANG: Slot 1 chopper hijau 3 pisau, Slot 2 chopper putih 2 pisau; atau Slot 1 toples kaca, Slot 2 panci masak). Jika ada kandidat video yang produk fisiknya berbeda tipe/warna/model dengan produk target, JANGAN pilih frame dari video tersebut!
@@ -1656,7 +1709,9 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 7. Output Format:
    - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
    - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
-   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "storyboard": {"clip1_full_product": N1, "clip2_feature": N2, "clip3_action_demo": N3, "clip4_action_demo_diff": N4, "clip5_action_demo": N5, "clip6_full_product": N6, "clip7_full_product": N7}, "frames": [N1, N2, N3, N4, N5, N6, N7], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
+   - Isi "frameAudit" untuk SETIAP frame yang dipilih: [{"frameIndex": N, "timestamp": 10.0, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}].
+   - Jangan pernah menandai frame tanpa produk target sebagai containsTargetProduct=true.
+   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "hasTargetProductInEverySelectedFrame": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "storyboard": {"clip1_full_product": N1, "clip2_feature": N2, "clip3_action_demo": N3, "clip4_action_demo_diff": N4, "clip5_action_demo": N5, "clip6_full_product": N6, "clip7_full_product": N7}, "frames": [N1, N2, N3, N4, N5, N6, N7], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
 
   const messageContent = [
     { type: 'text', text: userPrompt },
@@ -1747,6 +1802,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const isMatchFalse =
         parsed.isProductMatch === false ||
         parsed.isExactProductMatch === false ||
+        parsed.hasTargetProductInEverySelectedFrame === false ||
         isBulky ||
         parsed.isUsableSourceVideo === false;
       const hasFace = parsed.hasFaceIn916Frame === true ||
@@ -1776,9 +1832,33 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 
       const selectedIndices = Array.isArray(parsed.frames) ? parsed.frames : [];
       const hasValidFrames = selectedIndices.length >= 1;
+      const selectedFrameAudit = Array.isArray(parsed.frameAudit) ? parsed.frameAudit : [];
+      const auditByFrameIndex = new Map(
+        selectedFrameAudit
+          .map((a) => [Number(a?.frameIndex), a])
+          .filter(([idx]) => Number.isFinite(idx) && idx > 0)
+      );
+      const hasCompleteSelectedFrameAudit = selectedIndices.length === 0
+        ? true
+        : selectedIndices.every((rawIdx) => {
+            const idx = typeof rawIdx === 'object'
+              ? Number(rawIdx?.frameIndex ?? rawIdx?.frame ?? rawIdx?.index)
+              : Number(rawIdx);
+            const audit = auditByFrameIndex.get(idx);
+            return Boolean(
+              audit &&
+              audit.containsTargetProduct === true &&
+              audit.isPackaging !== true &&
+              audit.isMachine !== true &&
+              audit.isActiveProductDemo === true
+            );
+          });
+      const selectedFrameProofFailure =
+        selectedIndices.length >= 3 &&
+        (parsed.hasTargetProductInEverySelectedFrame !== true || !hasCompleteSelectedFrameAudit);
 
       // Penolakan FATAL video HANYA jika produk benar-benar salah/berbeda, buatan AI/CGI, atau perabot dilarang
-      const isFatalMismatch = isMatchFalse || isSynthetic || isBulky || (isRejectStatus && (reasonLower.includes('tidak cocok') || reasonLower.includes('pasar barat') || reasonLower.includes('bukan produk')));
+      const isFatalMismatch = isMatchFalse || selectedFrameProofFailure || isSynthetic || isBulky || (isRejectStatus && (reasonLower.includes('tidak cocok') || reasonLower.includes('pasar barat') || reasonLower.includes('bukan produk')));
 
       if (isFatalMismatch) {
         let rejectionMsg = reasonText || 'Produk di video tidak cocok dengan produk target.';
@@ -1814,35 +1894,53 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       // Fallback ke legacy loop jika build7SlotStoryboardClips kosong
       if ((!candidateClips || candidateClips.length === 0) && selectedIndices.length > 0) {
         candidateClips = [];
+        const fallbackFrameKeys = new Set();
         for (const rawIdx of selectedIndices) {
-          const idx = parseInt(rawIdx, 10);
+          const idx = typeof rawIdx === 'object'
+            ? Number(rawIdx?.frameIndex ?? rawIdx?.frame ?? rawIdx?.index)
+            : parseInt(rawIdx, 10);
           if (isNaN(idx) || idx < 1 || idx > evalFrames.length) continue;
           const frameObj = evalFrames[idx - 1];
+          const audit = auditByFrameIndex.get(idx);
+          if (
+            audit &&
+            (
+              audit.containsTargetProduct !== true ||
+              audit.isPackaging === true ||
+              audit.isMachine === true ||
+              audit.isActiveProductDemo !== true
+            )
+          ) {
+            continue;
+          }
           const ts = frameObj ? frameObj.timestamp : (idx * (totalDuration / evalFrames.length));
           const minSafeStart = Math.max(introCutoffSec || 0, 0);
           const rawStart = Math.max(0, Math.min(totalDuration - clipSec, Math.round(ts * 10) / 10));
-          if (rawStart < minSafeStart) {
-            continue; // Lewati frame yang berada di area intro bumper
-          }
-          const startSec = rawStart;
-          // Cegah memasukkan frame dengan timestamp berdekatan (< 2.5s) pada kandidat video yang sama
+          if (rawStart < minSafeStart) continue;
+
           const candIdx = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : null;
-          if (candidateClips.some(c => (c.candidateIndex === candIdx || (!c.candidateIndex && !candIdx)) && Math.abs(c.startSeconds - startSec) < 2.5)) {
-            continue;
-          }
-          const endSec = Math.round((startSec + clipSec) * 10) / 10;
+          const frameKey = frameObj?.filePath || `${frameObj?.videoId || frameObj?.candidate?.id || candIdx}:${Math.round(ts * 10) / 10}`;
+          if (fallbackFrameKeys.has(frameKey)) continue;
+
+          const collides = candidateClips.some(c =>
+            (c.candidateIndex === candIdx || (!c.candidateIndex && !candIdx)) &&
+            Math.abs(c.startSeconds - rawStart) < Math.max(clipSec, 4.0)
+          );
+          if (collides) continue;
+
+          const endSec = Math.round((rawStart + clipSec) * 10) / 10;
           candidateClips.push({
-            startSeconds: startSec,
+            startSeconds: rawStart,
             endSeconds: endSec,
             duration: clipSec,
-            startTime: formatSeconds(startSec),
+            startTime: formatSeconds(rawStart),
             endTime: formatSeconds(endSec),
             candidateIndex: frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : null,
             candidateTitle: frameObj?.candidateTitle || '',
             candidateUrl: frameObj?.candidateUrl || '',
             videoId: frameObj?.videoId || '',
             candidate: frameObj?.candidate || null,
-            reason: `Frame #${idx} (${frameObj?.displayLabel || formatSeconds(startSec)}) peragaan produk memuaskan`,
+            reason: `Frame #${idx} (${frameObj?.displayLabel || formatSeconds(rawStart)}) peragaan produk memuaskan`,
             isCleanAffiliateShot: true,
             hasProductBrand: Boolean(parsed.hasProductBrand),
             reframe: {
@@ -1850,6 +1948,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
               renderMode: 'stage_80',
             }
           });
+          fallbackFrameKeys.add(frameKey);
         }
       }
 
@@ -1859,6 +1958,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 
       const clips = normalizeClipPlan(candidateClips, totalDuration, {
         allowFallback: allowFallbackClips,
+        frameAudit: Array.isArray(parsed.frameAudit) ? parsed.frameAudit : [],
         hasProductBrand,
         allowHflip,
         sceneDuration: clipSec,
@@ -2726,6 +2826,59 @@ export function build7SlotStoryboardClips({
 
   let slot1Clip = null;
 
+  // Anti-repetition / packaging guard:
+  // Never reuse the exact source frame, and never reuse overlapping moments from the same source video.
+  const selectedFrameKeys = new Set();
+  const selectedTimestampsByCandidate = new Map();
+  const frameAuditByIndex = new Map(
+    (Array.isArray(parsed?.frameAudit) ? parsed.frameAudit : [])
+      .map((a) => [Number(a?.frameIndex), a])
+      .filter(([idx]) => Number.isFinite(idx) && idx > 0)
+  );
+
+  const getFrameKey = (f) =>
+    f?.filePath ||
+    `${f?.videoId || f?.candidate?.id || f?.candidateUrl || 'candidate'}:${Math.round((Number(f?.timestamp) || 0) * 10) / 10}`;
+
+  const isForbiddenFrame = (f) => {
+    if (!f) return true;
+    const idx = validFrames.indexOf(f) + 1;
+    const audit = frameAuditByIndex.get(idx);
+    if (audit) {
+      if (audit.containsTargetProduct === false || audit.isPackaging === true || audit.isMachine === true || audit.isActiveProductDemo === false) {
+        return true;
+      }
+    }
+    const text = [
+      f.reason, f.detectedAction, f.category, f.datasetTag, f.displayLabel
+    ].filter(Boolean).join(' ').toLowerCase();
+    return /unbox|unpack|bubble\s*wrap|kardus|cardboard|packaging|package opening|open box|box opening|industrial machine|factory machine|machinery|mesin industri|mesin pabrik|mesin produksi/.test(text);
+  };
+
+  const chooseDistinctFrame = (preferred) => {
+    const ordered = [];
+    if (preferred) ordered.push(preferred);
+    for (const f of validFrames) {
+      if (f !== preferred) ordered.push(f);
+    }
+
+    for (const f of ordered) {
+      if (isForbiddenFrame(f)) continue;
+
+      const key = getFrameKey(f);
+      if (selectedFrameKeys.has(key)) continue;
+
+      const cand = f?.candidateIndex !== undefined ? f.candidateIndex : 0;
+      const ts = Number(f?.timestamp) || 0;
+      const previous = selectedTimestampsByCandidate.get(cand) || [];
+      // A new clip from the same source must not overlap the previous clip.
+      if (previous.some((p) => Math.abs(p - ts) < Math.max(clipSec, 4.0))) continue;
+
+      return f;
+    }
+    return null;
+  };
+
   for (let sIdx = 0; sIdx < slotsConfig.length; sIdx++) {
     const config = slotsConfig[sIdx];
     let frameObj = null;
@@ -2789,27 +2942,20 @@ export function build7SlotStoryboardClips({
         frameObj = getFrameByIdx(resultCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 8)];
       }
     } else if (config.slot === 6 || config.slot === 7) {
-      // Slot 6 & 7: WAJIB Visual Produk Utuh!
+      // Slot 6 & 7: cari hero/closing frame yang BENAR-BENAR berbeda.
       if (!frameObj) {
-        const lateCleanHero = validFrames.find((f, i) => i >= Math.floor(totalFramesCount * 0.82) && (f.timestamp || 0) > 0);
-        if (lateCleanHero && config.slot === 6) {
-          frameObj = lateCleanHero;
-        } else if (slot1Clip) {
-          frameObj = {
-            candidateIndex: slot1Clip.candidateIndex,
-            candidateTitle: slot1Clip.candidateTitle,
-            candidateUrl: slot1Clip.candidateUrl,
-            videoId: slot1Clip.videoId,
-            candidate: slot1Clip.candidate,
-            timestamp: config.slot === 6 ? slot1Clip.startSeconds : Math.min(totalDuration - clipSec, slot1Clip.startSeconds + 2.5)
-          };
-        } else {
-          frameObj = validFrames[0];
-        }
+        const lateHeroCandidates = validFrames
+          .filter((f, i) => i >= Math.floor(totalFramesCount * 0.70) && (f.timestamp || 0) > 0);
+        frameObj = lateHeroCandidates[config.slot === 6 ? 0 : 1] || lateHeroCandidates[0] || null;
       }
     }
 
-    if (!frameObj) frameObj = validFrames[0] || {};
+    const distinctFrame = chooseDistinctFrame(frameObj);
+    if (!distinctFrame) {
+      console.warn(`[build7SlotStoryboardClips] Tidak ada frame unik yang cukup untuk Slot #${config.slot}; slot dilewati agar tidak mengulang visual.`);
+      continue;
+    }
+    frameObj = distinctFrame;
 
     const candIdx = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : 0;
     const candDuration = frameObj?.candidate?.duration || totalDuration;
@@ -2820,30 +2966,14 @@ export function build7SlotStoryboardClips({
       startSec = minSafeStart;
     }
 
-    // Jika slot 2 sampai 5 bertabrakan (< 2.0s) dengan klip sebelumnya di kandidat yang sama, sebarkan
-    if (config.slot >= 2 && config.slot <= 5) {
-      const collides = storyboardClips.some(sc =>
-        sc.candidateIndex === candIdx && Math.abs(sc.startSeconds - startSec) < 2.0
-      );
-      if (collides) {
-        const span = Math.max(0, candDuration - clipSec - minSafeStart);
-        const proportionalSec = minSafeStart + ((sIdx / 6) * span);
-        startSec = Math.round(Math.min(candDuration - clipSec, Math.max(minSafeStart, proportionalSec)) * 10) / 10;
-        while (storyboardClips.some(sc => sc.candidateIndex === candIdx && Math.abs(sc.startSeconds - startSec) < 1.5) && startSec + 1.5 <= candDuration - clipSec) {
-          startSec = Math.round((startSec + 1.5) * 10) / 10;
-        }
-      }
-    }
-
-    if (config.slot === 7 && storyboardClips.length >= 6) {
-      const slot6 = storyboardClips[5];
-      if (slot6.candidateIndex === candIdx && Math.abs(slot6.startSeconds - startSec) < 2.0) {
-        if (slot6.startSeconds + 2.5 <= candDuration - clipSec) {
-          startSec = slot6.startSeconds + 2.5;
-        } else {
-          startSec = Math.max(0, slot6.startSeconds - 2.5);
-        }
-      }
+    // Universal anti-overlap rule: same source video must use non-overlapping clips.
+    const collides = storyboardClips.some(sc =>
+      sc.candidateIndex === candIdx &&
+      Math.abs(sc.startSeconds - startSec) < Math.max(clipSec, 4.0)
+    );
+    if (collides) {
+      console.warn(`[build7SlotStoryboardClips] Slot #${config.slot} bentrok dengan clip sebelumnya pada video yang sama; slot dilewati.`);
+      continue;
     }
 
     const endSec = Math.round((startSec + clipSec) * 10) / 10;
@@ -2873,6 +3003,16 @@ export function build7SlotStoryboardClips({
     };
 
     if (config.slot === 1) slot1Clip = clipObj;
+
+    const selectedKey = getFrameKey(frameObj);
+    selectedFrameKeys.add(selectedKey);
+    const selectedCand = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : candIdx;
+    const selectedTs = Number(frameObj?.timestamp) || startSec;
+    if (!selectedTimestampsByCandidate.has(selectedCand)) {
+      selectedTimestampsByCandidate.set(selectedCand, []);
+    }
+    selectedTimestampsByCandidate.get(selectedCand).push(selectedTs);
+
     storyboardClips.push(clipObj);
   }
 
@@ -3018,7 +3158,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       }
       return (
         (e.candidateIndex === c.candidateIndex || (!e.candidateIndex && !c.candidateIndex)) &&
-        Math.abs(e.startSeconds - c.startSeconds) < 2.0
+        Math.abs(e.startSeconds - c.startSeconds) < Math.max(clipLength, 4.0)
       );
     });
     if (!isDup) {
