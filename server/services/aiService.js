@@ -398,6 +398,10 @@ export function getDynamicProductHookFallback(productName = '', niche = 'kitchen
  */
 export function buildNicheProductCriterion(niche = 'kitchen_tools', coreNoun = '', effectiveTitle = '', isVideoFirstMode = false, effectiveDesc = '') {
   const preset = getNichePreset(niche);
+  const identityInfo = extractCoreProductInfo(effectiveTitle, effectiveDesc);
+  const productIdentity = identityInfo.productIdentity || coreNoun || effectiveTitle || 'Produk';
+  const productBrand = identityInfo.brand || '';
+  const productModel = identityInfo.model || '';
   if (preset.id === 'gadget_smartphone') {
     return `CRITERION 1: PRODUCT IDENTIFICATION & VALIDATION (SMARTPHONE & GADGET NICHE)
 - Target Gadget / Smartphone: "${coreNoun}" (Listing/Topic: "${effectiveTitle}")
