@@ -2188,46 +2188,56 @@ export async function runStage1Pipeline({
         const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
         let vPath = downloadedCandidatesMap.get(candIdx);
         if (!vPath) {
-          const altCand = [...downloadedCandidatesMap.entries()][0];
-          console.warn(`[Job ${jobId}] ⚠️ Video kandidat #${candIdx + 1} tidak tersedia di 1080p. Mengalihkan ke kandidat #${altCand ? altCand[0] + 1 : 1}...`);
-          return {
-            ...c,
-            candidateIndex: altCand ? altCand[0] : candIdx,
-            videoPath: altCand ? altCand[1] : null,
-          };
+          // NEVER remap a missing source to Video #1. That silently turns a multi-source
+          // storyboard into repeated footage.
+          console.warn(`[Job ${jobId}] ⛔ Video kandidat #${candIdx + 1} tidak tersedia di 1080p. Klip sumber ini dibuang, bukan dialihkan ke video lain.`);
+          return null;
         }
         return {
           ...c,
           videoPath: vPath,
         };
-      });
+      }).filter(Boolean);
 
-      // Jaminan klip minimal 6-8 klip (30-35s) dengan adegan berganti dinamis:
-      const currentHlDuration = hl.clips.reduce((sum, c) => sum + (c.duration || sceneDuration), 0);
-      if (hl.clips.length < 6 || currentHlDuration < 30.0) {
-        console.log(`[Job ${jobId}] ⚠️ AI Vision memilih ${hl.clips.length} klip (${currentHlDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai durasi standar minimal 30-35s...`);
-        const baseClips = [...hl.clips];
-        let expRound = 1;
-        while (hl.clips.length < 7 && expRound <= 4) {
-          for (const base of baseClips) {
-            if (hl.clips.length >= 7) break;
-            const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 4.0));
-            hl.clips.push({
-              ...base,
-              startSeconds: newStart,
-              endSeconds: newStart + sceneDuration,
-              duration: sceneDuration,
-              startTime: formatSeconds(newStart),
-              endTime: formatSeconds(newStart + sceneDuration),
-              storyboardSlot: hl.clips.length + 1,
-              reason: `${base.reason} (Dynamic Scene Cut #${expRound})`,
-            });
-          }
-          expRound++;
-        }
-        hl.duration = hl.clips.reduce((sum, c) => sum + (c.duration || sceneDuration), 0);
+      // NEVER manufacture extra scenes by copying an existing clip.
+      // A copied clip with a shifted timestamp can produce the exact visual repetition
+      // reported by users (Scene 1 == Scene 3, Scene 2 == Scene 4).
+      const currentHlDuration = hl.clips.reduce((sum, c) => sum + (c.duration || 3.5), 0);
+      const downloadedSourceIds = new Set(
+        hl.clips
+          .map(c => c?.candidateIndex)
+          .filter(v => v !== null && v !== undefined)
+      );
+
+      if (downloadedCandidatesMap.size >= 2 && downloadedSourceIds.size < 2) {
+        const sourceErr = new Error(
+          `AI Vision menghasilkan klip dari satu sumber padahal ${downloadedCandidatesMap.size} sumber video sudah tersedia. Job dihentikan untuk mencegah pengulangan adegan.`
+        );
+        sourceErr.isAiRejection = true;
+        sourceErr.rejectionReason = 'Final clip plan collapse ke satu URL video.';
+        throw sourceErr;
       }
 
+      if (hl.clips.length < 5) {
+        const clipErr = new Error(
+          `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik. Tidak akan menggandakan adegan untuk mengejar durasi.`
+        );
+        clipErr.isAiRejection = true;
+        clipErr.rejectionReason = 'Adegan unik tidak mencukupi; tidak memakai duplikasi sintetis.';
+        throw clipErr;
+      }
+
+      hl.clips = hl.clips.map(c => ({
+        ...c,
+        duration: 3.5,
+        endSeconds: Number(c.startSeconds) + 3.5,
+        endTime: formatSeconds(Number(c.startSeconds) + 3.5),
+      }));
+      hl.duration = hl.clips.length * 3.5;
+
+      // Keperluan backward compatibility: inputVideo tetap diisi, tetapi setiap clip
+      // wajib mempunyai videoPath sumbernya sendiri dan renderer tidak boleh memakai
+      // rawVideoPath sebagai pengganti sumber klip multi-video.
       rawVideoPath = [...downloadedCandidatesMap.values()][0];
       highlight = hl;
       approved = true;
