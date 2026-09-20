@@ -20,7 +20,6 @@ import {
   formatEnrichedCaption,
   formatSeconds,
   getDynamicProductHookFallback,
-  build7SlotStoryboardClips,
   verifyProductCandidateWithAI,
   verifyFinalRenderedFramesWithAI
 } from './services/aiService.js';
@@ -1970,7 +1969,6 @@ export async function runStage1Pipeline({
       const candidatesToProcess = candidatePool.slice(0, 12);
       let candidateResults = [];
       const downloadedCandidatesMap = new Map();
-      let totalCleanCount = 0;
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
         // Professional source policy: consistency beats forced multi-source.
@@ -2071,7 +2069,6 @@ export async function runStage1Pipeline({
               cleanFrames: frameFilterRes.cleanFrames,
               productVerification,
             });
-            totalCleanCount += frameFilterRes.cleanFrames.length;
           }
         } catch (candErr) {
           console.warn(`[Job ${jobId}] Gagal memproses stream ${candLabel}: ${candErr.message}`);
@@ -2265,7 +2262,6 @@ export async function runStage1Pipeline({
       // NEVER manufacture extra scenes by copying an existing clip.
       // A copied clip with a shifted timestamp can produce the exact visual repetition
       // reported by users (Scene 1 == Scene 3, Scene 2 == Scene 4).
-      const currentHlDuration = hl.clips.reduce((sum, c) => sum + (c.duration || 3.5), 0);
       if (hl.clips.length < 6) {
         const clipErr = new Error(
           `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik (<6 / 21 detik). Tidak akan menggandakan adegan untuk mengejar durasi.`
