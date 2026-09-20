@@ -2299,7 +2299,7 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
-  const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|unboxing|demo|pakai|menggunakan)\b/i.test(titleText);
+  const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|demo|pakai|menggunakan)\b/i.test(titleText);
 
   // Disqualify broken / repair / disassembly / maintenance tutorials / DIY / set / pack / bundle / western retail
   if (/\b(set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total|amazon|walmart|target|bestbuy|homedepot)\b/i.test(titleText)) return false;
@@ -2308,6 +2308,10 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (!isToolDemoTitle && /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
+    // Packaging/unboxing is never a valid primary affiliate source.
+    'unboxing', 'unbox', 'unpack', 'unpacking', 'bubble wrap', 'bubblewrap',
+    'kardus', 'cardboard', 'paket dibuka', 'buka paket', 'open box', 'opening box',
+    'packaging', 'package opening', 'box opening', 'kemasan paket',
     // Western / US retail chain & Amazon exclusive haul filters (incompatible with Shopee)
     'amazon finds', 'amazon haul', 'amazon must haves', 'amazon favorites', 'found on amazon', 'bought on amazon',
     'walmart', 'target haul', 'best buy', 'home depot', 'dollar tree',
@@ -2346,6 +2350,23 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     'pakan ternak', 'mesin ternak', 'limbah', 'janggel', 'selep', 'pemipil', 'perontok', 'pemanen', 'traktor', 'chopper pakan', 'chopper rumput', 'chopper ternak', 'pencacah rumput', 'pencacah ranting', 'pencacah pakan', 'silase', 'alat berat'
   ];
   if (excludedTitleWords.some((keyword) => titleText.includes(keyword))) return false;
+
+  // Hard blacklist for factory/industrial/large-machine footage.
+  // Compact countertop appliances are allowed only when the target explicitly describes
+  // a compact electric machine; otherwise a generic "mesin/machine" result is noise.
+  const targetHasCompactMachine =
+    Array.isArray(productWords) &&
+    productWords.some((w) => /\b(mesin|machine)\b/i.test(String(w))) &&
+    productWords.some((w) => /\b(mini|portable|compact|countertop|kitchen|dapur|handheld|usb|electric|elektrik|chopper|blender|mixer|frother|sealer|toaster|waffle|food processor)\b/i.test(String(w)));
+
+  const industrialMachineTitle =
+    /\b(?:industrial\s+machine|factory\s+machine|production\s+machine|packing\s+machine|packaging\s+machine|commercial\s+machine|industrial|machinery|mesin\s+industri|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|mesin\s+komersial|mesin\s+besar|mesin\s+raksasa|cnc|conveyor|hydraulic\s+press|lathe\s+machine|milling\s+machine|washing\s+machine|mesin\s+cuci)\b/i.test(titleText);
+
+  const genericMachineTitle =
+    /\b(?:mesin|machine|machinery)\b/i.test(titleText) &&
+    !/\b(?:mini|portable|compact|countertop|kitchen|dapur|handheld|usb|electric|elektrik|chopper|blender|mixer|frother|sealer|toaster|waffle)\b/i.test(titleText);
+
+  if (industrialMachineTitle || (genericMachineTitle && !targetHasCompactMachine)) return false;
 
   // Flexible check: Cross-category exclusion for non-kitchen items
   // Per instruksi pengguna: Verifikasi fisik produk diserahkan ke AI Vision, backend hanya memblokir kategori silang terlarang.
