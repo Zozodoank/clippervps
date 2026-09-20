@@ -2962,46 +2962,49 @@ function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun =
     if (clean && !queries.includes(clean)) queries.push(clean);
   };
 
-  const attributes = extractDynamicSearchAttributes(title);
-  const mechanismAttributes = attributes.filter(a => !/^\d/.test(a));
-  const capacityAttributes = attributes.filter(a => /^\d/.test(a));
-  const mechanism = mechanismAttributes.join(' ').trim();
-  const capacity = capacityAttributes.join(' ').trim();
-  const hasStrongIdentity = Boolean(brand || model);
+  // Discovery is intentionally identity-first:
+  // 1) Brand + model/type when available.
+  // 2) Brand + product type when only brand is known.
+  // 3) Model + product type when only model is known.
+  // 4) Product type alone when the listing is genuinely OEM/unbranded.
+  // Do NOT expand discovery with marketplace adjectives, dimensions, capacity,
+  // generic attributes, or the full seller title: those queries create unrelated footage.
+  const type = String(noun || englishNoun || '').replace(/\s+/g, ' ').trim();
+  const exactIdentity = [brand, model].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim() || String(identity || '').trim();
 
-  if (hasStrongIdentity) {
-    const exactIdentity = [brand, model].filter(Boolean).join(' ').trim() || identity;
-    if (exactIdentity) {
-      add(`"${exactIdentity}" demo`);
-      add(`"${exactIdentity}" demonstration`);
-      add(`"${exactIdentity}" hands on`);
-      add(`"${exactIdentity}" review`);
-      add(`"${exactIdentity}" b-roll`);
-    }
-    if (brand && noun) add(`${brand} ${noun} demo`);
-    if (brand && englishNoun) add(`${brand} ${englishNoun} demonstration`);
-  } else {
-    // Unbranded/OEM products: search by product type + mechanism + distinguishing attributes.
-    // Do not quote the whole marketplace title because that over-constrains discovery.
-    if (englishNoun && mechanism) {
-      add(`${mechanism} ${englishNoun} demo`);
-      add(`${englishNoun} ${mechanism} demonstration`);
-    }
-    if (noun && mechanism) {
-      add(`${noun} ${mechanism} demo`);
-    }
-    if (englishNoun) add(`${englishNoun} demo`);
-    if (noun) add(`${noun} demo`);
-    if (englishNoun && capacity) add(`${englishNoun} ${capacity} demo`);
-    if (noun && capacity) add(`${noun} ${capacity} demo`);
+  if (exactIdentity) {
+    add(`"${exactIdentity}" demo`);
+    add(`"${exactIdentity}" review`);
+    add(`"${exactIdentity}" demonstration`);
+    add(`"${exactIdentity}" hands on`);
   }
 
-  // Broad fallbacks come last so retries can still find footage when listing wording is unusual.
-  if (englishNoun) add(`${englishNoun} hands on`);
-  if (noun) add(`${noun} demonstration`);
-  if (hasStrongIdentity && title) add(`"${title.slice(0, 100)}"`);
+  if (brand && type) {
+    add(`${brand} ${type} demo`);
+    add(`${brand} ${type} review`);
+  }
 
-  return queries.slice(0, 16);
+  if (model && type) {
+    add(`${model} ${type} demo`);
+    add(`${model} ${type} review`);
+  }
+
+  // Truly unbranded/OEM listing: only the product type is used.
+  if (!brand && !model && type) {
+    add(`${type} demo`);
+    add(`${type} review`);
+    add(`${type} demonstration`);
+    add(`${type} hands on`);
+  }
+
+  // Keep one final exact-type query for unusual wording, but never fall back
+  // to broad attributes or the entire marketplace title.
+  if (queries.length === 0 && title) {
+    const compactType = String(title).replace(/[^\p{L}\p{N}\s-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (compactType) add(`${compactType} demo`);
+  }
+
+  return queries.slice(0, 12);
 }
 
 export function isTitleMatchingProduct(candidateTitle, productWords = [], extraMeta = {}) {
