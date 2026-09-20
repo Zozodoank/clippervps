@@ -1964,37 +1964,18 @@ export async function runStage1Pipeline({
 
       // Ambil hingga 12 kandidat untuk memastikan cukup video yang mereview produk yang sama persis
       const candidatesToProcess = candidatePool.slice(0, 12);
-      const candidateResults = [];
+      let candidateResults = [];
       const downloadedCandidatesMap = new Map();
       let totalCleanCount = 0;
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
-        // Footage Budget Target (Audit GPT 2026):
-        // Hitung estimasi clean usable duration (setiap frame bersih mewakili ~4 detik footage aksi).
-        const totalUsableDuration = candidateResults.reduce((acc, cr) => {
-          const cleanCount = cr.cleanFrames?.length || 0;
-          return acc + Math.min(cr.videoMeta?.duration || 60, cleanCount * 4.0);
-        }, 0);
-
-        // Multi-source is mandatory whenever at least 2 viable candidates are available.
-        // Do NOT stop after one rich video: that was the root cause of the "always 1 URL" behavior.
-        const maxTargetSources = Math.min(3, candidatesToProcess.length);
-        const minimumTargetSources = Math.min(2, maxTargetSources);
-        const reachedPreferredSourceCount = candidateResults.length >= maxTargetSources;
-        const reachedMinimumSourceCount = candidateResults.length >= minimumTargetSources;
-
-        const enoughFootageAfterMinimumSources =
-          totalCleanCount >= 8 ||
-          totalUsableDuration >= 35.0 ||
-          candidateResults.length >= 3;
-
-        const hasEnoughFootage =
-          (reachedPreferredSourceCount && enoughFootageAfterMinimumSources) ||
-          (reachedMinimumSourceCount && enoughFootageAfterMinimumSources);
-
-        if (hasEnoughFootage) {
+        // Professional source policy: consistency beats forced multi-source.
+        // Stop early when one VERIFIED source already has enough diverse clean material.
+        const preferredSoFar = choosePreferredCandidateSet(candidateResults);
+        const bestVerified = preferredSoFar[0];
+        if (bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) {
           console.log(
-            `[Job ${jobId}] ✅ Target footage budget terpenuhi (~${totalUsableDuration.toFixed(1)}s usable footage dari ${candidateResults.length} video kandidat; target multi-source=${minimumTargetSources}-${maxTargetSources}). Menghentikan pencarian awal, langsung ke AI Vision!`
+            `[Job ${jobId}] ✅ Satu sumber terverifikasi sudah kaya adegan (${bestVerified.cleanFrames.length} frame bersih). Memprioritaskan konsistensi produk daripada memaksa multi-source.`
           );
           break;
         }
@@ -2049,11 +2030,42 @@ export async function runStage1Pipeline({
           console.log(`[Job ${jobId}] [${candLabel}] Hasil filter frame: ${frameFilterRes.cleanFrames.length} frame peragaan tangan disimpan (${frameFilterRes.discardedCount} frame wajah/intro disingkirkan).`);
 
           if (frameFilterRes.cleanFrames.length > 0) {
+            updateProgress({
+              step: 'product_verification',
+              message: `[${candLabel}] Memastikan jenis, bentuk, dan mekanisme produk sama dengan target...`,
+              progress: 34,
+              status: 'running',
+            });
+
+            const productVerification = await verifyProductCandidateWithAI({
+              apiKey,
+              aiProvider,
+              frames: frameFilterRes.cleanFrames,
+              productTitle,
+              productDescription,
+              productImage: effectiveProductImage,
+              productFingerprint,
+              niche: options.niche || 'kitchen_tools',
+              onProgress: updateProgress,
+            });
+
+            if (!productVerification?.verified) {
+              console.warn(
+                `[Job ${jobId}] ⛔ [${candLabel}] Produk tidak lolos verifikasi identitas (confidence=${Number(productVerification?.confidence || 0).toFixed(2)}): ${productVerification?.reason || 'mismatch'}`
+              );
+              continue;
+            }
+
+            console.log(
+              `[Job ${jobId}] ✅ [${candLabel}] Produk terverifikasi cocok (confidence=${Number(productVerification.confidence || 0).toFixed(2)}).`
+            );
+
             candidateResults.push({
               candidateIndex: i,
               candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
               videoMeta: candMeta,
               cleanFrames: frameFilterRes.cleanFrames,
+              productVerification,
             });
             totalCleanCount += frameFilterRes.cleanFrames.length;
           }
@@ -2064,8 +2076,17 @@ export async function runStage1Pipeline({
       }
 
       if (candidateResults.length === 0) {
-        throw new Error(`Tidak ditemukan video YouTube yang cocok dan memiliki frame bersih untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'semua kandidat tidak memenuhi standar kualitas'}.`);
+        throw new Error(`Tidak ditemukan video yang lolos verifikasi exact-product untuk "${productTitle}". Kandidat bersih yang produknya berbeda tidak akan dipakai.`);
       }
+
+      candidateResults = choosePreferredCandidateSet(candidateResults);
+      if (candidateResults.length === 0) {
+        throw new Error(`Tidak ada kandidat dengan confidence produk yang cukup tinggi untuk "${productTitle}".`);
+      }
+
+      console.log(
+        `[Job ${jobId}] 🎬 Source policy profesional: memakai ${candidateResults.length} sumber terverifikasi; sumber tunggal yang kaya adegan diprioritaskan untuk menjaga konsistensi.`
+      );
 
       if (candidateResults.length === 1) {
         const singleCleanCount = candidateResults[0].cleanFrames?.length || 0;
@@ -2077,7 +2098,7 @@ export async function runStage1Pipeline({
 
       // Kumpulkan frame bersih gabungan dari seluruh kandidat (maksimal 30 frame pilihan)
       pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 });
-      console.log(`[Job ${jobId}] 🎯 Pool Multi-Kandidat Terbentuk: ${pooledFrames.length} frame bersih gabungan dari ${candidateResults.length} video kandidat.`);
+      console.log(`[Job ${jobId}] 🎯 Verified Footage Pool: ${pooledFrames.length} frame bersih dari ${candidateResults.length} sumber exact-product.`);
 
       if (pooledFrames.length < 2) {
         throw new Error(`Semua kandidat video YouTube (${candidatesToProcess.length} video) tidak memiliki cukup frame bersih peragaan produk untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'terlalu banyak wajah / video rusak'}.`);
@@ -2112,34 +2133,10 @@ export async function runStage1Pipeline({
           onProgress: updateProgress,
         });
       } catch (aiErr) {
-        console.warn(`[Job ${jobId}] ⚠️ AI Vision menolak video: ${aiErr.message}`);
-        // USER MANDATE: Jangan buang video hanya karena ada frame tidak sesuai!
-        // Ambil frame peragaan bersih dari video yang sama untuk menggantikan frame yang ditolak.
-        if (pooledFrames.length >= 3) {
-          console.log(`[Job ${jobId}] 🛡️ Memulihkan video: Membangun 7-slot storyboard dari ${pooledFrames.length} frame peragaan bersih yang lolos filter visual...`);
-          const fallbackClips = build7SlotStoryboardClips({
-            parsed: {},
-            frames: pooledFrames,
-            totalDuration: 600,
-            clipSec: sceneDuration,
-            introCutoffSec: 0,
-            niche: options.niche || 'kitchen_tools'
-          });
-          if (fallbackClips && fallbackClips.length > 0) {
-            hl = {
-              status: 'accept',
-              clips: fallbackClips,
-              frames: fallbackClips.map((_, i) => i + 1),
-              detectedProduct: productTitle,
-              isExactProductMatch: true,
-              productHook: getDynamicProductHookFallback(productTitle, options.niche || 'kitchen_tools'),
-              hasProductBrand: false,
-            };
-          }
-        }
-        if (!hl) {
-          throw aiErr;
-        }
+        console.warn(`[Job ${jobId}] ⛔ Storyboard AI gagal/menolak verified pool: ${aiErr.message}`);
+        // Never promote a local-clean frame pool to isExactProductMatch=true.
+        // Exact-product uncertainty must trigger a new candidate search/retry instead of a fabricated acceptance.
+        throw aiErr;
       }
 
       if (!hl || !Array.isArray(hl.clips) || hl.clips.length === 0) {
