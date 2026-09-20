@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'child_process';
+import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -548,8 +549,9 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
-  // Fast seek each timestamp with adaptive concurrency (2 parallel workers on mobile/Termux to prevent CPU heating)
-  const concurrency = isMobile ? 2 : 4;
+  // On Termux/mobile, use a single sequential worker because output-side stream seek
+  // is intentionally used to avoid repeated nearest-keyframe frames.
+  const concurrency = isMobile ? 1 : 4;
   const executing = [];
   for (const point of samplePoints) {
     // Micro pacing delay (human-like pacing)
@@ -559,18 +561,22 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     const outputPath = path.join(outputDir, frameFile);
 
     const p = new Promise((resolve) => {
-      // Input seeking (-ss before -i) fetches only the keyframe near timestamp via HTTP Range headers
-      // -an -sn -dn omits audio and subtitle parsing for maximum keyframe seek speed
-      // scale=-2:270 provides optimal balance of speed and visual clarity for AI gatekeeper
+      // IMPORTANT:
+      // Termux/mobile must seek AFTER opening the stream (-i ... -ss ...).
+      // Input-side seeking can repeatedly land on the same nearest keyframe for HLS/remote
+      // streams, which is exactly the "same frame repeated several times" failure mode.
+      const seekArgs = isMobile
+        ? ['-i', streamUrl, '-ss', String(point.timestamp)]
+        : ['-ss', String(point.timestamp), '-i', streamUrl];
+
       const proc = spawn(ffmpegPath, [
         '-y',
         '-user_agent', browserUserAgent,
         '-headers', browserHeaders,
         '-reconnect', '1',
         '-reconnect_streamed', '1',
-        '-reconnect_delay_max', '2',
-        '-ss', String(point.timestamp),
-        '-i', streamUrl,
+        '-reconnect_delay_max', isMobile ? '4' : '2',
+        ...seekArgs,
         '-an',
         '-sn',
         '-dn',
@@ -614,6 +620,34 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   let frameFiles = fs.readdirSync(outputDir)
     .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
     .sort();
+
+  // Hard de-duplicate the actual extracted image content.  This is intentionally
+  // done AFTER FFmpeg writes the files: timestamps alone cannot prove that two
+  // frames are visually different when a remote stream keeps returning the same keyframe.
+  const uniqueFrameFiles = [];
+  const seenFrameHashes = new Set();
+  for (const filename of frameFiles) {
+    const filePath = path.join(outputDir, filename);
+    try {
+      const buf = fs.readFileSync(filePath);
+      const hash = crypto.createHash('sha256').update(buf).digest('hex');
+      if (seenFrameHashes.has(hash)) {
+        try { fs.unlinkSync(filePath); } catch {}
+        console.warn(`[VideoFilterService] ♻️ Drop duplicate visual frame: ${filename}`);
+        continue;
+      }
+      seenFrameHashes.add(hash);
+      uniqueFrameFiles.push(filename);
+    } catch {
+      // Keep unreadable/partial files out of the downstream AI pool.
+      try { fs.unlinkSync(filePath); } catch {}
+    }
+  }
+  frameFiles = uniqueFrameFiles;
+
+  if (frameFiles.length < 5) {
+    throw new Error(`Frame visual unik tidak mencukupi setelah deduplikasi (${frameFiles.length}/5). Candidate ditolak agar sistem tidak mengulang frame yang sama.`);
+  }
 
   // Percobaan kedua internal: Jika fast input seek menghasilkan 0 frame, coba mode output seek
   if (frameFiles.length === 0) {
