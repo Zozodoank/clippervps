@@ -1341,45 +1341,77 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
       .filter(r => !seen.has(r.url) && !isBundleOrSetProduct(r.title));
     results.forEach(r => seen.add(r.url));
 
-    if (results.length > 0) {
-      const batch = results.slice(0, 3);
-      const metas = await Promise.allSettled(batch.map(r => fetchShopeePageMeta(r.url)));
+    // Inspect several marketplace results and accept ONLY a listing with a
+    // reliable brand + concrete product type. OEM/unbranded listings are skipped.
+    const batch = results.slice(0, 10);
+    const metas = await Promise.allSettled(batch.map(r => fetchShopeePageMeta(r.url)));
 
-      for (let i = 0; i < batch.length; i++) {
-        const result = batch[i];
-        const pageMeta = metas[i].status === 'fulfilled' ? metas[i].value : {};
+    for (let i = 0; i < batch.length; i++) {
+      const result = batch[i];
+      const pageMeta = metas[i].status === 'fulfilled' ? metas[i].value : {};
+      const rawTitle = pageMeta.title || result.title || '';
 
-        const rawTitle = pageMeta.title || result.title || '';
-        if (isBundleOrSetProduct(rawTitle)) {
-          continue;
-        }
-
-        let titleCandidate = cleanTitle(rawTitle, result.url);
-        if (!titleCandidate || isGenericShopeeTitle(titleCandidate)) {
-          titleCandidate = formatKeywordToProductTitle(keyword);
-        }
-        const descCandidate = cleanDescription(pageMeta.description || result.snippet || '') || `Produk alat dapur praktis: ${titleCandidate}.`;
-
-        if (isBulkyOrUnsuitableProduct(titleCandidate) || isBulkyOrUnsuitableProduct(descCandidate) || isBulkyOrUnsuitableProduct(keyword)) {
-          continue;
-        }
-
-        return {
-          keyword,
-          title: titleCandidate,
-          description: descCandidate,
-          url: result.url,
-          imageUrl: pageMeta.imageUrl || result.thumbnail || '',
-        };
+      if (!rawTitle || isBundleOrSetProduct(rawTitle) || isGenericShopeeTitle(rawTitle)) {
+        continue;
       }
+
+      const titleCandidate = cleanTitle(rawTitle, result.url);
+      if (!titleCandidate || isGenericShopeeTitle(titleCandidate)) {
+        continue;
+      }
+
+      const descCandidate = cleanDescription(pageMeta.description || result.snippet || '');
+      if (
+        isBulkyOrUnsuitableProduct(titleCandidate) ||
+        isBulkyOrUnsuitableProduct(descCandidate) ||
+        isBulkyOrUnsuitableProduct(keyword)
+      ) {
+        continue;
+      }
+
+      const productInfo = extractCoreProductInfo(
+        titleCandidate,
+        descCandidate,
+        result.url,
+        pageMeta.brand || ''
+      );
+
+      const brand = String(productInfo?.brand || pageMeta.brand || '').trim();
+      const productType = String(productInfo?.coreProductNoun || '').trim();
+      const model = String(productInfo?.model || '').trim();
+      const searchQueries = Array.isArray(productInfo?.searchQueries)
+        ? productInfo.searchQueries.filter((q) => /\\S/.test(String(q || '')))
+        : [];
+
+      // Hard gate: AutoRun accepts no OEM/unbranded product.
+      if (
+        !brand ||
+        !productType ||
+        productType === 'Produk Praktis' ||
+        searchQueries.length === 0
+      ) {
+        continue;
+      }
+
+      return {
+        keyword,
+        title: titleCandidate,
+        description: descCandidate || `Produk bermerek: ${titleCandidate}.`,
+        url: result.url,
+        imageUrl: pageMeta.imageUrl || result.thumbnail || '',
+        brand,
+        model,
+        productType,
+        searchQueries,
+        brandedVerified: true,
+      };
     }
   } catch (err) {
     console.warn(`[Discovery] Search engine lookup failed for "${keyword}":`, err.message);
   }
 
-  // IMPORTANT: Auto Mode must never fabricate a product from a generic keyword.
-  // If the marketplace lookup is unavailable, return null so Auto Mode can skip
-  // the item instead of spending video/AI quota on an OEM/generic product.
+  // Never fabricate a product from a generic keyword. OEM/unbranded results are
+  // intentionally rejected and must be supplied through the manual OEM flow.
   return null;
 }
 
@@ -2193,10 +2225,47 @@ export async function fetchShopeePageMeta(url) {
       $('link[rel="image_src"]').attr('href') || '';
     const imageUrl = rawImg.startsWith('//') ? `https:${rawImg}` : rawImg;
 
+    let brand = (
+      $('meta[property="product:brand"]').attr('content') ||
+      $('meta[itemprop="brand"]').attr('content') ||
+      $('[itemprop="brand"] [itemprop="name"]').attr('content') ||
+      $('[itemprop="brand"] [itemprop="name"]').text() ||
+      $('meta[name="brand"]').attr('content') ||
+      ''
+    ).trim();
+
+    // Shopee pages may expose Product/Brand in JSON-LD rather than meta tags.
+    if (!brand) {
+      $('script[type="application/ld+json"]').each((_, el) => {
+        if (brand) return;
+        try {
+          const parsed = JSON.parse($(el).text().trim());
+          const entries = Array.isArray(parsed) ? parsed : [parsed];
+          for (const entry of entries) {
+            const candidates = Array.isArray(entry?.['@graph']) ? entry['@graph'] : [entry];
+            for (const item of candidates) {
+              const rawBrand = item?.brand;
+              const candidate = typeof rawBrand === 'string'
+                ? rawBrand
+                : rawBrand?.name;
+              if (candidate && typeof candidate === 'string') {
+                brand = candidate.trim();
+                break;
+              }
+            }
+            if (brand) break;
+          }
+        } catch {
+          // Ignore malformed JSON-LD.
+        }
+      });
+    }
+
     return {
       title: $('meta[property="og:title"]').attr('content') || $('title').text(),
       description: $('meta[property="og:description"]').attr('content') || $('meta[name="description"]').attr('content'),
       imageUrl: imageUrl || '',
+      brand,
     };
   } catch {
     return {};
@@ -2798,14 +2867,14 @@ export const PRODUCT_ANCHORS = [
  * No hard-coded brand database is required: brand/model signals are learned
  * from the actual Shopee title and preserved for downstream video search.
  */
-export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '') {
+export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '', rawBrand = '') {
   const cleaned = cleanTitle(rawTitle, rawUrl) || String(rawTitle || '').trim();
   const normalized = normalizeText(cleaned);
   for (const anchor of PRODUCT_ANCHORS) {
     if (anchor.pattern.test(normalized)) {
       const allWords = Array.from(new Set([...(anchor.core || []), ...(anchor.multilingual || [])]));
       const englishNoun = anchor.englishNoun || anchor.noun;
-      const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc);
+      const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc, rawBrand);
       return {
         cleanTitle: cleaned, coreProductNoun: anchor.noun, englishNoun,
         category: anchor.category, brand: dynamicIdentity.brand, model: dynamicIdentity.model,
@@ -2827,7 +2896,7 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '')
     'store','shop','indonesia','free','shipping','sale','best','seller','new','limited','edition'
   ];
   const words = normalized.split(/\s+/).filter(w => w.length >= 2 && !stopWords.includes(w));
-  const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc);
+  const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc, rawBrand);
   const fallbackTokens = words.slice(0, 6);
   const fallbackNoun = dynamicIdentity.identity ||
     fallbackTokens.slice(0, 4).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') ||
@@ -2862,7 +2931,7 @@ function isMeasurementOrVariantToken(value = '') {
   return false;
 }
 
-function extractDynamicProductIdentity(title = '', description = '') {
+function extractDynamicProductIdentity(title = '', description = '', explicitBrand = '') {
   const source = String(title || '').replace(/\s+/g, ' ').trim();
   const desc = String(description || '').replace(/\s+/g, ' ').trim();
 
@@ -2878,6 +2947,9 @@ function extractDynamicProductIdentity(title = '', description = '') {
     'original','official','store','shop','mall','promo','murah','viral','terbaru','terlaris',
     'premium','portable','multifungsi','serbaguna','electric','elektrik','manual','mini',
     'besar','kecil','set','paket','bundle','new','sale','ready','stock','import','indonesia',
+    'murah','termurah','terbaik','best','seller','top','hits','favorit','rekomendasi',
+    'praktis','portable','simple','smart','universal','standar','standart','premium',
+    'grosir','eceran','official store','free','gratis','promo store',
     'review','demo','test','unboxing','produk','alat','barang','tanpa','merek','brand','no','merk'
   ]);
   const genericProductWords = new Set([
@@ -2902,15 +2974,25 @@ function extractDynamicProductIdentity(title = '', description = '') {
       !/^\d/.test(candidate);
   };
 
-  let brand = '';
-  if (model) {
+  let brand = String(explicitBrand || '').trim();
+
+  if (brand) {
+    // Strip marketplace noise from structured brand metadata before using it.
+    brand = brand
+      .replace(/^(?:brand|merk|merek)\s*[:\-]?\s*/i, '')
+      .replace(/[|,:;]+$/g, '')
+      .trim();
+    if (!isPossibleBrand(brand)) brand = '';
+  }
+
+  if (!brand && model) {
     const mi = tokens.findIndex(t => t.toLowerCase() === model.toLowerCase());
     if (mi > 0) {
       // Search backwards because titles often place the product noun between brand and model:
       // "Philips Blender HR7301" -> Philips, not Blender.
       for (let i = mi - 1; i >= 0 && i >= mi - 4; i--) {
         const candidate = tokens[i];
-        if (isPossibleBrand(candidate) && /^[A-Z]/.test(candidate)) {
+        if (isPossibleBrand(candidate)) {
           brand = candidate;
           break;
         }
@@ -2919,9 +3001,9 @@ function extractDynamicProductIdentity(title = '', description = '') {
   }
 
   if (!brand) {
-    // Conservative fallback: only inspect the beginning of the listing title.
-    // This avoids treating capitalized generic words such as "Rak" as a brand.
-    brand = tokens.slice(0, 4).find(t => /^[A-Z][A-Za-z0-9&.-]{1,}$/.test(t) && isPossibleBrand(t)) || '';
+    // Conservative fallback: inspect only the beginning of the listing title.
+    // Capitalization is not required because marketplace titles are often lowercase.
+    brand = tokens.slice(0, 4).find(t => isPossibleBrand(t)) || '';
   }
 
   const identityParts = [];
@@ -3010,8 +3092,6 @@ function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun =
 
   // Never generate type-only or full-title discovery queries here.
   // Unbranded/OEM products are handled exclusively through the manual URL flow.
-  return queries.slice(0, 12);
-
   return queries.slice(0, 12);
 }
 
