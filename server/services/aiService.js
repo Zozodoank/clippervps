@@ -3036,13 +3036,16 @@ export function build7SlotStoryboardClips({
     return /unbox|unpack|bubble\s*wrap|kardus|cardboard|packaging|package opening|open box|box opening|industrial machine|factory machine|machinery|mesin industri|mesin pabrik|mesin produksi/.test(text);
   };
 
-  // HARD MULTI-SOURCE ROTATION:
-  // With >=2 candidate URLs, each scene alternates to another source.
-  // With >=3 candidate URLs, use Video 1 -> Video 2 -> Video 3 -> Video 1...
-  // This is independent of what the AI happened to put in storyboard slots.
-  const sourceRotation = candIndices.length >= 2
-    ? candIndices.slice(0, Math.min(3, candIndices.length))
-    : candIndices;
+  // Professional source policy: prefer the richest single verified source.
+  // Secondary verified sources are only used when the primary source cannot provide
+  // a distinct clean moment for a requested shot role.
+  const sourceRank = candIndices
+    .map((candidateIndex) => ({
+      candidateIndex,
+      count: framesByCand.get(candidateIndex)?.length || 0,
+    }))
+    .sort((a, b) => b.count - a.count);
+  const primaryCandidate = sourceRank[0]?.candidateIndex ?? null;
 
   const isUsableDistinctFrame = (f) => {
     if (!f || isForbiddenFrame(f)) return false;
@@ -3077,11 +3080,9 @@ export function build7SlotStoryboardClips({
       }
     }
 
-    // HARD RULE: when multiple source videos are available, NEVER fall back to another
-    // source here. A missing frame in the required source must leave the slot empty rather
-    // than silently reusing Video #1. This prevents A/B/A/B turning into A/A/A/A.
-    if (preferredCandidate !== null) return null;
-
+    // If the primary source cannot satisfy this role, allow another independently
+    // verified source rather than leaving the slot empty. Product verification happened
+    // before pooling, so this remains identity-safe.
     if (preferred && isUsableDistinctFrame(preferred)) return preferred;
     for (const f of validFrames) {
       if (isUsableDistinctFrame(f)) return f;
@@ -3090,9 +3091,7 @@ export function build7SlotStoryboardClips({
   };
 
   for (let sIdx = 0; sIdx < slotsConfig.length; sIdx++) {
-    const requiredCandidate = sourceRotation.length > 0
-      ? sourceRotation[sIdx % sourceRotation.length]
-      : null;
+    const requiredCandidate = primaryCandidate;
     const config = slotsConfig[sIdx];
     let frameObj = null;
     let chosenIdx = rawSlotIndices[sIdx];
@@ -3163,8 +3162,7 @@ export function build7SlotStoryboardClips({
       }
     }
 
-    // Override the AI's source choice when multiple matching URLs are available.
-    // The selected scene must rotate through candidateIndex 0/1/2 instead of staying on Video #1.
+    // Prefer the primary exact-product source; fall back only when that source lacks a distinct usable shot.
     const distinctFrame = chooseDistinctFrame(frameObj, requiredCandidate);
     if (!distinctFrame) {
       console.warn(`[build7SlotStoryboardClips] Tidak ada frame unik yang cukup untuk Slot #${config.slot}; slot dilewati agar tidak mengulang visual.`);
@@ -3235,13 +3233,14 @@ export function build7SlotStoryboardClips({
 }
 
 export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.5 } = {}) {
-  // Hard production cadence: no scene may exceed 3.5 seconds.
-  const clipLength = Math.max(3.0, Math.min(3.5, Number(sceneDuration) || 3.5));
+  // Adaptive cadence: individual clips may be shorter/longer according to creative role,
+  // while the default stays around 3.0-3.5s.
+  const defaultClipLength = Math.max(2.0, Math.min(4.0, Number(sceneDuration) || 3.2));
   const sourceClips = Array.isArray(rawClips) ? rawClips : [];
   const normalized = [];
   let previousEnd = -1;
 
-  console.log(`[normalizeClipPlan] totalDuration=${totalDuration}s, rawClips=${sourceClips.length}, clipLength=${clipLength}s, frameAudit=${frameAudit.length}, hasProductBrand=${hasProductBrand}, allowHflip=${allowHflip}`);
+  console.log(`[normalizeClipPlan] totalDuration=${totalDuration}s, rawClips=${sourceClips.length}, defaultClipLength=${defaultClipLength}s, frameAudit=${frameAudit.length}, hasProductBrand=${hasProductBrand}, allowHflip=${allowHflip}`);
 
   // Build a set of timestamps containing detected floating text, subtitles, watermarks, faces, or amateur framing
   const dirtyTimestamps = [];
@@ -3275,6 +3274,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   const hasStoryboardSlots = sourceClips.some(c => c.storyboardSlot !== undefined);
 
   for (const rawClip of sourceClips) {
+    const clipLength = Math.max(1.5, Math.min(4.5, Number(rawClip?.duration) || defaultClipLength));
     let startSeconds = Math.max(0, Math.round(parseTimeToSeconds(rawClip?.startSeconds ?? rawClip?.startTime)));
     const candKey = rawClip?.candidateIndex !== null && rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : 'default';
     const prevEnd = previousEndsByCand.get(candKey) || 0;
@@ -3348,26 +3348,6 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
 
   console.log(`[normalizeClipPlan] Accepted ${normalized.length} valid clips from AI vision`);
 
-  // HARD MULTI-SOURCE GUARANTEE:
-  // If the pool actually contains 2+ source identities, do not allow a final plan
-  // to collapse back to one source. Repetition is worse than rejecting the job.
-  const availableSourceIds = new Set(
-    sourceClips
-      .map(c => c?.candidateIndex)
-      .filter(v => v !== null && v !== undefined)
-  );
-  const selectedSourceIds = new Set(
-    normalized
-      .map(c => c?.candidateIndex)
-      .filter(v => v !== null && v !== undefined)
-  );
-  if (availableSourceIds.size >= 2 && selectedSourceIds.size < 2) {
-    const sourceErr = new Error('AI menolak video: pool memiliki beberapa sumber video, tetapi rencana klip hanya memakai satu sumber. Mencegah pengulangan adegan.');
-    sourceErr.isAiRejection = true;
-    sourceErr.rejectionReason = 'Multi-source collapse: hanya satu URL video yang dipakai.';
-    throw sourceErr;
-  }
-
   // Urutkan klip berdasarkan storyboard slot atau urutan waktu alami
   if (!hasStoryboardSlots) {
     normalized.sort((a, b) => {
@@ -3380,7 +3360,8 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     normalized.sort((a, b) => (a.storyboardSlot || 0) - (b.storyboardSlot || 0));
   }
 
-  console.log(`[normalizeClipPlan] ✅ Mempertahankan ${normalized.length} klip bersih asli hasil kurasi (${(normalized.length * clipLength).toFixed(1)}s total) tanpa ekspansi sintetis.`);
+  const normalizedDuration = normalized.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
+  console.log(`[normalizeClipPlan] ✅ Mempertahankan ${normalized.length} klip bersih asli hasil kurasi (${normalizedDuration.toFixed(1)}s total) dengan pacing adaptif.`);
 
   // Deduplikasi ketat: Pastikan tidak ada 2 klip dari kandidat yang sama dengan selisih waktu < 2.0 detik
   const dedupedClips = [];
@@ -3394,7 +3375,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       }
       return (
         (e.candidateIndex === c.candidateIndex || (!e.candidateIndex && !c.candidateIndex)) &&
-        Math.abs(e.startSeconds - c.startSeconds) < Math.max(clipLength, 4.0)
+        Math.abs(e.startSeconds - c.startSeconds) < Math.max(Number(c.duration) || defaultClipLength, 3.0)
       );
     });
     if (!isDup) {
@@ -3416,28 +3397,28 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   cleanErr.rejectionReason = 'Cuplikan aksi demonstrasi bersih terlalu sedikit (kurang dari 3 variasi aksi demonstrasi berbeda).';
   throw cleanErr;
 
-  // Fallback: build 10 to 12 evenly spaced clips (around 30 to 35 seconds total, exactly clipLength per clip)
-  console.log(`[normalizeClipPlan] Building ~30-35s fallback clip plan for ${totalDuration}s video with clipLength=${clipLength}s`);
+  // Fallback: build 10 to 12 evenly spaced clips (around 30 to 35 seconds total, exactly defaultClipLength per clip)
+  console.log(`[normalizeClipPlan] Building ~30-35s fallback clip plan for ${totalDuration}s video with defaultClipLength=${defaultClipLength}s`);
   const fallbackClips = [];
   const targetTotalSec = 33;
-  const fallbackTargetClips = Math.min(12, Math.max(10, Math.floor(Math.min(totalDuration, targetTotalSec) / clipLength)));
-  const maxStart = Math.max(0, Math.floor(totalDuration - clipLength));
+  const fallbackTargetClips = Math.min(12, Math.max(10, Math.floor(Math.min(totalDuration, targetTotalSec) / defaultClipLength)));
+  const maxStart = Math.max(0, Math.floor(totalDuration - defaultClipLength));
   // Avoid first 15-18% of video in fallback to bypass intro unboxing segments on YouTube
   const fallbackStart = totalDuration > 30
     ? Math.min(maxStart, Math.max(0, Math.floor(totalDuration * 0.18)))
     : (totalDuration > 20 ? Math.min(maxStart, Math.max(0, Math.floor(totalDuration * 0.10))) : 0);
   const fallbackLastStart = totalDuration > 30
-    ? Math.max(fallbackStart, Math.min(maxStart, Math.floor(totalDuration * 0.95) - clipLength))
+    ? Math.max(fallbackStart, Math.min(maxStart, Math.floor(totalDuration * 0.95) - defaultClipLength))
     : maxStart;
 
   const span = fallbackLastStart - fallbackStart;
   const numSteps = Math.max(1, fallbackTargetClips - 1);
-  const stepSize = fallbackTargetClips > 1 ? span / numSteps : clipLength;
+  const stepSize = fallbackTargetClips > 1 ? span / numSteps : defaultClipLength;
 
   let lastStart = -1;
   for (let i = 0; i < fallbackTargetClips; i++) {
     const rawStart = Math.round(fallbackStart + (i * stepSize));
-    const startSeconds = Math.min(maxStart, Math.max(lastStart + clipLength, rawStart));
+    const startSeconds = Math.min(maxStart, Math.max(lastStart + defaultClipLength, rawStart));
     if (startSeconds + clipLength > totalDuration) break;
 
     fallbackClips.push({
@@ -3446,7 +3427,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       duration: clipLength,
       startTime: formatSeconds(startSeconds),
       endTime: formatSeconds(startSeconds + clipLength),
-      reason: `Fallback ${clipLength}s product shot.`,
+      reason: `Fallback ${defaultClipLength}s product shot.`,
       hasProductBrand,
       allowHflip,
       reframe: normalizeReframe({
@@ -3458,7 +3439,7 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   }
 
   if (!fallbackClips.length) {
-    throw new Error(`Video terlalu pendek untuk membuat potongan produk utama (minimal ${Math.round(clipLength * 4)} detik).`);
+    throw new Error(`Video terlalu pendek untuk membuat potongan produk utama (minimal ${Math.round(defaultClipLength * 4)} detik).`);
   }
   return fallbackClips;
 }
