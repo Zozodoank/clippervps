@@ -2363,6 +2363,51 @@ function dedupeShopeeSearchResults(results = []) {
   return output;
 }
 
+function extractShopeeProductCandidatesFromHtml(html = '', limit = 20) {
+  const source = String(html || '');
+  const results = [];
+  const seen = new Set();
+  const patterns = [
+    /https?:\/\/(?:www\.)?shopee\.co\.id\/[^"'\s<>]+/gi,
+    /(?:^|[^a-z0-9])(?:www\.)?shopee\.co\.id\/[^"'\s<>]+/gi,
+  ];
+
+  for (const pattern of patterns) {
+    let match;
+    while ((match = pattern.exec(source)) !== null && results.length < limit) {
+      let rawUrl = match[0];
+      rawUrl = rawUrl.replace(/^[^h]*(?=https?:\/\/)/i, '');
+      if (!/^https?:\/\//i.test(rawUrl)) {
+        rawUrl = `https://${rawUrl.replace(/^\/+/, '')}`;
+      }
+
+      const url = normalizeSearchResultUrl(rawUrl);
+      if (!isShopeeProductUrl(url) || seen.has(url)) continue;
+
+      seen.add(url);
+      results.push({ title: '', snippet: '', url });
+    }
+    if (results.length >= limit) break;
+  }
+
+  return results.slice(0, limit);
+}
+
+function mergeShopeeCandidates(primary = [], fallback = [], limit = 20) {
+  const output = [];
+  const seen = new Set();
+
+  for (const item of [...primary, ...fallback]) {
+    const url = String(item?.url || '').trim();
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    output.push(item);
+    if (output.length >= limit) break;
+  }
+
+  return output;
+}
+
 async function expandShopeeDiscoveryPage(url, { limit = 20 } = {}) {
   if (!isShopeeDiscoveryUrl(url)) return [];
 
@@ -2408,17 +2453,8 @@ async function expandShopeeDiscoveryPage(url, { limit = 20 } = {}) {
       if (results.length >= limit) return false;
     });
 
-    // Some Shopee responses embed product URLs in script/JSON payloads instead
-    // of ordinary anchor tags.
-    if (results.length < limit) {
-      const productUrlRegex = /https?:\/\/(?:www\.)?shopee\.co\.id\/[^"'\s<>]+(?:-i\.\d+\.\d+|\.\d+\.\d+)(?:[^"'\s<>]*)?/gi;
-      let match;
-      while ((match = productUrlRegex.exec(html)) !== null && results.length < limit) {
-        addProduct(match[0]);
-      }
-    }
-
-    return dedupeShopeeSearchResults(results).slice(0, limit);
+    const embedded = extractShopeeProductCandidatesFromHtml(html, limit);
+    return mergeShopeeCandidates(dedupeShopeeSearchResults(results), embedded, limit);
   } catch (err) {
     console.warn(`[BrandedDiscovery] Failed expanding Shopee discovery page ${url}: ${err.message}`);
     return [];
@@ -2503,6 +2539,7 @@ async function searchShopeeBrandDirectFromQuery(cleanQuery) {
   const directUrls = [
     `https://shopee.co.id/list/${encodeURIComponent(brand)}`,
     `https://shopee.co.id/search?keyword=${encodeURIComponent(brand)}`,
+    `https://shopee.co.id/list/Blender/${encodeURIComponent(brand)}`,
   ];
 
   for (const url of directUrls) {
@@ -2522,6 +2559,40 @@ export async function searchRawShopeeWeb(query) {
 
   const queryVariants = buildRawShopeeQueryVariants(cleanQuery);
   const engines = [
+    {
+      name: 'Google',
+      run: async (engineQuery) => {
+        const url = `https://www.google.com/search?q=${encodeURIComponent(engineQuery)}&num=20&hl=id`;
+        const response = await fetchWithTlsFallback(url, {
+          timeoutMs: 10000,
+          headers: {
+            'user-agent': USER_AGENT,
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+          },
+        });
+        if (!response?.ok) return [];
+        const html = await response.text();
+        const $ = cheerio.load(html);
+        const results = [];
+
+        $('a[href]').each((_, element) => {
+          const targetUrl = normalizeSearchResultUrl($(element).attr('href'));
+          if (!isShopeeProductUrl(targetUrl) && !isShopeeDiscoveryUrl(targetUrl)) return;
+          results.push({
+            title: $(element).text().trim(),
+            snippet: $(element).closest('div').text().replace(/\s+/g, ' ').trim().slice(0, 500),
+            url: targetUrl,
+          });
+        });
+
+        const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
+        return expandShopeeSearchResults(
+          mergeShopeeCandidates(results, embedded, 20),
+          { limit: 20 }
+        );
+      },
+    },
     {
       name: 'Bing',
       run: async (engineQuery) => {
@@ -2547,7 +2618,11 @@ export async function searchRawShopeeWeb(query) {
             url: targetUrl,
           });
         });
-        return expandShopeeSearchResults(results, { limit: 20 });
+        const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
+        return expandShopeeSearchResults(
+          mergeShopeeCandidates(results, embedded, 20),
+          { limit: 20 }
+        );
       },
     },
     {
@@ -2575,7 +2650,11 @@ export async function searchRawShopeeWeb(query) {
             url: targetUrl,
           });
         });
-        return expandShopeeSearchResults(results, { limit: 20 });
+        const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
+        return expandShopeeSearchResults(
+          mergeShopeeCandidates(results, embedded, 20),
+          { limit: 20 }
+        );
       },
     },
     {
@@ -2605,7 +2684,11 @@ export async function searchRawShopeeWeb(query) {
             url: targetUrl,
           });
         });
-        return expandShopeeSearchResults(results, { limit: 20 });
+        const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
+        return expandShopeeSearchResults(
+          mergeShopeeCandidates(results, embedded, 20),
+          { limit: 20 }
+        );
       },
     },
   ];
@@ -2764,16 +2847,20 @@ function normalizeSearchResultUrl(rawHref) {
     const parsed = new URL(rawHref, 'https://duckduckgo.com');
     const redirected = parsed.searchParams.get('uddg');
     const bingTarget = decodeBingRedirect(parsed.searchParams.get('u'));
-    const target = redirected ? new URL(redirected) : bingTarget ? new URL(bingTarget) : parsed;
+    const googleTarget = parsed.searchParams.get('q') || parsed.searchParams.get('url');
+    const target = redirected
+      ? new URL(redirected)
+      : bingTarget
+        ? new URL(bingTarget)
+        : googleTarget
+          ? new URL(decodeURIComponent(googleTarget))
+          : parsed;
+
     const host = target.hostname.replace(/^www\./, '').toLowerCase();
     const isShopee = host === 'shopee.co.id' || host === 'shope.ee' || host === 's.shopee.co.id';
 
     target.hash = '';
 
-    // Shopee PDP URLs are frequently represented as:
-    // /shop-slug?itemId=123&shopId=456
-    // Keep only these identifiers so product links remain recognizable while
-    // tracking parameters are still stripped.
     if (isShopee && target.searchParams.has('itemId')) {
       const itemId = target.searchParams.get('itemId');
       const shopId = target.searchParams.get('shopId');
