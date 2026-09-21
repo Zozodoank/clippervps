@@ -1429,9 +1429,9 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
 
   for (const brandSeed of seeds) {
     const queries = [
-      \`site:shopee.co.id "\${brandSeed}" "\${category}" -set -pack -paket -bundle\`,
-      \`site:shopee.co.id "\${brandSeed}" "\${category}" official\`,
-      \`site:shopee.co.id "\${brandSeed}" "\${category}" review\`,
+      `site:shopee.co.id "${brandSeed}" "${category}" -set -pack -paket -bundle`,
+      `site:shopee.co.id "${brandSeed}" "${category}" official`,
+      `site:shopee.co.id "${brandSeed}" "${category}" review`,
     ];
 
     for (const query of queries) {
@@ -1455,8 +1455,8 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
         results = (results || []).filter((r) =>
           r?.url &&
           !seen.has(r.url) &&
-          !isBundleOrSetProduct(\`\${r.title || ''} \${r.snippet || ''}\`) &&
-          !isFoodOrBeverageProduct(\`\${r.title || ''} \${r.snippet || ''}\`)
+          !isBundleOrSetProduct(`${r.title || ''} ${r.snippet || ''}`) &&
+          !isFoodOrBeverageProduct(`${r.title || ''} ${r.snippet || ''}`)
         );
 
         for (const result of results.slice(0, 12)) {
@@ -1508,7 +1508,7 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
           }
 
           return {
-            keyword: \`\${brandSeed} \${category}\`,
+            keyword: `${brandSeed} ${category}`,
             title,
             description,
             url: result.url,
@@ -1521,7 +1521,7 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
           };
         }
       } catch (err) {
-        console.warn(\`[BrandedDiscovery] Query failed "\${query}":\`, err.message);
+        console.warn(`[BrandedDiscovery] Query failed "${query}":`, err.message);
       }
     }
   }
