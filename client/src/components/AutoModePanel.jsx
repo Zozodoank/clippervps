@@ -156,7 +156,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          maxJobs: 'unlimited',
+          maxJobs: 1,
           niche: selectedNiche,
           candidateDepth: { shopee: 5, youtube: 10 },
           options: {
@@ -211,7 +211,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Auto-Run Berkelanjutan: Pipeline 9:16 vertikal otomatis dengan batasan harian anti-blokir IP (maks. 20 video/hari).
+            Mode Aman 1 Job: Pipeline 9:16 otomatis men-generate 1 video hingga benar-benar berhasil, lalu otomatis berhenti agar aman (maks. 20 video/hari).
           </p>
 
           <div className="flex flex-wrap items-center gap-2 mt-2.5">
