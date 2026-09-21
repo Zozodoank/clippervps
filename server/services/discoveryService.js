@@ -2704,6 +2704,12 @@ export async function searchRawShopeeWeb(query) {
   }
 
   const queryVariants = buildRawShopeeQueryVariants(cleanQuery);
+
+  // If the first-party API is blocked, try the JS-rendered Shopee brand
+  // page before spending time on external search engines.
+  const directFallback = await searchShopeeBrandDirectFromQuery(cleanQuery);
+  if (directFallback.length) return directFallback;
+
   const engines = [
     {
       name: 'Google',
@@ -2854,11 +2860,6 @@ export async function searchRawShopeeWeb(query) {
       console.warn(`[BrandedDiscovery] ${engine.name} raw query failed: ${err.message}`);
     }
   }
-
-  // If the first-party API is blocked, try the JS-rendered Shopee brand
-  // page before spending time on external search engines.
-  const directFallback = await searchShopeeBrandDirectFromQuery(cleanQuery);
-  if (directFallback.length) return directFallback;
 
   // Second pass: relax only the search-engine syntax, while preserving the
   // brand identity. Never fall back to a product-type-only query.
