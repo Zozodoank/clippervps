@@ -2404,10 +2404,26 @@ function dedupeShopeeSearchResults(results = []) {
 function extractShopeeProductCandidatesFromHtml(html = '', limit = 20) {
   // Search engines and embedded JSON frequently escape forward slashes as
   // "\\/" and HTML-escape ampersands. Normalize those representations first.
-  const source = String(html || '')
+  let source = String(html || '')
     .replace(/\\\//g, '/')
     .replace(/\\u0026/gi, '&')
-    .replace(/&amp;/gi, '&');
+    .replace(/&amp;/gi, '&')
+    .replace(/\\u003d/gi, '=')
+    .replace(/\\u003f/gi, '?')
+    .replace(/\\u002f/gi, '/');
+
+  // Search engines frequently percent-encode the destination URL inside
+  // redirect links or embedded JSON. Decode a few safe layers so the Shopee
+  // product URL becomes visible to the extractor without fetching Shopee.
+  for (let pass = 0; pass < 2; pass++) {
+    try {
+      const decoded = decodeURIComponent(source);
+      if (decoded === source) break;
+      source = decoded;
+    } catch {
+      break;
+    }
+  }
 
   const results = [];
   const seen = new Set();
@@ -3019,23 +3035,39 @@ function normalizeSearchResultUrl(rawHref) {
           ? new URL(decodeURIComponent(googleTarget))
           : parsed;
 
-    const host = target.hostname.replace(/^www\./, '').toLowerCase();
+    // Some search engines wrap the real destination several times.
+    // Unwrap common encoded redirect parameters before validating the host.
+    let unwrapped = target;
+    for (let pass = 0; pass < 2; pass++) {
+      const nested =
+        unwrapped.searchParams.get('uddg') ||
+        unwrapped.searchParams.get('url') ||
+        unwrapped.searchParams.get('q');
+      if (!nested || !/^https?:\/\//i.test(nested)) break;
+      try {
+        unwrapped = new URL(decodeURIComponent(nested));
+      } catch {
+        break;
+      }
+    }
+
+    const host = unwrapped.hostname.replace(/^www\./, '').toLowerCase();
     const isShopee = host === 'shopee.co.id' || host === 'shope.ee' || host === 's.shopee.co.id';
 
-    target.hash = '';
+    unwrapped.hash = '';
 
-    if (isShopee && target.searchParams.has('itemId')) {
-      const itemId = target.searchParams.get('itemId');
-      const shopId = target.searchParams.get('shopId');
+    if (isShopee && unwrapped.searchParams.has('itemId')) {
+      const itemId = unwrapped.searchParams.get('itemId');
+      const shopId = unwrapped.searchParams.get('shopId');
       const params = new URLSearchParams();
       if (itemId) params.set('itemId', itemId);
       if (shopId) params.set('shopId', shopId);
-      target.search = params.toString() ? `?${params.toString()}` : '';
+      unwrapped.search = params.toString() ? `?${params.toString()}` : '';
     } else {
-      target.search = '';
+      unwrapped.search = '';
     }
 
-    return target.toString();
+    return unwrapped.toString();
   } catch {
     return '';
   }
