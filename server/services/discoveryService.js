@@ -1491,11 +1491,18 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
           descriptionNorm.includes(seedNorm) ||
           normalizeText(meta.brand || '').includes(seedNorm);
 
+        const brandNorm = normalizeText(brand);
+        const productTypeNorm = normalizeText(productType);
+        const modelNorm = normalizeText(model);
+
         if (
           !brand ||
           !brandAppearsInListing ||
           !productType ||
           productType === 'Produk Praktis' ||
+          !productTypeNorm ||
+          productTypeNorm === brandNorm ||
+          (modelNorm && productTypeNorm === modelNorm) ||
           !searchQueries.length
         ) {
           continue;
