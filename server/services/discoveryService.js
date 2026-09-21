@@ -2537,69 +2537,126 @@ function buildRawShopeeQueryVariants(cleanQuery) {
 }
 
 async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
-  const cleanBrand = String(brand || '').replace(/[^\\p{L}\\p{N} ._-]/gu, ' ').replace(/\\s+/g, ' ').trim();
+  const cleanBrand = String(brand || '')
+    .replace(/[^\p{L}\p{N} ._&-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!cleanBrand) return [];
 
-  const endpoint =
-    `https://shopee.co.id/api/pas/v4/search/search_items?by=relevancy&keyword=${encodeURIComponent(cleanBrand)}&limit=${Math.min(50, Math.max(1, limit))}&newest=0&order=desc&page_type=search&scenario=PAGE_GLOBAL_SEARCH&version=2`;
+  const safeLimit = Math.min(50, Math.max(1, limit));
+  const endpoints = [
+    'https://shopee.co.id/api/v4/search/search_items?by=relevancy&keyword=' +
+      encodeURIComponent(cleanBrand) +
+      '&limit=' + safeLimit +
+      '&newest=0&order=desc&page_type=search&scenario=PAGE_GLOBAL_SEARCH&version=2',
+    'https://shopee.co.id/api/v4/search/search_page_common?keyword=' +
+      encodeURIComponent(cleanBrand),
+  ];
 
-  try {
-    const response = await fetchWithTlsFallback(endpoint, {
-      timeoutMs: 12000,
-      headers: {
-        'user-agent': USER_AGENT,
-        'accept': 'application/json,text/plain,*/*',
-        'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-        'referer': 'https://shopee.co.id/',
-        'x-api-source': 'pc',
-      },
-    });
+  const compact = (value) =>
+    String(value || '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]/gu, '');
 
-    if (!response?.ok) {
-      console.warn(`[BrandedDiscovery] Shopee API HTTP ${response?.status || 'unknown'} for "${cleanBrand}"`);
-      return [];
-    }
+  const brandCompact = compact(cleanBrand);
 
-    const payload = await response.json();
-    const items = Array.isArray(payload?.items) ? payload.items : [];
-    const results = [];
-
-    for (const entry of items) {
-      const item = entry?.item_basic || entry?.item || entry;
-      const shopId = item?.shopid ?? item?.shop_id;
-      const itemId = item?.itemid ?? item?.item_id;
-      const name = String(item?.name || '').replace(/\\s+/g, ' ').trim();
-      if (!name || !/^\\d+$/.test(String(shopId)) || !/^\\d+$/.test(String(itemId))) continue;
-
-      const slug = name
-        .toLowerCase()
-        .replace(/[^\\p{L}\\p{N}]+/gu, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 140);
-      const url = `https://shopee.co.id/${slug || 'produk'}-i.${shopId}.${itemId}`;
-
-      results.push({
-        title: name,
-        snippet: String(item?.description || '').replace(/\\s+/g, ' ').trim().slice(0, 500),
-        url,
-        imageUrl: item?.image ? `https://down-id.img.susercontent.com/file/${item.image}` : '',
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetchWithTlsFallback(endpoint, {
+        timeoutMs: 9000,
+        headers: {
+          'user-agent': USER_AGENT,
+          'accept': 'application/json,text/plain,*/*',
+          'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+          'referer': 'https://shopee.co.id/',
+          'x-api-source': 'pc',
+          'x-requested-with': 'XMLHttpRequest',
+        },
       });
-      if (results.length >= limit) break;
-    }
 
-    const usable = results.filter((item) =>
-      isShopeeProductUrl(item.url) &&
-      normalizeText(item.title).includes(normalizeText(cleanBrand))
-    );
+      if (!response?.ok) {
+        console.warn('[BrandedDiscovery] Shopee API HTTP ' + (response?.status || 'unknown') + ' for "' + cleanBrand + '"');
+        continue;
+      }
 
-    if (usable.length) {
-      console.log(`[BrandedDiscovery] Shopee public API returned ${usable.length} branded product(s): "${cleanBrand}"`);
+      const rawBody = await response.text();
+      let payload;
+      try {
+        payload = JSON.parse(rawBody);
+      } catch {
+        console.warn('[BrandedDiscovery] Shopee API returned non-JSON for "' + cleanBrand + '" (' + rawBody.slice(0, 120) + ')');
+        continue;
+      }
+
+      const items =
+        (Array.isArray(payload?.items) && payload.items) ||
+        (Array.isArray(payload?.data?.items) && payload.data.items) ||
+        (Array.isArray(payload?.data?.items_response?.items) && payload.data.items_response.items) ||
+        [];
+
+      if (!items.length) {
+        console.warn('[BrandedDiscovery] Shopee API returned 0 items for "' + cleanBrand + '"');
+        continue;
+      }
+
+      const results = [];
+
+      for (const entry of items) {
+        const item =
+          entry?.item_basic ||
+          entry?.item ||
+          entry?.item_data ||
+          entry ||
+          {};
+
+        const shopId = item?.shopid ?? item?.shop_id ?? entry?.shopid ?? entry?.shop_id;
+        const itemId = item?.itemid ?? item?.item_id ?? entry?.itemid ?? entry?.item_id;
+        const name = String(
+          item?.name ||
+          item?.item_card_displayed_asset?.name ||
+          item?.item_card_displayed_asset?.item_name ||
+          entry?.name ||
+          ''
+        ).replace(/\s+/g, ' ').trim();
+
+        if (!name || !/^\d+$/.test(String(shopId)) || !/^\d+$/.test(String(itemId))) {
+          continue;
+        }
+
+        const imageKey =
+          item?.image ||
+          item?.item_card_displayed_asset?.image ||
+          '';
+
+        const url = 'https://shopee.co.id/product/' + shopId + '/' + itemId;
+
+        results.push({
+          title: name,
+          snippet: String(item?.description || entry?.description || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+          url,
+          imageUrl: imageKey
+            ? 'https://down-id.img.susercontent.com/file/' + imageKey
+            : '',
+        });
+
+        if (results.length >= safeLimit) break;
+      }
+
+      const usable = results.filter((item) => compact(item.title).includes(brandCompact));
+
+      if (usable.length) {
+        console.log('[BrandedDiscovery] Shopee API returned ' + usable.length + ' branded product(s): "' + cleanBrand + '"');
+        return usable;
+      }
+
+      console.warn('[BrandedDiscovery] Shopee API returned ' + results.length + ' products but none matched brand "' + cleanBrand + '"');
+    } catch (err) {
+      console.warn('[BrandedDiscovery] Shopee API failed for "' + cleanBrand + '": ' + err.message);
     }
-    return usable;
-  } catch (err) {
-    console.warn(`[BrandedDiscovery] Shopee public API failed for "${cleanBrand}": ${err.message}`);
-    return [];
   }
+
+  return [];
 }
 
 async function searchShopeeBrandDirectFromQuery(cleanQuery) {
@@ -2633,6 +2690,18 @@ async function searchShopeeBrandDirectFromQuery(cleanQuery) {
 export async function searchRawShopeeWeb(query) {
   const cleanQuery = String(query || '').replace(/\s+/g, ' ').trim();
   if (!cleanQuery) return [];
+
+  const quotedBrand = [...cleanQuery.matchAll(/"([^"]{2,80})"/g)]
+    .map((match) => match[1].trim())
+    .find(Boolean);
+
+  // First try Shopee's own search API. This is the cheapest and most direct
+  // branded path, and avoids spending four search-engine requests when
+  // Shopee itself can return structured item/shop IDs.
+  if (quotedBrand) {
+    const apiResults = await searchShopeePublicApi(quotedBrand, { limit: 20 });
+    if (apiResults.length) return apiResults;
+  }
 
   const queryVariants = buildRawShopeeQueryVariants(cleanQuery);
   const engines = [
@@ -2786,20 +2855,10 @@ export async function searchRawShopeeWeb(query) {
     }
   }
 
-  // Direct Shopee brand fallback comes before relaxed engine variants because
-  // the goal is branded product discovery, not generic web search.
+  // If the first-party API is blocked, try the JS-rendered Shopee brand
+  // page before spending time on external search engines.
   const directFallback = await searchShopeeBrandDirectFromQuery(cleanQuery);
   if (directFallback.length) return directFallback;
-
-  // Last-resort first-party Shopee API. This avoids depending on the JS-rendered
-  // Shopee search page, which often returns an empty shell to server-side fetches.
-  const quotedBrand = [...cleanQuery.matchAll(/"([^"]{2,80})"/g)]
-    .map((match) => match[1].trim())
-    .find(Boolean);
-  if (quotedBrand) {
-    const apiFallback = await searchShopeePublicApi(quotedBrand, { limit: 20 });
-    if (apiFallback.length) return apiFallback;
-  }
 
   // Second pass: relax only the search-engine syntax, while preserving the
   // brand identity. Never fall back to a product-type-only query.
