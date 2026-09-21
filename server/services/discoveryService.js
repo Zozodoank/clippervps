@@ -1386,7 +1386,7 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
       const productType = String(productInfo?.coreProductNoun || '').trim();
       const model = String(productInfo?.model || '').trim();
       const searchQueries = Array.isArray(productInfo?.searchQueries)
-        ? productInfo.searchQueries.filter((q) => /\\S/.test(String(q || '')))
+        ? productInfo.searchQueries.filter((q) => /\S/.test(String(q || '')))
         : [];
 
       // Hard gate: AutoRun accepts no OEM/unbranded product.
@@ -1599,7 +1599,7 @@ export async function discoverBrandedShopeeProduct({
         text.includes(normalizeText(brandSeed)) &&
         !isBundleOrSetProduct(text) &&
         !isFoodOrBeverageProduct(text) &&
-        !/\\b(?:official|official store|iklan resmi|advertisement|commercial)\\b/i.test(text);
+        !/\b(?:official|official store|iklan resmi|advertisement|commercial)\b/i.test(text);
     });
 
     console.log('[BrandedDiscovery] YouTube brand=' + brandSeed + ' product candidates=' + usable.length);
@@ -1618,9 +1618,9 @@ export async function discoverBrandedShopeeProduct({
       const productType = String(ytInfo?.productType || info?.coreProductNoun || '').trim();
       const model = String(ytInfo?.model || info?.model || '').trim();
       const searchQueries = Array.isArray(ytInfo?.searchQueries)
-        ? ytInfo.searchQueries.filter((q) => /\\S/.test(String(q || '')))
+        ? ytInfo.searchQueries.filter((q) => /\S/.test(String(q || '')))
         : Array.isArray(info?.searchQueries)
-          ? info.searchQueries.filter((q) => /\\S/.test(String(q || '')))
+          ? info.searchQueries.filter((q) => /\S/.test(String(q || '')))
           : [];
 
       const titleNorm = normalizeText(title);
