@@ -1497,6 +1497,9 @@ export async function runStage1Pipeline({
     let approved = false;
     let lastRejectionError = null;
     let pooledFrames = [];
+    // Shared across candidate download + post-download audit/recovery.
+    // Must live at runStage1Pipeline scope, not only inside the harvesting branch.
+    const downloadedCandidatesMap = new Map();
 
     const usedVids = getAllUsedYouTubeVideoIds();
     const initialVid = extractVideoId(currentYoutubeUrl);
@@ -1891,7 +1894,7 @@ export async function runStage1Pipeline({
       updateProgress({
         step: 'auto_search_fallback',
         message: preferMultiVideo
-          ? `Menyiapkan streaming 3-5 video untuk target "${coreProductNoun}"...`
+          ? `Menyiapkan streaming 3-4 video untuk target "${coreProductNoun}"...`
           : `⛔ Video awal ditolak AI (${lastRejectionError?.rejectionReason || 'tidak cocok'}). ${engineName} mencari video YouTube baru untuk target "${coreProductNoun}"...`,
         progress: 15,
         status: 'running',
@@ -1963,19 +1966,18 @@ export async function runStage1Pipeline({
         throw new Error(`Tidak ditemukan video YouTube yang cocok untuk "${productTitle}": ${lastRejectionError?.rejectionReason || 'kandidat kosong'}.`);
       }
 
-      console.log(`[Job ${jobId}] Menemukan ${candidatePool.length} kandidat video YouTube. Memulai Multi-Video Stream & Harvesting (stream 3-5 video, target klip 30-35s)...`);
+      console.log(`[Job ${jobId}] Menemukan ${candidatePool.length} kandidat video YouTube. Memulai Multi-Video Stream & Harvesting (stream 3-4 video, target klip 30-35s)...`);
 
       // Ambil hingga 12 kandidat untuk memastikan cukup video yang mereview produk yang sama persis
-      const candidatesToProcess = candidatePool.slice(0, 12);
+      const candidatesToProcess = candidatePool.slice(0, 4);
       let candidateResults = [];
-      const downloadedCandidatesMap = new Map();
 
       for (let i = 0; i < candidatesToProcess.length; i++) {
         // Professional source policy: consistency beats forced multi-source.
         // Stop early when one VERIFIED source already has enough diverse clean material.
         const preferredSoFar = choosePreferredCandidateSet(candidateResults);
         const bestVerified = preferredSoFar[0];
-        if (bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) {
+        if (candidateResults.length >= 3 && bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) {
           console.log(
             `[Job ${jobId}] ✅ Satu sumber terverifikasi sudah kaya adegan (${bestVerified.cleanFrames.length} frame bersih). Memprioritaskan konsistensi produk daripada memaksa multi-source.`
           );
