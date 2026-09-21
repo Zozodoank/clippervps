@@ -2186,6 +2186,12 @@ export async function runStage1Pipeline({
       console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari ${neededIndices.length} video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh 1080p Full HD...`);
 
       let lastDlError = null;
+
+      // Track every HD source actually downloaded so multi-video storyboards,
+      // post-download audits, and recovery clips can resolve candidateIndex -> file path.
+      // This map MUST exist before the progress calculation and download loop below.
+      const downloadedCandidatesMap = new Map();
+
       for (const candIdx of neededIndices) {
         const candObj = candidateResults.find(c => c.candidateIndex === candIdx)?.candidate || candidatesToProcess[candIdx];
         if (!candObj?.url) continue;
