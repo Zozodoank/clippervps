@@ -3401,31 +3401,11 @@ async function runAutoStage1Worker(run) {
         limit: 16,
         excludeVideoIds: usedYouTubeVideoIds,
         strictIdentity: true,
+        youtubeOnly: true,
         onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
       });
 
-      // Jika pencarian teks multi-engine kosong, cari video via gambar listing
-      // yang sama. Manual/OEM verification bypass remains separate from Auto Mode.
-      if (!candidates || candidates.length === 0) {
-        try {
-          if (shopeeCandidate && shopeeCandidate.imageUrl) {
-            updateAutoRun(run, { message: `[${targetLabel}] Mencoba pencarian video via gambar produk Shopee: "${shopeeCandidate.title.slice(0, 30)}..."` });
-            const visualCandidates = await searchVideosByProductImage({
-              imageUrl: shopeeCandidate.imageUrl,
-              productTitle: shopeeCandidate.title,
-              productDescription: shopeeCandidate.description,
-              limit: 16,
-              excludeVideoIds: usedYouTubeVideoIds,
-              onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
-            });
-            if (visualCandidates && visualCandidates.length > 0) {
-              candidates = visualCandidates;
-            }
-          }
-        } catch (visAutoErr) {
-          console.warn(`[Auto] Fallback visual search error for ${keyword}:`, visAutoErr.message);
-        }
-      }
+      // AutoRun uses direct YouTube search only. No marketplace image/reverse-search fallback. 
 
       if (!candidates || candidates.length === 0) {
         run.skippedProducts++;
