@@ -1793,6 +1793,7 @@ export async function searchMultiEngineVideos(query, {
   excludeVideoIds = new Set(),
   onProgress = () => {},
   strictIdentity = false,
+  youtubeOnly = false,
 } = {}) {
   const excludeSet = excludeVideoIds instanceof Set ? excludeVideoIds : new Set(excludeVideoIds || []);
   const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
@@ -1822,6 +1823,7 @@ export async function searchMultiEngineVideos(query, {
     console.warn(`[MultiEngineVideo] YouTube search error: ${err.message}`);
   }
 
+  if (!youtubeOnly) {
   // 2. Query Bing Videos (Fast, independent video index)
   try {
     const bingResults = await searchBingVideos(query, { limit: safeLimit, onProgress });
@@ -1836,6 +1838,7 @@ export async function searchMultiEngineVideos(query, {
     }
   } catch (err) {
     console.warn(`[MultiEngineVideo] Bing Video search error: ${err.message}`);
+  }
   }
 
   // 2B. Generic core-noun fallback is forbidden in strict identity mode.
