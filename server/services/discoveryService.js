@@ -1470,7 +1470,8 @@ export async function discoverBrandedShopeeProduct({
     const brandKey = String(brandSeed).trim().toLowerCase();
     normalizedAttempted.add(brandKey);
 
-    // Search only by the brand; product type/model must come from the indexed listing title.\n    const query = 'site:shopee.co.id "' + brandSeed + '" -set -pack -paket -bundle';
+    // Search only by the brand; product type/model must come from the indexed listing title.
+    const query = 'site:shopee.co.id "' + brandSeed + '" -set -pack -paket -bundle';
     const results = (await searchRawShopeeWeb(query))
       .filter((r) =>
         r?.url &&
