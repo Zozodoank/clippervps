@@ -1419,10 +1419,7 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
   const preset = getNichePreset(niche);
   const isGadget = preset?.id === 'gadget_smartphone';
 
-  // Auto Mode is brand-first: search for real branded listings directly.
-  // Do not generate OEM/product-only keywords here. The small brand seed list is
-  // only used as a discovery mechanism; the returned listing still has to pass
-  // the dynamic brand + product-type gate below.
+  // Auto Mode is brand-first. Never generate OEM/product-only keywords here.
   const brandSeeds = isGadget
     ? ['Samsung', 'Xiaomi', 'Redmi', 'POCO', 'OPPO', 'vivo', 'realme', 'Infinix', 'TECNO']
     : ['Maspion', 'Oxone', 'Cosmos', 'Miyako', 'Kirin', 'Philips', 'Tefal', 'Maxim', 'LocknLock', 'BOLDe', 'Mito', 'Han River'];
@@ -1432,15 +1429,13 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
 
   for (const brandSeed of seeds) {
     const queries = [
-      `site:shopee.co.id "${brandSeed}" "${category}" -set -pack -paket -bundle`,
-      `site:shopee.co.id "${brandSeed}" "${category}" official`,
-      `site:shopee.co.id "${brandSeed}" "${category}" review`,
+      \`site:shopee.co.id "\${brandSeed}" "\${category}" -set -pack -paket -bundle\`,
+      \`site:shopee.co.id "\${brandSeed}" "\${category}" official\`,
+      \`site:shopee.co.id "\${brandSeed}" "\${category}" review\`,
     ];
 
     for (const query of queries) {
       try {
-        // Use the raw search functions so the discovery query is not rewritten
-        // by buildShopeeSearchQueries() into a generic/OEM keyword.
         const engines = [
           () => searchBingShopee(query),
           () => searchBraveShopee(query),
@@ -1457,19 +1452,16 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
           if (results.length) break;
         }
 
-        results = (results || [])
-          .filter((r) =>
-            r?.url &&
-            !seen.has(r.url) &&
-            !isBundleOrSetProduct(`${r.title || ''} ${r.snippet || ''}`) &&
-            !isFoodOrBeverageProduct(`${r.title || ''} ${r.snippet || ''}`)
-          );
+        results = (results || []).filter((r) =>
+          r?.url &&
+          !seen.has(r.url) &&
+          !isBundleOrSetProduct(\`\${r.title || ''} \${r.snippet || ''}\`) &&
+          !isFoodOrBeverageProduct(\`\${r.title || ''} \${r.snippet || ''}\`)
+        );
 
         for (const result of results.slice(0, 12)) {
           seen.add(result.url);
 
-          // Search-engine title/snippet is a valid fallback when Shopee blocks
-          // direct page metadata. Prefer metadata when available.
           let meta = {};
           try {
             meta = await fetchShopeePageMeta(result.url);
@@ -1495,88 +1487,15 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
           const productType = String(info?.coreProductNoun || '').trim();
           const model = String(info?.model || '').trim();
           const searchQueries = Array.isArray(info?.searchQueries)
-            ? info.searchQueries.filter((q) => /\\S/.test(String(q || '')))
+            ? info.searchQueries.filter((q) => /\S/.test(String(q || '')))
             : [];
 
-          // The seed is never accepted blindly: it must occur in the listing
-          // identity/title or be confirmed by structured page metadata.
+          // Seed must be visibly present in the listing or confirmed by metadata.
+          const titleNorm = normalizeText(title);
+          const seedNorm = normalizeText(brandSeed);
           const brandMatchesListing =
             !!meta.brand ||
-            new RegExp(`\\\\b${String(brandSeed).replace(/[.*+?^{}()|[\\]\\\\]/g, '\\\\export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', seen = new Set() } = {}) {
-  const preset = getNichePreset(niche);
-  const isGadget = preset?.id === 'gadget_smartphone';
-  const category = isGadget ? 'smartphone' : 'alat dapur';
-  const queries = [
-    `"official store" ${category} site:shopee.co.id`,
-    `"brand" ${category} site:shopee.co.id`,
-    `"merek" ${category} site:shopee.co.id`,
-    `"${isGadget ? 'garansi resmi' : 'official store'}" ${category} site:shopee.co.id`,
-  ];
-
-  for (const query of queries) {
-    try {
-      const engines = [
-        () => searchBingShopee(query),
-        () => searchBraveShopee(query),
-        () => searchDuckDuckGoShopee(query),
-      ];
-
-      for (const searchEngine of engines) {
-        let results = [];
-        try { results = await searchEngine(); } catch { results = []; }
-        results = (results || []).filter(r =>
-          r?.url &&
-          !seen.has(r.url) &&
-          !isBundleOrSetProduct(r.title)
-        );
-        results.forEach(r => seen.add(r.url));
-
-        const batch = results.slice(0, 12);
-        const metas = await Promise.allSettled(batch.map(r => fetchShopeePageMeta(r.url)));
-
-        for (let i = 0; i < batch.length; i++) {
-          const result = batch[i];
-          const meta = metas[i].status === 'fulfilled' ? metas[i].value : {};
-          const rawTitle = meta.title || result.title || '';
-          if (!rawTitle || isGenericShopeeTitle(rawTitle) || isBundleOrSetProduct(rawTitle)) continue;
-
-          const title = cleanTitle(rawTitle, result.url);
-          const description = cleanDescription(meta.description || result.snippet || '');
-          if (!title || isGenericShopeeTitle(title)) continue;
-
-          const info = extractCoreProductInfo(title, description, result.url, meta.brand || '');
-          const brand = String(info?.brand || meta.brand || '').trim();
-          const productType = String(info?.coreProductNoun || '').trim();
-          const model = String(info?.model || '').trim();
-          const searchQueries = Array.isArray(info?.searchQueries)
-            ? info.searchQueries.filter(q => /\S/.test(String(q || '')))
-            : [];
-
-          if (!brand || !productType || productType === 'Produk Praktis' || !searchQueries.length) continue;
-
-          return {
-            keyword: query,
-            title,
-            description,
-            url: result.url,
-            imageUrl: meta.imageUrl || result.thumbnail || '',
-            brand,
-            model,
-            productType,
-            searchQueries,
-            brandedVerified: true,
-          };
-        }
-      }
-    } catch (err) {
-      console.warn(`[BrandedDiscovery] Query failed "${query}": ${err.message}`);
-    }
-  }
-
-  return null;
-}
-
-')}\\\\b`, 'i').test(title);
+            titleNorm.includes(seedNorm);
 
           if (
             !brand ||
@@ -1589,7 +1508,7 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
           }
 
           return {
-            keyword: `${brandSeed} ${category}`,
+            keyword: \`\${brandSeed} \${category}\`,
             title,
             description,
             url: result.url,
@@ -1602,7 +1521,7 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
           };
         }
       } catch (err) {
-        console.warn(`[BrandedDiscovery] Query failed "${query}":`, err.message);
+        console.warn(\`[BrandedDiscovery] Query failed "\${query}":\`, err.message);
       }
     }
   }
