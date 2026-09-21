@@ -1470,7 +1470,7 @@ export async function discoverBrandedShopeeProduct({
     const brandKey = String(brandSeed).trim().toLowerCase();
     normalizedAttempted.add(brandKey);
 
-    const query = 'site:shopee.co.id "' + brandSeed + '" -set -pack -paket -bundle';
+    // Search only by the brand; product type/model must come from the indexed listing title.\n    const query = 'site:shopee.co.id "' + brandSeed + '" -set -pack -paket -bundle';
     const results = (await searchRawShopeeWeb(query))
       .filter((r) =>
         r?.url &&
@@ -1484,15 +1484,11 @@ export async function discoverBrandedShopeeProduct({
     for (const result of results.slice(0, 12)) {
       seen.add(result.url);
 
-      let meta = {};
-      try {
-        meta = await fetchShopeePageMeta(result.url);
-      } catch {
-        meta = {};
-      }
-
-      const rawTitle = String(meta.title || result.title || '').trim();
-      const description = cleanDescription(meta.description || result.snippet || '');
+      // Search-only mode: do not fetch Shopee PDP pages here.
+      // Use search-engine metadata and the product URL slug only.
+      const meta = {};
+      const rawTitle = String(result.title || titleFromShopeeUrl(result.url) || '').trim();
+      const description = cleanDescription(result.snippet || '');
       if (!rawTitle || isGenericShopeeTitle(rawTitle) || isBundleOrSetProduct(rawTitle)) continue;
 
       const title = cleanTitle(rawTitle, result.url);
@@ -2743,165 +2739,138 @@ async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
 }
 
 export async function searchRawShopeeWeb(query) {
-  const cleanQuery = String(query || '').replace(/\s+/g, ' ').trim();
+  const cleanQuery = String(query || '').replace(/\\s+/g, ' ').trim();
   if (!cleanQuery) return [];
 
-  const quotedBrand = [...cleanQuery.matchAll(/"([^"]{2,80})"/g)]
-    .map((match) => match[1].trim())
-    .find(Boolean);
-
-  if (quotedBrand) {
-    const apiResults = await searchShopeePublicApi(quotedBrand, { limit: 20 });
-    if (apiResults.length) return apiResults;
-  }
-
+  // Branded discovery is intentionally SEARCH-ONLY.
+  // Do not call Shopee's API, product pages, or direct Shopee listings here.
+  // The only discovery source is DuckDuckGo result pages; Auto Mode later
+  // validates the returned product title/URL as brand + type.
   const queryVariants = buildRawShopeeQueryVariants(cleanQuery);
 
-  const engines = [
-    {
-      name: 'Google',
-      run: async (engineQuery) => {
-        const url = 'https://www.google.com/search?q=' + encodeURIComponent(engineQuery) + '&num=20&hl=id';
+  const searchDuckDuckGo = async (engineQuery) => {
+    const urls = [
+      'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(engineQuery),
+      'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(engineQuery),
+    ];
+
+    for (const url of urls) {
+      try {
         const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 8000,
-          headers: {
-            'user-agent': USER_AGENT,
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-          },
-        });
-        if (!response?.ok) return [];
-
-        const html = await response.text();
-        const $ = cheerio.load(html);
-        const results = [];
-
-        $('a[href]').each((_, element) => {
-          const targetUrl = normalizeSearchResultUrl($(element).attr('href'));
-          if (!isShopeeProductUrl(targetUrl) && !isShopeeDiscoveryUrl(targetUrl)) return;
-          results.push({
-            title: $(element).text().trim(),
-            snippet: $(element).closest('div').text().replace(/\s+/g, ' ').trim().slice(0, 500),
-            url: targetUrl,
-          });
-        });
-
-        const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
-        return expandShopeeSearchResults(
-          mergeShopeeCandidates(results, embedded, 20),
-          { limit: 20 }
-        );
-      },
-    },
-    {
-      name: 'Bing',
-      run: async (engineQuery) => {
-        const url = 'https://www.bing.com/search?q=' + encodeURIComponent(engineQuery);
-        const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 8000,
-          headers: {
-            'user-agent': USER_AGENT,
-            'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-          },
-        });
-        if (!response?.ok) return [];
-
-        const html = await response.text();
-        const $ = cheerio.load(html);
-        const results = [];
-
-        $('li.b_algo').each((_, element) => {
-          const anchor = $(element).find('h2 a').first();
-          const targetUrl = normalizeSearchResultUrl(anchor.attr('href'));
-          if (!isShopeeProductUrl(targetUrl) && !isShopeeDiscoveryUrl(targetUrl)) return;
-          results.push({
-            title: anchor.text().trim(),
-            snippet: $(element).find('.b_caption p').first().text().trim(),
-            url: targetUrl,
-          });
-        });
-
-        const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
-        return expandShopeeSearchResults(
-          mergeShopeeCandidates(results, embedded, 20),
-          { limit: 20 }
-        );
-      },
-    },
-    {
-      name: 'Brave',
-      run: async (engineQuery) => {
-        const url = 'https://search.brave.com/search?q=' + encodeURIComponent(engineQuery);
-        const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 8000,
+          timeoutMs: 10000,
           headers: {
             'user-agent': USER_AGENT,
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+            'cache-control': 'no-cache',
           },
         });
-        if (!response?.ok) return [];
+
+        if (!response?.ok) continue;
 
         const html = await response.text();
+        if (!html || /internetbaik\\.telkomsel\\.com|blocked|anomaly/i.test(html)) continue;
+
         const $ = cheerio.load(html);
         const results = [];
+        const seen = new Set();
 
-        $('a').each((_, element) => {
-          const targetUrl = normalizeSearchResultUrl($(element).attr('href'));
-          if (!isShopeeProductUrl(targetUrl) && !isShopeeDiscoveryUrl(targetUrl)) return;
+        const addCandidate = (rawHref, element = null) => {
+          const productUrl = normalizeSearchResultUrl(rawHref);
+          if (!isShopeeProductUrl(productUrl) || seen.has(productUrl)) return;
+
+          seen.add(productUrl);
+
+          let title = '';
+          let snippet = '';
+
+          if (element) {
+            title =
+              $(element).find('a.result__a, a.result-link, h2 a').first().text().trim() ||
+              $(element).text().replace(/\\s+/g, ' ').trim().slice(0, 220);
+
+            snippet = $(element)
+              .find('.result__snippet, .result-snippet, .snippet, .result__body')
+              .first()
+              .text()
+              .replace(/\\s+/g, ' ')
+              .trim()
+              .slice(0, 500);
+          }
+
+          if (!title) {
+            title = titleFromShopeeUrl(productUrl);
+          }
+
           results.push({
-            title: $(element).text().trim(),
-            snippet: $(element).closest('[data-type="web"]').text().trim().slice(0, 500),
-            url: targetUrl,
+            title: title.slice(0, 220),
+            snippet,
+            url: productUrl,
           });
+        };
+
+        // DuckDuckGo HTML result blocks.
+        $('.result, .results_links, .result-link, .web-result').each((_, element) => {
+          const anchor = $(element).find('a.result__a, a.result-link, a[href]').first();
+          if (anchor.length) addCandidate(anchor.attr('href'), element);
         });
 
-        const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
-        return expandShopeeSearchResults(
-          mergeShopeeCandidates(results, embedded, 20),
-          { limit: 20 }
-        );
-      },
-    },
-  ];
+        // DuckDuckGo Lite result rows use plain anchors.
+        $('a.result-link, a.result__a').each((_, element) => {
+          addCandidate($(element).attr('href'), element.parent || element);
+        });
 
-  const searchRound = async (engineQuery) => {
-    const settled = await Promise.all(
-      engines.map(async (engine) => {
-        try {
-          const results = await engine.run(engineQuery);
-          return { engine: engine.name, results: Array.isArray(results) ? results : [] };
-        } catch (err) {
-          console.warn(
-            '[BrandedDiscovery] ' + engine.name +
-            ' search failed for "' + engineQuery + '": ' + err.message
+        // Last-resort scan over every href/data-url plus embedded JSON/text.
+        $('a[href], [data-url], [data-href], [data-link-url]').each((_, element) => {
+          addCandidate(
+            $(element).attr('href') ||
+            $(element).attr('data-url') ||
+            $(element).attr('data-href') ||
+            $(element).attr('data-link-url'),
+            element
           );
-          return { engine: engine.name, results: [] };
-        }
-      })
-    );
+        });
 
-    for (const hit of settled) {
-      if (hit.results.length) {
-        console.log(
-          '[BrandedDiscovery] ' + hit.engine +
-          ' returned ' + hit.results.length +
-          ' Shopee product result(s): "' + engineQuery + '"'
+        const embedded = extractShopeeProductCandidatesFromHtml(html, 30);
+        for (const candidate of embedded) {
+          if (!seen.has(candidate.url) && isShopeeProductUrl(candidate.url)) {
+            seen.add(candidate.url);
+            results.push(candidate);
+          }
+          if (results.length >= 30) break;
+        }
+
+        const deduped = dedupeShopeeSearchResults(
+          results.filter((item) => isShopeeProductUrl(item.url))
+        ).slice(0, 20);
+
+        if (deduped.length) return deduped;
+      } catch (err) {
+        console.warn(
+          '[BrandedDiscovery] DuckDuckGo search failed for "' +
+          engineQuery + '": ' + err.message
         );
-        return hit.results;
       }
-      console.log(
-        '[BrandedDiscovery] ' + hit.engine +
-        ' returned no usable Shopee products: "' + engineQuery + '"'
-      );
     }
 
     return [];
   };
 
   for (const engineQuery of queryVariants) {
-    const results = await searchRound(engineQuery);
-    if (results.length) return results;
+    const results = await searchDuckDuckGo(engineQuery);
+
+    if (results.length) {
+      console.log(
+        '[BrandedDiscovery] DuckDuckGo returned ' + results.length +
+        ' Shopee product result(s): "' + engineQuery + '"'
+      );
+      return results;
+    }
+
+    console.log(
+      '[BrandedDiscovery] DuckDuckGo returned no usable Shopee products: "' +
+      engineQuery + '"'
+    );
   }
 
   console.warn(
