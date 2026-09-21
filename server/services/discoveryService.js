@@ -2744,8 +2744,26 @@ function normalizeSearchResultUrl(rawHref) {
     const redirected = parsed.searchParams.get('uddg');
     const bingTarget = decodeBingRedirect(parsed.searchParams.get('u'));
     const target = redirected ? new URL(redirected) : bingTarget ? new URL(bingTarget) : parsed;
+    const host = target.hostname.replace(/^www\./, '').toLowerCase();
+    const isShopee = host === 'shopee.co.id' || host === 'shope.ee' || host === 's.shopee.co.id';
+
     target.hash = '';
-    target.search = '';
+
+    // Shopee PDP URLs are frequently represented as:
+    // /shop-slug?itemId=123&shopId=456
+    // Keep only these identifiers so product links remain recognizable while
+    // tracking parameters are still stripped.
+    if (isShopee && target.searchParams.has('itemId')) {
+      const itemId = target.searchParams.get('itemId');
+      const shopId = target.searchParams.get('shopId');
+      const params = new URLSearchParams();
+      if (itemId) params.set('itemId', itemId);
+      if (shopId) params.set('shopId', shopId);
+      target.search = params.toString() ? `?${params.toString()}` : '';
+    } else {
+      target.search = '';
+    }
+
     return target.toString();
   } catch {
     return '';
@@ -2784,7 +2802,19 @@ export function isShopeeProductUrl(url) {
     const host = parsed.hostname.replace(/^www\./, '');
     if (host === 'shope.ee' || host === 's.shopee.co.id') return true;
     if (host !== 'shopee.co.id') return false;
+
     const path = decodeURIComponent(parsed.pathname).toLowerCase();
+
+    // Newer Shopee PDP links often use a store slug plus itemId/shopId query
+    // instead of the classic /product/... or -i.shopId.itemId form.
+    if (
+      parsed.searchParams.has('itemId') &&
+      /^\d+$/.test(parsed.searchParams.get('itemId') || '') &&
+      !['/search', '/cart', '/buyer'].some((prefix) => path.startsWith(prefix))
+    ) {
+      return true;
+    }
+
     if (['/search', '/mall', '/buyer', '/cart', '/list', '/flash_sale'].some((prefix) => path.startsWith(prefix))) return false;
     if (/\/shop\/?\d*/.test(path)) return false;
     return path.includes('/product/') || /-i\.\d+\.\d+/.test(path) || /\.\d+\.\d+/.test(path);
