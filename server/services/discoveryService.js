@@ -2514,26 +2514,41 @@ function buildRawShopeeQueryVariants(cleanQuery) {
     if (normalized && !variants.includes(normalized)) variants.push(normalized);
   };
 
+  const quotedBrand = [...String(cleanQuery || '').matchAll(/"([^"]{2,80})"/g)]
+    .map((match) => match[1].trim())
+    .find(Boolean);
+
   add(cleanQuery);
 
-  // Search engines can silently drop pages when several negative operators are
-  // combined with a quoted site restriction. Retry the SAME brand query without
-  // those exclusions before declaring discovery empty.
-  const withoutNegativeOperators = cleanQuery
+  const withoutNegativeOperators = String(cleanQuery || '')
     .replace(/\s+-[A-Za-z0-9_-]+/g, '')
     .replace(/\s+/g, ' ')
     .trim();
   add(withoutNegativeOperators);
 
-  // Keep the brand text but loosen the site restriction. This is still a branded
-  // query; it does not generate an OEM/product-only search.
-  const withoutSiteOperator = withoutNegativeOperators
-    .replace(/\bsite:shopee\.co\.id\/?\b/ig, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (withoutSiteOperator) add(`${withoutSiteOperator} Shopee Indonesia`);
+  if (quotedBrand) {
+    add('"' + quotedBrand + '" Shopee Indonesia');
+  }
 
-  return variants.slice(0, 4);
+  return variants.slice(0, 3);
+}
+
+let shopeeRequestBlockedUntil = 0;
+const SHOPEE_REQUEST_BLOCK_COOLDOWN_MS = 10 * 60 * 1000;
+
+function isShopeeRequestBlocked() {
+  return Date.now() < shopeeRequestBlockedUntil;
+}
+
+function markShopeeRequestsBlocked(reason = '') {
+  shopeeRequestBlockedUntil = Date.now() + SHOPEE_REQUEST_BLOCK_COOLDOWN_MS;
+  console.warn(
+    '[BrandedDiscovery] Shopee server-side access temporarily blocked for ' +
+    Math.round(SHOPEE_REQUEST_BLOCK_COOLDOWN_MS / 60000) +
+    ' minutes' +
+    (reason ? ' (' + reason + ')' : '') +
+    '. Using external indexed search only.'
+  );
 }
 
 async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
@@ -2541,9 +2556,9 @@ async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
     .replace(/[^\p{L}\p{N} ._&-]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!cleanBrand) return [];
+  if (!cleanBrand || isShopeeRequestBlocked()) return [];
 
-  const safeLimit = Math.min(50, Math.max(1, limit));
+  const safeLimit = Math.min(30, Math.max(1, Number(limit) || 20));
   const endpoints = [
     'https://shopee.co.id/api/v4/search/search_items?by=relevancy&keyword=' +
       encodeURIComponent(cleanBrand) +
@@ -2564,7 +2579,7 @@ async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
   for (const endpoint of endpoints) {
     try {
       const response = await fetchWithTlsFallback(endpoint, {
-        timeoutMs: 9000,
+        timeoutMs: 7000,
         headers: {
           'user-agent': USER_AGENT,
           'accept': 'application/json,text/plain,*/*',
@@ -2575,8 +2590,15 @@ async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
         },
       });
 
+      const status = Number(response?.status || 0);
       if (!response?.ok) {
-        console.warn('[BrandedDiscovery] Shopee API HTTP ' + (response?.status || 'unknown') + ' for "' + cleanBrand + '"');
+        console.warn('[BrandedDiscovery] Shopee API HTTP ' + (status || 'unknown') + ' for "' + cleanBrand + '"');
+
+        if (status === 403 || status === 429) {
+          markShopeeRequestsBlocked('HTTP ' + status);
+          break;
+        }
+
         continue;
       }
 
@@ -2585,7 +2607,7 @@ async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
       try {
         payload = JSON.parse(rawBody);
       } catch {
-        console.warn('[BrandedDiscovery] Shopee API returned non-JSON for "' + cleanBrand + '" (' + rawBody.slice(0, 120) + ')');
+        console.warn('[BrandedDiscovery] Shopee API returned non-JSON for "' + cleanBrand + '"');
         continue;
       }
 
@@ -2629,12 +2651,13 @@ async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
           item?.item_card_displayed_asset?.image ||
           '';
 
-        const url = 'https://shopee.co.id/product/' + shopId + '/' + itemId;
-
         results.push({
           title: name,
-          snippet: String(item?.description || entry?.description || '').replace(/\s+/g, ' ').trim().slice(0, 500),
-          url,
+          snippet: String(item?.description || entry?.description || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 500),
+          url: 'https://shopee.co.id/product/' + shopId + '/' + itemId,
           imageUrl: imageKey
             ? 'https://down-id.img.susercontent.com/file/' + imageKey
             : '',
@@ -2644,43 +2667,20 @@ async function searchShopeePublicApi(brand, { limit = 20 } = {}) {
       }
 
       const usable = results.filter((item) => compact(item.title).includes(brandCompact));
-
       if (usable.length) {
-        console.log('[BrandedDiscovery] Shopee API returned ' + usable.length + ' branded product(s): "' + cleanBrand + '"');
+        console.log(
+          '[BrandedDiscovery] Shopee API returned ' + usable.length +
+          ' branded product(s): "' + cleanBrand + '"'
+        );
         return usable;
       }
 
-      console.warn('[BrandedDiscovery] Shopee API returned ' + results.length + ' products but none matched brand "' + cleanBrand + '"');
+      console.warn(
+        '[BrandedDiscovery] Shopee API returned ' + results.length +
+        ' products but none matched brand "' + cleanBrand + '"'
+      );
     } catch (err) {
       console.warn('[BrandedDiscovery] Shopee API failed for "' + cleanBrand + '": ' + err.message);
-    }
-  }
-
-  return [];
-}
-
-async function searchShopeeBrandDirectFromQuery(cleanQuery) {
-  // Auto branded queries contain the brand in quotes. Use the quoted term to hit
-  // Shopee's own brand listing when external search engines return only zero/empty.
-  const quoted = [...String(cleanQuery || '').matchAll(/"([^"]{2,80})"/g)]
-    .map((match) => match[1].trim())
-    .filter(Boolean);
-
-  if (!quoted.length) return [];
-
-  const brand = quoted[0];
-  const directUrls = [
-    `https://shopee.co.id/list/${encodeURIComponent(brand)}`,
-    `https://shopee.co.id/search?keyword=${encodeURIComponent(brand)}`,
-    `https://shopee.co.id/list/Blender/${encodeURIComponent(brand)}`,
-  ];
-
-  for (const url of directUrls) {
-    const expanded = await expandShopeeDiscoveryPage(url, { limit: 20 });
-    console.log(`[BrandedDiscovery] Direct Shopee fallback ${expanded.length} product(s): ${url}`);
-    if (expanded.length) {
-      console.log(`[BrandedDiscovery] Direct Shopee brand fallback returned ${expanded.length} product(s): "${brand}"`);
-      return expanded;
     }
   }
 
@@ -2695,9 +2695,6 @@ export async function searchRawShopeeWeb(query) {
     .map((match) => match[1].trim())
     .find(Boolean);
 
-  // First try Shopee's own search API. This is the cheapest and most direct
-  // branded path, and avoids spending four search-engine requests when
-  // Shopee itself can return structured item/shop IDs.
   if (quotedBrand) {
     const apiResults = await searchShopeePublicApi(quotedBrand, { limit: 20 });
     if (apiResults.length) return apiResults;
@@ -2705,18 +2702,13 @@ export async function searchRawShopeeWeb(query) {
 
   const queryVariants = buildRawShopeeQueryVariants(cleanQuery);
 
-  // If the first-party API is blocked, try the JS-rendered Shopee brand
-  // page before spending time on external search engines.
-  const directFallback = await searchShopeeBrandDirectFromQuery(cleanQuery);
-  if (directFallback.length) return directFallback;
-
   const engines = [
     {
       name: 'Google',
       run: async (engineQuery) => {
-        const url = `https://www.google.com/search?q=${encodeURIComponent(engineQuery)}&num=20&hl=id`;
+        const url = 'https://www.google.com/search?q=' + encodeURIComponent(engineQuery) + '&num=20&hl=id';
         const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 10000,
+          timeoutMs: 8000,
           headers: {
             'user-agent': USER_AGENT,
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
@@ -2724,6 +2716,7 @@ export async function searchRawShopeeWeb(query) {
           },
         });
         if (!response?.ok) return [];
+
         const html = await response.text();
         const $ = cheerio.load(html);
         const results = [];
@@ -2748,18 +2741,20 @@ export async function searchRawShopeeWeb(query) {
     {
       name: 'Bing',
       run: async (engineQuery) => {
-        const url = `https://www.bing.com/search?q=${encodeURIComponent(engineQuery)}`;
+        const url = 'https://www.bing.com/search?q=' + encodeURIComponent(engineQuery);
         const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 10000,
+          timeoutMs: 8000,
           headers: {
             'user-agent': USER_AGENT,
             'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
           },
         });
         if (!response?.ok) return [];
+
         const html = await response.text();
         const $ = cheerio.load(html);
         const results = [];
+
         $('li.b_algo').each((_, element) => {
           const anchor = $(element).find('h2 a').first();
           const targetUrl = normalizeSearchResultUrl(anchor.attr('href'));
@@ -2770,6 +2765,7 @@ export async function searchRawShopeeWeb(query) {
             url: targetUrl,
           });
         });
+
         const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
         return expandShopeeSearchResults(
           mergeShopeeCandidates(results, embedded, 20),
@@ -2780,9 +2776,9 @@ export async function searchRawShopeeWeb(query) {
     {
       name: 'Brave',
       run: async (engineQuery) => {
-        const url = `https://search.brave.com/search?q=${encodeURIComponent(engineQuery)}`;
+        const url = 'https://search.brave.com/search?q=' + encodeURIComponent(engineQuery);
         const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 10000,
+          timeoutMs: 8000,
           headers: {
             'user-agent': USER_AGENT,
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -2790,52 +2786,21 @@ export async function searchRawShopeeWeb(query) {
           },
         });
         if (!response?.ok) return [];
+
         const html = await response.text();
         const $ = cheerio.load(html);
         const results = [];
+
         $('a').each((_, element) => {
           const targetUrl = normalizeSearchResultUrl($(element).attr('href'));
           if (!isShopeeProductUrl(targetUrl) && !isShopeeDiscoveryUrl(targetUrl)) return;
           results.push({
             title: $(element).text().trim(),
-            snippet: $(element).closest('[data-type="web"]').text().trim(),
+            snippet: $(element).closest('[data-type="web"]').text().trim().slice(0, 500),
             url: targetUrl,
           });
         });
-        const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
-        return expandShopeeSearchResults(
-          mergeShopeeCandidates(results, embedded, 20),
-          { limit: 20 }
-        );
-      },
-    },
-    {
-      name: 'DuckDuckGo',
-      run: async (engineQuery) => {
-        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(engineQuery)}`;
-        const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 10000,
-          headers: {
-            'user-agent': USER_AGENT,
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-          },
-        });
-        if (!response?.ok) return [];
-        const html = await response.text();
-        if (html.includes('internetbaik.telkomsel.com') || html.includes('anomaly')) return [];
-        const $ = cheerio.load(html);
-        const results = [];
-        $('.result').each((_, element) => {
-          const anchor = $(element).find('a.result__a').first();
-          const targetUrl = normalizeSearchResultUrl(anchor.attr('href'));
-          if (!isShopeeProductUrl(targetUrl) && !isShopeeDiscoveryUrl(targetUrl)) return;
-          results.push({
-            title: anchor.text().trim(),
-            snippet: $(element).find('.result__snippet').text().trim(),
-            url: targetUrl,
-          });
-        });
+
         const embedded = extractShopeeProductCandidatesFromHtml(html, 20);
         return expandShopeeSearchResults(
           mergeShopeeCandidates(results, embedded, 20),
@@ -2845,39 +2810,49 @@ export async function searchRawShopeeWeb(query) {
     },
   ];
 
-  // First pass: use the original branded query across all engines.
-  // This keeps the normal path fast and gives direct Shopee fallback a chance
-  // before we spend time on relaxed search variants.
-  for (const engine of engines) {
-    try {
-      const results = await engine.run(cleanQuery);
-      if (results.length) {
-        console.log(`[BrandedDiscovery] ${engine.name} raw query returned ${results.length} Shopee product result(s): "${cleanQuery}"`);
-        return results;
+  const searchRound = async (engineQuery) => {
+    const settled = await Promise.all(
+      engines.map(async (engine) => {
+        try {
+          const results = await engine.run(engineQuery);
+          return { engine: engine.name, results: Array.isArray(results) ? results : [] };
+        } catch (err) {
+          console.warn(
+            '[BrandedDiscovery] ' + engine.name +
+            ' search failed for "' + engineQuery + '": ' + err.message
+          );
+          return { engine: engine.name, results: [] };
+        }
+      })
+    );
+
+    for (const hit of settled) {
+      if (hit.results.length) {
+        console.log(
+          '[BrandedDiscovery] ' + hit.engine +
+          ' returned ' + hit.results.length +
+          ' Shopee product result(s): "' + engineQuery + '"'
+        );
+        return hit.results;
       }
-      console.log(`[BrandedDiscovery] ${engine.name} returned no usable Shopee products: "${cleanQuery}"`);
-    } catch (err) {
-      console.warn(`[BrandedDiscovery] ${engine.name} raw query failed: ${err.message}`);
+      console.log(
+        '[BrandedDiscovery] ' + hit.engine +
+        ' returned no usable Shopee products: "' + engineQuery + '"'
+      );
     }
+
+    return [];
+  };
+
+  for (const engineQuery of queryVariants) {
+    const results = await searchRound(engineQuery);
+    if (results.length) return results;
   }
 
-  // Second pass: relax only the search-engine syntax, while preserving the
-  // brand identity. Never fall back to a product-type-only query.
-  for (const engineQuery of queryVariants.slice(1)) {
-    for (const engine of engines) {
-      try {
-        const results = await engine.run(engineQuery);
-        if (results.length) {
-          console.log(`[BrandedDiscovery] ${engine.name} relaxed query returned ${results.length} Shopee product result(s): "${engineQuery}"`);
-          return results;
-        }
-        console.log(`[BrandedDiscovery] ${engine.name} returned no usable Shopee products: "${engineQuery}"`);
-      } catch (err) {
-        console.warn(`[BrandedDiscovery] ${engine.name} relaxed query failed: ${err.message}`);
-      }
-    }
-  }
-  console.warn(`[BrandedDiscovery] No Shopee products from search engines or direct brand page: "${cleanQuery}"`);
+  console.warn(
+    '[BrandedDiscovery] No indexed Shopee products found for branded query: "' +
+    cleanQuery + '"'
+  );
   return [];
 }
 
