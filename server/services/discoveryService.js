@@ -1433,10 +1433,11 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
   const seeds = [...brandSeeds].sort(() => Math.random() - 0.5);
 
   for (const brandSeed of seeds) {
+    // One brand-focused query is sufficient because searchRawShopeeWeb()
+    // already retries relaxed syntax and has a direct Shopee brand-page fallback.
+    // Avoid repeating the same brand three times per AutoRun cycle.
     const queries = [
       `site:shopee.co.id "${brandSeed}" -set -pack -paket -bundle`,
-      `site:shopee.co.id "${brandSeed}" official -set -pack -paket -bundle`,
-      `site:shopee.co.id "${brandSeed}" review -set -pack -paket -bundle`,
     ];
 
     for (const query of queries) {
