@@ -1325,7 +1325,13 @@ export function getAutoKeywords(limit = 1000, { niche = 'kitchen_tools', exclude
 }
 
 const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-const insecureTlsAgent = new https.Agent({ rejectUnauthorized: false });
+// VPS datacenter environments can have broken/slow IPv6 routes. Force IPv4 for all HTTPS scraping
+// so Bing/Brave/DuckDuckGo do not sit until AbortController kills an otherwise healthy request.
+const insecureTlsAgent = new https.Agent({
+  rejectUnauthorized: false,
+  family: 4,
+  keepAlive: true,
+});
 
 function formatKeywordToProductTitle(keyword) {
   if (!keyword) return 'Alat Dapur Praktis Viral';
@@ -2499,6 +2505,25 @@ async function fetchWithTlsFallback(url, options = {}) {
     return response;
   } catch (error) {
     clearTimeout(timeout);
+
+    // Make transport failures actionable in VPS logs. The old message only said
+    // "The operation was aborted", which hid whether the AbortController fired.
+    if (error?.name === 'AbortError' || /aborted/i.test(String(error?.message || ''))) {
+      const target = (() => {
+        try {
+          return new URL(url).hostname;
+        } catch {
+          return 'unknown-host';
+        }
+      })();
+      const diagnostic = new Error(
+        `Request timeout/abort after ${timeoutMs}ms: ${target}. IPv4 transport is enabled.`
+      );
+      diagnostic.name = error?.name || 'AbortError';
+      diagnostic.cause = error;
+      throw diagnostic;
+    }
+
     throw error;
   }
 }
