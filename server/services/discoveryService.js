@@ -1421,6 +1421,94 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
   return null;
 }
 
+
+function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = '', brandSeed = '') {
+  const title = String(rawTitle || '').replace(/\s+/g, ' ').trim();
+  const normalized = normalizeText(title);
+  const seedNorm = normalizeText(brandSeed);
+
+  if (!title || !seedNorm || !normalized.includes(seedNorm)) {
+    return null;
+  }
+
+  // Prefer the same concrete product taxonomy used by the normal extractor,
+  // but match directly against the YouTube title rather than marketplace-cleaned text.
+  for (const anchor of PRODUCT_ANCHORS) {
+    if (anchor.pattern.test(normalized)) {
+      const modelInfo = extractDynamicProductIdentity(title, rawDescription, brandSeed);
+      const brand = String(modelInfo?.brand || brandSeed).trim();
+      const model = String(modelInfo?.model || '').trim();
+      const noun = String(anchor.noun || '').trim();
+
+      if (brand && noun && noun !== 'Produk Praktis') {
+        return {
+          brand,
+          model,
+          productType: noun,
+          searchQueries: buildDynamicProductSearchQueries({
+            title,
+            noun,
+            englishNoun: anchor.englishNoun || noun,
+            brand,
+            model,
+            identity: modelInfo?.identity || [brand, model].filter(Boolean).join(' ')
+          }),
+        };
+      }
+    }
+  }
+
+  // Fallback for a product type not yet present in PRODUCT_ANCHORS.
+  // Remove brand/model/promo/video-intent words and retain the first useful
+  // physical-product phrase from the title.
+  const dynamic = extractDynamicProductIdentity(title, rawDescription, brandSeed);
+  const model = String(dynamic?.model || '').trim();
+
+  const stop = new Set([
+    ...Array.from(['review','demo','test','testing','reviewer','reviewing','unboxing','video','youtube',
+      'official','channel','indonesia','indonesian','terbaik','bagus','murah','viral','terbaru',
+      'rekomendasi','produk','product','alat','barang','pakai','menggunakan','cara','tutorial',
+      'vs','versus','comparison','comparisons','hands','on','demonstration']),
+  ]);
+
+  const rawTokens = title.split(/\s+/)
+    .map((token) => token.replace(/^[^\p{L}\p{N}&.-]+|[^\p{L}\p{N}&.-]+$/gu, ''))
+    .filter(Boolean);
+
+  const typeTokens = [];
+  for (const token of rawTokens) {
+    const normToken = normalizeText(token);
+    if (!normToken || normToken === seedNorm || stop.has(normToken)) continue;
+    if (model && normalizeText(token) === normalizeText(model)) continue;
+    if (isMeasurementOrVariantToken(token)) continue;
+    if (/^\d+$/.test(token)) continue;
+    if (/^(?:or|and|with|for|the|a|an|ini|itu|yang|dan|untuk)$/i.test(token)) continue;
+    typeTokens.push(token);
+    if (typeTokens.length >= 4) break;
+  }
+
+  if (!typeTokens.length) return null;
+
+  const productType = typeTokens.join(' ').trim();
+  const brand = String(dynamic?.brand || brandSeed).trim() || brandSeed;
+  const identity = [brand, model, productType].filter(Boolean).join(' ');
+  const searchQueries = buildDynamicProductSearchQueries({
+    title,
+    noun: productType,
+    englishNoun: productType,
+    brand,
+    model,
+    identity
+  });
+
+  return {
+    brand,
+    model,
+    productType,
+    searchQueries,
+  };
+}
+
 const brandedDiscoveryMisses = new Map();
 const BRANDED_DISCOVERY_MISS_COOLDOWN_MS = 15 * 60 * 1000;
 const BRANDED_DISCOVERY_MAX_BRANDS_PER_PASS = 4;
@@ -1496,17 +1584,21 @@ export async function discoverBrandedShopeeProduct({
     for (const result of usable.slice(0, 12)) {
       seen.add(result.url);
 
-      const title = cleanTitle(String(result.title || '').trim());
+      const rawTitle = String(result.title || '').trim();
+      const title = cleanTitle(rawTitle) || rawTitle;
       const description = cleanDescription(result.description || '');
-      if (!title || isGenericShopeeTitle(title) || isBundleOrSetProduct(title)) continue;
+      if (!title || isBundleOrSetProduct(title)) continue;
 
-      const info = extractCoreProductInfo(title, description, result.url, brandSeed);
-      const brand = String(info?.brand || brandSeed).trim();
-      const productType = String(info?.coreProductNoun || '').trim();
-      const model = String(info?.model || '').trim();
-      const searchQueries = Array.isArray(info?.searchQueries)
-        ? info.searchQueries.filter((q) => /\\S/.test(String(q || '')))
-        : [];
+      const info = extractCoreProductInfo(title, description, '', brandSeed);
+      const ytInfo = extractBrandedYouTubeProductIdentity(title, description, brandSeed);
+      const brand = String(ytInfo?.brand || info?.brand || brandSeed).trim();
+      const productType = String(ytInfo?.productType || info?.coreProductNoun || '').trim();
+      const model = String(ytInfo?.model || info?.model || '').trim();
+      const searchQueries = Array.isArray(ytInfo?.searchQueries)
+        ? ytInfo.searchQueries.filter((q) => /\\S/.test(String(q || '')))
+        : Array.isArray(info?.searchQueries)
+          ? info.searchQueries.filter((q) => /\\S/.test(String(q || '')))
+          : [];
 
       const titleNorm = normalizeText(title);
       const brandNorm = normalizeText(brandSeed);
