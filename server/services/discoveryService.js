@@ -1424,88 +1424,111 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
 
 function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = '', brandSeed = '') {
   const title = String(rawTitle || '').replace(/\s+/g, ' ').trim();
-  const normalized = normalizeText(title);
+  const description = String(rawDescription || '').replace(/\s+/g, ' ').trim();
+  const normalized = normalizeText(title + ' ' + description);
   const seedNorm = normalizeText(brandSeed);
 
   if (!title || !seedNorm || !normalized.includes(seedNorm)) {
     return null;
   }
 
-  // Prefer the same concrete product taxonomy used by the normal extractor,
-  // but match directly against the YouTube title rather than marketplace-cleaned text.
+  // First use the established product anchors when available.
   for (const anchor of PRODUCT_ANCHORS) {
     if (anchor.pattern.test(normalized)) {
-      const modelInfo = extractDynamicProductIdentity(title, rawDescription, brandSeed);
-      const brand = String(modelInfo?.brand || brandSeed).trim();
-      const model = String(modelInfo?.model || '').trim();
-      const noun = String(anchor.noun || '').trim();
-
-      if (brand && noun && noun !== 'Produk Praktis') {
-        return {
-          brand,
-          model,
-          productType: noun,
-          searchQueries: buildDynamicProductSearchQueries({
-            title,
-            noun,
-            englishNoun: anchor.englishNoun || noun,
-            brand,
-            model,
-            identity: modelInfo?.identity || [brand, model].filter(Boolean).join(' ')
-          }),
-        };
-      }
+      return {
+        brand: brandSeed,
+        model: '',
+        productType: anchor.noun,
+        searchQueries: buildDynamicProductSearchQueries({
+          title,
+          noun: anchor.noun,
+          englishNoun: anchor.englishNoun || anchor.noun,
+          brand: brandSeed,
+          model: '',
+          identity: brandSeed + ' ' + anchor.noun
+        }),
+      };
     }
   }
 
-  // Fallback for a product type not yet present in PRODUCT_ANCHORS.
-  // Remove brand/model/promo/video-intent words and retain the first useful
-  // physical-product phrase from the title.
-  const dynamic = extractDynamicProductIdentity(title, rawDescription, brandSeed);
-  const model = String(dynamic?.model || '').trim();
+  // YouTube titles are often short and do not contain marketplace-style model
+  // syntax. Use a conservative physical-product vocabulary as the fallback.
+  const physicalTypes = [
+    ['air fryer', 'Air Fryer'],
+    ['food processor', 'Food Processor'],
+    ['food chopper', 'Food Chopper'],
+    ['chopper', 'Chopper'],
+    ['blender', 'Blender'],
+    ['mixer', 'Mixer'],
+    ['hand mixer', 'Hand Mixer'],
+    ['juicer', 'Juicer'],
+    ['kettle', 'Electric Kettle'],
+    ['rice cooker', 'Rice Cooker'],
+    ['cooker', 'Cooker'],
+    ['toaster', 'Toaster'],
+    ['oven', 'Oven'],
+    ['microwave', 'Microwave'],
+    ['fryer', 'Fryer'],
+    ['grinder', 'Grinder'],
+    ['coffee maker', 'Coffee Maker'],
+    ['coffee machine', 'Coffee Machine'],
+    ['frother', 'Milk Frother'],
+    ['sealer', 'Plastic Sealer'],
+    ['vacuum sealer', 'Vacuum Sealer'],
+    ['scale', 'Kitchen Scale'],
+    ['timbangan', 'Kitchen Scale'],
+    ['thermometer', 'Kitchen Thermometer'],
+    ['chopper mini', 'Mini Chopper'],
+    ['slicer', 'Slicer'],
+    ['grater', 'Grater'],
+    ['peeler', 'Peeler'],
+    ['cutter', 'Cutter'],
+    ['can opener', 'Can Opener'],
+    ['garlic press', 'Garlic Press'],
+    ['spatula', 'Spatula'],
+    ['tongs', 'Kitchen Tongs'],
+    ['shears', 'Kitchen Shears'],
+    ['gunting dapur', 'Kitchen Shears'],
+    ['wajan', 'Pan/Wok'],
+    ['wok', 'Wok'],
+    ['panci', 'Cooking Pot'],
+    ['pan', 'Pan'],
+    ['pot', 'Pot'],
+    ['dispenser', 'Dispenser'],
+    ['rice dispenser', 'Rice Dispenser'],
+    ['toaster oven', 'Toaster Oven'],
+    ['waffle maker', 'Waffle Maker'],
+    ['sandwich maker', 'Sandwich Maker']
+  ];
 
-  const stop = new Set([
-    ...Array.from(['review','demo','test','testing','reviewer','reviewing','unboxing','video','youtube',
-      'official','channel','indonesia','indonesian','terbaik','bagus','murah','viral','terbaru',
-      'rekomendasi','produk','product','alat','barang','pakai','menggunakan','cara','tutorial',
-      'vs','versus','comparison','comparisons','hands','on','demonstration']),
-  ]);
+  // Prefer multi-word matches first.
+  physicalTypes.sort((a, b) => b[0].length - a[0].length);
+  const hit = physicalTypes.find(([needle]) => normalized.includes(needle));
+  if (!hit) return null;
 
-  const rawTokens = title.split(/\s+/)
-    .map((token) => token.replace(/^[^\p{L}\p{N}&.-]+|[^\p{L}\p{N}&.-]+$/gu, ''))
-    .filter(Boolean);
+  // Extract a likely model token only when it is clearly model-like.
+  const titleTokens = title.split(/\s+/).map((token) => token.replace(/^[^\p{L}\p{N}&.-]+|[^\p{L}\p{N}&.-]+$/gu, ''));
+  const model = titleTokens.find((token) =>
+    /^(?=.*\d)[A-Za-z][A-Za-z0-9-]{2,}$/i.test(token) &&
+    !isMeasurementOrVariantToken(token) &&
+    normalizeText(token) !== seedNorm &&
+    normalizeText(token) !== hit[0]
+  ) || '';
 
-  const typeTokens = [];
-  for (const token of rawTokens) {
-    const normToken = normalizeText(token);
-    if (!normToken || normToken === seedNorm || stop.has(normToken)) continue;
-    if (model && normalizeText(token) === normalizeText(model)) continue;
-    if (isMeasurementOrVariantToken(token)) continue;
-    if (/^\d+$/.test(token)) continue;
-    if (/^(?:or|and|with|for|the|a|an|ini|itu|yang|dan|untuk)$/i.test(token)) continue;
-    typeTokens.push(token);
-    if (typeTokens.length >= 4) break;
-  }
-
-  if (!typeTokens.length) return null;
-
-  const productType = typeTokens.join(' ').trim();
-  const brand = String(dynamic?.brand || brandSeed).trim() || brandSeed;
-  const identity = [brand, model, productType].filter(Boolean).join(' ');
-  const searchQueries = buildDynamicProductSearchQueries({
-    title,
-    noun: productType,
-    englishNoun: productType,
-    brand,
-    model,
-    identity
-  });
-
+  const productType = hit[1];
+  const identity = [brandSeed, model, productType].filter(Boolean).join(' ');
   return {
-    brand,
+    brand: brandSeed,
     model,
     productType,
-    searchQueries,
+    searchQueries: buildDynamicProductSearchQueries({
+      title,
+      noun: productType,
+      englishNoun: productType,
+      brand: brandSeed,
+      model,
+      identity
+    }),
   };
 }
 
