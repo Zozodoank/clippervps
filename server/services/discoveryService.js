@@ -1421,7 +1421,26 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
   return null;
 }
 
-export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', seen = new Set() } = {}) {
+const brandedDiscoveryMisses = new Map();
+const BRANDED_DISCOVERY_MISS_COOLDOWN_MS = 15 * 60 * 1000;
+const BRANDED_DISCOVERY_MAX_BRANDS_PER_PASS = 4;
+
+function isBrandedSeedOnCooldown(brandSeed) {
+  const until = Number(brandedDiscoveryMisses.get(String(brandSeed || '').toLowerCase()) || 0);
+  return until > Date.now();
+}
+
+function markBrandedSeedMiss(brandSeed) {
+  const key = String(brandSeed || '').trim().toLowerCase();
+  if (!key) return;
+  brandedDiscoveryMisses.set(key, Date.now() + BRANDED_DISCOVERY_MISS_COOLDOWN_MS);
+}
+
+export async function discoverBrandedShopeeProduct({
+  niche = 'kitchen_tools',
+  seen = new Set(),
+  attemptedBrands = new Set(),
+} = {}) {
   const preset = getNichePreset(niche);
   const isGadget = preset?.id === 'gadget_smartphone';
 
@@ -1430,101 +1449,120 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
     ? ['Samsung', 'Xiaomi', 'Redmi', 'POCO', 'OPPO', 'vivo', 'realme', 'Infinix', 'TECNO']
     : ['Maspion', 'Oxone', 'Cosmos', 'Miyako', 'Kirin', 'Philips', 'Tefal', 'Maxim', 'LocknLock', 'BOLDe', 'Mito', 'Han River'];
 
-  const seeds = [...brandSeeds].sort(() => Math.random() - 0.5);
+  const normalizedAttempted = attemptedBrands instanceof Set
+    ? attemptedBrands
+    : new Set(Array.isArray(attemptedBrands) ? attemptedBrands : []);
 
-  for (const brandSeed of seeds) {
-    // One brand-focused query is sufficient because searchRawShopeeWeb()
-    // already retries relaxed syntax and has a direct Shopee brand-page fallback.
-    // Avoid repeating the same brand three times per AutoRun cycle.
-    const queries = [
-      `site:shopee.co.id "${brandSeed}" -set -pack -paket -bundle`,
-    ];
+  const candidates = [...brandSeeds]
+    .filter((brand) => {
+      const key = String(brand).trim().toLowerCase();
+      return !normalizedAttempted.has(key) && !isBrandedSeedOnCooldown(brand);
+    })
+    .sort(() => Math.random() - 0.5)
+    .slice(0, BRANDED_DISCOVERY_MAX_BRANDS_PER_PASS);
 
-    for (const query of queries) {
-      const results = (await searchRawShopeeWeb(query))
-        .filter((r) =>
-          r?.url &&
-          !seen.has(r.url) &&
-          !isBundleOrSetProduct(`${r.title || ''} ${r.snippet || ''}`) &&
-          !isFoodOrBeverageProduct(`${r.title || ''} ${r.snippet || ''}`)
-        );
+  if (!candidates.length) {
+    console.log('[BrandedDiscovery] Semua merk kandidat sedang dalam cooldown; tidak mengulang pencarian yang sama.');
+    return null;
+  }
 
-      console.log(`[BrandedDiscovery] brand=${brandSeed} candidates=${results.length}`);
+  for (const brandSeed of candidates) {
+    const brandKey = String(brandSeed).trim().toLowerCase();
+    normalizedAttempted.add(brandKey);
 
-      for (const result of results.slice(0, 15)) {
-        seen.add(result.url);
+    const query = 'site:shopee.co.id "' + brandSeed + '" -set -pack -paket -bundle';
+    const results = (await searchRawShopeeWeb(query))
+      .filter((r) =>
+        r?.url &&
+        !seen.has(r.url) &&
+        !isBundleOrSetProduct((r.title || '') + ' ' + (r.snippet || '')) &&
+        !isFoodOrBeverageProduct((r.title || '') + ' ' + (r.snippet || ''))
+      );
 
-        let meta = {};
-        try {
-          meta = await fetchShopeePageMeta(result.url);
-        } catch {
-          meta = {};
-        }
+    console.log('[BrandedDiscovery] brand=' + brandSeed + ' candidates=' + results.length);
 
-        const rawTitle = String(meta.title || result.title || '').trim();
-        const description = cleanDescription(meta.description || result.snippet || '');
-        if (!rawTitle || isGenericShopeeTitle(rawTitle) || isBundleOrSetProduct(rawTitle)) continue;
+    for (const result of results.slice(0, 12)) {
+      seen.add(result.url);
 
-        const title = cleanTitle(rawTitle, result.url);
-        if (!title || isGenericShopeeTitle(title)) continue;
-
-        // The brand seed is supplied only after the listing was found through a
-        // brand-specific query; it is never created from an OEM/product keyword.
-        const info = extractCoreProductInfo(
-          title,
-          description,
-          result.url,
-          meta.brand || brandSeed
-        );
-
-        const brand = String(info?.brand || meta.brand || brandSeed).trim();
-        const productType = String(info?.coreProductNoun || '').trim();
-        const model = String(info?.model || '').trim();
-        const searchQueries = Array.isArray(info?.searchQueries)
-          ? info.searchQueries.filter((q) => /\S/.test(String(q || '')))
-          : [];
-
-        const titleNorm = normalizeText(title);
-        const descriptionNorm = normalizeText(description);
-        const seedNorm = normalizeText(brandSeed);
-        const brandAppearsInListing =
-          titleNorm.includes(seedNorm) ||
-          descriptionNorm.includes(seedNorm) ||
-          normalizeText(meta.brand || '').includes(seedNorm);
-
-        const brandNorm = normalizeText(brand);
-        const productTypeNorm = normalizeText(productType);
-        const modelNorm = normalizeText(model);
-
-        if (
-          !brand ||
-          !brandAppearsInListing ||
-          !productType ||
-          productType === 'Produk Praktis' ||
-          !productTypeNorm ||
-          productTypeNorm === brandNorm ||
-          (modelNorm && productTypeNorm === modelNorm) ||
-          !searchQueries.length
-        ) {
-          continue;
-        }
-
-        console.log(`[BrandedDiscovery] ✅ Branded product found: ${brand} | ${productType} | ${model || 'no-model'}`);
-
-        return {
-          keyword: `${brandSeed}`,
-          title,
-          description,
-          url: result.url,
-          imageUrl: meta.imageUrl || result.thumbnail || '',
-          brand,
-          model,
-          productType,
-          searchQueries,
-          brandedVerified: true,
-        };
+      let meta = {};
+      try {
+        meta = await fetchShopeePageMeta(result.url);
+      } catch {
+        meta = {};
       }
+
+      const rawTitle = String(meta.title || result.title || '').trim();
+      const description = cleanDescription(meta.description || result.snippet || '');
+      if (!rawTitle || isGenericShopeeTitle(rawTitle) || isBundleOrSetProduct(rawTitle)) continue;
+
+      const title = cleanTitle(rawTitle, result.url);
+      if (!title || isGenericShopeeTitle(title)) continue;
+
+      const info = extractCoreProductInfo(
+        title,
+        description,
+        result.url,
+        meta.brand || brandSeed
+      );
+
+      const brand = String(info?.brand || meta.brand || brandSeed).trim();
+      const productType = String(info?.coreProductNoun || '').trim();
+      const model = String(info?.model || '').trim();
+      const searchQueries = Array.isArray(info?.searchQueries)
+        ? info.searchQueries.filter((q) => /\S/.test(String(q || '')))
+        : [];
+
+      const titleNorm = normalizeText(title);
+      const descriptionNorm = normalizeText(description);
+      const seedNorm = normalizeText(brandSeed);
+      const brandAppearsInListing =
+        titleNorm.includes(seedNorm) ||
+        descriptionNorm.includes(seedNorm) ||
+        normalizeText(meta.brand || '').includes(seedNorm);
+
+      const brandNorm = normalizeText(brand);
+      const productTypeNorm = normalizeText(productType);
+      const modelNorm = normalizeText(model);
+
+      if (
+        !brand ||
+        !brandAppearsInListing ||
+        !productType ||
+        productType === 'Produk Praktis' ||
+        !productTypeNorm ||
+        productTypeNorm === brandNorm ||
+        (modelNorm && productTypeNorm === modelNorm) ||
+        !searchQueries.length
+      ) {
+        continue;
+      }
+
+      brandedDiscoveryMisses.delete(brandKey);
+      console.log(
+        '[BrandedDiscovery] ✅ Branded product found: ' +
+        brand + ' | ' + productType + ' | ' + (model || 'no-model')
+      );
+
+      return {
+        keyword: brandSeed,
+        title,
+        description,
+        url: result.url,
+        imageUrl: meta.imageUrl || result.thumbnail || '',
+        brand,
+        model,
+        productType,
+        searchQueries,
+        brandedVerified: true,
+      };
     }
+
+    markBrandedSeedMiss(brandSeed);
+    console.log(
+      '[BrandedDiscovery] Merk "' + brandSeed +
+      '" tidak menghasilkan listing bermerek + type yang valid; cooldown ' +
+      Math.round(BRANDED_DISCOVERY_MISS_COOLDOWN_MS / 60000) + ' menit.'
+    );
   }
 
   return null;
