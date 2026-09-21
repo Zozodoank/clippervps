@@ -2609,24 +2609,43 @@ export async function searchRawShopeeWeb(query) {
     },
   ];
 
-  for (const engineQuery of queryVariants) {
+  // First pass: use the original branded query across all engines.
+  // This keeps the normal path fast and gives direct Shopee fallback a chance
+  // before we spend time on relaxed search variants.
+  for (const engine of engines) {
+    try {
+      const results = await engine.run(cleanQuery);
+      if (results.length) {
+        console.log(`[BrandedDiscovery] ${engine.name} raw query returned ${results.length} Shopee product result(s): "${cleanQuery}"`);
+        return results;
+      }
+      console.log(`[BrandedDiscovery] ${engine.name} returned no usable Shopee products: "${cleanQuery}"`);
+    } catch (err) {
+      console.warn(`[BrandedDiscovery] ${engine.name} raw query failed: ${err.message}`);
+    }
+  }
+
+  // Direct Shopee brand fallback comes before relaxed engine variants because
+  // the goal is branded product discovery, not generic web search.
+  const directFallback = await searchShopeeBrandDirectFromQuery(cleanQuery);
+  if (directFallback.length) return directFallback;
+
+  // Second pass: relax only the search-engine syntax, while preserving the
+  // brand identity. Never fall back to a product-type-only query.
+  for (const engineQuery of queryVariants.slice(1)) {
     for (const engine of engines) {
       try {
         const results = await engine.run(engineQuery);
         if (results.length) {
-          console.log(`[BrandedDiscovery] ${engine.name} raw query returned ${results.length} Shopee product result(s): "${engineQuery}"`);
+          console.log(`[BrandedDiscovery] ${engine.name} relaxed query returned ${results.length} Shopee product result(s): "${engineQuery}"`);
           return results;
         }
         console.log(`[BrandedDiscovery] ${engine.name} returned no usable Shopee products: "${engineQuery}"`);
       } catch (err) {
-        console.warn(`[BrandedDiscovery] ${engine.name} raw query failed: ${err.message}`);
+        console.warn(`[BrandedDiscovery] ${engine.name} relaxed query failed: ${err.message}`);
       }
     }
   }
-
-  const directFallback = await searchShopeeBrandDirectFromQuery(cleanQuery);
-  if (directFallback.length) return directFallback;
-
   console.warn(`[BrandedDiscovery] No Shopee products from search engines or direct brand page: "${cleanQuery}"`);
   return [];
 }
