@@ -2317,7 +2317,7 @@ export async function searchRawShopeeWeb(query) {
       run: async () => {
         const url = `https://www.bing.com/search?q=${encodeURIComponent(cleanQuery)}`;
         const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 3500,
+          timeoutMs: 10000,
           headers: {
             'user-agent': USER_AGENT,
             'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -2345,7 +2345,7 @@ export async function searchRawShopeeWeb(query) {
       run: async () => {
         const url = `https://search.brave.com/search?q=${encodeURIComponent(cleanQuery)}`;
         const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 3500,
+          timeoutMs: 10000,
           headers: {
             'user-agent': USER_AGENT,
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -2373,7 +2373,7 @@ export async function searchRawShopeeWeb(query) {
       run: async () => {
         const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQuery)}`;
         const response = await fetchWithTlsFallback(url, {
-          timeoutMs: 3500,
+          timeoutMs: 10000,
           headers: {
             'user-agent': USER_AGENT,
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
