@@ -2458,6 +2458,7 @@ function mergeShopeeCandidates(primary = [], fallback = [], limit = 20) {
 
 async function expandShopeeDiscoveryPage(url, { limit = 20 } = {}) {
   if (!isShopeeDiscoveryUrl(url)) return [];
+  if (isShopeeRequestBlocked()) return [];
 
   try {
     const response = await fetchWithTlsFallback(url, {
@@ -2895,6 +2896,8 @@ export async function searchRawShopeeWeb(query) {
 }
 
 export async function fetchShopeePageMeta(url) {
+  if (isShopeeRequestBlocked()) return {};
+
   try {
     const response = await fetchWithTlsFallback(url, {
       timeoutMs: 4000,
