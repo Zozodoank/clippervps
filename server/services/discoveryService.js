@@ -1505,7 +1505,52 @@ function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = ''
   // Prefer multi-word matches first.
   physicalTypes.sort((a, b) => b[0].length - a[0].length);
   const hit = physicalTypes.find(([needle]) => normalized.includes(needle));
-  if (!hit) return null;
+  if (!hit) {
+    // Last-resort YouTube title fallback: keep a short, concrete phrase after
+    // the brand when the video uses a product name not present in our noun list.
+    // This remains brand-bound and never generates a generic keyword.
+    const brandLower = String(brandSeed).toLowerCase();
+    const titleLower = title.toLowerCase();
+    const brandIndex = titleLower.indexOf(brandLower);
+    const afterBrand = (brandIndex >= 0 ? title.slice(brandIndex + brandSeed.length) : title)
+      .replace(/[-|:()\\[\\],]+/g, ' ')
+      .replace(/\\s+/g, ' ')
+      .trim();
+    const blocked = new Set([
+      'review','reviewer','reviewing','demo','demonstration','test','testing','unboxing',
+      'video','youtube','official','store','indonesia','terbaru','terbaik','rekomendasi',
+      'produk','product','alat','cara','tutorial','vs','versus','comparison','murah',
+      'bagus','viral','pakai','menggunakan','dengan','untuk','yang','dan','ini','itu'
+    ]);
+    const words = afterBrand.split(/\\s+/).filter(Boolean);
+    const fallbackWords = [];
+    for (const word of words) {
+      const n = normalizeText(word);
+      if (!n || blocked.has(n) || isMeasurementOrVariantToken(word)) continue;
+      if (/^\\d+$/.test(word)) continue;
+      if (/^(?:or|and|with|for|the|a|an)$/i.test(word)) continue;
+      fallbackWords.push(word);
+      if (fallbackWords.length >= 3) break;
+    }
+    if (!fallbackWords.length) return null;
+
+    const fallbackType = fallbackWords.join(' ').trim();
+    const fallbackModel = fallbackWords.find((word) => /^(?=.*\\d)[A-Za-z][A-Za-z0-9-]{2,}$/i.test(word)) || '';
+    const identity = [brandSeed, fallbackModel, fallbackType].filter(Boolean).join(' ');
+    return {
+      brand: brandSeed,
+      model: fallbackModel,
+      productType: fallbackType,
+      searchQueries: buildDynamicProductSearchQueries({
+        title,
+        noun: fallbackType,
+        englishNoun: fallbackType,
+        brand: brandSeed,
+        model: fallbackModel,
+        identity
+      }),
+    };
+  }
 
   // Extract a likely model token only when it is clearly model-like.
   const titleTokens = title.split(/\s+/).map((token) => token.replace(/^[^\p{L}\p{N}&.-]+|[^\p{L}\p{N}&.-]+$/gu, ''));
