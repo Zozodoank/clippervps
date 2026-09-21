@@ -2322,6 +2322,7 @@ export async function searchBingShopee(keyword) {
 
 export function isShopeeDiscoveryUrl(url = '') {
   if (!url) return false;
+  if (isShopeeProductUrl(url)) return false;
   try {
     const parsed = new URL(url);
     const host = parsed.hostname.replace(/^www\./, '').toLowerCase();
