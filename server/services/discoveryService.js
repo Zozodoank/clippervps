@@ -2364,7 +2364,13 @@ function dedupeShopeeSearchResults(results = []) {
 }
 
 function extractShopeeProductCandidatesFromHtml(html = '', limit = 20) {
-  const source = String(html || '');
+  // Search engines and embedded JSON frequently escape forward slashes as
+  // "\\/" and HTML-escape ampersands. Normalize those representations first.
+  const source = String(html || '')
+    .replace(/\\\//g, '/')
+    .replace(/\\u0026/gi, '&')
+    .replace(/&amp;/gi, '&');
+
   const results = [];
   const seen = new Set();
   const patterns = [
@@ -2385,7 +2391,11 @@ function extractShopeeProductCandidatesFromHtml(html = '', limit = 20) {
       if (!isShopeeProductUrl(url) || seen.has(url)) continue;
 
       seen.add(url);
-      results.push({ title: '', snippet: '', url });
+      results.push({
+        title: titleFromShopeeUrl(url),
+        snippet: '',
+        url,
+      });
     }
     if (results.length >= limit) break;
   }
@@ -2544,6 +2554,7 @@ async function searchShopeeBrandDirectFromQuery(cleanQuery) {
 
   for (const url of directUrls) {
     const expanded = await expandShopeeDiscoveryPage(url, { limit: 20 });
+    console.log(`[BrandedDiscovery] Direct Shopee fallback ${expanded.length} product(s): ${url}`);
     if (expanded.length) {
       console.log(`[BrandedDiscovery] Direct Shopee brand fallback returned ${expanded.length} product(s): "${brand}"`);
       return expanded;
