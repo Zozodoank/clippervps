@@ -3412,7 +3412,7 @@ function cleanDescription(value = '') {
   return value.replace(/\s+/g, ' ').trim().slice(0, 500);
 }
 
-function normalizeText(value = '') {
+export function normalizeText(value = '') {
   return value.toString().toLowerCase().replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 }
 
