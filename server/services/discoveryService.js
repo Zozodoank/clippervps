@@ -1453,6 +1453,7 @@ function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = ''
 
   // YouTube titles are often short and do not contain marketplace-style model
   // syntax. Use a conservative physical-product vocabulary as the fallback.
+  // Accept common Indonesian product nouns even when PRODUCT_ANCHORS has no match.
   const physicalTypes = [
     ['air fryer', 'Air Fryer'],
     ['food processor', 'Food Processor'],
