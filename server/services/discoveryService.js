@@ -1428,9 +1428,9 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
 
   for (const brandSeed of seeds) {
     const queries = [
-      \`site:shopee.co.id "\${brandSeed}" -set -pack -paket -bundle\`,
-      \`site:shopee.co.id "\${brandSeed}" official -set -pack -paket -bundle\`,
-      \`site:shopee.co.id "\${brandSeed}" review -set -pack -paket -bundle\`,
+      `site:shopee.co.id "${brandSeed}" -set -pack -paket -bundle`,
+      `site:shopee.co.id "${brandSeed}" official -set -pack -paket -bundle`,
+      `site:shopee.co.id "${brandSeed}" review -set -pack -paket -bundle`,
     ];
 
     for (const query of queries) {
@@ -1438,11 +1438,11 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
         .filter((r) =>
           r?.url &&
           !seen.has(r.url) &&
-          !isBundleOrSetProduct(\`\${r.title || ''} \${r.snippet || ''}\`) &&
-          !isFoodOrBeverageProduct(\`\${r.title || ''} \${r.snippet || ''}\`)
+          !isBundleOrSetProduct(`${r.title || ''} ${r.snippet || ''}`) &&
+          !isFoodOrBeverageProduct(`${r.title || ''} ${r.snippet || ''}`)
         );
 
-      console.log(\`[BrandedDiscovery] brand=\${brandSeed} candidates=\${results.length}\`);
+      console.log(`[BrandedDiscovery] brand=${brandSeed} candidates=${results.length}`);
 
       for (const result of results.slice(0, 15)) {
         seen.add(result.url);
@@ -1495,10 +1495,10 @@ export async function discoverBrandedShopeeProduct({ niche = 'kitchen_tools', se
           continue;
         }
 
-        console.log(\`[BrandedDiscovery] ✅ Branded product found: \${brand} | \${productType} | \${model || 'no-model'}\`);
+        console.log(`[BrandedDiscovery] ✅ Branded product found: ${brand} | ${productType} | ${model || 'no-model'}`);
 
         return {
-          keyword: \`\${brandSeed}\`,
+          keyword: `${brandSeed}`,
           title,
           description,
           url: result.url,
@@ -2315,7 +2315,7 @@ export async function searchRawShopeeWeb(query) {
     {
       name: 'Bing',
       run: async () => {
-        const url = \`https://www.bing.com/search?q=\${encodeURIComponent(cleanQuery)}\`;
+        const url = `https://www.bing.com/search?q=${encodeURIComponent(cleanQuery)}`;
         const response = await fetchWithTlsFallback(url, {
           timeoutMs: 3500,
           headers: {
@@ -2343,7 +2343,7 @@ export async function searchRawShopeeWeb(query) {
     {
       name: 'Brave',
       run: async () => {
-        const url = \`https://search.brave.com/search?q=\${encodeURIComponent(cleanQuery)}\`;
+        const url = `https://search.brave.com/search?q=${encodeURIComponent(cleanQuery)}`;
         const response = await fetchWithTlsFallback(url, {
           timeoutMs: 3500,
           headers: {
@@ -2371,7 +2371,7 @@ export async function searchRawShopeeWeb(query) {
     {
       name: 'DuckDuckGo',
       run: async () => {
-        const url = \`https://html.duckduckgo.com/html/?q=\${encodeURIComponent(cleanQuery)}\`;
+        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(cleanQuery)}`;
         const response = await fetchWithTlsFallback(url, {
           timeoutMs: 3500,
           headers: {
@@ -2404,15 +2404,15 @@ export async function searchRawShopeeWeb(query) {
     try {
       const results = await engine.run();
       if (results.length) {
-        console.log(\`[BrandedDiscovery] \${engine.name} raw query returned \${results.length} Shopee result(s): "\${cleanQuery}"\`);
+        console.log(`[BrandedDiscovery] ${engine.name} raw query returned ${results.length} Shopee result(s): "${cleanQuery}"`);
         return results;
       }
     } catch (err) {
-      console.warn(\`[BrandedDiscovery] \${engine.name} raw query failed: \${err.message}\`);
+      console.warn(`[BrandedDiscovery] ${engine.name} raw query failed: ${err.message}`);
     }
   }
 
-  console.warn(\`[BrandedDiscovery] No Shopee results from any search engine: "\${cleanQuery}"\`);
+  console.warn(`[BrandedDiscovery] No Shopee results from any search engine: "${cleanQuery}"`);
   return [];
 }
 
