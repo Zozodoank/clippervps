@@ -80,6 +80,7 @@ import {
   DEFAULT_AUTO_KEYWORDS,
   getAutoKeywords,
   extractCoreProductInfo,
+  normalizeText,
   isBulkyOrUnsuitableProduct,
   markKeywordAsUsed,
   loadUsedKeywords,
