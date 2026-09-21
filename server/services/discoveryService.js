@@ -2411,7 +2411,7 @@ async function expandShopeeDiscoveryPage(url, { limit = 20 } = {}) {
     // Some Shopee responses embed product URLs in script/JSON payloads instead
     // of ordinary anchor tags.
     if (results.length < limit) {
-      const productUrlRegex = /https?:\\/\\/(?:www\\.)?shopee\\.co\\.id\\/[^"'\\s<>\\]+(?:-i\\.\\d+\\.\\d+|\\.\\d+\\.\\d+)(?:[^"'\\s<>]*)?/gi;
+      const productUrlRegex = /https?:\/\/(?:www\.)?shopee\.co\.id\/[^"'\s<>]+(?:-i\.\d+\.\d+|\.\d+\.\d+)(?:[^"'\s<>]*)?/gi;
       let match;
       while ((match = productUrlRegex.exec(html)) !== null && results.length < limit) {
         addProduct(match[0]);
