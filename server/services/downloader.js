@@ -285,16 +285,10 @@ export const DIRTY_NEGATIVE_OPERATORS = [
   '-"mesin raksasa"',
   '-"conveyor"',
   '-"cnc machine"',
-  '-unboxing',
-  '-unbox',
-  '-unpacking',
   '-"bubble wrap"',
   '-kardus',
   '-cardboard',
   '-packaging',
-  '-"open box"',
-  '-"package opening"',
-  '-"box opening"',
   '-slideshow',
   '-traktor',
   '-"pakan ternak"',
@@ -327,29 +321,35 @@ export function buildCleanYouTubeQuery(baseQuery) {
   if (!baseQuery) return '';
   const lower = baseQuery.toLowerCase();
   const isMoldOrFoodTool = /cetakan|dumpling|pastel|tamagoyaki|baking|kue|bakso|pembuat|maker|chopper|parutan|slicer|peeler|cutter|pemotong|pengupas|pemeras|wajan|panci|dispenser|sealer/i.test(lower);
+  const isBrandedOrReview = /review|unboxing|tes|demo|hands on|spesifikasi|hp|smartphone|b-roll/i.test(lower);
 
-  // 1. Bersihkan kata-kata sampah tanpa mematikan kata cara/tutorial jika mencari alat dapur
+  // 1. Bersihkan kata-kata sampah tanpa mematikan unboxing atau review (karena intro/penutup sudah diskip)
   const stripRegex = isMoldOrFoodTool
-    ? /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|mukbang|unboxing|unbox|unpacking|bubble\s*wrap|kardus|cardboard|packaging|open\s+box|package\s+opening|box\s+opening|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
-    : /\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|unboxing|unbox|unpacking|bubble\s*wrap|kardus|cardboard|packaging|open\s+box|package\s+opening|box\s+opening|pabrik|factory|manufacturing|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
+    ? /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|mukbang|bubble\s*wrap|kardus|cardboard|packaging|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
+    : /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|bubble\s*wrap|kardus|cardboard|packaging|pabrik|factory|manufacturing|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
 
   let cleaned = String(baseQuery)
     .replace(stripRegex, '')
     .replace(/\s+/g, ' ')
     .trim();
 
-  // Truncate overly long combinatorial keywords (e.g. "alat pemipil jagung serbaguna praktis anti bocor anti tumpah presisi")
-  // Keep maximum 6 words to maintain broad searchability on YouTube
+  // Truncate overly long combinatorial keywords
   const words = cleaned.split(' ');
-  if (words.length > 6) {
-    cleaned = words.slice(0, 6).join(' ');
+  if (words.length > 7) {
+    cleaned = words.slice(0, 7).join(' ');
   }
 
-  // 2. Pilih operator negatif yang relevan dan batasi maksimal 8-10 kata penting saja
+  // Jika query sudah spesifik berupa review produk/merk, JANGAN tambahkan operator negatif berlebihan
+  // karena operator negatif membingungkan ranking YouTube search dan menyebabkan 0 hasil
+  if (isBrandedOrReview) {
+    return cleaned.trim();
+  }
+
+  // 2. Pilih operator negatif yang relevan untuk keyword umum non-merk
   const sensitiveFoodOperators = ['-cara', '-tutorial', '-resep', '-recipe', '-makanan', '-minuman', '-kuliner', '-jajanan', '-streetfood'];
   const relevantOperators = DIRTY_NEGATIVE_OPERATORS.filter(op => {
     if (isMoldOrFoodTool && sensitiveFoodOperators.includes(op)) {
-      return false; // Jangan blokir video peragaan alat dapur / cetakan
+      return false;
     }
     return true;
   });
@@ -357,7 +357,7 @@ export function buildCleanYouTubeQuery(baseQuery) {
   const existingLower = cleaned.toLowerCase();
   const toAdd = relevantOperators
     .filter(op => !existingLower.includes(op.toLowerCase()))
-    .slice(0, 8); // Maksimal 8 operator agar query YouTube tidak tersumbat
+    .slice(0, 4); // Maksimal 4 operator untuk menjaga broad coverage
 
   if (toAdd.length > 0) {
     cleaned = `${cleaned} ${toAdd.join(' ')}`;
@@ -395,49 +395,6 @@ async function searchWithYouTubeDataApi(query, limit = 10) {
   }
 }
 
-// ── RapidAPI Search Helper ──────────────────────────────────────────────────
-
-async function searchWithRapidApi(query, limit = 10) {
-  const apiKey = process.env.RAPIDAPI_KEY?.trim();
-  const host = process.env.RAPIDAPI_HOST?.trim() || 'yt-api.p.rapidapi.com';
-  if (!apiKey) return null;
-
-  try {
-    const cleanQuery = buildCleanYouTubeQuery(query);
-    console.log(`[Downloader] Searching YouTube via RapidAPI: "${cleanQuery}" (type=video&videoDefinition=high)`);
-    const res = await fetch(`https://${host}/search?query=${encodeURIComponent(cleanQuery)}&type=video&videoDefinition=high`, {
-      headers: {
-        'x-rapidapi-key': apiKey,
-        'x-rapidapi-host': host
-      },
-      signal: AbortSignal.timeout(10000)
-    });
-    if (!res.ok) {
-      console.warn(`[Downloader] RapidAPI returned HTTP ${res.status} ${res.statusText || ''} for query "${cleanQuery}"`);
-      return null;
-    }
-    const data = await res.json();
-    const items = data.data || data.results || [];
-    if (!items.length) {
-      console.warn(`[Downloader] RapidAPI returned 0 items for query "${cleanQuery}"`);
-    }
-    return items
-      .filter(item => item.type === 'video' || item.videoId || item.id)
-      .map(item => ({
-        id: item.videoId || item.id,
-        title: item.title || 'YouTube Video',
-        url: item.videoId ? `https://www.youtube.com/watch?v=${item.videoId}` : (item.url || ''),
-        duration: Number(item.lengthSeconds || item.duration) || 0,
-        channel: item.channelTitle || item.author || '',
-        description: (item.description || '').slice(0, 500)
-      }))
-      .filter(item => item.id && item.url && (item.duration === 0 || (item.duration >= 35 && item.duration <= 900)))
-      .slice(0, limit);
-  } catch (e) {
-    console.warn(`[Downloader] RapidAPI search error for "${query}": ${e.message}`);
-    return null;
-  }
-}
 
 // ── Native Stream Downloader Helper ──────────────────────────────────────────
 
@@ -538,75 +495,6 @@ async function downloadWithCobaltApi(url, outputPath, onProgress) {
   }
 }
 
-// ── YouTube Downloader via RapidAPI (yt-api) ──
-
-async function downloadWithYouTubeMediaDownloader(url, outputPath, onProgress, { quality = '1080p' } = {}) {
-  const apiKey = process.env.RAPIDAPI_KEY?.trim();
-  const host = process.env.RAPIDAPI_HOST?.trim() || 'yt-api.p.rapidapi.com';
-  if (!apiKey) return null;
-
-  const videoId = extractVideoId(url);
-  if (!videoId) return null;
-
-  try {
-    onProgress({ step: 'download', message: 'Fetching video stream link from RapidAPI...', progress: 12 });
-
-    const detailRes = await fetch(`https://${host}/dl?id=${videoId}`, {
-      headers: {
-        'x-rapidapi-key': apiKey,
-        'x-rapidapi-host': host
-      },
-      signal: AbortSignal.timeout(15000)
-    });
-
-    if (!detailRes.ok) {
-      console.warn(`[Downloader] yt-api returned HTTP ${detailRes.status}`);
-      return null;
-    }
-
-    const data = await detailRes.json();
-    if (!data.formats || data.formats.length === 0) {
-      console.warn(`[Downloader] yt-api error: No formats returned`);
-      return null;
-    }
-
-    const metadata = {
-      title: data.title || 'YouTube Video',
-      duration: Math.round(Number(data.lengthSeconds) || 60),
-      description: (data.description || '').slice(0, 500),
-      channel: data.channelTitle || '',
-      tags: []
-    };
-
-    const isPreview = quality === 'preview' || quality === 'low';
-    let best = null;
-    if (isPreview) {
-      best = data.formats.find(f => f.qualityLabel === '360p' && f.audioQuality) ||
-             data.formats.find(f => f.qualityLabel === '360p') ||
-             data.formats.find(f => f.audioQuality) || 
-             data.formats[0];
-    } else {
-      // Strictly require 1080p or higher formats (1080p, 1440p, 2160p)
-      best = data.formats.find(f => (f.qualityLabel === '1080p' || f.qualityLabel === '1440p' || f.qualityLabel === '2160p') && f.audioQuality) ||
-             data.formats.find(f => f.qualityLabel === '1080p' || f.qualityLabel === '1440p' || f.qualityLabel === '2160p');
-    }
-
-    if (!best || !best.url) {
-      console.warn(`[Downloader] yt-api notice: Tidak ada stream minimal 1080p pada RapidAPI`);
-      return null;
-    }
-
-    onProgress({ step: 'download', message: `Downloading video via RapidAPI stream (${best.qualityLabel || '1080p'})...`, progress: 18 });
-    console.log(`[Downloader] yt-api stream: ${best.qualityLabel}, hasAudio=${!!best.audioQuality}`);
-
-    await downloadFileFromUrl(best.url, outputPath, { onProgress });
-
-    return { filePath: outputPath, metadata };
-  } catch (e) {
-    console.warn(`[Downloader] RapidAPI download error: ${e.message}`);
-    return null;
-  }
-}
 
 
 // ── Direct Native YouTube Web Search Scraper (With Stealth Headers & Human Pacing) ───
@@ -704,7 +592,7 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
 }
 
 /**
- * Searches YouTube candidates using YouTube Data API v3, RapidAPI, yt-dlp, or Native Web Search.
+ * Searches YouTube candidates using YouTube Data API v3, yt-dlp, or Native Web Search.
  * @param {string} query - Search query text
  * @param {{ limit?: number, onProgress?: Function }} options
  * @returns {Promise<Array<{ id: string, title: string, url: string, duration: number, channel: string, description: string }>>}
@@ -726,13 +614,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
     return ytDataResults;
   }
 
-  // 2. Prioritize RapidAPI search if key is configured
-  const rapidResults = await searchWithRapidApi(query, safeLimit);
-  if (rapidResults && rapidResults.length > 0) {
-    return rapidResults;
-  }
-
-  // 3. Fallback to direct yt-dlp search with human sleep and player client rotation
+  // 2. Fallback to direct yt-dlp search with human sleep and player client rotation
   try {
     const cleanQuery = buildCleanYouTubeQuery(query);
     const ytDlpPath = await getYtDlpPath(reportProgress);
@@ -748,6 +630,8 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
       Boolean(process.env.TERMUX_VERSION) ||
       (process.platform === 'linux' && !process.env.DISPLAY);
 
+    const foundCookies = findCookiesFile();
+
     const baseArgs = [
       '--no-check-certificates',
       '--geo-bypass',
@@ -759,11 +643,10 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
       '--extractor-args', isTermuxOrMobile
         ? 'youtube:player_client=android,mweb,web'
         : (foundCookies ? 'youtube:player_client=web,mweb,android' : 'youtube:player_client=mweb,android,web'),
-      '--match-filter', 'duration >= 150 & duration <= 600',
+      '--match-filter', 'duration >= 50 & duration <= 900',
       searchTarget
     ];
 
-    const foundCookies = findCookiesFile();
     if (foundCookies) baseArgs.push('--cookies', foundCookies);
 
     const result = await runYtDlp(ytDlpPath, baseArgs);
@@ -997,21 +880,6 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     console.warn(`[Downloader] Profile ${clientType} failed: ${lastDownloadError.slice(-200)}`);
   }
 
-  // Tier 3: Try RapidAPI fallback if available
-  if (process.env.RAPIDAPI_KEY) {
-    onProgress({ step: 'download', message: 'Mencoba pengunduhan cadangan via RapidAPI Stream Proxy...', progress: 28 });
-    const rapidDl = await downloadWithYouTubeMediaDownloader(url, finalExpectedPath, onProgress, { quality });
-    if (rapidDl && fs.existsSync(rapidDl.filePath)) {
-      if (!isPreview) {
-        const dims = await getVideoDimensions(rapidDl.filePath, ffmpegPath);
-        if (dims && !(dims.height >= 720 || dims.width >= 720 || dims.is1080pOrHigher)) {
-          try { fs.unlinkSync(rapidDl.filePath); } catch {}
-          throw new Error(`Resolusi video RapidAPI (${dims.width}x${dims.height}) di bawah standar minimal HD 720p.`);
-        }
-      }
-      return rapidDl;
-    }
-  }
 
   // Format clean human-readable error with actionable advice for IP block / bot detection
   const lowerErr = (lastDownloadError || '').toLowerCase();

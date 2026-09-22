@@ -2177,17 +2177,34 @@ export async function discoverYouTubeCandidatesForProduct({
     await delayWithJitter(1500, 2500);
   }
 
-  // Fallback: If all results were previously used or cleanResults was empty, search exact core noun
+  // Fallback: If all results were previously used or cleanResults was empty, try natural review variations
   if (!candidates.length) {
-    let fallbackResults = await searchBingVideos(`${coreNoun} "b-roll"`, { limit, onProgress });
-    if (!fallbackResults || fallbackResults.length === 0) {
-      fallbackResults = await searchYouTubeVideos(`${coreNoun} "b-roll"`, { limit, onProgress });
+    const brand = (productInfo.brand || '').trim();
+    const model = (productInfo.model || '').trim();
+    const fallbackQueries = [
+      brand && model ? `${brand} ${model} review` : '',
+      brand && model ? `unboxing ${brand} ${model}` : '',
+      brand ? `${brand} ${coreNoun} review` : '',
+      `${coreNoun} review indonesia`,
+      `${coreNoun} review`,
+      `${cleanTitle(productTitle)} review`,
+    ].filter(Boolean);
+
+    for (const fbQuery of fallbackQueries) {
+      let fbResults = await searchYouTubeVideos(fbQuery, { limit, onProgress });
+      if (!fbResults || fbResults.length === 0) {
+        fbResults = await searchBingVideos(fbQuery, { limit, onProgress });
+      }
+      const validFb = (fbResults || []).filter((c) => {
+        const vid = c.id || extractVideoId(c.url);
+        return vid && !excludeSet.has(vid) && isLikelyCleanYouTubeCandidate(c, coreWords);
+      });
+      if (validFb.length > 0) {
+        candidates = validFb;
+        usedQuery = fbQuery;
+        break;
+      }
     }
-    const nonExcluded = (fallbackResults || []).filter((c) => {
-      const vid = c.id || extractVideoId(c.url);
-      return vid && !excludeSet.has(vid) && isLikelyCleanYouTubeCandidate(c, coreWords);
-    });
-    candidates = nonExcluded;
   }
 
   const scoredCandidates = candidates
@@ -2199,9 +2216,6 @@ export async function discoverYouTubeCandidatesForProduct({
       matchScore: scoreCandidateMatch(candidate, coreWords, productDescription),
     }));
 
-  // Keyword discovery must have a textual product signal before it reaches expensive
-  // visual analysis. Visual-search candidates are the only exception because the
-  // physical reference image is the primary matching signal there.
   const visualCandidates = scoredCandidates.filter(
     (c) => Boolean(c.isVisualSearch || c.source === 'bing_visual_search' || c.source === 'visual_ai_query')
   );
@@ -2209,8 +2223,8 @@ export async function discoverYouTubeCandidatesForProduct({
   const cleanCandidates = [...matchedCandidates, ...visualCandidates.filter((c) => c.matchScore <= 0)]
     .sort((a, b) => b.matchScore - a.matchScore);
 
-  // Never leak a keyword-search candidate with zero product signal.
-  return cleanCandidates;
+  // Jika matchedCandidates kosong namun scoredCandidates ada (hasil dari query merk/tipe langsung), jangan buang!
+  return cleanCandidates.length > 0 ? cleanCandidates : scoredCandidates;
 }
 
 /**
@@ -2220,7 +2234,7 @@ export async function discoverYouTubeCandidatesForProduct({
 export async function searchBingVideos(query, { limit = 20, onProgress = () => {} } = {}) {
   const cleanQuery = buildCleanYouTubeQuery(query);
   const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
-  const url = `https://www.bing.com/videos/search?q=${encodeURIComponent(cleanQuery)}&qft=+filterui:duration-medium+filterui:video-definition-high`;
+  const url = `https://www.bing.com/videos/search?q=${encodeURIComponent(cleanQuery)}`;
 
   onProgress({
     step: 'auto_video_search',
@@ -3641,8 +3655,8 @@ export function extractShopeeLinkFromText(text = '') {
 
 export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (!candidate.url || !candidate.id) return false;
-  // If duration is known, reject if too short (< 150s / 2.5 min) or too long (> 10 min / 600s)
-  if (candidate.duration > 0 && (candidate.duration < 150 || candidate.duration > 600)) return false;
+  // If duration is known, reject if too short (< 50s) or too long (> 15 min / 900s)
+  if (candidate.duration > 0 && (candidate.duration < 50 || candidate.duration > 900)) return false;
 
   // Reject vertical Shorts (which already have hardburned music/captions)
   if (candidate.url.includes('/shorts/') || /#shorts\b/i.test(candidate.title || '')) return false;
@@ -3655,7 +3669,7 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
-  const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|demo|pakai|menggunakan)\b/i.test(titleText);
+  const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|unboxing|demo|pakai|menggunakan)\b/i.test(titleText);
 
   // Disqualify broken / repair / disassembly / maintenance tutorials / DIY / set / pack / bundle / western retail
   if (/\b(set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total|amazon|walmart|target|bestbuy|homedepot)\b/i.test(titleText)) return false;
@@ -3664,10 +3678,8 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (!isToolDemoTitle && /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(titleText)) return false;
 
   const excludedTitleWords = [
-    // Packaging/unboxing is never a valid primary affiliate source.
-    'unboxing', 'unbox', 'unpack', 'unpacking', 'bubble wrap', 'bubblewrap',
-    'kardus', 'cardboard', 'paket dibuka', 'buka paket', 'open box', 'opening box',
-    'packaging', 'package opening', 'box opening', 'kemasan paket',
+    // Box opening packaging waste filters (Unboxing/Review produk fisik diperbolehkan karena intro & penutup sudah diskip)
+    'bubble wrap', 'bubblewrap', 'kardus', 'cardboard',
     // Western / US retail chain & Amazon exclusive haul filters (incompatible with Shopee)
     'amazon finds', 'amazon haul', 'amazon must haves', 'amazon favorites', 'found on amazon', 'bought on amazon',
     'walmart', 'target haul', 'best buy', 'home depot', 'dollar tree',
@@ -4383,12 +4395,17 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
   // Do NOT expand discovery with marketplace adjectives, dimensions, capacity,
   // generic attributes, or the full seller title: those queries create unrelated footage.
   let type = String(noun || englishNoun || '').replace(/\s+/g, ' ').trim();
-  const cleanBrand = String(brand || '').replace(/\s+/g, ' ').trim();
-  const cleanModel = String(model || '').replace(/\s+/g, ' ').trim();
+  let cleanBrand = String(brand || '').replace(/\s+/g, ' ').trim();
+  let cleanModel = String(model || '').replace(/\s+/g, ' ').trim();
 
   // If type is identical to brand, remove type so the brand is never doubled (e.g. "BOLDE BOLDE")
   if (type && cleanBrand && normalizeText(type) === normalizeText(cleanBrand)) {
     type = '';
+  }
+
+  // If type already contains the model (e.g. model "P55", type "P55 5G"), avoid duplicate "P55 P55 5G"
+  if (type && cleanModel && normalizeText(type).includes(normalizeText(cleanModel))) {
+    cleanModel = '';
   }
 
   // Deduplicate tokens case-insensitively when constructing exactIdentity
@@ -4406,34 +4423,41 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
   const fallbackIdentity = String(identity || '').trim();
 
   if (exactIdentity) {
-    add(`"${exactIdentity}" review indonesia`);
-    add(`"${exactIdentity}" review`);
-    add(`"${exactIdentity}" demo cara pakai`);
-    add(`"${exactIdentity}" demonstration`);
-    add(`"${exactIdentity}" hands on`);
+    add(`${exactIdentity} review indonesia`);
+    add(`${exactIdentity} unboxing review`);
+    add(`${exactIdentity} unboxing`);
+    add(`${exactIdentity} review`);
+    add(`review ${exactIdentity}`);
+    add(`${exactIdentity} demo cara pakai`);
+    add(`unboxing ${exactIdentity}`);
   } else if (fallbackIdentity && !cleanBrand) {
-    // Kept for non-auto/manual callers. Auto Mode validates brand + type before
-    // reaching video search, so this cannot create generic Auto Mode queries.
-    add(`"${fallbackIdentity}" review indonesia`);
-    add(`"${fallbackIdentity}" demo cara pakai`);
-    add(`"${fallbackIdentity}" review`);
+    add(`${fallbackIdentity} review indonesia`);
+    add(`${fallbackIdentity} unboxing`);
+    add(`${fallbackIdentity} review`);
+    add(`${fallbackIdentity} demo cara pakai`);
+  }
+
+  if (cleanBrand && cleanModel && normalizeText(cleanBrand) !== normalizeText(cleanModel)) {
+    add(`${cleanBrand} ${cleanModel} review indonesia`);
+    add(`${cleanBrand} ${cleanModel} unboxing`);
+    add(`${cleanBrand} ${cleanModel} review`);
+    add(`review ${cleanBrand} ${cleanModel}`);
   }
 
   if (cleanBrand && type && normalizeText(cleanBrand) !== normalizeText(type)) {
     add(`${cleanBrand} ${type} review indonesia`);
+    add(`${cleanBrand} ${type} unboxing`);
+    add(`review ${cleanBrand} ${type}`);
     add(`${cleanBrand} ${type} demo cara pakai`);
-    add(`${cleanBrand} ${type} review`);
   }
 
   if (cleanModel && type && normalizeText(cleanModel) !== normalizeText(type)) {
     add(`${cleanModel} ${type} review indonesia`);
-    add(`${cleanModel} ${type} demo`);
+    add(`${cleanModel} ${type} unboxing`);
     add(`${cleanModel} ${type} review`);
   }
 
-  // Never generate type-only or full-title discovery queries here.
-  // Unbranded/OEM products are handled exclusively through the manual URL flow.
-  return queries.slice(0, 12);
+  return queries.slice(0, 14);
 }
 
 export function isTitleMatchingProduct(candidateTitle, productWords = [], extraMeta = {}) {

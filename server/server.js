@@ -80,6 +80,7 @@ import {
   DEFAULT_AUTO_KEYWORDS,
   getAutoKeywords,
   extractCoreProductInfo,
+  cleanTitle,
   normalizeText,
   isBulkyOrUnsuitableProduct,
   markKeywordAsUsed,
@@ -117,7 +118,6 @@ const PLACEHOLDER_ENV_VALUES = new Set([
   '',
   'your_gemini_api_key_here',
   'your_aivene_api_key_here',
-  'your_rapidapi_key_here',
   'your_cobalt_api_key_here',
 ]);
 
@@ -1982,6 +1982,44 @@ export async function runStage1Pipeline({
           }
         }
         searchIteration++;
+      }
+
+      if (!candidatePool || candidatePool.length === 0) {
+        // Coba variasi kata kunci alternatif (brand + model/tipe) sebelum menyerah
+        const info = extractCoreProductInfo(productTitle, productDescription);
+        const b = (info.brand || options.brand || '').trim();
+        const m = (info.model || options.model || '').trim();
+        const p = (info.coreProductNoun || options.productType || '').trim();
+        const fallbackQueries = [
+          b && m ? `${b} ${m} review indonesia` : '',
+          b && m ? `${b} ${m} review` : '',
+          b && m ? `unboxing ${b} ${m}` : '',
+          b && p ? `${b} ${p} review` : '',
+          b && p ? `review ${b} ${p}` : '',
+          b ? `${b} review indonesia` : '',
+          p ? `${p} review indonesia` : '',
+          `${cleanTitle(productTitle)} review`,
+          cleanTitle(productTitle),
+        ].filter(Boolean);
+
+        for (const altQuery of fallbackQueries) {
+          console.log(`[Job ${jobId}] Mencari kandidat cadangan multi-engine: "${altQuery}"...`);
+          const altResults = await searchMultiEngineVideos(altQuery, {
+            limit: 8,
+            excludeVideoIds: usedVids,
+            strictIdentity: false,
+            youtubeOnly: true,
+            onProgress: (p) => updateProgress({ message: `Mencari video alternatif: "${altQuery}"...`, status: 'running' }),
+          });
+          if (altResults && altResults.length > 0) {
+            for (const cand of altResults) {
+              if (!candidatePool.some(t => (t.url && t.url === cand.url) || (t.id && t.id === cand.id))) {
+                candidatePool.push(cand);
+              }
+            }
+            if (candidatePool.length > 0) break;
+          }
+        }
       }
 
       if (!candidatePool || candidatePool.length === 0) {
