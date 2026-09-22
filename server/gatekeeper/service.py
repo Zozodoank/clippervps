@@ -477,8 +477,8 @@ class SceneGatekeeper:
     elemen unboxing yang berantakan, logo transparan, atau framing produk yang kurang fokus.
     Nilai 0.62 menjadi batas pemisah zona uncertain vs reject.
     """
-    CLEAN_CONF_THRESHOLD = 0.78
-    UNCERTAIN_CONF_THRESHOLD = 0.62
+    CLEAN_CONF_THRESHOLD = 0.74
+    UNCERTAIN_CONF_THRESHOLD = 0.60
 
     def __init__(self):
         self.ort_session = None
@@ -671,21 +671,6 @@ def detect_synthetic_graphic_overlay(crop_bgr):
             if v_std < 14.0:
                 return True, f"Terdeteksi grafis overlay buatan (panah/lingkaran/stiker vektor, area {comp_ratio*100:.1f}%)"
 
-    white_mask = cv2.inRange(hsv, np.array([0, 0, 235]), np.array([180, 25, 255]))
-    opened_w = cv2.morphologyEx(white_mask, cv2.MORPH_OPEN, kernel)
-    num_labels_w, labels_w, stats_w, _ = cv2.connectedComponentsWithStats(opened_w)
-    for i in range(1, num_labels_w):
-        comp_area = stats_w[i, cv2.CC_STAT_AREA]
-        comp_ratio = comp_area / total_area
-        top_y = stats_w[i, cv2.CC_STAT_TOP]
-        height_c = stats_w[i, cv2.CC_STAT_HEIGHT]
-        if 0.004 <= comp_ratio <= 0.10 and (top_y < int(h * 0.35) or (top_y + height_c) > int(h * 0.65)):
-            comp_mask = (labels_w == i).astype(np.uint8)
-            comp_v = v_channel[comp_mask > 0]
-            v_std = float(np.std(comp_v)) if len(comp_v) > 0 else 99.0
-            if v_std < 10.0:
-                return True, f"Terdeteksi watermark / badge grafis putih di sudut frame (area {comp_ratio*100:.1f}%)"
-
     return False, "Tidak ada grafis sintetis"
 
 
@@ -868,7 +853,7 @@ class FrameGatekeeper:
         }
 
     def process_batch(self, frame_items, niche="kitchen_tools",
-                      min_consecutive_clean=2, min_clean_duration=2.5):
+                      min_consecutive_clean=2, min_clean_duration=1.5):
         """
         Memproses batch frame dengan logika:
         1. Static frame detection (MAD & edge difference)
@@ -990,7 +975,7 @@ class FrameGatekeeper:
                     start_ts = single_verdicts[current_streak[0]]["timestamp"]
                     end_ts = single_verdicts[current_streak[-1]]["timestamp"]
                     duration = round(end_ts - start_ts, 2)
-                    if duration >= min_clean_duration or len(current_streak) >= 4:
+                    if duration >= min_clean_duration or len(current_streak) >= min_consecutive_clean:
                         verified_segments.append({
                             "startIndex": current_streak[0],
                             "endIndex": current_streak[-1],
@@ -1008,7 +993,7 @@ class FrameGatekeeper:
             start_ts = single_verdicts[current_streak[0]]["timestamp"]
             end_ts = single_verdicts[current_streak[-1]]["timestamp"]
             duration = round(end_ts - start_ts, 2)
-            if duration >= min_clean_duration or len(current_streak) >= 4:
+            if duration >= min_clean_duration or len(current_streak) >= min_consecutive_clean:
                 verified_segments.append({
                     "startIndex": current_streak[0],
                     "endIndex": current_streak[-1],
@@ -1149,8 +1134,8 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 "service": "AI Local Frame Gatekeeper (Temporal Segment Edition)",
                 "version": "2.0.0",
                 "policy": {
-                    "minConsecutiveClean": 3,
-                    "minCleanDurationSec": 4.0,
+                    "minConsecutiveClean": 2,
+                    "minCleanDurationSec": 1.5,
                     "cleanConfidenceThreshold": SceneGatekeeper.CLEAN_CONF_THRESHOLD,
                     "uncertainThreshold": SceneGatekeeper.UNCERTAIN_CONF_THRESHOLD
                 },
@@ -1171,8 +1156,8 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 payload = json.loads(raw_body)
                 frames = payload.get("frames", [])
                 niche = payload.get("niche", "kitchen_tools")
-                min_consec = int(payload.get("minConsecutiveClean", 3))
-                min_dur = float(payload.get("minCleanDuration", 4.0))
+                min_consec = int(payload.get("minConsecutiveClean", 2))
+                min_dur = float(payload.get("minCleanDuration", 1.5))
 
                 if not frames:
                     self._send_json(400, {"error": "Array 'frames' kosong atau tidak ditemukan"})

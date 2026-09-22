@@ -104,6 +104,7 @@ async function startGatekeeperProcess() {
     cwd: path.join(__dirname, 'server', 'gatekeeper'),
     env: {
       ...process.env,
+      PYTHONUNBUFFERED: '1',
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
       OMP_NUM_THREADS: '1',

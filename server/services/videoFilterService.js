@@ -20,10 +20,10 @@ const serverDir = path.resolve(__dirname, '..');
 export const GATEKEEPER_CONFIG = {
   SAMPLE_INTERVAL_SEC: 2.0,
   MIN_CONSECUTIVE_CLEAN_FRAMES: 2,
-  MIN_CLEAN_DURATION_SEC: 2.5,
+  MIN_CLEAN_DURATION_SEC: 1.5,
   MAX_ALLOWED_DIRTY_FRAMES: 0,
-  CLEAN_CONF_THRESHOLD: 0.78,
-  UNCERTAIN_CONF_THRESHOLD: 0.62,
+  CLEAN_CONF_THRESHOLD: 0.74,
+  UNCERTAIN_CONF_THRESHOLD: 0.60,
   TIMEOUT_SEC: 25,
 };
 
@@ -583,25 +583,26 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
-  // On Termux/mobile, use a single sequential worker because output-side stream seek
-  // is intentionally used to avoid repeated nearest-keyframe frames.
-  const concurrency = isMobile ? 1 : 4;
+  // Two-stage seek: fast coarse seek before -i (jumps in ~0.05s via HTTP range)
+  // + accurate sub-second fine seek after -i (decodes only ~1s to reach exact frame).
+  // This prevents landing on duplicate keyframes without ever downloading from byte 0.
+  const concurrency = isMobile ? 2 : 4;
   const executing = [];
   for (const point of samplePoints) {
     // Micro pacing delay (human-like pacing)
-    await new Promise(r => setTimeout(r, isMobile ? 35 : 15));
+    await new Promise(r => setTimeout(r, isMobile ? 25 : 15));
 
     const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
     const outputPath = path.join(outputDir, frameFile);
 
     const p = new Promise((resolve) => {
-      // IMPORTANT:
-      // Termux/mobile must seek AFTER opening the stream (-i ... -ss ...).
-      // Input-side seeking can repeatedly land on the same nearest keyframe for HLS/remote
-      // streams, which is exactly the "same frame repeated several times" failure mode.
-      const seekArgs = isMobile
-        ? ['-i', streamUrl, '-ss', String(point.timestamp)]
-        : ['-ss', String(point.timestamp), '-i', streamUrl];
+      const preSeek = Math.max(0, point.timestamp - 1.2);
+      const postSeek = Math.min(point.timestamp, 1.2);
+      const seekArgs = [
+        '-ss', String(preSeek.toFixed(2)),
+        '-i', streamUrl,
+        '-ss', String(postSeek.toFixed(2))
+      ];
 
       const proc = spawn(ffmpegPath, [
         '-y',
