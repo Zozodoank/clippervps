@@ -650,25 +650,22 @@ def detect_synthetic_graphic_overlay(crop_bgr):
     hsv = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2HSV)
     _, s_channel, v_channel = cv2.split(hsv)
 
-    red_mask1 = cv2.inRange(hsv, np.array([0, 190, 160]), np.array([10, 255, 255]))
-    red_mask2 = cv2.inRange(hsv, np.array([170, 190, 160]), np.array([180, 255, 255]))
-    yellow_mask = cv2.inRange(hsv, np.array([22, 210, 180]), np.array([34, 255, 255]))
-    neon_mask = cv2.inRange(hsv, np.array([35, 220, 180]), np.array([160, 255, 255]))
-
-    synthetic_mask = cv2.bitwise_or(cv2.bitwise_or(red_mask1, red_mask2), cv2.bitwise_or(yellow_mask, neon_mask))
+    # Hanya deteksi grafis digital sintetis berintensitas murni (neon green/cyan/magenta)
+    # JANGAN deteksi warna merah atau kuning karena itu warna alami produk dapur/rumah tangga!
+    neon_mask = cv2.inRange(hsv, np.array([45, 235, 200]), np.array([150, 255, 255]))
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
-    opened = cv2.morphologyEx(synthetic_mask, cv2.MORPH_OPEN, kernel)
+    opened = cv2.morphologyEx(neon_mask, cv2.MORPH_OPEN, kernel)
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(opened)
     total_area = float(h * w)
     for i in range(1, num_labels):
         comp_area = stats[i, cv2.CC_STAT_AREA]
         comp_ratio = comp_area / total_area
-        if 0.003 <= comp_ratio <= 0.15:
+        if 0.04 <= comp_ratio <= 0.25:
             comp_mask = (labels == i).astype(np.uint8)
             comp_v = v_channel[comp_mask > 0]
             v_std = float(np.std(comp_v)) if len(comp_v) > 0 else 99.0
-            if v_std < 14.0:
+            if v_std < 10.0:
                 return True, f"Terdeteksi grafis overlay buatan (panah/lingkaran/stiker vektor, area {comp_ratio*100:.1f}%)"
 
     return False, "Tidak ada grafis sintetis"

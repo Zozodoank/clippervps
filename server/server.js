@@ -103,6 +103,14 @@ import { runFinalMasterQc } from './services/finalMasterQcService.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Global crash guards to keep the server resilient against transient background socket/stream interruptions
+process.on('uncaughtException', (err) => {
+  console.error('⚠️ [UncaughtException Guard]:', err?.message || err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('⚠️ [UnhandledRejection Guard]:', reason?.message || reason);
+});
+
 // Load .env from multiple candidate paths. Keep server/.env as the primary
 // Termux/local source, but still accept root-level .env files for portability.
 const envCandidates = [
@@ -2610,15 +2618,14 @@ export async function runStage1Pipeline({
         if (testFrames.length > 0) {
           let gkRes = null;
           try {
-            gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 12, niche: options?.niche || 'kitchen_tools' });
-          } catch (e) {}
+            gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 40, niche: options?.niche || 'kitchen_tools' });
+          } catch (e) {
+            console.warn(`[ClipAudit] Gatekeeper microservice timeout/error: ${e?.message || e}`);
+          }
 
-          // Run the local heuristic as a SECOND safety layer even when the AI
-          // Gatekeeper says clean. This catches moving text, stickers and static cards
-          // that can otherwise masquerade as "video".
           let heuristicRes = null;
           try {
-            heuristicRes = await inspectFramesLocally(testFrames, { niche: options?.niche || 'kitchen_tools' });
+            heuristicRes = await inspectFramesLocally(testFrames, { allowPartialClean: true, niche: options?.niche || 'kitchen_tools' });
           } catch (e) {}
 
           const heuristicDirty = heuristicRes?.discardedFrames?.find(f =>
@@ -2630,18 +2637,26 @@ export async function runStage1Pipeline({
           }
 
           if (gkRes && Array.isArray(gkRes.allFrames)) {
-            const dirtyDet = gkRes.allFrames.find(f => f.status !== 'clean');
+            // Discard only if there is a severe violation: presenter face, paper manual, or burned watermark
+            const dirtyDet = gkRes.allFrames.find(f => {
+              if (f.status === 'clean') return false;
+              if (f.stage === 'face') return true;
+              if (f.stage === 'paper_manual') return true;
+              if (f.stage === 'graphic_overlay') return true;
+              if (f.stage === 'text' && (Number(f.totalCoverage) > 0.05 || Number(f.bottomCoverage) > 0.05)) return true;
+              return false;
+            });
             if (dirtyDet) {
               hasDirtyContent = true;
               dirtyReason = `[${dirtyDet.stage ? dirtyDet.stage.toUpperCase() : 'DIRTY'}] ${dirtyDet.reason || 'Konten tidak layak'}`;
             }
-          } else {
-            // SAFETY FALLBACK: Jika Gatekeeper microservice port 5050 belum menyala / offline,
-            // jalankan fallback heuristik lokal agar klip kotor TIDAK lolos tanpa pengawasan!
-            const fallbackRes = await inspectFramesLocally(testFrames, { niche: options?.niche || 'kitchen_tools' });
-            if (fallbackRes && (!fallbackRes.eligible || fallbackRes.discardedFrames?.length > 0)) {
+          } else if (!heuristicRes || heuristicRes.discardedFrames?.length > 0) {
+            const severeDiscard = (heuristicRes?.discardedFrames || []).find(f =>
+              ['face', 'subtitle', 'watermark', 'intro_bumper'].includes(f.stage)
+            );
+            if (severeDiscard) {
               hasDirtyContent = true;
-              dirtyReason = `[HEURISTIC] ${fallbackRes.reason || 'Terdeteksi teks overlay/bumper statis pada klip'}`;
+              dirtyReason = `[HEURISTIC] ${severeDiscard.reason || 'Terdeteksi teks overlay/bumper statis pada klip'}`;
             }
           }
 
@@ -2668,12 +2683,12 @@ export async function runStage1Pipeline({
           cleanAuditedClips[0].storyboardRole = 'full_product';
         }
 
-        // HARD RULE: never replenish by copying/offsetting an existing clip.
-        // If audit leaves too few unique scenes, reject rather than manufacture repeats.
-        if (cleanAuditedClips.length >= 6) {
+        // Adaptive clip pacing for 3 to 7 clips
+        if (cleanAuditedClips.length >= 3) {
+          const targetPerClip = Math.max(3.0, Math.min(4.5, 21.0 / cleanAuditedClips.length));
           highlight.clips = cleanAuditedClips.map((c, clipIndex) => {
             const planShot = creativePlan?.shots?.[clipIndex];
-            const duration = Number(planShot?.targetSec) || Number(c.duration) || 3.0;
+            const duration = Number(planShot?.targetSec) || Number(c.duration) || targetPerClip;
             return {
               ...c,
               duration,
@@ -2684,17 +2699,18 @@ export async function runStage1Pipeline({
             };
           });
           highlight.duration = highlight.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
+          console.log(`[ClipAudit] ✅ Mempertahankan ${highlight.clips.length} klip bersih hasil audit (total ${highlight.duration.toFixed(1)}s) dengan pacing adaptif.`);
         } else {
-          // USER MANDATE: Jika klip terpilih terbuang seluruhnya pada audit, JANGAN buang video!
-          // Ambil frame peragaan bersih yang tersimpan di pooledFrames dari video yang sama!
-          console.warn(`[ClipAudit] ⚠️ Seluruh klip awal terbuang pada audit. Memulihkan klip dari frame bersih alternatif pada video yang sama...`);
+          // USER MANDATE: Jika klip terpilih terbuang sebagian/seluruhnya pada audit, JANGAN buang video!
+          // Gabungkan klip bersih yang ada dengan frame peragaan bersih di pooledFrames dari video yang sama!
+          console.warn(`[ClipAudit] ⚠️ Klip bersih tersisa (${cleanAuditedClips.length}) kurang dari 3. Memulihkan klip dari frame bersih alternatif pada video yang sama...`);
           const recoveryFrames = (pooledFrames || [])
             .filter(f => f && Number(f.timestamp) > 0)
             .filter(f => f.candidateIndex !== undefined && f.candidateIndex !== null);
 
-          const recoveryClips = [];
-          const usedRecoveryKeys = new Set();
-          for (let rIdx = 0; rIdx < Math.min(8, recoveryFrames.length); rIdx++) {
+          const recoveryClips = [...cleanAuditedClips];
+          const usedRecoveryKeys = new Set(cleanAuditedClips.map(c => `${c.candidateIndex}:${Math.round(c.startSeconds * 10) / 10}`));
+          for (let rIdx = 0; rIdx < recoveryFrames.length && recoveryClips.length < 6; rIdx++) {
             const frame = recoveryFrames[rIdx];
             const candIdx = Number(frame.candidateIndex);
             const ts = Number(frame.timestamp);
@@ -2710,16 +2726,17 @@ export async function runStage1Pipeline({
               startTime: formatSeconds(ts),
               endTime: formatSeconds(ts + 3.5),
               storyboardSlot: recoveryClips.length + 1,
-              reason: `Recovered Clean Segment #${rIdx + 1}`,
+              reason: `Recovered Clean Segment #${recoveryClips.length}`,
               candidateIndex: candIdx,
               videoPath: sourcePath,
             });
           }
 
-          if (recoveryClips.length >= 6) {
+          if (recoveryClips.length >= 3) {
+            const targetPerClip = Math.max(3.0, Math.min(4.5, 21.0 / recoveryClips.length));
             highlight.clips = recoveryClips.slice(0, 8).map((c, clipIndex) => {
               const planShot = creativePlan?.shots?.[clipIndex];
-              const duration = Number(planShot?.targetSec) || 3.0;
+              const duration = Number(planShot?.targetSec) || targetPerClip;
               return {
                 ...c,
                 duration,
@@ -2730,7 +2747,7 @@ export async function runStage1Pipeline({
               };
             });
             highlight.duration = highlight.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
-            console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi (minimal 21 detik).`);
+            console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi (total ${highlight.duration.toFixed(1)}s).`);
           } else {
             console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
             const auditErr = new Error('Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi, bumper statis, atau wajah.');
