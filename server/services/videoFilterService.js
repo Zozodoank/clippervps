@@ -154,11 +154,16 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
     Number(metaResult.height) || 0,
     ...formats.map(f => Number(f.height) || 0)
   );
+  const maxAvailableWidth = Math.max(
+    Number(metaResult.width) || 0,
+    ...formats.map(f => Number(f.width) || 0)
+  );
   const metadata = {
     id: metaResult.id,
     title: metaResult.title || 'YouTube Video',
     duration,
     maxHeight: maxAvailableHeight,
+    maxWidth: maxAvailableWidth,
     description: (metaResult.description || '').slice(0, 1000),
     channel: metaResult.uploader || metaResult.channel || '',
     tags: Array.isArray(metaResult.tags) ? metaResult.tags : [],
@@ -268,8 +273,10 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal 15 menit (900 detik).` };
   }
 
-  // Catatan: Verifikasi resolusi HD 720p/1080p dilakukan saat video diunduh di downloader.js
-  // (Jangan tolak di sini karena preview stream metadata hanya mengambil format 360p untuk hemat kuota)
+  // 1A. Resolusi Maksimal Video (Wajib tersedia minimal HD 720p/1080p baik landscape maupun portrait)
+  if (metadata.maxHeight > 0 && metadata.maxWidth > 0 && metadata.maxHeight < 720 && metadata.maxWidth < 720) {
+    return { eligible: false, reason: `Resolusi maksimal video (${metadata.maxWidth}x${metadata.maxHeight}) di bawah standar HD 720p/1080p.` };
+  }
 
   const titleLower = (metadata.title || '').toLowerCase();
   const descLower = (metadata.description || '').toLowerCase();

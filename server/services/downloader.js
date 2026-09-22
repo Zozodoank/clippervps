@@ -886,10 +886,8 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   const isBotOrIpBlock =
     lowerErr.includes('sign in to confirm') ||
     lowerErr.includes('automated queries') ||
-    lowerErr.includes('too many requests') ||
-    lowerErr.includes('only images are available') ||
-    (lowerErr.includes('requested format is not available') && lowerErr.includes('images')) ||
-    (lowerErr.includes('http error 429') || lowerErr.includes('status: 429'));
+    lowerErr.includes('http error 429') ||
+    lowerErr.includes('status: 429');
 
   if (isBotOrIpBlock) {
     throw new Error(
@@ -898,6 +896,10 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
       `1. Aktifkan Mode Pesawat (Airplane Mode) di HP selama 5 detik lalu matikan lagi untuk mendapatkan IP operator seluler baru.\n` +
       `2. Atau letakkan file cookies.txt dari browser YouTube ke folder project.`
     );
+  }
+
+  if (lowerErr.includes('standar hd 720p') || lowerErr.includes('requested format is not available') || lowerErr.includes('only images are available')) {
+    throw new Error(`Video sumber tidak memiliki format HD 720p/1080p yang valid di YouTube (hanya tersedia resolusi rendah).`);
   }
 
   throw new Error(`Download video gagal (${qualityLabel}): ${lastDownloadError.slice(-400)}`);
