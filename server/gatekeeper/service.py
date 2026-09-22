@@ -1033,7 +1033,7 @@ class FrameGatekeeper:
                     v["status"] = "discarded"
                     v["stage"] = "temporal_inconsistency"
                     v["decision"] = "ISOLATED_CLEAN_REJECT"
-                    v["reason"] = f"Frame bersih terisolasi ({ts:.1f}s), tidak memenuhi syarat segmen kontinu minimal 2 frame berurutan / 2.5s"
+                    v["reason"] = f"Frame bersih terisolasi ({ts:.1f}s), tidak memenuhi syarat segmen kontinu minimal {min_consecutive_clean} frame berurutan / {min_clean_duration}s"
                 elif v["status"] == "uncertain":
                     v["status"] = "discarded"
                     v["stage"] = "uncertain_scene"

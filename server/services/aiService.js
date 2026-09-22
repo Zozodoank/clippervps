@@ -3164,8 +3164,19 @@ export function build7SlotStoryboardClips({
       if (audit.containsTargetProduct === false || audit.isPackaging === true || audit.isMachine === true || audit.isActiveProductDemo === false) {
         return true;
       }
-    }
-    return /bubble\s*wrap|kardus\s+kosong|cardboard\s+box|empty\s+package|resi\s+pengiriman|paper\s+manual|buku\s+panduan|industrial\s+machine|factory\s+machine|machinery|mesin\s+industri|mesin\s+pabrik|mesin\s+produksi/.test(text);
+    const frameText = [
+      f?.displayLabel,
+      f?.label,
+      f?.description,
+      f?.category,
+      f?.datasetTag,
+      f?.candidateTitle,
+      audit?.visualDescription,
+      audit?.detectedAction,
+      audit?.reason,
+    ].filter(Boolean).join(' ').toLowerCase();
+
+    return /bubble\s*wrap|kardus\s+kosong|cardboard\s+box|empty\s+package|resi\s+pengiriman|paper\s+manual|buku\s+panduan|industrial\s+machine|factory\s+machine|machinery|mesin\s+industri|mesin\s+pabrik|mesin\s+produksi/.test(frameText);
   };
 
   // Professional source policy: prefer the richest single verified source.
