@@ -1029,21 +1029,31 @@ class FrameGatekeeper:
                 print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} text=clean face=clean motion={mot:>4.2f} decision=VERIFIED_CLEAN ✅")
             else:
                 if v["status"] == "clean":
-                    # Frame bersih terisolasi tanpa segmen temporal kontinu
-                    v["status"] = "discarded"
-                    v["stage"] = "temporal_inconsistency"
-                    v["decision"] = "ISOLATED_CLEAN_REJECT"
-                    v["reason"] = f"Frame bersih terisolasi ({ts:.1f}s), tidak memenuhi syarat segmen kontinu minimal {min_consecutive_clean} frame berurutan / {min_clean_duration}s"
+                    # Izinkan frame bersih dengan keyakinan tinggi (valid_real conf >= 0.76)
+                    # sebagai cuplikan peragaan produk mandiri yang valid
+                    if v.get("confidence", 0) >= 0.76 and cls_name == "valid_real":
+                        v["status"] = "clean"
+                        v["decision"] = "VERIFIED_CLEAN"
+                        clean_frames.append(v)
+                        print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} text=clean face=clean motion={mot:>4.2f} decision=VERIFIED_CLEAN (STANDALONE) ✅")
+                    else:
+                        v["status"] = "discarded"
+                        v["stage"] = "temporal_inconsistency"
+                        v["decision"] = "ISOLATED_CLEAN_REJECT"
+                        v["reason"] = f"Frame bersih terisolasi ({ts:.1f}s), tidak memenuhi syarat segmen kontinu minimal {min_consecutive_clean} frame berurutan / {min_clean_duration}s"
+                        discarded_frames.append(v)
                 elif v["status"] == "uncertain":
                     v["status"] = "discarded"
                     v["stage"] = "uncertain_scene"
                     v["decision"] = "UNCERTAIN_REJECT"
                     v["reason"] = f"Keyakinan model lokal di zona uncertain ({v.get('confidence', 0)*100:.1f}%) tanpa konfirmasi segmen temporal"
+                    discarded_frames.append(v)
                 else:
                     v["decision"] = "REJECT"
+                    discarded_frames.append(v)
 
-                discarded_frames.append(v)
-                print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} stage={v.get('stage','none'):<16} decision={v.get('decision')} ⛔ ({v.get('reason')})")
+                if v["decision"] != "VERIFIED_CLEAN":
+                    print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} stage={v.get('stage','none'):<16} decision={v.get('decision')} ⛔ ({v.get('reason')})")
 
             final_all_frames.append(v)
 
@@ -1062,7 +1072,7 @@ class FrameGatekeeper:
                 intro_cutoff_sec = max(intro_cutoff_sec, ordered_results[1].get("timestamp", 5.0))
 
         # ── Keputusan Kelayakan Video (Strict Gatekeeper Policy) ──
-        # Video HANYA eligible jika memiliki MINIMAL 1 Clean Temporal Segment yang terverifikasi!
+        # Video eligible jika memiliki minimal 1 segmen temporal ATAU setidaknya min_consecutive_clean frame bersih terverifikasi
         has_verified_segment = len(verified_segments) > 0
         total_clean_count = len(clean_frames)
         total_f_count = max(1, len(frame_items))
@@ -1071,7 +1081,7 @@ class FrameGatekeeper:
         text_count = sum(1 for d in discarded_frames if d.get("stage") in ("text", "persistent_watermark"))
         static_count = sum(1 for d in discarded_frames if d.get("stage") == "static_frame")
 
-        eligible = has_verified_segment and (total_clean_count >= min_consecutive_clean)
+        eligible = (has_verified_segment or total_clean_count >= min_consecutive_clean) and (total_clean_count >= min_consecutive_clean)
 
         if eligible:
             summary_reason = f"Visual video valid: Ditemukan {len(verified_segments)} segmen temporal bersih kontinu ({total_clean_count}/{total_f_count} frame VERIFIED_CLEAN)."
@@ -1082,7 +1092,7 @@ class FrameGatekeeper:
                 summary_reason = f"Ditolak AI Gatekeeper: Video dipenuhi teks/watermark ({text_count}/{total_f_count} frame). Wajib footage produk bersih."
             elif static_count >= 3 and static_count / total_f_count >= 0.40:
                 summary_reason = f"Ditolak AI Gatekeeper: Video berupa slideshow statis ({static_count}/{total_f_count} frame beku). Wajib video aksi gerak fisik."
-            elif not has_verified_segment:
+            elif not has_verified_segment and total_clean_count < min_consecutive_clean:
                 summary_reason = f"Ditolak AI Gatekeeper: Tidak ditemukan Clean Temporal Segment kontinu (frame bersih sporadis terisolasi, tidak ada {min_consecutive_clean} frame berurutan)."
             else:
                 summary_reason = f"Ditolak AI Gatekeeper: Hanya {total_clean_count} frame bersih (kurang dari syarat minimal)."

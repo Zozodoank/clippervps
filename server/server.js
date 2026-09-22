@@ -2462,20 +2462,23 @@ export async function runStage1Pipeline({
       }).filter(Boolean);
 
       // NEVER manufacture extra scenes by copying an existing clip.
-      // A copied clip with a shifted timestamp can produce the exact visual repetition
-      // reported by users (Scene 1 == Scene 3, Scene 2 == Scene 4).
-      if (hl.clips.length < 6) {
+      // Minimum 3 adegan unik fisik produk untuk menghasilkan reel/short affiliate berkualitas tinggi (13-25 detik).
+      if (hl.clips.length < 3) {
         const clipErr = new Error(
-          `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik (<6 / 21 detik). Tidak akan menggandakan adegan untuk mengejar durasi.`
+          `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik (<3). Tidak akan menggandakan adegan untuk mengejar durasi.`
         );
         clipErr.isAiRejection = true;
-        clipErr.rejectionReason = 'Adegan unik kurang dari 6 (21 detik). Tidak memakai duplikasi sintetis.';
+        clipErr.rejectionReason = 'Adegan unik produk kurang dari 3 klip fisik bersih.';
         throw clipErr;
       }
 
+      // Pacing adaptif: jika klip 3-5 buah, sesuaikan durasi per-klip (3.5s - 4.5s) agar reel tetap proporsional (14-25s)
+      const targetMinTotalSec = hl.clips.length <= 3 ? 13.5 : (hl.clips.length <= 4 ? 16.0 : (hl.clips.length <= 5 ? 18.0 : 21.0));
+      const adaptiveClipSec = Math.max(3.0, Math.min(4.8, Math.round((targetMinTotalSec / hl.clips.length) * 10) / 10));
+
       hl.clips = hl.clips.map((c, clipIndex) => {
         const planShot = creativePlan?.shots?.[clipIndex];
-        const duration = Number(planShot?.targetSec) || Number(c.duration) || 3.0;
+        const duration = Number(planShot?.targetSec) || adaptiveClipSec || Number(c.duration) || 3.5;
         return {
           ...c,
           duration,
@@ -2486,7 +2489,7 @@ export async function runStage1Pipeline({
         };
       });
       hl.duration = hl.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
-      console.log(`[Job ${jobId}] 🎬 Story-first pacing aktif:\n${describeCreativePlan(creativePlan)}`);
+      console.log(`[Job ${jobId}] 🎬 Story-first pacing aktif (${hl.clips.length} klip, ${hl.duration.toFixed(1)}s total):\n${describeCreativePlan(creativePlan)}`);
 
       // Keperluan backward compatibility: inputVideo tetap diisi, tetapi setiap clip
       // wajib mempunyai videoPath sumbernya sendiri dan renderer tidak boleh memakai

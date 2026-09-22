@@ -558,8 +558,8 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
     return true;
   }
 
-  // 1B. Disqualify 'cara', 'tutorial', 'DIY', 'how to', 'do it yourself'
-  if (/\b(?:cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(normalized)) {
+  // 1B. Disqualify DIY crafting / carpentry / building from scratch (bukan review produk jadi)
+  if (/\b(?:diy|do\s+it\s+yourself|cara\s+membuat|cara\s+bikin|how\s+to\s+make|how\s+to\s+build)\b/i.test(normalized) && !/\b(?:unboxing|review|review\s+jujur|spatula|pisau|oven|blender|chopper|air\s*fryer|steamer|pan|wajan)\b/i.test(normalized)) {
     return true;
   }
 
