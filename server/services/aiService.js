@@ -3164,6 +3164,7 @@ export function build7SlotStoryboardClips({
       if (audit.containsTargetProduct === false || audit.isPackaging === true || audit.isMachine === true || audit.isActiveProductDemo === false) {
         return true;
       }
+    }
     const frameText = [
       f?.displayLabel,
       f?.label,
