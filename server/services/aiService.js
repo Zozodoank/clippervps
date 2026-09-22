@@ -846,7 +846,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   );
   const selectedProductProofFailure =
     rawTimestampsForAudit.length >= 2 &&
-    (parsed.hasTargetProductInEverySelectedFrame !== true || !auditEntriesValid);
+    (parsed.hasTargetProductInEverySelectedFrame === false || (streamFrameAudit.length > 0 && !auditEntriesValid));
 
   const shouldReject =
     isFatalMismatch ||
@@ -1599,6 +1599,7 @@ If ACCEPTED:
   "status": "accept",
   "detectedProduct": "<nama produk di video>",
   "isExactProductMatch": true,
+  "hasTargetProductInEverySelectedFrame": true,
   "isFacelessIn916Frame": true,
   "hasFaceIn916Frame": false,
   "hasWatermarkIn916Frame": false,
@@ -1888,7 +1889,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
           });
       const selectedFrameProofFailure =
         selectedIndices.length >= 3 &&
-        (parsed.hasTargetProductInEverySelectedFrame !== true || !hasCompleteSelectedFrameAudit);
+        (parsed.hasTargetProductInEverySelectedFrame === false || (selectedFrameAudit.length > 0 && !hasCompleteSelectedFrameAudit));
 
       // Penolakan FATAL video HANYA jika produk benar-benar salah/berbeda, buatan AI/CGI, atau perabot dilarang
       const isFatalMismatch = isMatchFalse || selectedFrameProofFailure || isSynthetic || isBulky || (isRejectStatus && (reasonLower.includes('tidak cocok') || reasonLower.includes('pasar barat') || reasonLower.includes('bukan produk')));
