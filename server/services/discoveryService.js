@@ -558,6 +558,11 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
     return true;
   }
 
+  // 1A. Disqualify songs, music, lyrics, concerts, artists, podcasts, trailers, gameplay, episode
+  if (/\b(?:lagu|lirik|lyric|lyrics|sing|song|music|mv|official\s+video|concert|konser|podcast|trailer|gameplay|walkthrough|eps?\s*\d+|episode|cover|remix|acoustic|karaoke|chord|kunci\s+gitar|mars|adele|green\s+day|taylor\s+swift|billie\s+eilish)\b/i.test(normalized)) {
+    return true;
+  }
+
   // 1B. Disqualify DIY crafting / carpentry / building from scratch (bukan review produk jadi)
   if (/\b(?:diy|do\s+it\s+yourself|cara\s+membuat|cara\s+bikin|how\s+to\s+make|how\s+to\s+build)\b/i.test(normalized) && !/\b(?:unboxing|review|review\s+jujur|spatula|pisau|oven|blender|chopper|air\s*fryer|steamer|pan|wajan)\b/i.test(normalized)) {
     return true;
@@ -1957,7 +1962,7 @@ export async function discoverBrandedShopeeProduct({
         'Pandaoma', 'Deenor', 'Hayylife', 'Idealife', 'Advance', 'Moegen', 'Gm Bear',
         'Niko', 'Tori', 'Nagako', 'Vicenza', 'Gohappy', 'Sivicom', 'Chefina', 'Supra', 'Kangaroo',
         'Debellin', 'Cypruz', 'One Two Cups', 'Halu', 'Meimei', 'Roschel', 'Vianis', 'Cookmaster',
-        'Morphy Richards', 'Bruno', 'Mecoo', 'Kels', 'Ravelle', 'Sokany', 'DSP', 'Sonifer',
+        'Morphy Richards', 'Mecoo', 'Kels', 'Ravelle', 'Sokany', 'DSP', 'Sonifer',
         'RAF', 'Boma', 'Haeger', 'Geepas', 'Sanford', 'Donlim',
         // Brand Terkenal & Rumah Tangga Indonesia / Global:
         'Maspion', 'Miyako', 'Cosmos', 'Kirin', 'Maxim', 'Oxone', 'BOLDe', 'Mito', 'Mitochiba',
@@ -1992,7 +1997,7 @@ export async function discoverBrandedShopeeProduct({
     // Strictly exclude Chinese platforms and Mandarin search results (-douyin -kuaishou -bilibili -chinese -mandarin).
     const query = isGadget
       ? `"${brandSeed}" (smartphone OR hp OR "handphone") (review OR unboxing OR tes) -laptop -notebook -macbook -douyin -kuaishou -bilibili -weibo -chinese -mandarin`
-      : `"${brandSeed}" (alat dapur OR masak OR kitchen OR chopper OR blender OR panci OR vacuum OR steamer) (review OR demo OR "cara pakai" OR unboxing OR tes) -douyin -kuaishou -bilibili -weibo -chinese -mandarin`;
+      : `"${brandSeed}" (alat dapur OR masak OR kitchen OR chopper OR blender OR panci OR steamer OR oven OR "air fryer" OR wajan OR teko) (review OR demo OR "cara pakai" OR unboxing OR tes) -mars -adele -lagu -lirik -douyin -kuaishou -bilibili -weibo -chinese -mandarin`;
     let results = [];
     try {
       results = await searchYouTubeVideos(query, { limit: 16 });
@@ -2019,6 +2024,7 @@ export async function discoverBrandedShopeeProduct({
         text.includes(normalizeText(brandSeed)) &&
         !isBundleOrSetProduct(text) &&
         !isFoodOrBeverageProduct(text) &&
+        !/\b(?:lagu|lirik|lyric|lyrics|sing|song|music|mv|official\s+video|concert|konser|podcast|trailer|gameplay|walkthrough|eps?\s*\d+|episode|cover|remix|acoustic|karaoke|chord|kunci\s+gitar)\b/i.test(text) &&
         !/\b(?:official|official store|iklan resmi|advertisement|commercial)\b/i.test(text);
     });
 
