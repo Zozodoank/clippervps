@@ -1949,18 +1949,16 @@ export async function discoverBrandedShopeeProduct({
         'Cubot', 'Doogee', 'Umidigi', 'Blackview', 'Oukitel', 'Ulefone', 'HOTWAV', 'FOSSiBOT'
       ]
     : [
-        // Brand Murah Viral Marketplace & Chinese OEM Direct-to-Consumer:
-        'Gaabor', 'Simplus', 'Samono', 'Deerma', 'Bear', 'Tjean', 'Daewoo', 'Konka', 'Joyoung',
-        'Midea', 'Supor', 'Olayks', 'Ocooker', 'Liven', 'Nathome', 'MIUI', 'Dreame', 'Roborock',
-        'Roidmi', 'Jimmy', 'Mijia', 'Xiaomi', 'Youpin', 'Han River', 'Goto', 'Inone', 'Olike',
+        // Brand Murah Viral Marketplace & Chinese OEM Direct-to-Consumer (Kitchen / Cookware / Home Appliances):
+        'Gaabor', 'Simplus', 'Samono', 'Bear', 'Tjean', 'Daewoo', 'Konka', 'Joyoung',
+        'Midea', 'Supor', 'Olayks', 'Ocooker', 'Liven', 'Nathome', 'MIUI',
+        'Mijia', 'Xiaomi', 'Youpin', 'Han River', 'Goto', 'Inone', 'Olike',
         'Freemir', 'Carote', 'Stein Cookware', 'Ecoco', 'Ecentio', 'Kova', 'Gabor', 'Hongzhuo',
-        'Pandaoma', 'Deenor', 'Hayylife', 'Kurumi', 'Idealife', 'Advance', 'Moegen', 'Gm Bear',
+        'Pandaoma', 'Deenor', 'Hayylife', 'Idealife', 'Advance', 'Moegen', 'Gm Bear',
         'Niko', 'Tori', 'Nagako', 'Vicenza', 'Gohappy', 'Sivicom', 'Chefina', 'Supra', 'Kangaroo',
         'Debellin', 'Cypruz', 'One Two Cups', 'Halu', 'Meimei', 'Roschel', 'Vianis', 'Cookmaster',
-        'Bardi', 'Reo', 'Haier', 'Hisense', 'Chigo', 'Gree', 'Aux', 'Changhong', 'Morphy Richards',
-        'Bruno', 'Mecoo', 'Kels', 'Ravelle', 'Sokany', 'DSP', 'Sonifer', 'RAF', 'Boma', 'Haeger',
-        'Geepas', 'Sanford', 'Donlim', 'Arenti', 'Imou', 'Ezviz', 'Tapo', 'Baseus', 'UGREEN',
-        'Usams', 'Acome', 'Robot', 'Vention', 'Aukey', 'Anker',
+        'Morphy Richards', 'Bruno', 'Mecoo', 'Kels', 'Ravelle', 'Sokany', 'DSP', 'Sonifer',
+        'RAF', 'Boma', 'Haeger', 'Geepas', 'Sanford', 'Donlim',
         // Brand Terkenal & Rumah Tangga Indonesia / Global:
         'Maspion', 'Miyako', 'Cosmos', 'Kirin', 'Maxim', 'Oxone', 'BOLDe', 'Mito', 'Mitochiba',
         'Yong Ma', 'Rinnai', 'Sanken', 'Denpoo', 'Sekai', 'Hi-Cook', 'Beko', 'Philips', 'Tefal',
@@ -2033,6 +2031,8 @@ export async function discoverBrandedShopeeProduct({
       const title = cleanTitle(rawTitle) || rawTitle;
       const description = cleanDescription(result.description || '');
       if (!title || isBundleOrSetProduct(title)) continue;
+      const targetNiche = isGadget ? 'gadget_smartphone' : 'kitchen_tools';
+      if (isBulkyOrUnsuitableProduct(title, { niche: targetNiche })) continue;
 
       const ytInfo = extractBrandedYouTubeProductIdentity(title, description, brandSeed, isGadget);
       const info = extractCoreProductInfo(title, description, '', brandSeed);
@@ -2061,7 +2061,8 @@ export async function discoverBrandedShopeeProduct({
         !productTypeNorm ||
         productTypeNorm === brandNorm ||
         (modelNorm && productTypeNorm === modelNorm) ||
-        !searchQueries.length
+        !searchQueries.length ||
+        isBulkyOrUnsuitableProduct(productType, { niche: targetNiche })
       ) continue;
 
       brandedDiscoveryMisses.delete(brandKey);
