@@ -81,8 +81,8 @@ MODELS_DIR = os.path.join(CURRENT_DIR, "models")
 # 1. TAHAP 1: FACE DETECTOR (MediaPipe BlazeFace + OpenCV YuNet)
 # ─────────────────────────────────────────────────────────────────────────────
 class FaceGatekeeper:
-    def __init__(self, min_confidence=0.38):
-        # min_confidence diperketat ke 0.38 untuk menangkap presenter di latar/sudut
+    def __init__(self, min_confidence=0.52):
+        # min_confidence 0.52 — cukup tinggi agar tidak false-positive pada produk oval/tangan
         self.min_confidence = min_confidence
         self.mp_detector = None
         self.yunet_detector = None
@@ -111,7 +111,7 @@ class FaceGatekeeper:
                     model=yunet_path,
                     config="",
                     input_size=(320, 320),
-                    score_threshold=0.60,
+                    score_threshold=0.72,
                     nms_threshold=0.3,
                     top_k=5000
                 )
@@ -868,7 +868,7 @@ class FrameGatekeeper:
         }
 
     def process_batch(self, frame_items, niche="kitchen_tools",
-                      min_consecutive_clean=3, min_clean_duration=4.0):
+                      min_consecutive_clean=2, min_clean_duration=2.5):
         """
         Memproses batch frame dengan logika:
         1. Static frame detection (MAD & edge difference)
@@ -954,14 +954,14 @@ class FrameGatekeeper:
         for idx, v in enumerate(single_verdicts):
             c_acts = v.get("cornerActivations") or {}
             for c_name in ["TL", "TR", "BL", "BR"]:
-                # Ambang aktivasi sudut yang mencurigakan (>= 0.012 atau 1.2% zona sudut)
-                if c_acts.get(c_name, 0.0) >= 0.012:
+                # Ambang aktivasi sudut yang mencurigakan (>= 0.025 atau 2.5% zona sudut)
+                if c_acts.get(c_name, 0.0) >= 0.025:
                     corner_hits[c_name].append(idx)
 
         persistent_watermark_corners = []
         for c_name, hit_indices in corner_hits.items():
-            # Jika terdeteksi di >= 2 frame yang terpisah, probabilitas watermark pojok statis sangat tinggi!
-            if len(hit_indices) >= 2:
+            # Jika terdeteksi di >= 3 frame yang terpisah, probabilitas watermark pojok statis sangat tinggi!
+            if len(hit_indices) >= 3:
                 persistent_watermark_corners.append(c_name)
                 for h_idx in hit_indices:
                     f_item = single_verdicts[h_idx]
@@ -1048,7 +1048,7 @@ class FrameGatekeeper:
                     v["status"] = "discarded"
                     v["stage"] = "temporal_inconsistency"
                     v["decision"] = "ISOLATED_CLEAN_REJECT"
-                    v["reason"] = f"Frame bersih terisolasi ({ts:.1f}s), tidak memenuhi syarat segmen kontinu minimal 3 frame berurutan / 4.0s"
+                    v["reason"] = f"Frame bersih terisolasi ({ts:.1f}s), tidak memenuhi syarat segmen kontinu minimal 2 frame berurutan / 2.5s"
                 elif v["status"] == "uncertain":
                     v["status"] = "discarded"
                     v["stage"] = "uncertain_scene"
