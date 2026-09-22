@@ -1741,14 +1741,14 @@ export async function runStage1Pipeline({
 
       // ── JALUR 2: OPENROUTER / STREAM SAMPLING LOKAL DENGAN VERIFIED CLEAN FRAMES ──
       // STRICT SAFETY GATE: Hanya kirim frame yang telah lolos verifikasi segmen bersih (VERIFIED_CLEAN)
-      let verifiedCleanFrames = (localCheck.cleanFrames && localCheck.cleanFrames.length >= 3)
+      let verifiedCleanFrames = (localCheck.cleanFrames && localCheck.cleanFrames.length >= 2)
         ? localCheck.cleanFrames
         : [];
 
-      if (!verifiedCleanFrames || verifiedCleanFrames.length < 3) {
+      if (!verifiedCleanFrames || verifiedCleanFrames.length < 2) {
         const frameErr = new Error(`Tidak cukup frame bersih terverifikasi (${verifiedCleanFrames?.length || 0} frames) untuk dikirim ke AI Vision.`);
         frameErr.isAiRejection = true;
-        frameErr.rejectionReason = 'Frame bersih tidak mencukupi standar Clean Temporal Segment (minimal 3 frame berurutan).';
+        frameErr.rejectionReason = 'Frame bersih tidak mencukupi standar Clean Temporal Segment (minimal 2 frame berurutan).';
         throw frameErr;
       }
 
