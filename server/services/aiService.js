@@ -620,14 +620,14 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GR
 
 ${buildFaceAndMotionCriterion(niche, clipSec)}
 
-CRITERION 4B: ZERO UNBOXING / ZERO PACKAGING IN SELECTED FOOTAGE
-- PROSES UNBOXING BUKAN FOOTAGE AFFILIATE YANG BOLEH DIPILIH.
-- DILARANG KERAS memilih atau memasukkan ke timestamps/storyboard frame/scene yang menampilkan:
-  * kardus, cardboard box, bubble wrap, plastik pembungkus, paket, label pengiriman, kemasan retail, buku manual kertas, kartu garansi, atau busa packaging sebagai subjek utama/terlihat jelas.
-  * membuka paket, merobek bubble wrap, mengeluarkan barang dari kotak, membongkar packing, atau memegang kotak kosong.
-- Jika video memiliki unboxing di awal, ABAIKAN bagian tersebut dan pilih hanya segmen setelah produk benar-benar sudah keluar dari kemasan dan sedang dipakai/didemonstrasikan.
-- Jika tidak ada cukup segmen aktif setelah packaging dibuang, WAJIB REJECT video. Jangan mengisi slot dengan frame kardus/kemasan hanya untuk memenuhi 7 slot.
-- Slot 1 WAJIB berupa beauty shot / produk fisik yang sudah keluar dari kemasan; ZERO unboxing, ZERO kardus, ZERO bubble wrap.
+CRITERION 4B: PRODUCT HANDS-ON SHOWCASE & CLEAN FOOTAGE (UNBOXING SHOWCASE WELCOMED)
+- VIDEO UNBOXING / HANDS-ON REVIEW SANGAT DITERIMA KARENA MEMILIKI VARIASI VISUAL PRODUK YANG KAYA (close-up fisik produk, variasi sudut/angle bodi, tes layar/tombol/fitur, peragaan fungsi).
+- YANG DILARANG HANYALAH KEMASAN KOSONG / KARDUS SAJA:
+  * Jangan pilih frame yang hanya menampilkan kardus kosong, resi pengiriman, robekan bubble wrap, atau buku manual kertas tanpa produk.
+  * Frame unboxing yang menampilkan PRODUK FISIK SECARA JELAS (misal: produk dipegang di tangan, diperlihatkan dari depan/belakang/samping, dinyalakan, diuji coba, diperagakan fungsinya) adalah FOOTAGE EMAS AFFILIATE dan 100% DIPERBOLEHKAN!
+  * Untuk video unboxing: adegan fisik produk (memegang produk, memamerkan bodi/layar/kamera, mengoperasikan fitur, mendemokan alat) WAJIB ditandai sebagai containsTargetProduct=true, isPackaging=false, dan isActiveProductDemo=true.
+- Jika frame awal menampilkan kardus/paket, cukup lewati frame kardus tersebut dan pilih frame-frame peragaan fisik produk yang variatif.
+- Slot 1 WAJIB berupa beauty shot / produk fisik yang jelas (bodi produk di tangan atau di atas meja; bebas kardus/bubble wrap kosong).
 
 CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOOTAGE
 - ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FOOTAGE (MIRING / ROTATE 90 DERAJAT):
@@ -639,7 +639,7 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
 
 CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
 - HARD REJECT (ZERO-TOLERANCE for selected clips):
-  * Every timestamp in "timestamps" MUST be 100% free of faces, subtitles, creator text, watermarks, pointing arrows, stickers, emojis, price tags, unboxing cardboard, paper manuals, and static slides.
+  * Every timestamp in "timestamps" MUST be 100% free of faces, subtitles, creator text, watermarks, pointing arrows, stickers, emojis, price tags, empty cardboard boxes, paper manuals, and static slides.
 - MOTION FIRST (ACTIVE DEMONSTRATION OVER FROZEN PRODUCT):
   * Give highest priority to clips showing clear hands-on demonstration, crisp natural lighting, and active physical product motion (operating, cutting, pressing, demonstrating function).
   * DO NOT select frozen or lifeless shots of the product sitting idly on a table.
@@ -657,7 +657,7 @@ CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
 - Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.
 - If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.
 - For EVERY selected timestamp, return a matching "frameAudit" row containing timestamp + containsTargetProduct/isPackaging/isMachine/isActiveProductDemo.
-- A selected timestamp is invalid if the target product is not visibly present and actively demonstrated, or if packaging/unboxing/machine footage dominates.
+- A selected timestamp is invalid if the target product is not visibly present and actively demonstrated, or if empty packaging/machine footage dominates.
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -1722,11 +1722,11 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - Jika ada watermark di tengah pada satu frame, abaikan frame tersebut dan pilih frame lain yang bersih dari video yang sama!
 5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
    Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
-   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / produk yang sudah keluar dari kemasan). DILARANG KERAS kardus, bubble wrap, paket, proses membuka kemasan, frame tanpa produk, atau aksi ekstrem di Slot 1!
+   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / produk yang sudah keluar dari kemasan / hands-on showcase fisik produk). DILARANG KERAS kardus kosong, bubble wrap tanpa produk, paket resi pengiriman, atau frame tanpa produk di Slot 1!
    ${preset.storyboardInstructions}
 5B. TARGET PRODUCT MUST BE VISIBLY PRESENT IN EVERY SELECTED FRAME:
    - Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.
-   - REJECT frame yang hanya menampilkan tangan, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus, bubble wrap, kemasan, atau mesin/peralatan lain tanpa produk target.
+   - REJECT frame yang hanya menampilkan tangan kosong, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus kosong, bubble wrap tanpa produk, resi paket, atau mesin industri/peralatan lain tanpa produk target.
    - Untuk kitchen_tools: jangan pernah menganggap aktivitas memasak sebagai bukti produk. Jika produk target tidak terlihat dan dioperasikan, frame TIDAK valid.
    - Set hasTargetProductInEverySelectedFrame menjadi true HANYA bila setiap frame yang dipilih lolos bukti visual tersebut; bila satu saja tidak memenuhi, set false.
 
@@ -3164,10 +3164,7 @@ export function build7SlotStoryboardClips({
         return true;
       }
     }
-    const text = [
-      f.reason, f.detectedAction, f.category, f.datasetTag, f.displayLabel
-    ].filter(Boolean).join(' ').toLowerCase();
-    return /unbox|unpack|bubble\s*wrap|kardus|cardboard|packaging|package opening|open box|box opening|industrial machine|factory machine|machinery|mesin industri|mesin pabrik|mesin produksi/.test(text);
+    return /bubble\s*wrap|kardus\s+kosong|cardboard\s+box|empty\s+package|resi\s+pengiriman|paper\s+manual|buku\s+panduan|industrial\s+machine|factory\s+machine|machinery|mesin\s+industri|mesin\s+pabrik|mesin\s+produksi/.test(text);
   };
 
   // Professional source policy: prefer the richest single verified source.
@@ -3412,10 +3409,11 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       const isLegacySubtitle = !isPhysicalBrand && (audit.hasTextOrSubtitles === true || (legacyText && legacyText !== 'none' && legacyText !== 'null' && legacyText !== 'false'));
       const hasFace = audit.hasFace === true;
       const isPoorlyFramed = audit.isWellFramed === false;
-      const isUnboxing = audit.isUnboxing === true ||
-        (audit.detectedAction && /unbox|kardus|paket|buka paket|kemasan|packaging|bubble wrap/i.test(audit.detectedAction));
+      // Hanya buang jika murni kardus kosong / bubble wrap tanpa produk
+      const isPurePackaging = audit.isPackaging === true ||
+        (audit.detectedAction && /(?:kardus\s+kosong|cardboard\s+box|bubble\s*wrap\s+only|resi\s+pengiriman|buka\s+kardus\s+kosong)/i.test(audit.detectedAction));
 
-      if (hasFloatingOverlay || isLegacySubtitle || hasFace || isPoorlyFramed || isUnboxing) {
+      if (hasFloatingOverlay || isLegacySubtitle || hasFace || isPoorlyFramed || isPurePackaging) {
         const sec = Math.round(parseTimeToSeconds(audit.timestamp ?? audit.frameIndex));
         dirtyTimestamps.push(sec);
       }
@@ -3449,20 +3447,20 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       continue;
     }
 
-    // Strictly discard any clip that is flagged as unboxing or packaging
-    const isUnboxingClip = rawClip?.isUnboxing === true ||
-      /unbox|kardus|paket|kemasan|packaging|bubble wrap|buka paket/i.test(String(rawClip?.reason || ''));
-    if (isUnboxingClip) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s: unboxing activity rejected (pro-affiliate mode)`);
+    // Discard any clip that is purely empty packaging waste without product
+    const isPurePackagingClip = rawClip?.isPackaging === true ||
+      /(?:kardus\s+kosong|cardboard\s+box|bubble\s*wrap\s+only|resi\s+pengiriman|buka\s+kardus\s+kosong)/i.test(String(rawClip?.reason || ''));
+    if (isPurePackagingClip) {
+      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s: empty packaging rejected`);
       continue;
     }
 
     const endSeconds = startSeconds + clipLength;
 
-    // Discard any clip interval that covers dirty frames containing floating text/subtitles/watermarks/unboxing
+    // Discard any clip interval that covers dirty frames containing floating text/subtitles/watermarks/packaging
     const overlapsDirtyFrame = dirtyTimestamps.some(ts => ts >= startSeconds && ts <= endSeconds);
     if (overlapsDirtyFrame) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}-${endSeconds}s: overlaps frame with detected subtitle/watermark/unboxing`);
+      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}-${endSeconds}s: overlaps frame with detected subtitle/watermark/empty packaging`);
       continue;
     }
 

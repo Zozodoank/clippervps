@@ -259,13 +259,13 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 
   const isGadget = options.niche === 'gadget_smartphone';
 
-  // 1. Durasi Video (Wajib antara 3 menit s/d 10 menit: 150s - 600s)
+  // 1. Durasi Video (Wajib antara 50 detik s/d 15 menit: 50s - 900s, harmonis dengan discovery & downloader)
   const duration = Number(metadata.duration) || 0;
-  if (duration > 0 && duration < 150) {
-    return { eligible: false, reason: `Durasi video terlalu pendek (${Math.round(duration)} detik). Sesuai target, minimal durasi 3 menit (150-180 detik) agar footage peragaan produk memadai.` };
+  if (duration > 0 && duration < 50) {
+    return { eligible: false, reason: `Durasi video terlalu pendek (${Math.round(duration)} detik). Minimal 50 detik agar footage peragaan produk memadai.` };
   }
-  if (duration > 600) {
-    return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Sesuai target, durasi video dibatasi 3-10 menit (maksimal 600 detik).` };
+  if (duration > 900) {
+    return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal 15 menit (900 detik).` };
   }
 
   // Catatan: Verifikasi resolusi HD 720p/1080p dilakukan saat video diunduh di downloader.js
@@ -302,18 +302,11 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 
   // 2B. Filter Kata Kunci Terlarang pada Judul Video
   // Catatan: Pembukaan kardus & intro awal (0-12s) serta outro (8s) sudah otomatis dilewati saat sampling frame.
-  // Jangan tolak video jika ada indikasi review/demo/tes/pakai aktif meskipun uploader menyertakan kata unboxing.
-  // Jangan periksa kata unboxing pada deskripsi karena hampir semua uploader review menulis kata "unboxing" di deskripsi.
-  const hasActiveReviewSignal = /\b(review|demo|demonstration|tes|uji|cara\s+pakai|fungsi|hands\s+on|pemakaian|reviewing|unboxing\s+dan\s+review|review\s+dan\s+unboxing|unboxing\s*&\s*review)\b/i.test(titleLower);
-  const purePackagingTitleRegex = /\b(unboxing\s+only|just\s+unboxing|buka\s+kardus|buka\s+paket|paket\s+dibuka|open\s+box|package\s+opening|box\s+opening|bubble\s*wrap)\b/i;
-
-  if (purePackagingTitleRegex.test(titleLower) && !hasActiveReviewSignal) {
-    return { eligible: false, reason: 'Judul video mengindikasikan murni unboxing kemasan/kardus tanpa demo pemakaian produk.' };
-  }
-
-  // Jika judul adalah unboxing murni tanpa sinyal review/demo/tes sama sekali
-  if (/\b(unboxing|unbox|unpack|unpacking)\b/i.test(titleLower) && !hasActiveReviewSignal) {
-    return { eligible: false, reason: 'Video terindikasi unboxing kemasan/kardus tanpa demo produk aktif.' };
+  // Video unboxing/hands-on SANGAT DITERIMA karena memuat footage b-roll fisik produk yang kaya & variatif.
+  // Hanya tolak konten sampah tanpa produk fisik nyata (seperti kardus kosong atau packing pesanan olshop).
+  const pureTrashPackagingRegex = /\b(kardus\s+kosong|bubble\s*wrap\s+only|packing\s+pesanan|bungkus\s+paket\s+olshop|koleksi\s+kardus)\b/i;
+  if (pureTrashPackagingRegex.test(titleLower)) {
+    return { eligible: false, reason: 'Judul video mengindikasikan kemasan kosong / packing pesanan tanpa produk nyata.' };
   }
 
   const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|demo|pakai|menggunakan)\b/i.test(titleLower);
@@ -406,7 +399,7 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
         'pengalaman pribadi', 'kulitku', 'mukaku', 'wajahku',
         'curhat', 'keseharianku', 'kenalan', 'ngobrol', 'bincang', 'q&a', 'storytime',
         'halo guys', 'halo teman', 'halo semuanya', 'sama aku', 'bareng aku',
-        'unbox with me', 'talking head', 'vlogger', 'blogger',
+        'talking head', 'vlogger', 'blogger',
         'haul with me', 'watch me'
       ];
 

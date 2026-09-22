@@ -2291,8 +2291,8 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
         if (uploaderMatch) channel = uploaderMatch[1].trim();
       }
 
-      // Filter out videos with known duration < 2.5 min (150s) or > 10 min (600s)
-      if (durationSec > 0 && (durationSec < 150 || durationSec > 600)) return;
+      // Filter out videos with known duration < 50s or > 15 min (900s)
+      if (durationSec > 0 && (durationSec < 50 || durationSec > 900)) return;
 
       // Filter out videos with banned / tutorial / DIY / repair keywords
       if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
@@ -2570,7 +2570,7 @@ Tugas:
 1. Identifikasi nama benda/gadget fisik ini dalam bahasa Inggris universal (nama produk OEM/pabrik yang biasa dipakai reviewer global di YouTube/Amazon/AliExpress).
 2. Buat 4 frasa pencarian YouTube paling efektif dalam bahasa Inggris untuk menemukan footage produk yang bersih, jernih, dan sinematik:
    - WAJIB kombinasikan nama produk dengan kata kunci aset mentah: "raw footage", "b-roll", "textless", "clean version", "no graphics".
-   - DILARANG KERAS menggunakan kata kunci: cara, tutorial, diy, how to, unboxing, perbaikan, penggantian, rusak, service, servis, ganti, repair, haul, vlog, review wajah.
+   - DILARANG KERAS menggunakan kata kunci: cara, tutorial, diy, how to, perbaikan, penggantian, rusak, service, servis, ganti, repair, haul, vlog, review wajah.
    - Hindari kata-kata promo belanja seperti: COD, murah, promo, terlaris, diskon.
 
 Keluarkan JSON dengan format persis:

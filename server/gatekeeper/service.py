@@ -636,7 +636,8 @@ def detect_paper_manual(image_bgr):
     edges = cv2.Canny(gray, 50, 150)
     edge_cov = float(np.count_nonzero(edges)) / float(h * w)
 
-    if val_mean > 215 and sat_mean < 22 and edge_cov > 0.065:
+    # Buku manual kertas murni: halaman kertas putih pekat (val > 230, sat < 12) dengan paragraf teks padat (edges > 12%)
+    if val_mean > 230 and sat_mean < 12 and edge_cov > 0.12:
         return True, f"Buku panduan / dokumen kertas manual terdeteksi (val={val_mean:.0f}, edges={edge_cov*100:.1f}%)"
     return False, "Bukan dokumen kertas"
 
@@ -760,7 +761,7 @@ class FrameGatekeeper:
                 "filePath": file_path,
                 "timestamp": timestamp,
                 "status": "discarded",
-                "stage": "unboxing_manual",
+                "stage": "paper_manual",
                 "reason": manual_reason,
                 "confidence": 0.90,
                 "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
