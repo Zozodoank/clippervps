@@ -412,9 +412,15 @@ async function searchWithRapidApi(query, limit = 10) {
       },
       signal: AbortSignal.timeout(10000)
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`[Downloader] RapidAPI returned HTTP ${res.status} ${res.statusText || ''} for query "${cleanQuery}"`);
+      return null;
+    }
     const data = await res.json();
     const items = data.data || data.results || [];
+    if (!items.length) {
+      console.warn(`[Downloader] RapidAPI returned 0 items for query "${cleanQuery}"`);
+    }
     return items
       .filter(item => item.type === 'video' || item.videoId || item.id)
       .map(item => ({
@@ -428,6 +434,7 @@ async function searchWithRapidApi(query, limit = 10) {
       .filter(item => item.id && item.url && (item.duration === 0 || (item.duration >= 35 && item.duration <= 900)))
       .slice(0, limit);
   } catch (e) {
+    console.warn(`[Downloader] RapidAPI search error for "${query}": ${e.message}`);
     return null;
   }
 }
@@ -628,7 +635,7 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
     // sp=EgIQAQ%253D%253D enforces YouTube Video filter (all durations, from 35s upwards)
     let res = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}&sp=EgIQAQ%253D%253D`, {
       headers: stealthHeaders,
-      signal: AbortSignal.timeout(8000)
+      signal: AbortSignal.timeout(15000)
     });
     if (!res.ok) return null;
     let html = await res.text();
@@ -642,7 +649,7 @@ async function searchDirectYouTubeWeb(query, limit = 10) {
       await new Promise(r => setTimeout(r, 1000 + Math.floor(Math.random() * 1000)));
       const fallbackRes = await fetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`, {
         headers: stealthHeaders,
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(15000)
       });
       if (fallbackRes.ok) {
         html = await fallbackRes.text();
@@ -751,7 +758,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
       '--sleep-requests', '1.5',
       '--extractor-args', isTermuxOrMobile
         ? 'youtube:player_client=android,mweb,web'
-        : 'youtube:player_client=web,mweb,android',
+        : (foundCookies ? 'youtube:player_client=web,mweb,android' : 'youtube:player_client=mweb,android,web'),
       '--match-filter', 'duration >= 150 & duration <= 600',
       searchTarget
     ];

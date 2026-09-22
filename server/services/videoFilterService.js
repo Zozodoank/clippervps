@@ -81,7 +81,7 @@ function getYtDlpBaseArgs() {
     '--geo-bypass',
     '--extractor-args', isTermuxOrMobile
       ? 'youtube:player_client=mweb,android,web;formats=missing_pot'
-      : 'youtube:player_client=web,mweb,android;formats=missing_pot',
+      : (foundCookies ? 'youtube:player_client=web,mweb,android;formats=missing_pot' : 'youtube:player_client=mweb,android,web;formats=missing_pot'),
     '--sleep-requests', '1.0',
     '--user-agent', isTermuxOrMobile
       ? 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
@@ -276,6 +276,19 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   const tagsLower = (metadata.tags || []).map(t => String(t).toLowerCase());
   const combinedText = `${titleLower} ${descLower} ${tagsLower.join(' ')}`;
 
+  // 1B. Filter Bahasa & Aksara Asing Non-Latin (Hanzi / Mandarin, Devanagari, Thai, Arabic, Cyrillic, Hangul, Kana)
+  // Per requirement: Brand kebanyakan produk China/marketplace, tapi video WAJIB bukan berbahasa China/asing!
+  const foreignScriptRegex = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u0900-\u097F\u0980-\u09FF\u0E00-\u0E7F\u0600-\u06FF\u0400-\u04FF\uAC00-\uD7AF\u3040-\u30ff]/;
+  if (foreignScriptRegex.test(metadata.title || '')) {
+    return { eligible: false, reason: 'Judul video terdeteksi berbahasa non-Latin (tulisan Mandarin / Hanzi / aksara asing). Video wajib berbahasa Indonesia atau Inggris.' };
+  }
+
+  // Filter platform media sosial China & indikasi bahasa Mandarin
+  const chinesePlatformRegex = /\b(douyin|kuaishou|bilibili|xiaohongshu|weibo|mandarin|bahasa mandarin|chinese version|china version|cn version|chinesecooking)\b/i;
+  if (chinesePlatformRegex.test(combinedText)) {
+    return { eligible: false, reason: 'Video terindikasi dari platform video China (Douyin/Bilibili/Kuaishou) atau berbahasa Mandarin.' };
+  }
+
   // 2. Filter Subtitle Hardburned pada Judul / Deskripsi / Tags
   // Catatan: Soft Closed Captions (CC) di YouTube (metadata.subtitles) adalah teks eksternal yang TIDAK
   // ter-render pada pixel stream/MP4. Subtitle hardburned yang sesungguhnya dideteksi via OCR di Tahap 2.
@@ -288,18 +301,34 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
 
   // 2B. Filter Kata Kunci Terlarang pada Judul Video
-  // Packaging/unboxing tidak pernah menjadi sumber footage affiliate yang valid.
-  const packagingRegex = /\b(unboxing|unbox|unpack|unpacking|bubble\s*wrap|kardus|cardboard|packaging|package\s+opening|box\s+opening|open\s+box|buka\s+paket|paket\s+dibuka)\b/i;
-  if (packagingRegex.test(titleLower) || packagingRegex.test(descLower.slice(0, 700))) {
-    return { eligible: false, reason: 'Video terindikasi unboxing/packaging (kardus, bubble wrap, atau pembukaan paket), bukan demo produk aktif.' };
+  // Catatan: Pembukaan kardus & intro awal (0-12s) serta outro (8s) sudah otomatis dilewati saat sampling frame.
+  // Jangan tolak video jika ada indikasi review/demo/tes/pakai aktif meskipun uploader menyertakan kata unboxing.
+  // Jangan periksa kata unboxing pada deskripsi karena hampir semua uploader review menulis kata "unboxing" di deskripsi.
+  const hasActiveReviewSignal = /\b(review|demo|demonstration|tes|uji|cara\s+pakai|fungsi|hands\s+on|pemakaian|reviewing|unboxing\s+dan\s+review|review\s+dan\s+unboxing|unboxing\s*&\s*review)\b/i.test(titleLower);
+  const purePackagingTitleRegex = /\b(unboxing\s+only|just\s+unboxing|buka\s+kardus|buka\s+paket|paket\s+dibuka|open\s+box|package\s+opening|box\s+opening|bubble\s*wrap)\b/i;
+
+  if (purePackagingTitleRegex.test(titleLower) && !hasActiveReviewSignal) {
+    return { eligible: false, reason: 'Judul video mengindikasikan murni unboxing kemasan/kardus tanpa demo pemakaian produk.' };
   }
 
+  // Jika judul adalah unboxing murni tanpa sinyal review/demo/tes sama sekali
+  if (/\b(unboxing|unbox|unpack|unpacking)\b/i.test(titleLower) && !hasActiveReviewSignal) {
+    return { eligible: false, reason: 'Video terindikasi unboxing kemasan/kardus tanpa demo produk aktif.' };
+  }
+
+  const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|demo|pakai|menggunakan)\b/i.test(titleLower);
+
   const bannedKeywordRegex = isGadget
-    ? /\b(cara|tutorial|diy|how\s+to|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti lcd|ganti baterai|repair|reparasi|bongkar mesin|mati total|matot|bypass|bootloop)\b/i
-    : /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
+    ? /\b(perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti lcd|ganti baterai|repair|reparasi|bongkar mesin|mati total|matot|bypass|bootloop)\b/i
+    : /\b(perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
 
   if (bannedKeywordRegex.test(titleLower)) {
-    return { eligible: false, reason: `Terdeteksi kata kunci terlarang (${isGadget ? 'perbaikan / servis / mati total / bypass' : 'cara / tutorial / DIY / perbaikan / servis'}) pada judul video.` };
+    return { eligible: false, reason: `Terdeteksi kata kunci terlarang (${isGadget ? 'perbaikan / servis / mati total / bypass' : 'perbaikan / servis / bongkar'}) pada judul video.` };
+  }
+
+  // Khusus kata 'cara' atau 'tutorial': hanya dilarang jika BUKAN peragaan alat/produk fisik
+  if (!isToolDemoTitle && /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(titleLower)) {
+    return { eligible: false, reason: 'Terdeteksi kata kunci tutorial/cara/DIY umum pada judul video.' };
   }
 
   // 2C. Filter Konten Perbaikan / Servis / Barang Rusak pada Deskripsi

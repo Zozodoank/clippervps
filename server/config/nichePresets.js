@@ -345,8 +345,15 @@ export const NICHE_PRESETS = {
       'rekomendasi hp 1 jutaan ram besar baterai awet',
       'review hp murah 1 jutaan layar 90hz gaming lancar',
       'hp 1 jutaan terbaik untuk ojek online gojek grab',
-      'review tws murah bass mantap noise cancelling',
-      'rekomendasi smartwatch murah baterai tahan 2 minggu'
+      'review itel p55 5g indonesia hp 1 jutaan terkencang',
+      'review itel s23 plus indonesia layar amoled lengkung',
+      'review tecno spark 20c indonesia hp sejutaan',
+      'review infinix smart 8 indonesia hp murah kekinian',
+      'review poco c65 indonesia hp gaming murah',
+      'review redmi a3 indonesia hp murah desain premium',
+      'review realme note 50 indonesia hp sejutaan awet',
+      'review zte blade a54 indonesia hp murah ram besar',
+      'review nubia neo 2 5g indonesia hp gaming terjangkau'
     ]
   }
 };
@@ -382,16 +389,30 @@ export function getAllNiches() {
 
 /**
  * Generates combinatorial smartphone keywords on the fly
+ * Focused specifically on budget, mid-range & viral smartphones (NO laptops or non-phone gadgets).
  */
 export function generateCombinatorialGadgetKeywords(count = 100, excludedSet = new Set()) {
   const brands = [
-    'Poco', 'Redmi Note', 'Infinix Note', 'Infinix GT', 'Infinix Hot',
-    'Samsung Galaxy A', 'Samsung Galaxy M', 'Realme', 'Tecno Pova',
-    'Tecno Camon', 'Tecno Spark', 'Vivo Y', 'Vivo V', 'iQOO Z'
+    'itel', 'Infinix Note', 'Infinix Hot', 'Infinix Smart', 'Infinix GT',
+    'Tecno Spark', 'Tecno Pova', 'Tecno Camon', 'Tecno Pop',
+    'Poco', 'Redmi Note', 'Redmi', 'Realme C', 'Realme Note', 'Realme',
+    'Samsung Galaxy A', 'Samsung Galaxy M',
+    'Vivo Y', 'Vivo V', 'iQOO Z',
+    'Oppo A', 'ZTE Blade', 'Nubia Neo'
   ];
 
   const series = [
-    '13', '14', '15', '20 Pro', '30 5G', '40 Pro', '50 Pro', 'X6 5G', 'F6', 'M6 Pro'
+    'P55 5G', 'S23 Plus', 'A70', 'Color Pro',
+    'Smart 8', 'Smart 9', 'Hot 40 Pro', 'Hot 50', 'Note 40 Pro', 'GT 20 Pro',
+    'Spark 20', 'Spark 20C', 'Spark 20 Pro', 'Pop 8', 'Pova 6 Pro', 'Camon 30',
+    'C65', 'M6 Pro', 'X6 5G', 'F6',
+    '13C', '14C', 'A3', 'Note 13 5G', 'Note 14 Pro',
+    'C53', 'C67', 'Note 50', 'Note 60', '12 5G',
+    'A05s', 'A15 5G', 'A25 5G', 'A35 5G', 'M15 5G',
+    'Y03', 'Y17s', 'Y28', 'Y100 5G', 'V30e',
+    'Z9x 5G', 'Z9 5G',
+    'A18', 'A38', 'A58', 'A79 5G',
+    'A54', 'V50 Design', '2 5G'
   ];
 
   const aspects = [
@@ -403,13 +424,14 @@ export function generateCombinatorialGadgetKeywords(count = 100, excludedSet = n
   const priceSegments = [
     'hp 1 jutaan terbaik', 'hp 2 jutaan terbaik', 'hp 3 jutaan terbaik',
     'rekomendasi hp 2 jutaan gaming', 'hp 2 jutaan kamera stabil',
-    'hp 2 jutaan layar lengkung', 'smartphone 2 jutaan ram 8gb 256gb'
+    'hp 2 jutaan layar lengkung', 'smartphone 2 jutaan ram 8gb 256gb',
+    'rekomendasi hp murah 1 jutaan', 'hp murah spek dewa'
   ];
 
   const results = new Set();
 
   for (const p of priceSegments) {
-    for (const a of ['indonesia', '2026', 'kamera ois', 'layar 120hz']) {
+    for (const a of ['indonesia', '2026', 'kamera ois', 'layar 120hz', 'baterai awet']) {
       const q = `${p} ${a}`.trim();
       if (!excludedSet.has(q.toLowerCase())) {
         results.add(q);

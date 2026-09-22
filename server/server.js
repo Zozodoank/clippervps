@@ -602,25 +602,40 @@ function getAllUsedYouTubeVideoIds() {
   return used;
 }
 
-/** Helper: get all core product nouns generated today to ensure 100% product diversity in Auto Mode */
-function getAllUsedProductNounsToday() {
+/** Helper: get all brand + product noun pairs generated today to prevent duplicate exact models/brands in Auto Mode while maximizing brand/type variety */
+function getAllUsedBrandProductPairsToday() {
   const todayStr = new Date().toISOString().slice(0, 10);
-  const usedProducts = new Set();
+  const usedPairs = new Set();
   for (const job of activeJobs.values()) {
     if (job.stage === 'completed' || job.stage === 'awaiting_voiceover' || job.stage === 'running') {
       const jobDate = (job.createdAt || job.updatedAt || '').slice(0, 10);
       if (jobDate === todayStr || !job.createdAt) {
+        const brand = (job.brand || '').toLowerCase().trim();
         const noun = (job.coreProductNoun || '').toLowerCase().trim();
-        if (noun) usedProducts.add(noun);
+        if (brand && noun) {
+          usedPairs.add(`${brand} ${noun}`);
+        } else if (noun) {
+          usedPairs.add(noun);
+        }
         const prodTitle = (job.productTitle || job.cleanProductTitle || '').toLowerCase().trim();
         if (prodTitle) {
           const info = extractCoreProductInfo(prodTitle);
-          if (info.coreProductNoun) usedProducts.add(info.coreProductNoun.toLowerCase().trim());
+          const infoBrand = (info.brand || '').toLowerCase().trim();
+          const infoNoun = (info.coreProductNoun || '').toLowerCase().trim();
+          if (infoBrand && infoNoun) {
+            usedPairs.add(`${infoBrand} ${infoNoun}`);
+          } else if (infoNoun) {
+            usedPairs.add(infoNoun);
+          }
         }
       }
     }
   }
-  return usedProducts;
+  return usedPairs;
+}
+
+function getAllUsedProductNounsToday() {
+  return getAllUsedBrandProductPairsToday();
 }
 
 function isVideoFilePath(p) {
@@ -1354,8 +1369,12 @@ export async function runStage1Pipeline({
     console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message}`);
   });
 
-  const productInfo = extractCoreProductInfo(productTitle, productDescription);
-  const coreProductNoun = productInfo.coreProductNoun || productTitle || 'Produk Praktis';
+  const explicitBrand = (options.brand || extraJobMeta?.brand || '').trim();
+  const explicitProductType = (options.productType || extraJobMeta?.productType || '').trim();
+  const explicitModel = (options.model || extraJobMeta?.model || '').trim();
+
+  const productInfo = extractCoreProductInfo(productTitle, productDescription, '', explicitBrand, explicitProductType, explicitModel);
+  const coreProductNoun = explicitProductType || productInfo.coreProductNoun || productTitle || 'Produk Praktis';
   const cleanProductTitle = productInfo.cleanTitle || productTitle || '';
   const productFingerprint = buildProductFingerprint({
     title: productTitle,
@@ -1398,6 +1417,9 @@ export async function runStage1Pipeline({
     productTitle: productTitle || '',
     cleanProductTitle,
     coreProductNoun,
+    brand: explicitBrand || productInfo.brand || '',
+    productType: explicitProductType || productInfo.coreProductNoun || '',
+    model: explicitModel || productInfo.model || '',
     productCategory: productInfo.category || 'general_gadget',
     productFingerprint,
     creativePlan,
@@ -1991,11 +2013,14 @@ export async function runStage1Pipeline({
 
           if (!fresh || fresh.length === 0) {
             // Coba variasi kata kunci alternatif (brand + tipe produk, review, demo)
+            const b = (explicitBrand || productInfo.brand || '').trim();
+            const p = (explicitProductType || productInfo.coreProductNoun || '').trim();
+            const combinedBP = (b && p && normalizeText(b) !== normalizeText(p)) ? `${b} ${p}` : (p || b);
             const extraQueries = [
-              `${extraJobMeta?.brand || ''} ${extraJobMeta?.productType || coreProductNoun || ''}`.trim(),
-              `${coreProductNoun || productTitle} review`,
-              `${coreProductNoun || productTitle} demo`,
-            ].filter(q => q && q.length > 3);
+              combinedBP ? `${combinedBP} review` : '',
+              combinedBP ? `${combinedBP} demo` : '',
+              combinedBP,
+            ].filter(q => q && q.length > 3 && (!b || !p || normalizeText(q) !== normalizeText(`${b} ${b}`)));
 
             for (const altQuery of extraQueries) {
               const altResults = await searchMultiEngineVideos(altQuery, {
@@ -3488,11 +3513,15 @@ async function runAutoStage1Worker(run) {
         continue;
       }
 
-      // ── DEDUPLIKASI PRODUK HARIAN ──
-      const coreNoun = productType.toLowerCase().trim();
-      const usedNouns = getAllUsedProductNounsToday();
-      if (coreNoun && usedNouns.has(coreNoun)) {
-        console.log(`[Auto] Skip "${shopeeCandidate.title}": Produk dasar sejenis ("${coreNoun}") sudah pernah dibuat hari ini.`);
+      // ── DEDUPLIKASI PRODUK HARIAN (BRAND + PRODUCT TYPE) ──
+      // Menggunakan kombinasi brand + type agar merk berbeda untuk tipe produk yang sama
+      // (misal: Gaabor Air Fryer, Simplus Air Fryer, Deerma Vacuum) tetap dapat diproses hari ini.
+      const brandNounCombo = brand && productType
+        ? `${brand.toLowerCase()} ${productType.toLowerCase()}`.trim()
+        : productType.toLowerCase().trim();
+      const usedBrandProducts = getAllUsedBrandProductPairsToday();
+      if (brandNounCombo && usedBrandProducts.has(brandNounCombo)) {
+        console.log(`[Auto] Skip "${shopeeCandidate.title}": Kombinasi brand + produk sejenis ("${brandNounCombo}") sudah pernah dibuat hari ini.`);
         continue;
       }
 

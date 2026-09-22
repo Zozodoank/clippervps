@@ -1416,13 +1416,335 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
     console.warn(`[Discovery] Search engine lookup failed for "${keyword}":`, err.message);
   }
 
-  // Never fabricate a product from a generic keyword. OEM/unbranded results are
-  // intentionally rejected and must be supplied through the manual OEM flow.
+  // Never fall back to unverified synthetic titles without a real branded model.
   return null;
 }
 
+/**
+ * Checks if text contains non-Latin foreign scripts (Chinese Hanzi, Devanagari, Thai, Arabic, Cyrillic, Hangul, Kana).
+ * Essential because viral marketplace gadgets are often Chinese OEM brands, but affiliate videos
+ * must strictly be in Indonesian or English (never Mandarin or foreign non-Latin scripts).
+ */
+export function hasNonLatinOrForeignScript(text = '') {
+  if (!text || typeof text !== 'string') return false;
+  const foreignScriptRegex = /[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff\u0900-\u097F\u0980-\u09FF\u0E00-\u0E7F\u0600-\u06FF\u0400-\u04FF\uAC00-\uD7AF\u3040-\u30ff]/;
+  return foreignScriptRegex.test(text);
+}
 
-function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = '', brandSeed = '') {
+/**
+ * Checks if text mentions domestic Chinese social media platforms or Mandarin audio terms.
+ */
+export function isChineseSocialOrForeignMedia(text = '') {
+  if (!text || typeof text !== 'string') return false;
+  const norm = normalizeText(text);
+  return /\b(douyin|kuaishou|bilibili|xiaohongshu|weibo|mandarin|bahasa mandarin|chinese version|china version|cn version|chinesecooking)\b/i.test(norm);
+}
+
+export const KNOWN_BRANDS = [
+  // Brand Murah Viral Marketplace & Chinese OEM Direct-to-Consumer (Shopee, TikTok Shop, Tokopedia, Lazada):
+  'Gaabor', 'Simplus', 'Samono', 'Deerma', 'Bear', 'Tjean', 'Daewoo', 'Konka', 'Joyoung',
+  'Midea', 'Supor', 'Olayks', 'Ocooker', 'Liven', 'Nathome', 'MIUI', 'Dreame', 'Roborock',
+  'Roidmi', 'Jimmy', 'Mijia', 'Xiaomi', 'Youpin', 'Han River', 'Goto', 'Inone', 'Olike',
+  'Freemir', 'Carote', 'Stein Cookware', 'Ecoco', 'Ecentio', 'Kova', 'Gabor', 'Hongzhuo',
+  'Pandaoma', 'Deenor', 'Hayylife', 'Kurumi', 'Idealife', 'Advance', 'Moegen', 'Gm Bear',
+  'Niko', 'Tori', 'Nagako', 'Vicenza', 'Gohappy', 'Sivicom', 'Chefina', 'Supra', 'Kangaroo',
+  'Debellin', 'Cypruz', 'One Two Cups', 'Halu', 'Meimei', 'Roschel', 'Vianis', 'Cookmaster',
+  'Bardi', 'Reo', 'Haier', 'Hisense', 'Chigo', 'Gree', 'Aux', 'Changhong', 'Morphy Richards',
+  'Bruno', 'Mecoo', 'Kels', 'Ravelle', 'Sokany', 'DSP', 'Sonifer', 'RAF', 'Boma', 'Haeger',
+  'Geepas', 'Sanford', 'Donlim', 'Arenti', 'Imou', 'Ezviz', 'Tapo', 'Baseus', 'UGREEN',
+  'Usams', 'Acome', 'Robot', 'Vention', 'Aukey', 'Anker',
+  // Brand Terkenal & Rumah Tangga Indonesia / Global:
+  'Maspion', 'Miyako', 'Cosmos', 'Kirin', 'Maxim', 'Oxone', 'BOLDe', 'Mito', 'Mitochiba',
+  'Yong Ma', 'Rinnai', 'Sanken', 'Denpoo', 'Sekai', 'Hi-Cook', 'Beko', 'Philips', 'Tefal',
+  'LocknLock', 'Signora', 'Bima', 'Kedaung', 'Hakazima', 'Starfrit', 'Finest Cook',
+  'Neochef', 'Sico', 'Perkasa', 'Vitaro', 'Tupperware', 'Thermos', 'Zojirushi',
+  'Electrolux', 'Sharp', 'Panasonic', 'Toshiba',
+  // Brand Smartphone & Gadget (Entry-Level, Mid-Range, Viral & Budget King):
+  'itel', 'Infinix', 'TECNO', 'Poco', 'Redmi', 'Realme',
+  'Vivo', 'Oppo', 'Xiaomi', 'Samsung', 'iQOO', 'ZTE', 'Nubia',
+  'Motorola', 'Honor', 'Meizu', 'Black Shark', 'TCL', 'Sharp', 'Sony',
+  'Evercoss', 'Polytron', 'Luna', 'Wiko', 'Coolpad',
+  'Cubot', 'Doogee', 'Umidigi', 'Blackview', 'Oukitel', 'Ulefone', 'HOTWAV', 'FOSSiBOT'
+];
+
+export const PHYSICAL_PRODUCT_NOUNS = [
+  // ── MOP, VACUUM & CLEANING GADGETS ──
+  ['robot vacuum cleaner', 'Robot Vacuum Cleaner'],
+  ['robot vacuum', 'Robot Vacuum'],
+  ['wet and dry vacuum', 'Wet Dry Vacuum'],
+  ['wet dry vacuum', 'Wet Dry Vacuum'],
+  ['cordless vacuum cleaner', 'Cordless Vacuum'],
+  ['cordless vacuum', 'Cordless Vacuum'],
+  ['handheld vacuum cleaner', 'Handheld Vacuum'],
+  ['handheld vacuum', 'Handheld Vacuum'],
+  ['dust mite vacuum', 'Dust Mite Vacuum'],
+  ['vacuum kasur', 'Dust Mite Vacuum'],
+  ['vacuum tungau', 'Dust Mite Vacuum'],
+  ['vacuum cleaner', 'Vacuum Cleaner'],
+  ['penghisap debu', 'Vacuum Cleaner'],
+  ['vacuum', 'Vacuum Cleaner'],
+  ['electric spin scrubber', 'Electric Spin Scrubber'],
+  ['electric cleaning brush', 'Electric Cleaning Brush'],
+  ['sikat elektrik serbaguna', 'Electric Cleaning Brush'],
+  ['sikat pembersih elektrik', 'Electric Cleaning Brush'],
+  ['sikat cuci piring elektrik', 'Electric Dish Scrubber'],
+  ['sikat botol elektrik', 'Electric Bottle Brush'],
+  ['lint remover portable', 'Lint Remover'],
+  ['lint remover', 'Lint Remover'],
+  ['penghilang bulu baju', 'Lint Remover'],
+  ['spray mop elektrik', 'Spray Mop'],
+  ['spray mop portable', 'Spray Mop'],
+  ['spray mop otomatis', 'Spray Mop'],
+  ['spray mop', 'Spray Mop'],
+  ['super mop otomatis', 'Super Mop'],
+  ['super mop', 'Super Mop'],
+  ['magic mop', 'Magic Mop'],
+  ['alat pel otomatis', 'Alat Pel'],
+  ['alat pel praktis', 'Alat Pel'],
+  ['alat pel lantai', 'Alat Pel'],
+  ['alat pel putar', 'Alat Pel Putar'],
+  ['alat pel peras', 'Alat Pel'],
+  ['alat pel', 'Alat Pel'],
+  ['kain pel lantai', 'Alat Pel'],
+  ['kain pel', 'Alat Pel'],
+  ['pel lantai', 'Alat Pel'],
+  ['mop lantai', 'Alat Pel'],
+  ['mop', 'Alat Pel'],
+  ['pel', 'Alat Pel'],
+
+  // ── COOKWARE, POTS & PANS ──
+  ['super pan set', 'Pan'],
+  ['super pan', 'Pan'],
+  ['wajan anti lengket', 'Non-Stick Pan'],
+  ['wajan teflon', 'Teflon Pan'],
+  ['wajan granit', 'Granite Pan'],
+  ['wajan tamagoyaki', 'Tamagoyaki Pan'],
+  ['wajan penggorengan', 'Frying Pan'],
+  ['frying pan', 'Frying Pan'],
+  ['frypan', 'Frypan'],
+  ['saucepan', 'Saucepan'],
+  ['wok pan', 'Wok Pan'],
+  ['wok', 'Wok'],
+  ['wajan', 'Pan/Wok'],
+  ['panci serbaguna', 'Multi Pot'],
+  ['panci listrik mini', 'Electric Pot'],
+  ['panci listrik serbaguna', 'Electric Pot'],
+  ['panci listrik', 'Electric Pot'],
+  ['electric pot', 'Electric Pot'],
+  ['hot pot elektrik', 'Electric Hot Pot'],
+  ['panci kukus', 'Steamer Pot'],
+  ['panci presto', 'Pressure Cooker'],
+  ['panci susu', 'Milk Pot'],
+  ['panci sup', 'Soup Pot'],
+  ['panci', 'Cooking Pot'],
+  ['casserole', 'Casserole Pot'],
+  ['pan', 'Pan'],
+  ['pot', 'Pot'],
+
+  // ── KITCHEN APPLIANCES & COOKING GADGETS ──
+  ['air fryer steamer', 'Air Fryer Steamer'],
+  ['air fryer digital', 'Digital Air Fryer'],
+  ['air fryer oven', 'Air Fryer Oven'],
+  ['air fryer', 'Air Fryer'],
+  ['airfryer', 'Air Fryer'],
+  ['food processor', 'Food Processor'],
+  ['foodprocessor', 'Food Processor'],
+  ['food chopper', 'Food Chopper'],
+  ['chopper daging', 'Food Chopper'],
+  ['chopper bumbu', 'Mini Chopper'],
+  ['chopper mini elektrik', 'Mini Electric Chopper'],
+  ['chopper mini', 'Mini Chopper'],
+  ['chopper', 'Chopper'],
+  ['blender portable', 'Portable Blender'],
+  ['portable blender', 'Portable Blender'],
+  ['hand blender', 'Hand Blender'],
+  ['handblender', 'Hand Blender'],
+  ['blender kapsul', 'Capsule Blender'],
+  ['blender', 'Blender'],
+  ['stand mixer', 'Stand Mixer'],
+  ['standmixer', 'Stand Mixer'],
+  ['hand mixer', 'Hand Mixer'],
+  ['handmixer', 'Hand Mixer'],
+  ['mixer adonan', 'Dough Mixer'],
+  ['mixer', 'Mixer'],
+  ['slow juicer', 'Slow Juicer'],
+  ['juicer extractor', 'Juice Extractor'],
+  ['juicer', 'Juicer'],
+  ['electric kettle', 'Electric Kettle'],
+  ['teko listrik', 'Electric Kettle'],
+  ['kettle listrik', 'Electric Kettle'],
+  ['kettle', 'Electric Kettle'],
+  ['thermo pot', 'Thermo Pot'],
+  ['kukusan elektrik', 'Electric Steamer'],
+  ['kukusan', 'Steamer'],
+  ['steamer makanan', 'Food Steamer'],
+  ['steamer', 'Steamer'],
+  ['rice cooker digital', 'Digital Rice Cooker'],
+  ['rice cooker low carbo', 'Rice Cooker Low Carbo'],
+  ['rice cooker mini', 'Mini Rice Cooker'],
+  ['rice cooker', 'Rice Cooker'],
+  ['ricecooker', 'Rice Cooker'],
+  ['magic com', 'Magic Com'],
+  ['magiccom', 'Magic Com'],
+  ['slow cooker', 'Slow Cooker'],
+  ['slowcooker', 'Slow Cooker'],
+  ['pressure cooker', 'Pressure Cooker'],
+  ['pressurecooker', 'Pressure Cooker'],
+  ['presto', 'Pressure Cooker'],
+  ['multicooker', 'Multicooker'],
+  ['multi cooker', 'Multicooker'],
+  ['cooker', 'Cooker'],
+  ['toaster oven', 'Toaster Oven'],
+  ['toaster', 'Toaster'],
+  ['pemanggang roti', 'Bread Toaster'],
+  ['sandwich maker', 'Sandwich Maker'],
+  ['pembuat sandwich', 'Sandwich Maker'],
+  ['waffle maker', 'Waffle Maker'],
+  ['pembuat waffle', 'Waffle Maker'],
+  ['egg boiler', 'Egg Boiler'],
+  ['perebus telur', 'Egg Boiler'],
+  ['egg cooker', 'Egg Boiler'],
+  ['oven listrik', 'Electric Oven'],
+  ['oven tangkring', 'Baking Oven'],
+  ['oven', 'Oven'],
+  ['microwave oven', 'Microwave'],
+  ['microwave', 'Microwave'],
+  ['kompor induksi', 'Induction Cooker'],
+  ['kompor listrik', 'Electric Stove'],
+  ['kompor portable', 'Portable Gas Stove'],
+  ['kompor gas', 'Gas Stove'],
+  ['deep fryer', 'Deep Fryer'],
+  ['deepfryer', 'Deep Fryer'],
+  ['fryer', 'Fryer'],
+  ['meat grinder', 'Meat Grinder'],
+  ['penggiling daging', 'Meat Grinder'],
+  ['grinder kopi', 'Coffee Grinder'],
+  ['coffee grinder', 'Coffee Grinder'],
+  ['grinder', 'Coffee Grinder'],
+  ['coffee maker', 'Coffee Maker'],
+  ['coffeemaker', 'Coffee Maker'],
+  ['coffee machine', 'Coffee Machine'],
+  ['mesin espresso', 'Espresso Machine'],
+  ['milk frother', 'Milk Frother'],
+  ['frother susu', 'Milk Frother'],
+  ['frother', 'Milk Frother'],
+  ['vacuum sealer', 'Vacuum Sealer'],
+  ['sealer plastik', 'Plastic Sealer'],
+  ['sealer makanan', 'Plastic Sealer'],
+  ['sealer', 'Plastic Sealer'],
+  ['dish dryer', 'Dish Dryer'],
+  ['pengering piring', 'Dish Dryer'],
+  ['rak piring', 'Dish Rack'],
+  ['lunch box elektrik', 'Electric Lunch Box'],
+  ['kotak makan elektrik', 'Electric Lunch Box'],
+  ['ice maker portable', 'Portable Ice Maker'],
+  ['ice maker machine', 'Ice Maker'],
+  ['ice maker', 'Ice Maker'],
+  ['mesin es batu', 'Ice Maker'],
+  ['pompa galon elektrik', 'Electric Water Pump Dispenser'],
+  ['pompa galon', 'Electric Water Pump Dispenser'],
+  ['dispenser galon', 'Water Dispenser'],
+
+  // ── HOME, STEAMER & LIFESTYLE GADGETS ──
+  ['garment steamer portable', 'Garment Steamer'],
+  ['garment steamer', 'Garment Steamer'],
+  ['steamer baju portable', 'Steamer Baju'],
+  ['steamer baju', 'Steamer Baju'],
+  ['setrika uap portable', 'Setrika Uap'],
+  ['setrika uap', 'Setrika Uap'],
+  ['setrika listrik', 'Electric Iron'],
+  ['setrika', 'Electric Iron'],
+  ['air purifier portable', 'Air Purifier'],
+  ['air purifier', 'Air Purifier'],
+  ['air humidifier', 'Air Humidifier'],
+  ['humidifier ultrasonik', 'Ultrasonic Humidifier'],
+  ['ultrasonic humidifier', 'Ultrasonic Humidifier'],
+  ['humidifier diffuser', 'Humidifier'],
+  ['humidifier', 'Humidifier'],
+  ['aroma diffuser', 'Aroma Diffuser'],
+  ['diffuser', 'Aroma Diffuser'],
+  ['dehumidifier', 'Dehumidifier'],
+  ['neck fan portable', 'Portable Neck Fan'],
+  ['neck fan', 'Portable Neck Fan'],
+  ['kipas angin leher', 'Portable Neck Fan'],
+  ['kipas angin portable', 'Portable Fan'],
+  ['portable fan', 'Portable Fan'],
+  ['kipas angin meja', 'Desk Fan'],
+  ['desk fan', 'Desk Fan'],
+  ['kipas angin mini', 'Mini Fan'],
+  ['mini fan', 'Mini Fan'],
+  ['kipas angin', 'Electric Fan'],
+  ['smart trash can', 'Smart Trash Can'],
+  ['tempat sampah pintar', 'Smart Trash Can'],
+  ['tempat sampah sensor', 'Smart Trash Can'],
+  ['soap dispenser otomatis', 'Automatic Soap Dispenser'],
+  ['automatic soap dispenser', 'Automatic Soap Dispenser'],
+  ['dispenser sabun otomatis', 'Automatic Soap Dispenser'],
+
+  // ── KITCHEN TOOLS & PREPARATION ──
+  ['timbangan digital dapur', 'Digital Kitchen Scale'],
+  ['timbangan dapur digital', 'Digital Kitchen Scale'],
+  ['timbangan digital', 'Digital Kitchen Scale'],
+  ['timbangan dapur', 'Kitchen Scale'],
+  ['scale digital', 'Kitchen Scale'],
+  ['scale', 'Kitchen Scale'],
+  ['timbangan', 'Kitchen Scale'],
+  ['thermometer makanan', 'Food Thermometer'],
+  ['termometer makanan', 'Food Thermometer'],
+  ['thermometer', 'Kitchen Thermometer'],
+  ['termometer', 'Kitchen Thermometer'],
+  ['mandoline slicer', 'Mandoline Slicer'],
+  ['slicer sayur', 'Vegetable Slicer'],
+  ['slicer', 'Slicer'],
+  ['rotary grater', 'Rotary Grater'],
+  ['parutan keju', 'Cheese Grater'],
+  ['grater', 'Grater'],
+  ['parutan serbaguna', 'Grater'],
+  ['parutan', 'Grater'],
+  ['apple peeler', 'Apple Peeler'],
+  ['peeler putar', 'Rotary Peeler'],
+  ['peeler', 'Peeler'],
+  ['pengupas buah', 'Peeler'],
+  ['pengupas kulit', 'Peeler'],
+  ['french fries cutter', 'Potato Cutter'],
+  ['pemotong kentang', 'Potato Cutter'],
+  ['cutter', 'Cutter'],
+  ['can opener', 'Can Opener'],
+  ['pembuka kaleng', 'Can Opener'],
+  ['garlic press', 'Garlic Press'],
+  ['pemeras bawang', 'Garlic Press'],
+  ['citrus juicer', 'Citrus Juicer'],
+  ['pemeras jeruk', 'Citrus Juicer'],
+  ['spatula silikon', 'Silicone Spatula'],
+  ['spatula set', 'Spatula Set'],
+  ['spatula', 'Spatula'],
+  ['sutil silikon', 'Silicone Spatula'],
+  ['sutil', 'Spatula'],
+  ['kitchen tongs', 'Kitchen Tongs'],
+  ['tongs', 'Kitchen Tongs'],
+  ['penjepit makanan', 'Kitchen Tongs'],
+  ['gunting dapur', 'Kitchen Shears'],
+  ['shears', 'Kitchen Shears'],
+  ['pisau set', 'Knife Set'],
+  ['knife set', 'Knife Set'],
+  ['oil pot saringan', 'Oil Pot'],
+  ['oil pot', 'Oil Pot'],
+  ['wadah minyak', 'Oil Pot'],
+  ['dispenser beras', 'Rice Dispenser'],
+  ['rice dispenser', 'Rice Dispenser'],
+  ['dispenser sabun', 'Soap Dispenser'],
+  ['dispenser', 'Dispenser'],
+  ['salad spinner', 'Salad Spinner'],
+  ['pengering sayur', 'Salad Spinner'],
+  ['silicone baking mat', 'Silicone Baking Mat'],
+  ['alas silikon', 'Silicone Mat'],
+  ['cetakan es batu', 'Ice Cube Tray'],
+  ['ice tray', 'Ice Cube Tray'],
+  ['flame gun portable', 'Gas Torch'],
+  ['torch gas portable', 'Gas Torch']
+].sort((a, b) => b[0].length - a[0].length);
+
+export function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = '', brandSeed = '', isGadget = false) {
   const title = String(rawTitle || '').replace(/\s+/g, ' ').trim();
   const description = String(rawDescription || '').replace(/\s+/g, ' ').trim();
   const normalized = normalizeText(title + ' ' + description);
@@ -1432,6 +1754,67 @@ function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = ''
     return null;
   }
 
+  // Reject foreign non-Latin scripts (Hanzi / Mandarin, Devanagari, Thai, Arabic, Cyrillic, Hangul, Kana)
+  // Per requirement: Chinese brands are common, but videos must NEVER be in Chinese or foreign scripts.
+  if (hasNonLatinOrForeignScript(rawTitle) || isChineseSocialOrForeignMedia(rawTitle) || isChineseSocialOrForeignMedia(rawDescription)) {
+    return null;
+  }
+
+  // 1. HARD BLOCK KHUSUS NICHE SMARTPHONE:
+  // Hindari merk & produk laptop, PC desktop, all-in-one, notebook, dsb.
+  if (isGadget) {
+    if (/\b(?:laptop|notebook|macbook|chromebook|netbook|pc desktop|pc all in one|aio pc|aio|komputer|workplus|soulmate|mybook|hype|pongo|vivobook|zenbook|thinkpad|ideapad|tuf gaming|rog strix|legion|predator|matebook|surface pro)\b/i.test(title + ' ' + description)) {
+      return null;
+    }
+
+    const gadgetPhysicalTypes = [
+      ['smartphone 5g', 'Smartphone 5G'],
+      ['smartphone gaming', 'Smartphone Gaming'],
+      ['smartphone', 'Smartphone'],
+      ['hp gaming', 'Smartphone Gaming'],
+      ['hp 5g', 'Smartphone 5G'],
+      ['hp murah', 'Smartphone'],
+      ['handphone', 'Smartphone'],
+      ['ponsel', 'Smartphone'],
+      ['telepon seluler', 'Smartphone'],
+      ['hp', 'Smartphone'],
+      ['phone', 'Smartphone']
+    ];
+
+    gadgetPhysicalTypes.sort((a, b) => b[0].length - a[0].length);
+    const hitGadget = gadgetPhysicalTypes.find(([needle]) => normalized.includes(needle));
+
+    // Ekstraksi model/series smartphone (misal: "P55 5G", "S23+", "Note 40 Pro", "Spark 20C", "Pova 6", "Blade A54", "Y100", "Hot 40", "C67", "A3", "KingKong 9")
+    const seriesMatch = title.match(/\b(Note\s*\d+|Hot\s*\d+|Smart\s*\d+|GT\s*\d+|Zero\s*\d+|Spark\s*[\w\d]+|Pova\s*\d+|Camon\s*\d+|Pop\s*\d+|Phantom\s*[\w\d]+|Blade\s*[\w\d]+|Focus\s*[\w\d]+|RedMagic\s*[\w\d]+|Neo\s*[\w\d]+|Narzo\s*[\w\d]+|Reno\s*\d+|Galaxy\s*[A-Z]\d+|Armor\s*[\w\d]+|Bison\s*[\w\d]+|KingKong\s*[\w\d]+|Tiger\s*[\w\d]+|Shark\s*[\w\d]+|Color\s*Pro|Vision\s*\d+|S\d+\+?|P\d+|A\d+[sS]?|C\d+|M\d+|X\d+|Y\d+[a-zA-Z]?|V\d+[a-zA-Z]?|G\d+|Z\d+[a-zA-Z]?|[A-Z]\d{2,3}[a-zA-Z]*)\b(?:\s*(?:Pro\s*Plus|Pro\+|Pro|Plus|Max|Ultra|Play|Prime|Lite|SE|5G|4G|NFC|Design|Ultimate|Neo|Speed))*/i);
+    const titleTokens = title.split(/\s+/).map((token) => token.replace(/^[^\p{L}\p{N}&.-]+|[^\p{L}\p{N}&.-]+$/gu, ''));
+    const fallbackModelToken = titleTokens.find((token) =>
+      /^(?=.*\d)[A-Za-z0-9-]{2,}$/i.test(token) &&
+      !isMeasurementOrVariantToken(token) &&
+      normalizeText(token) !== seedNorm
+    ) || '';
+
+    let resolvedModel = (seriesMatch ? seriesMatch[0].trim() : fallbackModelToken) || '';
+    // Strip trailing generic punctuation or noisy tags
+    resolvedModel = resolvedModel.replace(/[-|:()[\]]+$/g, '').trim();
+
+    const productType = hitGadget ? hitGadget[1] : 'Smartphone';
+    const cleanModel = resolvedModel && resolvedModel.toLowerCase() !== 'smartphone' ? resolvedModel : '';
+
+    return {
+      brand: brandSeed,
+      model: cleanModel,
+      productType,
+      searchQueries: [
+        `${brandSeed} ${cleanModel} review indonesia`.trim(),
+        `${brandSeed} ${cleanModel} unboxing`.trim(),
+        `${brandSeed} ${cleanModel} tes kamera gaming`.trim(),
+        `${brandSeed} ${cleanModel} ${productType}`.trim(),
+        `${brandSeed} ${cleanModel}`.trim(),
+      ].filter((q) => q && q.length > brandSeed.length),
+    };
+  }
+
+  // 2. NICHE KITCHEN TOOLS (ALAT DAPUR & RUMAH TANGGA)
   // First use the established product anchors when available.
   for (const anchor of PRODUCT_ANCHORS) {
     if (anchor.pattern.test(normalized)) {
@@ -1452,59 +1835,9 @@ function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = ''
   }
 
   // YouTube titles are often short and do not contain marketplace-style model
-  // syntax. Use a conservative physical-product vocabulary as the fallback.
+  // syntax. Use a comprehensive physical-product vocabulary as the fallback.
   // Accept common Indonesian product nouns even when PRODUCT_ANCHORS has no match.
-  const physicalTypes = [
-    ['air fryer', 'Air Fryer'],
-    ['food processor', 'Food Processor'],
-    ['food chopper', 'Food Chopper'],
-    ['chopper', 'Chopper'],
-    ['blender', 'Blender'],
-    ['mixer', 'Mixer'],
-    ['hand mixer', 'Hand Mixer'],
-    ['juicer', 'Juicer'],
-    ['kettle', 'Electric Kettle'],
-    ['rice cooker', 'Rice Cooker'],
-    ['cooker', 'Cooker'],
-    ['toaster', 'Toaster'],
-    ['oven', 'Oven'],
-    ['microwave', 'Microwave'],
-    ['fryer', 'Fryer'],
-    ['grinder', 'Grinder'],
-    ['coffee maker', 'Coffee Maker'],
-    ['coffee machine', 'Coffee Machine'],
-    ['frother', 'Milk Frother'],
-    ['sealer', 'Plastic Sealer'],
-    ['vacuum sealer', 'Vacuum Sealer'],
-    ['scale', 'Kitchen Scale'],
-    ['timbangan', 'Kitchen Scale'],
-    ['thermometer', 'Kitchen Thermometer'],
-    ['chopper mini', 'Mini Chopper'],
-    ['slicer', 'Slicer'],
-    ['grater', 'Grater'],
-    ['peeler', 'Peeler'],
-    ['cutter', 'Cutter'],
-    ['can opener', 'Can Opener'],
-    ['garlic press', 'Garlic Press'],
-    ['spatula', 'Spatula'],
-    ['tongs', 'Kitchen Tongs'],
-    ['shears', 'Kitchen Shears'],
-    ['gunting dapur', 'Kitchen Shears'],
-    ['wajan', 'Pan/Wok'],
-    ['wok', 'Wok'],
-    ['panci', 'Cooking Pot'],
-    ['pan', 'Pan'],
-    ['pot', 'Pot'],
-    ['dispenser', 'Dispenser'],
-    ['rice dispenser', 'Rice Dispenser'],
-    ['toaster oven', 'Toaster Oven'],
-    ['waffle maker', 'Waffle Maker'],
-    ['sandwich maker', 'Sandwich Maker']
-  ];
-
-  // Prefer multi-word matches first.
-  physicalTypes.sort((a, b) => b[0].length - a[0].length);
-  const hit = physicalTypes.find(([needle]) => normalized.includes(needle));
+  const hit = PHYSICAL_PRODUCT_NOUNS.find(([needle]) => normalized.includes(needle));
   if (!hit) {
     // Last-resort YouTube title fallback: keep a short, concrete phrase after
     // the brand when the video uses a product name not present in our noun list.
@@ -1513,8 +1846,8 @@ function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = ''
     const titleLower = title.toLowerCase();
     const brandIndex = titleLower.indexOf(brandLower);
     const afterBrand = (brandIndex >= 0 ? title.slice(brandIndex + brandSeed.length) : title)
-      .replace(/[-|:()\\[\\],]+/g, ' ')
-      .replace(/\\s+/g, ' ')
+      .replace(/[-|:()\[\],]+/g, ' ')
+      .replace(/\s+/g, ' ')
       .trim();
     const blocked = new Set([
       'review','reviewer','reviewing','demo','demonstration','test','testing','unboxing',
@@ -1522,12 +1855,12 @@ function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = ''
       'produk','product','alat','cara','tutorial','vs','versus','comparison','murah',
       'bagus','viral','pakai','menggunakan','dengan','untuk','yang','dan','ini','itu'
     ]);
-    const words = afterBrand.split(/\\s+/).filter(Boolean);
+    const words = afterBrand.split(/\s+/).filter(Boolean);
     const fallbackWords = [];
     for (const word of words) {
       const n = normalizeText(word);
       if (!n || blocked.has(n) || isMeasurementOrVariantToken(word)) continue;
-      if (/^\\d+$/.test(word)) continue;
+      if (/^\d+$/.test(word)) continue;
       if (/^(?:or|and|with|for|the|a|an)$/i.test(word)) continue;
       fallbackWords.push(word);
       if (fallbackWords.length >= 3) break;
@@ -1535,7 +1868,7 @@ function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = ''
     if (!fallbackWords.length) return null;
 
     const fallbackType = fallbackWords.join(' ').trim();
-    const fallbackModel = fallbackWords.find((word) => /^(?=.*\\d)[A-Za-z][A-Za-z0-9-]{2,}$/i.test(word)) || '';
+    const fallbackModel = fallbackWords.find((word) => /^(?=.*\d)[A-Za-z][A-Za-z0-9-]{2,}$/i.test(word)) || '';
     const identity = [brandSeed, fallbackModel, fallbackType].filter(Boolean).join(' ');
     return {
       brand: brandSeed,
@@ -1580,7 +1913,7 @@ function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescription = ''
 
 const brandedDiscoveryMisses = new Map();
 const BRANDED_DISCOVERY_MISS_COOLDOWN_MS = 15 * 60 * 1000;
-const BRANDED_DISCOVERY_MAX_BRANDS_PER_PASS = 4;
+const BRANDED_DISCOVERY_MAX_BRANDS_PER_PASS = 8;
 
 function isBrandedSeedOnCooldown(brandSeed) {
   const until = Number(brandedDiscoveryMisses.get(String(brandSeed || '').toLowerCase()) || 0);
@@ -1601,12 +1934,40 @@ export async function discoverBrandedShopeeProduct({
   const preset = getNichePreset(niche);
   const isGadget = preset?.id === 'gadget_smartphone';
 
-  // Auto discovery is intentionally brand-first and YouTube-only.
-  // No Shopee API, PDP fetch, marketplace scraping, or OEM keyword generation.
-  // Keep the seed list focused on local/emerging brands rather than major global brands.
+  // Daftar merk yang sangat diperluas:
+  // - Smartphone: Brand murah, terjangkau, viral & entry-level (HINDARI merk laptop seperti Axioo/Advan)
+  // - Kitchen & Home: Merk China viral marketplace (Shopee/TikTok), OEM direct-to-consumer, & household brands
   const brandSeeds = isGadget
-    ? ['Infinix', 'TECNO', 'itel', 'Advan', 'Evercoss', 'Axioo', 'Polytron']
-    : ['Maspion', 'Oxone', 'Cosmos', 'Miyako', 'Kirin', 'Maxim', 'BOLDe', 'Mito', 'Han River'];
+    ? [
+        // Brand Murah, Viral & Budget King:
+        'itel', 'Infinix', 'TECNO', 'Poco', 'Redmi', 'Realme',
+        // Brand Mainstream Terjangkau:
+        'Vivo', 'Oppo', 'Xiaomi', 'Samsung', 'iQOO', 'ZTE', 'Nubia',
+        // Brand Terjangkau / Kurang Populer / Alternatif / Rugged:
+        'Motorola', 'Honor', 'Meizu', 'Black Shark', 'TCL', 'Sharp', 'Sony',
+        'Evercoss', 'Polytron', 'Luna', 'Wiko', 'Coolpad',
+        'Cubot', 'Doogee', 'Umidigi', 'Blackview', 'Oukitel', 'Ulefone', 'HOTWAV', 'FOSSiBOT'
+      ]
+    : [
+        // Brand Murah Viral Marketplace & Chinese OEM Direct-to-Consumer:
+        'Gaabor', 'Simplus', 'Samono', 'Deerma', 'Bear', 'Tjean', 'Daewoo', 'Konka', 'Joyoung',
+        'Midea', 'Supor', 'Olayks', 'Ocooker', 'Liven', 'Nathome', 'MIUI', 'Dreame', 'Roborock',
+        'Roidmi', 'Jimmy', 'Mijia', 'Xiaomi', 'Youpin', 'Han River', 'Goto', 'Inone', 'Olike',
+        'Freemir', 'Carote', 'Stein Cookware', 'Ecoco', 'Ecentio', 'Kova', 'Gabor', 'Hongzhuo',
+        'Pandaoma', 'Deenor', 'Hayylife', 'Kurumi', 'Idealife', 'Advance', 'Moegen', 'Gm Bear',
+        'Niko', 'Tori', 'Nagako', 'Vicenza', 'Gohappy', 'Sivicom', 'Chefina', 'Supra', 'Kangaroo',
+        'Debellin', 'Cypruz', 'One Two Cups', 'Halu', 'Meimei', 'Roschel', 'Vianis', 'Cookmaster',
+        'Bardi', 'Reo', 'Haier', 'Hisense', 'Chigo', 'Gree', 'Aux', 'Changhong', 'Morphy Richards',
+        'Bruno', 'Mecoo', 'Kels', 'Ravelle', 'Sokany', 'DSP', 'Sonifer', 'RAF', 'Boma', 'Haeger',
+        'Geepas', 'Sanford', 'Donlim', 'Arenti', 'Imou', 'Ezviz', 'Tapo', 'Baseus', 'UGREEN',
+        'Usams', 'Acome', 'Robot', 'Vention', 'Aukey', 'Anker',
+        // Brand Terkenal & Rumah Tangga Indonesia / Global:
+        'Maspion', 'Miyako', 'Cosmos', 'Kirin', 'Maxim', 'Oxone', 'BOLDe', 'Mito', 'Mitochiba',
+        'Yong Ma', 'Rinnai', 'Sanken', 'Denpoo', 'Sekai', 'Hi-Cook', 'Beko', 'Philips', 'Tefal',
+        'LocknLock', 'Signora', 'Bima', 'Kedaung', 'Hakazima', 'Starfrit', 'Finest Cook',
+        'Neochef', 'Sico', 'Perkasa', 'Vitaro', 'Tupperware', 'Thermos', 'Zojirushi',
+        'Electrolux', 'Sharp', 'Panasonic', 'Toshiba'
+      ];
 
   const normalizedAttempted = attemptedBrands instanceof Set
     ? attemptedBrands
@@ -1630,7 +1991,10 @@ export async function discoverBrandedShopeeProduct({
     normalizedAttempted.add(brandKey);
 
     // Product identity is discovered from real YouTube search-result titles.
-    const query = `"${brandSeed}" ${isGadget ? 'product' : 'alat dapur'} (review OR demo OR test)`;
+    // Strictly exclude Chinese platforms and Mandarin search results (-douyin -kuaishou -bilibili -chinese -mandarin).
+    const query = isGadget
+      ? `"${brandSeed}" (smartphone OR hp OR "handphone") (review OR unboxing OR tes) -laptop -notebook -macbook -douyin -kuaishou -bilibili -weibo -chinese -mandarin`
+      : `"${brandSeed}" (alat dapur OR masak OR kitchen OR chopper OR blender OR panci OR vacuum OR steamer) (review OR demo OR "cara pakai" OR unboxing OR tes) -douyin -kuaishou -bilibili -weibo -chinese -mandarin`;
     let results = [];
     try {
       results = await searchYouTubeVideos(query, { limit: 16 });
@@ -1639,7 +2003,19 @@ export async function discoverBrandedShopeeProduct({
     }
 
     const usable = (Array.isArray(results) ? results : []).filter((r) => {
-      const text = normalizeText((r?.title || '') + ' ' + (r?.description || ''));
+      const rawTitle = String(r?.title || '');
+      const rawDesc = String(r?.description || '');
+
+      // Strict rejection: Foreign non-Latin scripts (Hanzi / Mandarin, Devanagari, Thai, Arabic, Cyrillic, Hangul, Kana)
+      // Per user requirement: Chinese brands are common, but videos must strictly be in Indonesian or English!
+      if (hasNonLatinOrForeignScript(rawTitle)) return false;
+      if (isChineseSocialOrForeignMedia(rawTitle) || isChineseSocialOrForeignMedia(rawDesc)) return false;
+
+      const text = normalizeText(rawTitle + ' ' + rawDesc);
+      // HARD FILTER: Jika mode gadget, tolak video jika mengandung istilah laptop / PC
+      if (isGadget && /\b(?:laptop|notebook|macbook|chromebook|netbook|pc desktop|pc all in one|aio pc|aio|workplus|soulmate|mybook|hype|pongo|vivobook|zenbook)\b/i.test(text)) {
+        return false;
+      }
       return r?.url &&
         !seen.has(r.url) &&
         text.includes(normalizeText(brandSeed)) &&
@@ -1658,8 +2034,8 @@ export async function discoverBrandedShopeeProduct({
       const description = cleanDescription(result.description || '');
       if (!title || isBundleOrSetProduct(title)) continue;
 
+      const ytInfo = extractBrandedYouTubeProductIdentity(title, description, brandSeed, isGadget);
       const info = extractCoreProductInfo(title, description, '', brandSeed);
-      const ytInfo = extractBrandedYouTubeProductIdentity(title, description, brandSeed);
       const brand = String(ytInfo?.brand || info?.brand || brandSeed).trim();
       const productType = String(ytInfo?.productType || info?.coreProductNoun || '').trim();
       const model = String(ytInfo?.model || info?.model || '').trim();
@@ -1854,7 +2230,7 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
 
   try {
     const res = await fetchWithTlsFallback(url, {
-      timeoutMs: 4000,
+      timeoutMs: 9000,
       headers: {
         'User-Agent': USER_AGENT,
         'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
@@ -3271,6 +3647,11 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   // Reject vertical Shorts (which already have hardburned music/captions)
   if (candidate.url.includes('/shorts/') || /#shorts\b/i.test(candidate.title || '')) return false;
 
+  // MANDATORY FILTER: Non-Latin scripts (Hanzi / Mandarin, Devanagari, Thai, Arabic, Cyrillic, Hangul, Kana)
+  // Most viral marketplace brands are Chinese brands, but videos MUST NOT be in Chinese or foreign scripts!
+  if (hasNonLatinOrForeignScript(candidate.title || '')) return false;
+  if (isChineseSocialOrForeignMedia(candidate.title || '') || isChineseSocialOrForeignMedia(candidate.description || '')) return false;
+
   const titleText = normalizeText(candidate.title || '');
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
@@ -3765,25 +4146,44 @@ export const PRODUCT_ANCHORS = [
  * No hard-coded brand database is required: brand/model signals are learned
  * from the actual Shopee title and preserved for downstream video search.
  */
-export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '', rawBrand = '') {
+export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '', rawBrand = '', explicitProductType = '', explicitModel = '') {
   const cleaned = cleanTitle(rawTitle, rawUrl) || String(rawTitle || '').trim();
   const normalized = normalizeText(cleaned);
+
+  // 1. First priority: Established product anchors
   for (const anchor of PRODUCT_ANCHORS) {
     if (anchor.pattern.test(normalized)) {
       const allWords = Array.from(new Set([...(anchor.core || []), ...(anchor.multilingual || [])]));
       const englishNoun = anchor.englishNoun || anchor.noun;
       const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc, rawBrand);
+      const effectiveBrand = rawBrand || dynamicIdentity.brand;
+      const effectiveModel = explicitModel || dynamicIdentity.model;
+      const effectiveNoun = explicitProductType || anchor.noun;
       return {
-        cleanTitle: cleaned, coreProductNoun: anchor.noun, englishNoun,
-        category: anchor.category, brand: dynamicIdentity.brand, model: dynamicIdentity.model,
-        productIdentity: dynamicIdentity.identity, identityWords: dynamicIdentity.words,
+        cleanTitle: cleaned, coreProductNoun: effectiveNoun, englishNoun,
+        category: anchor.category, brand: effectiveBrand, model: effectiveModel,
+        productIdentity: [effectiveBrand, effectiveModel].filter(Boolean).join(' ') || effectiveNoun,
+        identityWords: dynamicIdentity.words,
         coreWords: Array.from(new Set([...allWords, ...dynamicIdentity.words])),
         multilingualWords: Array.from(new Set([...allWords, ...dynamicIdentity.words])),
         searchQueries: buildDynamicProductSearchQueries({
-          title: cleaned, noun: anchor.noun, englishNoun,
-          brand: dynamicIdentity.brand, model: dynamicIdentity.model, identity: dynamicIdentity.identity,
+          title: cleaned, noun: effectiveNoun, englishNoun,
+          brand: effectiveBrand, model: effectiveModel, identity: dynamicIdentity.identity,
         })
       };
+    }
+  }
+
+  // 2. Second priority: Comprehensive physical product vocabulary
+  const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc, rawBrand);
+  const effectiveBrand = rawBrand || dynamicIdentity.brand;
+  const effectiveModel = explicitModel || dynamicIdentity.model;
+
+  let physicalNoun = explicitProductType || '';
+  if (!physicalNoun) {
+    const hitPhysical = PHYSICAL_PRODUCT_NOUNS.find(([needle]) => normalized.includes(needle));
+    if (hitPhysical) {
+      physicalNoun = hitPhysical[1];
     }
   }
 
@@ -3794,21 +4194,28 @@ export function extractCoreProductInfo(rawTitle = '', rawDesc = '', rawUrl = '',
     'store','shop','indonesia','free','shipping','sale','best','seller','new','limited','edition'
   ];
   const words = normalized.split(/\s+/).filter(w => w.length >= 2 && !stopWords.includes(w));
-  const dynamicIdentity = extractDynamicProductIdentity(cleaned, rawDesc, rawBrand);
   const fallbackTokens = words.slice(0, 6);
-  const fallbackNoun = dynamicIdentity.identity ||
-    fallbackTokens.slice(0, 4).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') ||
-    cleaned.slice(0, 40) || 'Produk Praktis';
+
+  // CRITICAL FIX: Never let fallbackNoun become the brand name itself!
+  let fallbackNoun = physicalNoun;
+  if (!fallbackNoun) {
+    const brandNorm = normalizeText(effectiveBrand);
+    const nonBrandTokens = fallbackTokens.filter(t => normalizeText(t) !== brandNorm);
+    fallbackNoun = nonBrandTokens.slice(0, 3).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ') ||
+      cleaned.slice(0, 40) || 'Produk Praktis';
+  }
+
   const fallbackWords = Array.from(new Set([...fallbackTokens, ...dynamicIdentity.words]));
   return {
     cleanTitle: cleaned, coreProductNoun: fallbackNoun, englishNoun: fallbackNoun,
-    category: 'general_gadget', brand: dynamicIdentity.brand, model: dynamicIdentity.model,
-    productIdentity: dynamicIdentity.identity || fallbackNoun, identityWords: dynamicIdentity.words,
+    category: 'general_gadget', brand: effectiveBrand, model: effectiveModel,
+    productIdentity: [effectiveBrand, effectiveModel].filter(Boolean).join(' ') || fallbackNoun,
+    identityWords: dynamicIdentity.words,
     coreWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
     multilingualWords: fallbackWords.length > 0 ? fallbackWords : ['produk'],
     searchQueries: buildDynamicProductSearchQueries({
       title: cleaned, noun: fallbackNoun, englishNoun: fallbackNoun,
-      brand: dynamicIdentity.brand, model: dynamicIdentity.model,
+      brand: effectiveBrand, model: effectiveModel,
       identity: dynamicIdentity.identity || fallbackNoun,
     })
   };
@@ -3859,7 +4266,12 @@ function extractDynamicProductIdentity(title = '', description = '', explicitBra
     'plate','mangkok','bowl','sendok','spoon','garpu','fork','tongs','capitan','lampu','light',
     'kipas','fan','humidifier','sealer','timbangan','scale','thermometer','termometer',
     'kitchen','dapur','tools','tool','holder','stand','lipat','foldable','tarik','putar',
-    'tekan','rotary','rechargeable','usb','cordless','isi','pcs','buah','food'
+    'tekan','rotary','rechargeable','usb','cordless','isi','pcs','buah','food',
+    // Compound words without spaces that should never be mistaken as brand names:
+    'ricecooker','rice-cooker','magiccom','magic-com','airfryer','air-fryer',
+    'slowcooker','pressurecooker','multicooker','foodprocessor','handblender',
+    'portableblender','handmixer','standmixer','coffeemaker','deepfryer',
+    'spraymop','supermop','superpan','frypan','saucepan','cookware','steamer','toaster','microwave'
   ]);
 
   const isPossibleBrand = (candidate) => {
@@ -3881,6 +4293,19 @@ function extractDynamicProductIdentity(title = '', description = '', explicitBra
       .replace(/[|,:;]+$/g, '')
       .trim();
     if (!isPossibleBrand(brand)) brand = '';
+  }
+
+  // 1. High priority: Check if any token or phrase matches KNOWN_BRANDS
+  if (!brand) {
+    const sourceNorm = normalizeText(source);
+    for (const kb of KNOWN_BRANDS) {
+      const kbNorm = normalizeText(kb);
+      const regex = new RegExp(`(^|\\s)${kbNorm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(\\s|$)`, 'i');
+      if (regex.test(sourceNorm)) {
+        brand = kb;
+        break;
+      }
+    }
   }
 
   if (!brand && model) {
@@ -3943,7 +4368,7 @@ function extractDynamicSearchAttributes(title = '') {
   return attributes.slice(0, 3);
 }
 
-function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun = '', brand = '', model = '', identity = '' } = {}) {
+export function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun = '', brand = '', model = '', identity = '' } = {}) {
   const queries = [];
   const add = (query) => {
     const clean = String(query || '').replace(/\s+/g, ' ').trim();
@@ -3957,35 +4382,53 @@ function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun =
   // 4) Product type alone when the listing is genuinely OEM/unbranded.
   // Do NOT expand discovery with marketplace adjectives, dimensions, capacity,
   // generic attributes, or the full seller title: those queries create unrelated footage.
-  const type = String(noun || englishNoun || '').replace(/\s+/g, ' ').trim();
-  // Auto/video discovery must keep brand + product type together.
-  // If a model exists, include it as an additional identity signal rather than
-  // replacing the product type.
-  const exactIdentity = brand && type
-    ? [brand, model, type].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim()
-    : '';
+  let type = String(noun || englishNoun || '').replace(/\s+/g, ' ').trim();
+  const cleanBrand = String(brand || '').replace(/\s+/g, ' ').trim();
+  const cleanModel = String(model || '').replace(/\s+/g, ' ').trim();
+
+  // If type is identical to brand, remove type so the brand is never doubled (e.g. "BOLDE BOLDE")
+  if (type && cleanBrand && normalizeText(type) === normalizeText(cleanBrand)) {
+    type = '';
+  }
+
+  // Deduplicate tokens case-insensitively when constructing exactIdentity
+  const rawTokens = [cleanBrand, cleanModel, type].filter(Boolean);
+  const uniqueTokens = [];
+  const seenNorm = new Set();
+  for (const tok of rawTokens) {
+    const n = normalizeText(tok);
+    if (!seenNorm.has(n)) {
+      seenNorm.add(n);
+      uniqueTokens.push(tok);
+    }
+  }
+  const exactIdentity = uniqueTokens.join(' ').trim();
   const fallbackIdentity = String(identity || '').trim();
 
   if (exactIdentity) {
-    add(`"${exactIdentity}" demo`);
+    add(`"${exactIdentity}" review indonesia`);
     add(`"${exactIdentity}" review`);
+    add(`"${exactIdentity}" demo cara pakai`);
     add(`"${exactIdentity}" demonstration`);
     add(`"${exactIdentity}" hands on`);
-  } else if (fallbackIdentity && !brand) {
+  } else if (fallbackIdentity && !cleanBrand) {
     // Kept for non-auto/manual callers. Auto Mode validates brand + type before
     // reaching video search, so this cannot create generic Auto Mode queries.
-    add(`"${fallbackIdentity}" demo`);
+    add(`"${fallbackIdentity}" review indonesia`);
+    add(`"${fallbackIdentity}" demo cara pakai`);
     add(`"${fallbackIdentity}" review`);
   }
 
-  if (brand && type) {
-    add(`${brand} ${type} demo`);
-    add(`${brand} ${type} review`);
+  if (cleanBrand && type && normalizeText(cleanBrand) !== normalizeText(type)) {
+    add(`${cleanBrand} ${type} review indonesia`);
+    add(`${cleanBrand} ${type} demo cara pakai`);
+    add(`${cleanBrand} ${type} review`);
   }
 
-  if (model && type) {
-    add(`${model} ${type} demo`);
-    add(`${model} ${type} review`);
+  if (cleanModel && type && normalizeText(cleanModel) !== normalizeText(type)) {
+    add(`${cleanModel} ${type} review indonesia`);
+    add(`${cleanModel} ${type} demo`);
+    add(`${cleanModel} ${type} review`);
   }
 
   // Never generate type-only or full-title discovery queries here.
@@ -3994,6 +4437,10 @@ function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun =
 }
 
 export function isTitleMatchingProduct(candidateTitle, productWords = [], extraMeta = {}) {
+  // Reject non-Latin foreign scripts (Mandarin/Hanzi, Devanagari, Thai, Arabic, Cyrillic, Hangul, Kana) & Chinese platforms
+  if (hasNonLatinOrForeignScript(candidateTitle || '')) return false;
+  if (isChineseSocialOrForeignMedia(candidateTitle || '')) return false;
+
   const normTitle = normalizeText(candidateTitle || '');
   const normDesc = normalizeText(extraMeta?.description || '').slice(0, 800);
   const normTags = Array.isArray(extraMeta?.tags)
