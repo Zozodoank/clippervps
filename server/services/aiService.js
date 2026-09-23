@@ -2001,7 +2001,7 @@ CRITICAL MANDATE FOR FRAME AUDIT & REJECTION REPORTING:
    Specify "frameIndex" (1-indexed matching frame #1, #2, ...), "timestamp" (approx seconds), and an explicit "reason".
 2. "acceptedFrames": List every clean, faceless, hands-on demonstration frame index.
 3. "missingSlots": If the pool of clean frames cannot fill all 7 diverse storyboard slots without repetition, list the unfilled slot keys (e.g. ["clip3_action_demo", "clip4_action_demo_diff"]).
-4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage. WAJIB GUNAKAN BAHASA INDONESIA yang umum dipakai di Shopee (contoh: "${effectiveTitle} cara pakai", "review ${effectiveTitle} bahasa indonesia"). JANGAN gunakan keyword bahasa Inggris jika produk target berbahasa Indonesia.
+4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage. WAJIB GUNAKAN merk dan tipe produk ("${effectiveTitle}") secara utuh dan akurat, meskipun nama merk berbahasa Inggris. Padukan dengan kata kunci pencarian dalam Bahasa Indonesia (contoh: "${effectiveTitle} cara pakai", "review ${effectiveTitle} indonesia") agar sesuai dengan audiens Shopee lokal.
 5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
 
   // Bound frames to at most 30 keyframes for Gemini Vision / AI APIs
