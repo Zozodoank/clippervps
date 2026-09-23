@@ -133,6 +133,9 @@ function getYtDlpArgs(clientSpoof = null) {
   if (cookiesArgs.length) args.push(...cookiesArgs);
   if (proxyArgs.length) args.push(...proxyArgs);
 
+  // Enable Node.js JS runtime to solve YouTube n-token signature challenges without throttle
+  args.push('--js-runtimes', 'node');
+
   // Standard Chrome desktop User-Agent to mimic browser / IDM
   if (clientSpoof && (clientSpoof.startsWith('android') || clientSpoof.includes('mweb'))) {
     args.push('--user-agent', 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36');

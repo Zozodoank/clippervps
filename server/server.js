@@ -2046,6 +2046,10 @@ export async function runStage1Pipeline({
       while (streamedCount < MAX_STREAM_VIDEOS) {
         // 1. Jika antrean candidatePool habis sebelum kuota stream 5 video tercapai, cari kandidat tambahan
         if (candidatePoolIndex >= candidatePool.length) {
+          if (searchIteration >= 3) {
+            console.warn(`[Job ${jobId}] Mencapai batas maksimal iterasi pencarian (${searchIteration}). Menghentikan pencarian video tambahan.`);
+            break;
+          }
           console.log(`[Job ${jobId}] Kuota stream masih tersedia (${streamedCount}/${MAX_STREAM_VIDEOS}). Mencari kandidat YouTube tambahan untuk "${productTitle}"...`);
           searchIteration++;
           let fresh = await discoverYouTubeCandidatesForProduct({

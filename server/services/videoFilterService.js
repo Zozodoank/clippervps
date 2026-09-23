@@ -91,6 +91,9 @@ function getYtDlpBaseArgs() {
   if (cookiesArgs.length) args.push(...cookiesArgs);
   if (proxyArgs.length) args.push(...proxyArgs);
 
+  // Enable Node.js JS runtime to solve YouTube n-token signature challenges without throttle and expose full HD formats
+  args.push('--js-runtimes', 'node');
+
   return args;
 }
 
@@ -273,9 +276,9 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal 15 menit (900 detik).` };
   }
 
-  // 1A. Resolusi Maksimal Video (Wajib tersedia minimal HD 720p/1080p baik landscape maupun portrait)
-  if (metadata.maxHeight > 0 && metadata.maxWidth > 0 && metadata.maxHeight < 720 && metadata.maxWidth < 720) {
-    return { eligible: false, reason: `Resolusi maksimal video (${metadata.maxWidth}x${metadata.maxHeight}) di bawah standar HD 720p/1080p.` };
+  // 1A. Resolusi Maksimal Video (Wajib tersedia minimal 480p/720p; tolak video 144p/240p/360p buram)
+  if (metadata.maxHeight > 0 && metadata.maxWidth > 0 && metadata.maxHeight < 480 && metadata.maxWidth < 480) {
+    return { eligible: false, reason: `Resolusi maksimal video (${metadata.maxWidth}x${metadata.maxHeight}) di bawah standar 480p/720p.` };
   }
 
   const titleLower = (metadata.title || '').toLowerCase();
