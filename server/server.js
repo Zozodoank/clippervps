@@ -2254,6 +2254,22 @@ export async function runStage1Pipeline({
         const preferredSoFar = choosePreferredCandidateSet(candidateResults);
         const bestVerified = preferredSoFar[0];
         const totalCleanFrames = preferredSoFar.reduce((acc, c) => acc + (c.cleanFrames?.length || 0), 0);
+        const verifiedCandidatesCount = preferredSoFar.filter(c => c?.productVerification?.verified).length;
+        const hasRemainingPool = candidatePoolIndex < candidatePool.length;
+
+        // DYNAMIC MULTI-VIDEO HARVESTING FOR REELS:
+        // Jangan langsung berhenti di 1 video jika masih ada kandidat lain yang belum di-stream!
+        // Usahakan mengumpulkan minimal 2 video terverifikasi (atau stream minimal 2-3 video)
+        // agar video reels memiliki variasi sudut kamera, pencahayaan, dan latar belakang berbeda!
+        const targetMultiSources = 2;
+        const shouldKeepHarvesting = verifiedCandidatesCount < targetMultiSources &&
+          hasRemainingPool &&
+          streamedCount < Math.min(3, MAX_STREAM_VIDEOS);
+
+        if (shouldKeepHarvesting) {
+          console.log(`[Job ${jobId}] 🎬 Multi-video harvesting: Sudah dapat ${verifiedCandidatesCount} video terverifikasi. Terus stream kandidat berikutnya untuk mendapatkan variasi sudut kamera & latar belakang...`);
+          continue;
+        }
 
         // Jika satu sumber terverifikasi sudah kaya adegan (>= 8 frame) atau gabungan sudah >= 8 frame:
         // Coba jalankan AI Storyboard untuk melihat apakah jumlah frame dan cuplikan terpenuhi!
@@ -2289,7 +2305,7 @@ export async function runStage1Pipeline({
               });
 
               if (testHl && Array.isArray(testHl.clips) && testHl.clips.length >= 3) {
-                console.log(`[Job ${jobId}] ✅ AI Vision berhasil memilih ${testHl.clips.length} cuplikan produk! Jumlah frame terpenuhi.`);
+                console.log(`[Job ${jobId}] ✅ AI Vision berhasil memilih ${testHl.clips.length} cuplikan produk dari ${preferredSoFar.length} video!`);
                 hl = testHl;
                 pooledFrames = testPool;
                 candidateResults = preferredSoFar;

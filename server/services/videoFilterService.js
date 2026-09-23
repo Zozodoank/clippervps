@@ -1062,13 +1062,13 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     }
   }
 
-  const isCornerLogo = topLeftPersistent >= 10 || topRightPersistent >= 10 || bottomLeftPersistent >= 10 || bottomRightPersistent >= 10;
-  const isWatermarkOverlay = totalPersistent >= 28;
-  const isBoldLogo = boldStaticLogoPairCount >= 3;
+  const isCornerLogo = topLeftPersistent >= 7 || topRightPersistent >= 7 || bottomLeftPersistent >= 8 || bottomRightPersistent >= 8;
+  const isWatermarkOverlay = totalPersistent >= 24;
+  const isBoldLogo = boldStaticLogoPairCount >= 2;
 
   if (isCornerLogo) {
     staticLogoCount = Math.max(topLeftPersistent, topRightPersistent, bottomLeftPersistent, bottomRightPersistent);
-    staticLogoReason = `Analisa visual lokal mendeteksi logo channel statis di area sudut frame 9:16 (TL:${topLeftPersistent}, TR:${topRightPersistent}, BL:${bottomLeftPersistent}, BR:${bottomRightPersistent} piksel persisten).`;
+    staticLogoReason = `Analisa visual lokal mendeteksi logo channel statis / angka mengambang di sudut frame 9:16 (TL:${topLeftPersistent}, TR:${topRightPersistent}, BL:${bottomLeftPersistent}, BR:${bottomRightPersistent} piksel persisten).`;
   } else if (isWatermarkOverlay) {
     staticLogoCount = totalPersistent;
     staticLogoReason = `Analisa visual lokal mendeteksi watermark / identitas channel statis di frame 9:16 (${totalPersistent} piksel persisten).`;
@@ -1091,6 +1091,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     let floatTextWhitePixels = 0;
     let floatTextEdges = 0;
     let animatedGraphicPixels = 0;
+    let cornerGraphicPixels = 0;
     let upperGenuineSkinPixels = 0;
     let totalBrightness = 0;
 
@@ -1123,15 +1124,19 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
           }
         }
 
-        // C. Grafis Animasi Overlay / Stiker Digital
-        const isHyperSaturatedGraphic = (sat > 0.72 && val > 130 && (
-          (r > 210 && g > 170 && b < 60) || // Emoji/cartoon yellow
-          (r > 200 && g < 70 && b < 70) ||   // Pure graphic red
-          (r < 60 && g > 200 && b < 90) ||   // Neon green sticker
-          (r < 60 && g > 180 && b > 210) ||  // Cyan/sky graphic
-          (r > 210 && g < 60 && b > 180)     // Magenta/purple graphic
+        // C. Grafis Animasi Overlay / Stiker Digital / Angka Mengambang di Sudut
+        const isCornerArea = (x < 24 && y < 35) || (x > 56 && y < 35);
+        const isHyperSaturatedGraphic = (sat > 0.65 && val > 120 && (
+          (r > 200 && g > 155 && b < 70) || // Emoji/cartoon yellow / angka teks 99
+          (r > 190 && g < 75 && b < 75) ||   // Pure graphic red
+          (r < 70 && g > 190 && b < 95) ||   // Neon green sticker
+          (r < 70 && g > 170 && b > 200) ||  // Cyan/sky graphic
+          (r > 200 && g < 70 && b > 170)     // Magenta/purple graphic
         ));
-        if (isHyperSaturatedGraphic) animatedGraphicPixels++;
+        if (isHyperSaturatedGraphic) {
+          animatedGraphicPixels++;
+          if (isCornerArea) cornerGraphicPixels++;
+        }
 
         // D. Wajah / Tubuh Manusia di Area Atas 65%
         if (y < faceEndY) {
@@ -1157,18 +1162,18 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     if (!isOpeningFrame) {
       if ((subWhitePixels / subTotal) > 0.05 && avgBrightness > 25) subtitleBandCount++;
       if ((floatTextWhitePixels / floatTotal) > 0.06 && (floatTextEdges / floatTotal) > 0.05) floatingTextCount++;
-      if ((animatedGraphicPixels / (W * H)) > 0.03) animatedGraphicCount++;
+      if ((animatedGraphicPixels / (W * H)) > 0.025 || cornerGraphicPixels >= 6) animatedGraphicCount++;
       if ((upperGenuineSkinPixels / upperTotal) > 0.07) humanFaceSkinCount++;
     }
 
-    // ── Klasifikasi granular per-frame (face, black, intro bumper, static frame, watermark, subtitle) ──
+    // ── Klasifikasi granular per-frame (face, black, intro bumper, static frame, watermark, subtitle, floating text/number) ──
     const isFrameFace = (upperGenuineSkinPixels / upperTotal) > 0.055;
     const isFrameBlack = avgBrightness < 8;
     const isFrameIntro = Boolean(isOpeningFrame);
     const isFrameStatic = staticFrameIndices.has(i) && !isFrameIntro;
     const isFrameSubtitle = (subWhitePixels / subTotal) > 0.038 && avgBrightness > 25;
     const isFrameFloatingText = (floatTextWhitePixels / floatTotal) > 0.045 && (floatTextEdges / floatTotal) > 0.04;
-    const isFrameGraphic = (animatedGraphicPixels / (W * H)) > 0.025;
+    const isFrameGraphic = (animatedGraphicPixels / (W * H)) > 0.022 || cornerGraphicPixels >= 6;
     const isFrameWatermark = isCornerLogo || isWatermarkOverlay || isBoldLogo;
 
     if (isFrameFace || isFrameBlack || isFrameIntro || isFrameStatic || isFrameSubtitle || isFrameFloatingText || isFrameGraphic || isFrameWatermark) {
@@ -1180,7 +1185,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       else if (isFrameSubtitle) rReason = 'subtitle';
       else if (isFrameWatermark) rReason = 'watermark';
       else if (isFrameFloatingText) rReason = 'floating_text';
-      else if (isFrameGraphic) rReason = 'animated_graphic';
+      else if (isFrameGraphic) rReason = cornerGraphicPixels >= 6 ? 'floating_corner_graphic' : 'animated_graphic';
 
       discardedFrames.push({
         ...frames[i],

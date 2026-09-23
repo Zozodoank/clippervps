@@ -73,7 +73,7 @@ export function buildCreativeShotPlan({ fingerprint = {}, niche = 'kitchen_tools
   if (niche === 'gadget_smartphone') {
     return {
       strategy: 'story_first',
-      sourcePolicy: 'single_consistent_source_preferred',
+      sourcePolicy: 'multi_angle_dynamic_preferred',
       shots: [
         { role: 'hook_hero', purpose: 'Buka dengan hero shot paling kuat', targetSec: 1.8, minSec: 1.4, maxSec: 2.4 },
         { role: 'design_detail', purpose: 'Detail fisik/build quality', targetSec: 2.6, minSec: 2.0, maxSec: 3.3 },
@@ -92,15 +92,15 @@ export function buildCreativeShotPlan({ fingerprint = {}, niche = 'kitchen_tools
 
   return {
     strategy: 'story_first',
-    sourcePolicy: 'single_consistent_source_preferred',
+    sourcePolicy: 'multi_angle_dynamic_preferred',
     shots: [
-      { role: 'hook_problem', purpose: 'Visual masalah/hasil paling menarik tanpa sapaan', targetSec: 1.7, minSec: 1.3, maxSec: 2.3 },
-      { role: 'hero_product', purpose: 'Produk utuh dan bentuk fisik jelas', targetSec: 2.2, minSec: 1.8, maxSec: 2.8 },
-      { role: 'mechanism_demo', purpose: `Peragakan ${mechanismLabel} secara jelas`, targetSec: 3.3, minSec: 2.7, maxSec: 3.8 },
-      { role: 'feature_detail', purpose: 'Close-up bagian pembeda/konstruksi', targetSec: 2.5, minSec: 2.0, maxSec: 3.2 },
-      { role: 'action_demo', purpose: 'Aksi penggunaan nyata berbeda dari shot sebelumnya', targetSec: 3.2, minSec: 2.6, maxSec: 3.8 },
-      { role: 'result_proof', purpose: 'Hasil nyata sesudah produk digunakan', targetSec: 2.8, minSec: 2.2, maxSec: 3.5 },
-      { role: 'cta_hero', purpose: 'Produk utuh/hasil akhir sebagai penutup', targetSec: 2.4, minSec: 1.8, maxSec: 3.0 },
+      { role: 'hook_hero', purpose: 'Hero shot produk utuh paling estetik & dinamis tanpa sapaan', targetSec: 1.7, minSec: 1.3, maxSec: 2.3 },
+      { role: 'feature_angle', purpose: 'Sudut pandang 45 derajat atau perspektif meja yang elegan', targetSec: 2.2, minSec: 1.8, maxSec: 2.8 },
+      { role: 'mechanism_demo', purpose: `Peragakan ${mechanismLabel} (putar carousel/buka tutup) secara aktif`, targetSec: 3.3, minSec: 2.7, maxSec: 3.8 },
+      { role: 'macro_detail', purpose: 'Close-up makro detail tekstur, motif bunga, handle, atau material', targetSec: 2.5, minSec: 2.0, maxSec: 3.2 },
+      { role: 'action_demo', purpose: 'Aksi pemakaian/penyajian nyata berbeda dari shot sebelumnya', targetSec: 3.2, minSec: 2.6, maxSec: 3.8 },
+      { role: 'result_proof', purpose: 'Hasil nyata penataan produk/hidangan secara menarik', targetSec: 2.8, minSec: 2.2, maxSec: 3.5 },
+      { role: 'cta_hero', purpose: 'Produk utuh/sudut elegan penutup untuk CTA', targetSec: 2.4, minSec: 1.8, maxSec: 3.0 },
     ],
   };
 }
@@ -192,15 +192,14 @@ export function choosePreferredCandidateSet(candidateResults = []) {
   }).sort((a, b) => b.score - a.score);
 
   const best = scored[0];
-  // A rich single source is preferred over mixing sources. Add a second source only
-  // when the first cannot supply enough diverse clean material and the second is also high confidence.
-  if ((best.c.cleanFrames?.length || 0) >= 8) return [best.c];
-
   const selected = [best.c];
+  // Multi-Video Synergy: Gabungkan hingga 2-3 sumber terverifikasi untuk variasi sudut kamera, latar, & pencahayaan
   for (const item of scored.slice(1)) {
     if (selected.length >= 3) break;
-    if ((Number(item.c.productVerification?.confidence) || 0) >= 0.82) selected.push(item.c);
-    if (selected.reduce((s, c) => s + (c.cleanFrames?.length || 0), 0) >= 10) break;
+    const candConfidence = Number(item.c.productVerification?.confidence) || 0;
+    if (candConfidence >= 0.75 && (item.c.cleanFrames?.length || 0) >= 2) {
+      selected.push(item.c);
+    }
   }
   return selected;
 }

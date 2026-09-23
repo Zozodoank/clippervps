@@ -1522,6 +1522,10 @@ RULE 1: ABSOLUTE ZERO HARDCODED SPEECH SUBTITLES & ZERO BURNED-IN CAPTION BARS:
 - Inspect every frame (bottom, middle, top, edges) for burned-in speech subtitles, translated lyric bars, or running dialogue captions.
 - Reason: The affiliate clipper generates and burns its own clean, animated Indonesian subtitles. Any source video with existing burned-in speech subtitles causes terrible overlapping double-subtitles and is unwatchable!
 - ZERO TOLERANCE FOR POST-PRODUCTION TEXT OVERLAYS & COLORED BANNERS: Dilarang ada stiker teks, teks keterangan digital editan, banner teks statis, atau kartu persegi berlatar warna (misal: kotak kuning/merah/putih dengan teks) di frame 9:16 tengah.
+- ZERO TOLERANCE FOR FLOATING NUMBERS, PROMO BADGES, PRICE TAGS & DIGITAL STICKERS:
+  * DILARANG KERAS frame yang memiliki ANGKA MENGAMBANG, BADGE DISKON, HARGA, ATAU STIKER DIGITAL DI SUDUT MAUPUN TENGAH FRAME 9:16 (misal: angka kuning/merah/putih seperti "99", "9.9", "12.12", angka persentase diskon, atau stiker grafis editan)!
+  * Setiap angka digital mengambang, nomor promosi, atau stiker grafis di dalam frame 9:16 adalah PELANGGARAN KERAS dan frame tersebut WAJIB DIBUANG / JANGAN DIPILIH!
+  * Jika seluruh frame video memiliki angka mengambang atau stiker permanen di dalam frame 9:16 yang tidak bisa di-crop: REJECT the video!
 - OPENING INTRO BUMPER / TITLE CARD TOLERANCE (CRITICAL MANDATE):
   * JIKA VIDEO MEMILIKI KARTU INTRO / BUMPER PEMBUKA / LOGO CHANNEL ANIMASI DI DETIK 0 SAMPAI DETIK 5 (Frame 1 atau 2): JANGAN DITOLAK!
   * Video TETAP DITERIMA (status: 'accept') asalkan frame demonstrasi produk setelahnya bersih dan faceless.
@@ -1542,10 +1546,11 @@ ${buildFaceAndMotionCriterion(niche, clipSec)}
 RULE 3B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD UNBOXING FRAMES):
 - JANGAN MENOLAK VIDEO HANYA KARENA ADA PROSES UNBOXING:
   * Jika video memiliki proses unboxing di awal (membuka kardus, merobek bubble wrap/plastik, unboxing paket): Video TETAP DITERIMA (status: 'accept').
-- MANDAT PEMBUANGAN FRAME UNBOXING & MANUAL KERTAS:
+- MANDAT PEMBUANGAN FRAME UNBOXING, METERAN & MANUAL KERTAS:
   * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA FRAME YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, ATAU BUSA PACKAGING!
-  * Frame proses unboxing, buku panduan kertas, atau kemasan kardus DILARANG KERAS dimasukkan ke dalam daftar "frames" terpilih!
-  * HANYA pilih indeks frame ("frames") ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA di luar kemasan (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
+  * STRICT BAN ON TAPE MEASURES, RULERS, AND PACKAGING RESIDUE: DILARANG KERAS MEMILIH FRAME DENGAN METERAN JAHIT (kuning/putih), PENGGARIS, ALAT UKUR PANJANG, BUSA KEMASAN, BUKU PANDUAN MANUAL, RESI PENGIRIMAN, ATAU KARDUS KOSONG!
+  * Cuplikan orang memegang meteran jahit mengukur mangkuk/produk adalah B-roll unboxing teknis yang SANGAT MEMBOSANKAN dan MEMATIKAN retensi penonton di Reels/TikTok. JANGAN PERNAH DIPILIH!
+  * HANYA pilih indeks frame ("frames") ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA di luar kemasan (misal: saat memotong, mengupas, memasak, memutar rak carousel, menyajikan makanan, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun peragaan cara kerja fisik produk.
 
@@ -1569,8 +1574,8 @@ RULE 5: WATERMARKS, SOCIAL MEDIA LOGOS & CHANNEL IDENTITIES (9:16 CROP GEOMETRY 
   * VERTICAL 9:16 VIDEOS (SHORTS / REELS / TIKTOK): ZERO HORIZONTAL CROPPING OCCURS! The full 100% width and all four corners remain completely visible in the final output!
     THEREFORE: In vertical videos, ANY watermark, channel handle, or creator text overlay anywhere in the frame (including corners and margins) CANNOT be cropped out and MUST BE REJECTED IMMEDIATELY!
 - STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME:
-  * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
-  * Setiap watermark atau logo yang masuk ke dalam frame 9:16 wajib DITOLAK karena tidak bisa terpotong.
+  * DILARANG KERAS jika watermark digital, angka mengambang ("99", "9.9"), logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
+  * Setiap watermark, logo, atau angka mengambang yang masuk ke dalam frame 9:16 wajib DITOLAK / DIBUANG karena tidak bisa terpotong.
   * PERINGATAN KERAS WATERMARK ABU-ABU / TRANSPARAN / SAMAR:
     Perhatikan dengan sangat teliti setiap watermark semi-transparan, watermark abu-abu muda, logo rumah/bangunan/karakter, atau teks merek kreator/studio (seperti logo channel samar, teks abu-abu di sudut atas atau tengah frame).
     JIKA WATERMARK ABU-ABU/SAMAR INI TERLIHAT DI DALAM AREA FRAME PERAGAAN (tidak terpotong habis di luar layar), VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "hasWatermarkIn916Frame": true, "reason": "Video ditolak: Mengandung watermark abu-abu/logo samar di dalam frame."}
@@ -1721,24 +1726,33 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 4. Watermark & Logo QC (9:16 Crop Tolerance):
    - Watermark/logo di pojok kiri/kanan video (di luar area 9:16 tengah) TETAP DITERIMA karena akan terpotong saat di-crop ke format vertikal 9:16.
    - Jika ada watermark di tengah pada satu frame, abaikan frame tersebut dan pilih frame lain yang bersih dari video yang sama!
-5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADENGAN BERBEDA):
-   Video reels/shorts affiliate WAJIB berganti adegan setiap ~5 detik dan DILARANG KERAS monoton!
-   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / produk yang sudah keluar dari kemasan / hands-on showcase fisik produk). DILARANG KERAS kardus kosong, bubble wrap tanpa produk, paket resi pengiriman, atau frame tanpa produk di Slot 1!
+5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADEGAN BERBEDA & DYNAMIC MULTI-ANGLE):
+   Video reels/shorts affiliate WAJIB berganti adegan setiap ~3-5 detik dan DILARANG KERAS monoton!
+   - ATURAN SUDUT PANDANG & VARIASI PERSPEKTIF (CRITICAL UNTUK RETENSI REELS):
+     * DILARANG KERAS memilih 2 frame berurutan dengan sudut kamera & jarak yang sama persis (terutama sudut top-down tegak lurus dari atas meja).
+     * WAJIB kombinasikan minimal 3 tipe visual berbeda di antara 7 slot:
+       1) Hero Establishing Shot: Produk utuh di atas meja (Slot 1).
+       2) Macro Close-up Shot: Menyorot detail motif bunga, handle, tutup, knob, atau tekstur bahan.
+       3) Dynamic Action Shot: Tangan memutar rak saji carousel/lazy susan, membuka penutup, menyajikan makanan, atau fungsi mekanik.
+       4) Angle Variety: Sudut 45 derajat (miring elegan) atau perspektif meja makan.
+   - DILARANG KERAS FRAME METERAN JAHIT / PENGGARIS: Dilarang memilih frame orang memegang meteran jahit kuning / mengukur mangkuk / membaca buku manual!
+   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / produk yang sudah keluar dari kemasan / hands-on showcase fisik produk). DILARANG KERAS kardus kosong, bubble wrap tanpa produk, meteran, paket resi pengiriman, atau frame tanpa produk di Slot 1!
    ${preset.storyboardInstructions}
 5B. TARGET PRODUCT MUST BE VISIBLY PRESENT IN EVERY SELECTED FRAME:
    - Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.
-   - REJECT frame yang hanya menampilkan tangan kosong, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus kosong, bubble wrap tanpa produk, resi paket, atau mesin industri/peralatan lain tanpa produk target.
+   - REJECT frame yang hanya menampilkan tangan kosong, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus kosong, bubble wrap tanpa produk, resi paket, meteran pengukur, atau mesin industri/peralatan lain tanpa produk target.
    - Untuk kitchen_tools: jangan pernah menganggap aktivitas memasak sebagai bukti produk. Jika produk target tidak terlihat dan dioperasikan, frame TIDAK valid.
    - Set hasTargetProductInEverySelectedFrame menjadi true HANYA bila setiap frame yang dipilih lolos bukti visual tersebut; bila satu saja tidak memenuhi, set false.
 
-6. 100% PRODUCT VISUAL CONSISTENCY & DYNAMIC SCENE DIVERSITY:
+6. 100% PRODUCT VISUAL CONSISTENCY & MULTI-VIDEO HARVESTING:
    - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh 7 adegan yang dipilih (Slot 1 sampai Slot 7) WAJIB menampakkan MODEL PRODUK FISIK YANG SAMA PERSIS (model, bentuk, material, warna, dan fungsi identik dengan produk target: "${coreNoun}").
-   - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! (Contoh TERLARANG: Slot 1 chopper hijau 3 pisau, Slot 2 chopper putih 2 pisau; atau Slot 1 toples kaca, Slot 2 panci masak). Jika ada kandidat video yang produk fisiknya berbeda tipe/warna/model dengan produk target, JANGAN pilih frame dari video tersebut!
-   - ATURAN PEMILIHAN SUMBER VIDEO:
-     * JIKA HANYA 1 VIDEO SUMBER YANG PRODUKNYA COCOK PERSIS:
-       PILIH SELURUH 7 SLOT DARI 1 VIDEO TERSEBUT dengan memilih momen, sudut kamera (angle), zoom hero shot, aksi pemakaian, dan tahapan demonstrasi yang berbeda agar video dinamis dan tidak monoton. JANGAN PERNAH MENOLAK (REJECT) hanya karena berasal dari 1 video sumber! Satu video sumber yang konsisten adalah pilihan terbaik untuk iklan affiliate!
-     * JIKA ADA 2 ATAU LEBIH VIDEO SUMBER YANG PRODUK FISIKNYA TERBUKTI SAMA PERSIS:
-       Boleh kombinasikan klip di antara video-video tersebut untuk variasi sudut pandang. Namun jika produk di video lain berbeda model/warna/bentuk, AMBIL SELURUH KLIP DARI 1 VIDEO YANG PALING SESUAI!
+   - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! Jika ada kandidat video yang produk fisiknya berbeda tipe/warna/model dengan produk target, JANGAN pilih frame dari video tersebut!
+   - ATURAN PEMILIHAN SUMBER VIDEO (MULTI-VIDEO HARVESTING):
+     * JIKA FRAME BERASAL DARI LEBIH DARI 1 VIDEO KANDIDAT (misal: "Video #1" dan "Video #2"):
+       AI WAJIB MEMILIH KLIP DARI MINIMAL 2 VIDEO SUMBER BERBEDA (misal: Slot 1, 3, 5 dari Video #1; Slot 2, 4, 6 dari Video #2).
+       Ini SANGAT PENTING agar video Reels memiliki variasi sudut kamera, pencahayaan, dan latar belakang berbeda yang cinematic dan tidak membosankan!
+     * JIKA HANYA 1 VIDEO SUMBER YANG TERSEDIA:
+       PILIH 7 SLOT DENGAN VARIASI MAKSIMAL: pilih momen-momen dengan perbedaan sudut pandang (angle 45°, top-down), zoom hero shot, macro close-up tekstur/motif, dan aksi pemutaran/penyajian yang paling kontras dari video tersebut.
 7. Output Format:
    - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
    - Isi "reframeBySlot" untuk setiap slot dengan focusXStart/focusYStart/focusXEnd/focusYEnd (semua 0.0-1.0) berdasarkan posisi produk pada awal dan akhir momen yang dipilih. Gunakan perubahan kecil dan natural; tujuan utamanya menjaga produk di safe-zone vertikal, bukan membuat gerakan kamera palsu berlebihan.
@@ -3177,12 +3191,10 @@ export function build7SlotStoryboardClips({
       audit?.reason,
     ].filter(Boolean).join(' ').toLowerCase();
 
-    return /bubble\s*wrap|kardus\s+kosong|cardboard\s+box|empty\s+package|resi\s+pengiriman|paper\s+manual|buku\s+panduan|industrial\s+machine|factory\s+machine|machinery|mesin\s+industri|mesin\s+pabrik|mesin\s+produksi/.test(frameText);
+    return /bubble\s*wrap|kardus\s+kosong|cardboard\s+box|empty\s+package|resi\s+pengiriman|paper\s+manual|buku\s+panduan|industrial\s+machine|factory\s+machine|machinery|mesin\s+industri|mesin\s+pabrik|mesin\s+produksi|meteran|penggaris|tape\s*measure|ruler|caliper|alat\s*ukur|measuring\s*tape|dimensi|angka\s*mengambang|floating\s*number|stiker\s*diskon|badge\s*diskon/.test(frameText);
   };
 
-  // Professional source policy: prefer the richest single verified source.
-  // Secondary verified sources are only used when the primary source cannot provide
-  // a distinct clean moment for a requested shot role.
+  // Multi-video harvesting: distribusikan slot antar kandidat jika tersedia lebih dari 1 video terverifikasi
   const sourceRank = candIndices
     .map((candidateIndex) => ({
       candidateIndex,
@@ -3235,7 +3247,10 @@ export function build7SlotStoryboardClips({
   };
 
   for (let sIdx = 0; sIdx < slotsConfig.length; sIdx++) {
-    const requiredCandidate = primaryCandidate;
+    // Rotasi target kandidat jika ada multi-kandidat untuk mendiversifikasi sumber antar adegan
+    const targetCandidate = (candIndices.length > 1)
+      ? candIndices[sIdx % candIndices.length]
+      : primaryCandidate;
     const config = slotsConfig[sIdx];
     let frameObj = null;
     let chosenIdx = rawSlotIndices[sIdx];
@@ -3306,8 +3321,14 @@ export function build7SlotStoryboardClips({
       }
     }
 
-    // Prefer the primary exact-product source; fall back only when that source lacks a distinct usable shot.
-    const distinctFrame = chooseDistinctFrame(frameObj, requiredCandidate);
+    // Multi-candidate diversity: Prioritaskan frame pilihan AI jika valid dan distinct
+    let distinctFrame = null;
+    if (frameObj && isUsableDistinctFrame(frameObj)) {
+      distinctFrame = frameObj;
+    } else {
+      distinctFrame = chooseDistinctFrame(frameObj, targetCandidate);
+    }
+
     if (!distinctFrame) {
       console.warn(`[build7SlotStoryboardClips] Tidak ada frame unik yang cukup untuk Slot #${config.slot}; slot dilewati agar tidak mengulang visual.`);
       continue;

@@ -1,0 +1,46 @@
+[
+  {
+    "filename": "clip_auto_6762819d1f_floating_num99_t001.jpg",
+    "original_filename": "shot_1_1.0s.jpg",
+    "video_source": "final_clip_auto_6762819d1f.mp4",
+    "product_name": "Unboxing Peralatan masak dan makan dari Vicenza",
+    "timestamp_sec": 1,
+    "time_formatted": "00:01",
+    "label": "rejected",
+    "category": "reject_text_overlay",
+    "category_label": "📝 Reject: Angka Mengambang / Sticker Badge / Overlay Digital (99)",
+    "split": "train",
+    "reason": "Angka mengambang kuning '99' dengan garis tepi hitam di pojok kiri atas frame 9:16.",
+    "text_details": {
+      "type": "floating_corner_number_overlay",
+      "text": "99",
+      "position": "top_left",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_6762819d1f"
+  },
+  {
+    "filename": "clip_auto_6762819d1f_floating_num99_t003.jpg",
+    "original_filename": "shot_2_3.5s.jpg",
+    "video_source": "final_clip_auto_6762819d1f.mp4",
+    "product_name": "Unboxing Peralatan masak dan makan dari Vicenza",
+    "timestamp_sec": 3.5,
+    "time_formatted": "00:03",
+    "label": "rejected",
+    "category": "reject_text_overlay_and_measuring_tape",
+    "category_label": "📝 Reject: Angka Mengambang (99) & Pita Meteran Jahit Unboxing",
+    "split": "val",
+    "reason": "Angka mengambang kuning '99' di pojok kiri atas dan pita meteran jahit unboxing membentang di atas mangkuk.",
+    "text_details": {
+      "type": "floating_corner_number_overlay",
+      "text": "99",
+      "position": "top_left",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_6762819d1f"
+  }
+]
