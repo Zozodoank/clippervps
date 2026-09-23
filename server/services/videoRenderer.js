@@ -382,16 +382,16 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
     return [
       `[${inputIndex}:v]${preFlip}split=2[bgsrc${inputIndex}][fgsrc${inputIndex}]`,
       `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
-      `[fgsrc${inputIndex}]scale=1080:1080:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1080:x='(iw-1080)*${xFocusExpr}':y='(ih-1080)*${yFocusExpr}',setsar=1[fg${inputIndex}]`,
+      `[fgsrc${inputIndex}]scale=1080:1080:force_original_aspect_ratio=decrease:flags=bicubic,pad=1080:1080:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1[fg${inputIndex}]`,
       `[bg${inputIndex}][fg${inputIndex}]overlay=(W-w)/2:(H-h)/2,${finish}[${outputLabel}]`,
     ];
   }
 
-  // Default Smart Stage 80% with subtle time-varying reframe.
+  // Default Smart Stage 80% (fit into 1080x1536 without severe cropping).
   return [
     `[${inputIndex}:v]${preFlip}split=2[bgsrc${inputIndex}][fgsrc${inputIndex}]`,
     `[bgsrc${inputIndex}]scale=1080:1920:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1920,boxblur=24:12,eq=brightness=-0.15:saturation=0.85[bg${inputIndex}]`,
-    `[fgsrc${inputIndex}]scale=1080:1536:force_original_aspect_ratio=increase:flags=bicubic,crop=1080:1536:x='(iw-1080)*${xFocusExpr}':y='(ih-1536)*${yFocusExpr}',setsar=1[fg${inputIndex}]`,
+    `[fgsrc${inputIndex}]scale=1080:1536:force_original_aspect_ratio=decrease:flags=bicubic,pad=1080:1536:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1[fg${inputIndex}]`,
     `[bg${inputIndex}][fg${inputIndex}]overlay=(W-w)/2:(H-h)/2,${finish}[${outputLabel}]`,
   ];
 }

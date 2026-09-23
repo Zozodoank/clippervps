@@ -2001,7 +2001,7 @@ CRITICAL MANDATE FOR FRAME AUDIT & REJECTION REPORTING:
    Specify "frameIndex" (1-indexed matching frame #1, #2, ...), "timestamp" (approx seconds), and an explicit "reason".
 2. "acceptedFrames": List every clean, faceless, hands-on demonstration frame index.
 3. "missingSlots": If the pool of clean frames cannot fill all 7 diverse storyboard slots without repetition, list the unfilled slot keys (e.g. ["clip3_action_demo", "clip4_action_demo_diff"]).
-4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage (e.g. "${effectiveTitle} demo", "${effectiveTitle} cara pakai").
+4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage. WAJIB GUNAKAN BAHASA INDONESIA yang umum dipakai di Shopee (contoh: "${effectiveTitle} cara pakai", "review ${effectiveTitle} bahasa indonesia"). JANGAN gunakan keyword bahasa Inggris jika produk target berbahasa Indonesia.
 5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
 
   // Bound frames to at most 30 keyframes for Gemini Vision / AI APIs
@@ -2063,7 +2063,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
    - VIDEO HANYA BOLEH DITOLAK (status: "reject") JIKA:
      1) Produk fisik di video 100% BUKAN produk target ("isExactProductMatch": false).
      2) SELURUH frame (100% dari detik awal hingga akhir) adalah rekaman podcast wajah orang bicara tanpa ada sama sekali peragaan fisik produk.
-     3) Video adalah animasi CGI / kartun / slide foto statis tanpa video nyata.
+     3) Video adalah animasi CGI / kartun / slide foto statis (gambar diam bergeser) tanpa video nyata bergerak.
    - Asalkan video memperagakan produk target dan memiliki frame peragaan yang bersih, OUTPUT SELALU {"status": "accept"} dengan memilih frame-frame peragaan bersih ke dalam 7 slot storyboard!
 3. Subtitle, Floating Text, & Graphic Overlay QC (with Granular Frame Tolerance):
    - Teks merek/tombol yang tercetak langsung pada fisik produk (printed/molded on product) adalah 100% DITERIMA dan BUKAN subtitle!
