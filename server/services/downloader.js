@@ -785,7 +785,7 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     // Resilient format selector: 360p preview for AI analysis vs High Quality HD (strictly capped at 1080p to avoid bloated 4K/1440p downloads)
     const formatSelector = isPreview
       ? '18/bestvideo[height<=360]+bestaudio/best[height<=360]/bestvideo[height<=480]+bestaudio/best[height<=480]/worstvideo+worstaudio/worst/best'
-      : 'bestvideo[height<=1080][height>=720]+bestaudio/bestvideo[width<=1920][width>=1280]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080][height>=720]/best[height<=1080]/best';
+      : 'bestvideo[height<=1080][height>=720]+bestaudio/bestvideo[width<=1920][width>=1280]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080][height>=720]/bestvideo[height<=720]+bestaudio/best[height<=1080]/best';
 
     const dlArgs = [
       '--ffmpeg-location',
@@ -862,11 +862,13 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
             const isHD = dims.height >= 720 || dims.width >= 720 || dims.is1080pOrHigher;
             if (isHD) {
               console.log(`[Downloader] ✅ Resolusi ${dims.width}x${dims.height} memenuhi standar minimal HD 720p/1080p+. Siap di-render.`);
+            } else if (dims.height >= 480 || dims.width >= 480) {
+              console.log(`[Downloader] ℹ️ Resolusi ${dims.width}x${dims.height} (standar 480p+). Diterima untuk di-render ke 1080p Full HD.`);
             } else {
-              // Video is below 720p (e.g. 480p, 360p). Strictly reject and delete it!
-              console.warn(`[Downloader] ❌ Resolusi video (${dims.width}x${dims.height}) di bawah standar HD 720p. Menolak video...`);
+              // Video is below 480p (e.g. 240p, 360p). Strictly reject and delete it!
+              console.warn(`[Downloader] ❌ Resolusi video (${dims.width}x${dims.height}) di bawah standar 480p. Menolak video...`);
               try { fs.unlinkSync(downloadedFile); } catch {}
-              lastDownloadError = `Resolusi video (${dims.width}x${dims.height}) di bawah standar HD 720p. Wajib minimal HD 720p/1080p ke atas.`;
+              lastDownloadError = `Resolusi video (${dims.width}x${dims.height}) di bawah standar 480p. Wajib minimal 480p/720p/1080p ke atas.`;
               continue;
             }
           }

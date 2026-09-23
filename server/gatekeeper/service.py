@@ -790,19 +790,29 @@ class FrameGatekeeper:
             }
 
         # ── TAHAP 1B: Face Detection pada Full Frame 16:9 ──
+        # Hanya tolak jika wajah bertabrakan dengan jendela crop 9:16 yang akan ditampilkan.
+        # Wajah vlogger/orang di pinggir luar 16:9 aman karena otomatis terpotong saat rendering.
+        h, w = img.shape[:2]
+        target_w = int(h * 9.0 / 16.0)
+        x_start = max(0, (w - target_w) // 2)
+        x_end = min(w, x_start + target_w)
+
         has_face_full, face_conf_full, face_box_full, face_reason_full = self.face_gate.detect(img, niche=niche)
-        if has_face_full:
-            return {
-                "filePath": file_path,
-                "timestamp": timestamp,
-                "status": "discarded",
-                "stage": "face",
-                "reason": f"Presenter terdeteksi di video: {face_reason_full}",
-                "confidence": round(face_conf_full, 3),
-                "box": face_box_full,
-                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
-                "decision": "REJECT"
-            }
+        if has_face_full and face_box_full:
+            bx, by, bw, bh = face_box_full
+            face_overlaps_crop = not (bx + bw < x_start or bx > x_end)
+            if face_overlaps_crop:
+                return {
+                    "filePath": file_path,
+                    "timestamp": timestamp,
+                    "status": "discarded",
+                    "stage": "face",
+                    "reason": f"Presenter terdeteksi di area crop 9:16: {face_reason_full}",
+                    "confidence": round(face_conf_full, 3),
+                    "box": face_box_full,
+                    "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                    "decision": "REJECT"
+                }
 
         # ── TAHAP 2: Text & 4-Corner Watermark Detection ──
         has_text, total_cov, bottom_cov, text_reason, corner_acts = self.text_gate.detect(crop, niche=niche)
@@ -1050,19 +1060,12 @@ class FrameGatekeeper:
                 print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} text=clean face=clean motion={mot:>4.2f} decision=VERIFIED_CLEAN ✅")
             else:
                 if v["status"] == "clean":
-                    # Izinkan frame bersih dengan keyakinan tinggi (valid_real conf >= 0.76)
-                    # sebagai cuplikan peragaan produk mandiri yang valid
-                    if v.get("confidence", 0) >= 0.76 and cls_name == "valid_real":
-                        v["status"] = "clean"
-                        v["decision"] = "VERIFIED_CLEAN"
-                        clean_frames.append(v)
-                        print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} text=clean face=clean motion={mot:>4.2f} decision=VERIFIED_CLEAN (STANDALONE) ✅")
-                    else:
-                        v["status"] = "discarded"
-                        v["stage"] = "temporal_inconsistency"
-                        v["decision"] = "ISOLATED_CLEAN_REJECT"
-                        v["reason"] = f"Frame bersih terisolasi ({ts:.1f}s), tidak memenuhi syarat segmen kontinu minimal {min_consecutive_clean} frame berurutan / {min_clean_duration}s"
-                        discarded_frames.append(v)
+                    # Seluruh frame yang lolos filter independen per-frame
+                    # (faceless, bebas teks/watermark, adegan produk nyata) diterima sebagai cuplikan bersih
+                    v["status"] = "clean"
+                    v["decision"] = "VERIFIED_CLEAN"
+                    clean_frames.append(v)
+                    print(f"  [Gatekeeper] frame={frame_name:<24} ts={ts:>5.1f}s classifier={cls_name:<10} conf={v.get('confidence', 0):>4.2f} text=clean face=clean motion={mot:>4.2f} decision=VERIFIED_CLEAN (STANDALONE) ✅")
                 elif v["status"] == "uncertain":
                     v["status"] = "discarded"
                     v["stage"] = "uncertain_scene"
