@@ -2306,6 +2306,9 @@ export async function runStage1Pipeline({
           candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
           videoMeta: candMeta,
           cleanFrames: frameFilterRes.cleanFrames,
+          discardedFaceTimestamps: frameFilterRes.discardedFaceTimestamps || [],
+          discardedViolationTimestamps: frameFilterRes.discardedViolationTimestamps || [],
+          cleanTimeWindows: (frameFilterRes.verifiedSegments || []).map(s => ({ start: s.startSec, end: s.endSec })),
           productVerification,
         });
 
@@ -2350,6 +2353,15 @@ export async function runStage1Pipeline({
               
               if (isGemini && hasGemini) {
                 const validUrls = Array.from(new Set(preferredSoFar.map(c => c.candidate.url).filter(Boolean)));
+                const allDiscardedFace = [];
+                const allDiscardedViolation = [];
+                const allCleanWindows = [];
+                
+                for (const c of preferredSoFar) {
+                  if (Array.isArray(c.discardedFaceTimestamps)) allDiscardedFace.push(...c.discardedFaceTimestamps);
+                  if (Array.isArray(c.discardedViolationTimestamps)) allDiscardedViolation.push(...c.discardedViolationTimestamps);
+                  if (Array.isArray(c.cleanTimeWindows)) allCleanWindows.push(...c.cleanTimeWindows);
+                }
                 
                 updateProgress({
                   step: 'gemini_vision',
@@ -2369,9 +2381,9 @@ export async function runStage1Pipeline({
                   allowFallbackClips: true,
                   totalDuration: 600,
                   introCutoffSec: 0,
-                  discardedFaceTimestamps: [],
-                  discardedViolationTimestamps: [],
-                  cleanTimeWindows: [],
+                  discardedFaceTimestamps: allDiscardedFace,
+                  discardedViolationTimestamps: allDiscardedViolation,
+                  cleanTimeWindows: allCleanWindows,
                   verifiedSegments: [],
                   isVideoFirst: Boolean(options.isVideoFirst),
                   niche: options.niche || 'kitchen_tools',

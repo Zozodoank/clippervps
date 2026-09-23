@@ -1336,6 +1336,8 @@ export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0
     eligible: isEligible,
     cleanFrames: clean,
     verifiedSegments: result.verifiedSegments || [],
+    discardedFaceTimestamps: result.discardedFaceTimestamps || [],
+    discardedViolationTimestamps: result.discardedViolationTimestamps || [],
     discardedCount: frames.length - clean.length,
     totalFrames: frames.length,
     reason: isEligible ? undefined : (result.reason || 'Tidak ada frame peragaan bersih yang terdeteksi.'),
