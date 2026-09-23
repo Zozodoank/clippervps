@@ -1819,9 +1819,9 @@ export async function runStage1Pipeline({
     if (rawVideoPath) {
       try {
         const rawDur = Number(videoMeta?.duration) || 300;
-        const rawInterval = Math.max(1.5, Math.floor(rawDur / 80));
-        const maxFrames = Math.min(120, Math.floor(rawDur / rawInterval));
-        updateProgress({ step: 'frames_raw', message: `Mengekstrak ${maxFrames} frame rapat video 1080p untuk analisa AI (interval ${rawInterval.toFixed(1)}s)...`, progress: 38, status: 'running' });
+        const rawInterval = Math.max(1.5, Math.floor(rawDur / 120));
+        const maxFrames = Math.min(200, Math.floor(rawDur / rawInterval));
+        updateProgress({ step: 'frames_raw', message: `Mengekstrak ${maxFrames} frame rapat video 1080p (9:16) untuk analisa AI (interval ${rawInterval.toFixed(1)}s)...`, progress: 38, status: 'running' });
         const { frames: rawFrames } = await extractFrames(rawVideoPath, rawFramesDir, updateProgress, {
           sampleIntervalSec: rawInterval,
           maxSampleFrames: maxFrames,
@@ -2334,7 +2334,7 @@ export async function runStage1Pipeline({
 
         // Coba jalankan AI Storyboard jika sudah ada cukup frame
         if ((bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) || totalCleanFrames >= 8) {
-          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 120 })
+          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 200 })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
           if (testPool.length >= 2) {
@@ -2489,7 +2489,7 @@ export async function runStage1Pipeline({
       if (!hl && candidateResults.length > 0) {
         candidateResults = choosePreferredCandidateSet(candidateResults);
         if (candidateResults.length > 0) {
-          pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 120 })
+          pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 200 })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
           if (pooledFrames.length >= 2) {

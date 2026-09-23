@@ -54,11 +54,11 @@ export async function extractFrames(videoPath, framesDir, onProgress = () => {},
   onProgress({ step: 'frames', message: `Extracting source timeline frames (1 frame every ${safeInterval}s)...`, progress: 40 });
 
   return new Promise((resolve, reject) => {
-    // 360p height JPEG with -q:v 3 keeps API payload minimal (~30KB per frame) to prevent AI overload
+    // Crop exactly to 9:16 center slice, then scale to 202x360 (which is exactly 9:16 at 360p height)
     const args = [
       '-y',
       '-i', targetVideoPath,
-      '-vf', `fps=1/${safeInterval},scale=-2:360`,
+      '-vf', `fps=1/${safeInterval},crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',scale=-2:360`,
       '-q:v', '3',
       outputPattern
     ];
