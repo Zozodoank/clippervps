@@ -96,6 +96,7 @@ export async function renderSilentAntiDetectionVideo({
       for (const clip of selectedClips) {
         const sourceDuration = (clip.duration * safeSpeedMultiplier).toFixed(3);
         const clipVideo = clip.videoPath || targetVideo;
+        // Trim lebih rapi: hindari error keyframe dengan format time yang tepat
         args.push('-ss', clip.startSeconds.toFixed(3), '-t', sourceDuration, '-i', clipVideo);
       }
 
@@ -126,9 +127,10 @@ export async function renderSilentAntiDetectionVideo({
         '-map', '[outv]',
         '-an', // Strictly NO AUDIO
         '-c:v', 'libx264',
-        '-preset', 'fast',
-        '-crf', '20',
+        '-preset', 'veryfast', // Dipercepat karena re-encoding
+        '-crf', '23',
         '-pix_fmt', 'yuv420p',
+        '-max_muxing_queue_size', '1024',
         '-t', totalSilentDuration.toFixed(3),
         '-movflags', '+faststart',
         outputVideo
