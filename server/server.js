@@ -5250,9 +5250,11 @@ app.post('/api/restart', async (req, res) => {
     try {
       updateExitCode = await new Promise((resolve) => {
         const isWin = process.platform === 'win32';
+        // Di Linux: gunakan update.sh (git fetch + hard reset + npm install)
+        // Di Windows: langsung spawn 'git' tanpa shell mode (git.exe sudah ada di PATH)
         const child = !isWin && fs.existsSync(updateScriptPath)
           ? spawn('bash', [updateScriptPath], { cwd: rootDir })
-          : spawn(isWin ? 'git.cmd' : 'git', ['pull', 'origin', 'main'], { cwd: rootDir, shell: isWin });
+          : spawn('git', ['pull', 'origin', 'main'], { cwd: rootDir });
 
         child.stdout.on('data', (chunk) => { updateLog += chunk.toString(); });
         child.stderr.on('data', (chunk) => { updateLog += chunk.toString(); });
