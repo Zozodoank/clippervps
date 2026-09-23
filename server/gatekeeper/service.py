@@ -169,11 +169,11 @@ class FaceGatekeeper:
         h, w = image_bgr.shape[:2]
         bx, by, bw, bh = bbox
 
-        # 1. Ambang batas keyakinan (Score Threshold) terkalibrasi:
-        # Presenter manusia asli secara konsisten mencetak skor >= 87.5% (rata-rata 90-94%).
-        # Tombol chopper, refleksi pisau blender, dan buku manual mencetak skor 65-85%.
-        if score < 0.875:
-            return False, f"Score di bawah batas presenter ({score * 100:.1f}% < 87.5%)"
+        # 1. Ambang batas keyakinan (Score Threshold) sangat ketat:
+        # Ditingkatkan ke 94.0% agar YuNet tidak agresif memblokir non-wajah (seperti tombol alat dapur).
+        # Wajah yang tidak tertangkap di sini akan ditangani oleh Gemini Filter 3.
+        if score < 0.94:
+            return False, f"Score di bawah batas presenter ({score * 100:.1f}% < 94.0%)"
 
         # 2. Batas dimensi geometris frame:
         # Bounding box tidak boleh melampaui lebar frame utuh (ciri khas bidikan makro tangan/alas meja)
@@ -205,8 +205,8 @@ class FaceGatekeeper:
             mask_ycrcb = cv2.inRange(ycrcb, (0, 133, 77), (255, 173, 127))
             skin_mask = cv2.bitwise_and(mask_hsv, mask_ycrcb)
             skin_ratio = float(np.count_nonzero(skin_mask)) / float(crop.shape[0] * crop.shape[1])
-            if skin_ratio < 0.25:
-                return False, f"Bukan warna kulit manusia (skin_ratio: {skin_ratio * 100:.1f}% < 25%)"
+            if skin_ratio < 0.35:
+                return False, f"Bukan warna kulit manusia (skin_ratio: {skin_ratio * 100:.1f}% < 35%)"
         except Exception:
             pass
 
@@ -247,10 +247,10 @@ class FaceGatekeeper:
         # 7. Validasi zona meja / alas kerja (Tabletop Zone Sanity Check):
         # Wajah presenter dalam video affiliasi selalu berada di separuh atas frame (top 65%).
         # Jika pusat bounding box berada di zona bawah (center_y > 65% height), area tersebut adalah
-        # tempat chopper, blender, dan talenan berada — memerlukan keyakinan sangat tinggi (>= 92%).
+        # tempat chopper, blender, dan talenan berada — memerlukan keyakinan mutlak (>= 97%).
         center_y = by + bh / 2.0
-        if center_y > h * 0.65 and score < 0.92:
-            return False, f"Objek di zona meja/bawah dengan keyakinan belum konklusif ({score * 100:.1f}% < 92%)"
+        if center_y > h * 0.50 and score < 0.97:
+            return False, f"Objek di zona meja/bawah dengan keyakinan belum konklusif ({score * 100:.1f}% < 97%)"
 
         return True, "Wajah manusia valid"
 
