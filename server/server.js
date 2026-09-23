@@ -2872,78 +2872,12 @@ export async function runStage1Pipeline({
           continue;
         }
 
-        let hasDirtyContent = false;
-        let dirtyReason = '';
-        if (testFrames.length > 0) {
-          let gkRes = null;
-          try {
-            gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 40, niche: options?.niche || 'kitchen_tools' });
-          } catch (e) {
-            console.warn(`[ClipAudit] Gatekeeper microservice timeout/error: ${e?.message || e}`);
-          }
-
-          let heuristicRes = null;
-          try {
-            heuristicRes = await inspectFramesLocally(testFrames, { allowPartialClean: true, niche: options?.niche || 'kitchen_tools' });
-          } catch (e) {}
-
-          const heuristicDirty = heuristicRes?.discardedFrames?.find(f =>
-            ['floating_text', 'animated_graphic', 'subtitle', 'watermark', 'static_frame', 'intro_bumper'].includes(f.stage)
-          );
-          if (heuristicDirty) {
-            hasDirtyContent = true;
-            dirtyReason = `[HEURISTIC-${String(heuristicDirty.stage).toUpperCase()}] ${heuristicDirty.reason || 'Elemen grafis/teks terdeteksi'}`;
-          }
-
-          if (gkRes && Array.isArray(gkRes.allFrames)) {
-            // Discard if there is any violation: presenter face, paper manual, graphic overlay, or burned text/watermark
-            const dirtyDet = gkRes.allFrames.find(f => {
-              if (f.status === 'clean') return false;
-              if (f.stage === 'face') return true;
-              if (f.stage === 'paper_manual') return true;
-              if (f.stage === 'graphic_overlay') return true;
-              if (f.stage === 'text') {
-                const total = Number(f.totalCoverage) || 0;
-                const bottom = Number(f.bottomCoverage) || 0;
-                const corners = f.cornerActivations || {};
-                const maxCorner = Math.max(
-                  Number(corners.TL) || 0,
-                  Number(corners.TR) || 0,
-                  Number(corners.BL) || 0,
-                  Number(corners.BR) || 0
-                );
-                return total > 0.015 || bottom > 0.015 || maxCorner >= 0.012 ||
-                  String(f.reason || '').toLowerCase().includes('watermark') ||
-                  String(f.reason || '').toLowerCase().includes('teks') ||
-                  String(f.reason || '').toLowerCase().includes('badge');
-              }
-              if (f.decision === 'REJECT' || f.status === 'discarded') return true;
-              return false;
-            });
-            if (dirtyDet) {
-              hasDirtyContent = true;
-              dirtyReason = `[${dirtyDet.stage ? dirtyDet.stage.toUpperCase() : 'DIRTY'}] ${dirtyDet.reason || 'Konten tidak layak'}`;
-            }
-          } else if (!heuristicRes || heuristicRes.discardedFrames?.length > 0) {
-            const severeDiscard = (heuristicRes?.discardedFrames || []).find(f =>
-              ['face', 'subtitle', 'watermark', 'intro_bumper'].includes(f.stage)
-            );
-            if (severeDiscard) {
-              hasDirtyContent = true;
-              dirtyReason = `[HEURISTIC] ${severeDiscard.reason || 'Terdeteksi teks overlay/bumper statis pada klip'}`;
-            }
-          }
-
-          if (hasDirtyContent) {
-            console.warn(`[ClipAudit] ⛔ Segment klip #${cIdx + 1} (${c.startSeconds}s - ${Math.round((c.startSeconds + dur) * 10) / 10}s) REJECTED (${dirtyReason}). Klip dibuang!`);
-          }
-        }
-
-        if (hasDirtyContent) {
-          discardedDirtyClips.push({ clip: c, reason: dirtyReason });
-        } else {
-          cleanAuditedClips.push(c);
-        }
+        // ─── CLIP AUDIT: HANYA CEGAH FOTO STATIS / KEN BURNS ───
+        // Pengecekan teks overlay & wajah sudah dilakukan oleh Gemini di tahap Source QC.
+        // ClipAudit pasca-download TIDAK BOLEH menolak klip karena teks/wajah.
+        // Hal ini menyebabkan kuota internet terbuang percuma setelah download selesai.
+        // Satu-satunya pemblokiran yang diizinkan di sini adalah klip FOTO DIAM (sudah ditangani oleh motionAudit di atas).
+        cleanAuditedClips.push(c);
       }
 
       if (discardedDirtyClips.length > 0) {
