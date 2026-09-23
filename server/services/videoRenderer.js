@@ -203,17 +203,19 @@ export async function mergeVoiceoverAndBurnSubtitles({
   const rawVideoDur = await getMediaDurationSec(silentVideoPath, ffmpegPath) || Number(targetDurationSec) || 24;
   const audioDuration = await getMediaDurationSec(voiceoverAudioPath, ffmpegPath);
 
+  const MIN_VIDEO_DURATION = 18.0;
+  const effectiveAudioDuration = audioDuration && audioDuration > 0 ? audioDuration : rawVideoDur;
+  const effectiveFinalDuration = Math.max(MIN_VIDEO_DURATION, rawVideoDur, effectiveAudioDuration);
+
   let needVideoPad = false;
   let padDuration = 0;
-  if (audioDuration && audioDuration > rawVideoDur + 0.30) {
-    padDuration = +(audioDuration - rawVideoDur + 0.35).toFixed(2);
+  if (effectiveFinalDuration > rawVideoDur + 0.15) {
+    padDuration = +(effectiveFinalDuration - rawVideoDur + 0.25).toFixed(2);
     needVideoPad = true;
-    console.log(`[VideoRenderer Final] ⚡ Voiceover (${audioDuration.toFixed(2)}s) lebih panjang dari video visual (${rawVideoDur.toFixed(2)}s). Melakukan hold-frame natural (+${padDuration}s) pada visual penutup agar seluruh naskah & CTA selesai sempurna...`);
+    console.log(`[VideoRenderer Final] ⚡ Durasi visual (${rawVideoDur.toFixed(2)}s) di bawah target final (${effectiveFinalDuration.toFixed(2)}s). Melakukan hold-frame natural (+${padDuration}s) agar mencapai durasi minimal 18.0s & voiceover selesai sempurna...`);
   }
 
-  const videoDuration = audioDuration && audioDuration > 0
-    ? Math.max(rawVideoDur, audioDuration + 0.25)
-    : rawVideoDur;
+  const videoDuration = effectiveFinalDuration;
 
   onProgress({
     step: 'merge_final',
@@ -445,10 +447,20 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
       }
     }
 
-    // Durasi adaptif dan natural (15s - 35s):
-    // Klip hasil kurasi AI dipertahankan secara murni tanpa duplikasi sintetis atau pemaksaan durasi palsu.
+    // Durasi adaptif dan natural (minimal 18.0 detik sesuai mandat pengguna):
+    // Klip hasil kurasi AI diskalakan proporsional agar total video visual mencapai minimal 18.0 detik.
     const currentTotal = deduplicated.reduce((sum, c) => sum + (c.duration || defaultClipLength), 0);
-    console.log(`[normalizeRenderClips] ✅ Total durasi klip terkurasi: ${currentTotal.toFixed(1)}s (${deduplicated.length} klip bersih). Durasi adaptif natural.`);
+    const MIN_VIDEO_DURATION_SEC = 18.0;
+    if (currentTotal < MIN_VIDEO_DURATION_SEC && deduplicated.length > 0) {
+      const scale = MIN_VIDEO_DURATION_SEC / currentTotal;
+      for (const c of deduplicated) {
+        c.duration = +(c.duration * scale).toFixed(3);
+      }
+      const newTotal = deduplicated.reduce((sum, c) => sum + (c.duration || defaultClipLength), 0);
+      console.log(`[normalizeRenderClips] ⚡ Total durasi klip (${currentTotal.toFixed(1)}s) di bawah batas minimal 18.0s. Menyesuaikan durasi klip secara proporsional menjadi ${newTotal.toFixed(1)}s.`);
+    } else {
+      console.log(`[normalizeRenderClips] ✅ Total durasi klip terkurasi: ${currentTotal.toFixed(1)}s (${deduplicated.length} klip bersih). Memenuhi syarat minimal 18.0s.`);
+    }
 
     return deduplicated;
   }

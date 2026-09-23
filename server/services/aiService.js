@@ -2497,13 +2497,13 @@ export async function generateAdAdvisorScriptWithAI({
 
   const effectiveTitle = (productTitle || '').trim() || videoMetadata?.title || (isGadget ? 'Smartphone Flagship & Mid-Range' : 'Produk Viral Shopee');
   const effectiveDesc = truncateProductDescription(productDescription, 900);
-  const targetDuration = Math.max(15, Math.min(45, Math.round(Number(segmentDuration) || 24)));
+  const targetDuration = Math.max(18, Math.min(45, Math.round(Number(segmentDuration) || 22)));
   const effectiveSceneSec = Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
-  const sceneCount = Math.max(4, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
-  const targetSpeechSec = Math.max(14, targetDuration - 3.0);
-  const targetWords = Math.round(targetSpeechSec * 1.9);
-  const minWords = Math.max(25, Math.round(targetSpeechSec * 1.7));
-  const maxWords = Math.max(35, Math.round(targetSpeechSec * 2.1));
+  const sceneCount = Math.max(5, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
+  const targetSpeechSec = Math.max(17, targetDuration - 1.5);
+  const targetWords = Math.round(targetSpeechSec * 2.2);
+  const minWords = Math.max(38, Math.round(targetSpeechSec * 1.9));
+  const maxWords = Math.max(48, Math.round(targetSpeechSec * 2.4));
 
   const systemPrompt = isGadget
     ? `You are a Senior Tech Reviewer and Creative Director specializing in Indonesian YouTube Shorts and TikTok smartphone reviews (Faceless B-roll tech content).

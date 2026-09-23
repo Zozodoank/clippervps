@@ -2689,13 +2689,13 @@ export async function runStage1Pipeline({
         throw clipErr;
       }
 
-      // Pacing adaptif: jika klip 3-5 buah, sesuaikan durasi per-klip (3.5s - 4.5s) agar reel tetap proporsional (14-25s)
-      const targetMinTotalSec = hl.clips.length <= 3 ? 13.5 : (hl.clips.length <= 4 ? 16.0 : (hl.clips.length <= 5 ? 18.0 : 21.0));
-      const adaptiveClipSec = Math.max(3.0, Math.min(4.8, Math.round((targetMinTotalSec / hl.clips.length) * 10) / 10));
+      // Pacing adaptif: minimal durasi video adalah 18.0 detik sesuai mandat pengguna
+      const targetMinTotalSec = Math.max(18.0, hl.clips.length <= 3 ? 18.0 : (hl.clips.length <= 4 ? 18.5 : (hl.clips.length <= 5 ? 19.5 : 22.0)));
+      const adaptiveClipSec = Math.max(3.2, Math.min(6.0, Math.round((targetMinTotalSec / hl.clips.length) * 10) / 10));
 
       hl.clips = hl.clips.map((c, clipIndex) => {
         const planShot = creativePlan?.shots?.[clipIndex];
-        const duration = Number(planShot?.targetSec) || adaptiveClipSec || Number(c.duration) || 3.5;
+        const duration = Math.max(adaptiveClipSec, Number(planShot?.targetSec) || Number(c.duration) || adaptiveClipSec);
         return {
           ...c,
           duration,
@@ -2706,7 +2706,7 @@ export async function runStage1Pipeline({
         };
       });
       hl.duration = hl.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
-      console.log(`[Job ${jobId}] 🎬 Story-first pacing aktif (${hl.clips.length} klip, ${hl.duration.toFixed(1)}s total):\n${describeCreativePlan(creativePlan)}`);
+      console.log(`[Job ${jobId}] 🎬 Story-first pacing aktif (${hl.clips.length} klip, ${hl.duration.toFixed(1)}s total - target min 18s):\n${describeCreativePlan(creativePlan)}`);
 
       // Keperluan backward compatibility: inputVideo tetap diisi, tetapi setiap clip
       // wajib mempunyai videoPath sumbernya sendiri dan renderer tidak boleh memakai
@@ -2907,12 +2907,13 @@ export async function runStage1Pipeline({
           cleanAuditedClips[0].storyboardRole = 'full_product';
         }
 
-        // Adaptive clip pacing for 3 to 7 clips
+        // Adaptive clip pacing: minimal durasi video adalah 18.0 detik
         if (cleanAuditedClips.length >= 3) {
-          const targetPerClip = Math.max(3.0, Math.min(4.5, 21.0 / cleanAuditedClips.length));
+          const targetMinSec = 18.0;
+          const targetPerClip = Math.max(3.2, Math.min(6.0, targetMinSec / cleanAuditedClips.length));
           highlight.clips = cleanAuditedClips.map((c, clipIndex) => {
             const planShot = creativePlan?.shots?.[clipIndex];
-            const duration = Number(planShot?.targetSec) || Number(c.duration) || targetPerClip;
+            const duration = Math.max(targetPerClip, Number(planShot?.targetSec) || Number(c.duration) || targetPerClip);
             return {
               ...c,
               duration,
@@ -2923,7 +2924,7 @@ export async function runStage1Pipeline({
             };
           });
           highlight.duration = highlight.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
-          console.log(`[ClipAudit] ✅ Mempertahankan ${highlight.clips.length} klip bersih hasil audit (total ${highlight.duration.toFixed(1)}s) dengan pacing adaptif.`);
+          console.log(`[ClipAudit] ✅ Mempertahankan ${highlight.clips.length} klip bersih hasil audit (total ${highlight.duration.toFixed(1)}s - min 18s) dengan pacing adaptif.`);
         } else {
           // USER MANDATE: Jika klip terpilih terbuang sebagian/seluruhnya pada audit, JANGAN buang video!
           // Gabungkan klip bersih yang ada dengan frame peragaan bersih di pooledFrames dari video yang sama!
@@ -2945,10 +2946,10 @@ export async function runStage1Pipeline({
             usedRecoveryKeys.add(key);
             recoveryClips.push({
               startSeconds: ts,
-              endSeconds: ts + 3.5,
-              duration: 3.5,
+              endSeconds: ts + 3.8,
+              duration: 3.8,
               startTime: formatSeconds(ts),
-              endTime: formatSeconds(ts + 3.5),
+              endTime: formatSeconds(ts + 3.8),
               storyboardSlot: recoveryClips.length + 1,
               reason: `Recovered Clean Segment #${recoveryClips.length}`,
               candidateIndex: candIdx,
@@ -2957,10 +2958,11 @@ export async function runStage1Pipeline({
           }
 
           if (recoveryClips.length >= 3) {
-            const targetPerClip = Math.max(3.0, Math.min(4.5, 21.0 / recoveryClips.length));
+            const targetMinSec = 18.0;
+            const targetPerClip = Math.max(3.2, Math.min(6.0, targetMinSec / recoveryClips.length));
             highlight.clips = recoveryClips.slice(0, 8).map((c, clipIndex) => {
               const planShot = creativePlan?.shots?.[clipIndex];
-              const duration = Number(planShot?.targetSec) || targetPerClip;
+              const duration = Math.max(targetPerClip, Number(planShot?.targetSec) || targetPerClip);
               return {
                 ...c,
                 duration,
@@ -2971,7 +2973,7 @@ export async function runStage1Pipeline({
               };
             });
             highlight.duration = highlight.clips.reduce((sum, c) => sum + (Number(c.duration) || 0), 0);
-            console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi (total ${highlight.duration.toFixed(1)}s).`);
+            console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi (total ${highlight.duration.toFixed(1)}s - min 18s).`);
           } else {
             console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
             const auditErr = new Error('Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi, bumper statis, atau wajah.');
