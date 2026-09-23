@@ -981,6 +981,347 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 }
 
 /**
+ * Multi-Video YouTube Stream Analysis
+ * Menganalisa 2-3 video sekaligus untuk menghasilkan keragaman klip (angle, aksi) yang lebih baik
+ */
+export async function analyzeMultipleYouTubeVideosWithGemini({
+  youtubeUrls = [],
+  apiKey,
+  productTitle,
+  productDescription,
+  productImage = '',
+  shopeeLink,
+  sceneDuration = 3.3,
+  allowFallbackClips = false,
+  totalDuration = 600,
+  introCutoffSec = 0,
+  discardedFaceTimestamps = [],
+  discardedViolationTimestamps = [],
+  cleanTimeWindows = [],
+  verifiedSegments = [],
+  isVideoFirst = false,
+  niche = 'kitchen_tools',
+  onProgress = () => { },
+}) {
+  if (!youtubeUrls || youtubeUrls.length === 0) {
+    throw new Error('URL YouTube tidak tersedia.');
+  }
+
+  // Fallback to single jika hanya 1 URL
+  if (youtubeUrls.length === 1) {
+    return await analyzeYouTubeVideoWithGemini({
+      youtubeUrl: youtubeUrls[0],
+      apiKey,
+      productTitle,
+      productDescription,
+      productImage,
+      shopeeLink,
+      sceneDuration,
+      allowFallbackClips,
+      totalDuration,
+      introCutoffSec,
+      discardedFaceTimestamps,
+      discardedViolationTimestamps,
+      cleanTimeWindows,
+      verifiedSegments,
+      isVideoFirst,
+      niche,
+      onProgress,
+    });
+  }
+
+  const geminiKey = getDirectGeminiApiKey(apiKey);
+  if (!geminiKey) {
+    throw new Error('GEMINI_API_KEY belum disetel di server/.env untuk Google Gemini.');
+  }
+
+  const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const isVideoFirstMode = Boolean(isVideoFirst);
+  const prodInfo = extractCoreProductInfo(productTitle, productDescription);
+  const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
+  const effectiveTitle = prodInfo.cleanTitle || (productTitle || '').trim() || coreNoun;
+  const effectiveDesc = (productDescription || '').trim().slice(0, 500);
+
+  let refImageInlineData = null;
+  if (productImage) {
+    try {
+      const resolvedImg = await resolveImageBufferAndBase64(productImage);
+      if (resolvedImg?.base64) {
+        refImageInlineData = {
+          inlineData: {
+            data: resolvedImg.base64,
+            mimeType: resolvedImg.mimeType || 'image/jpeg',
+          },
+        };
+      }
+    } catch (imgErr) {
+      console.warn(`[Gemini Multi-Video Stream] Gagal memuat foto referensi produk: ${imgErr.message}`);
+    }
+  }
+
+  onProgress({
+    step: 'gemini_vision',
+    message: `Google Gemini 3.6 Flash menganalisa ${youtubeUrls.length} stream video YouTube sekaligus untuk variasi adegan maksimal...`,
+    progress: 46,
+  });
+
+  const allViolationTimestamps = Array.from(new Set([
+    ...(Array.isArray(discardedFaceTimestamps) ? discardedFaceTimestamps : []),
+    ...(Array.isArray(discardedViolationTimestamps) ? discardedViolationTimestamps : [])
+  ])).map(t => Math.round(t)).sort((a, b) => a - b);
+
+  const violationBlacklistWarning = allViolationTimestamps.length > 0
+    ? `\nCRITICAL BLACKLIST (DETEKSI AI LOKAL: WAJAH, TEKS OVERLAY, PILLARBOX, DOKUMEN MANUAL): Frame visual pada detik [${allViolationTimestamps.join(', ')}s] terdeteksi melanggar aturan kualitas. DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
+    : '';
+
+  const cleanWindowsDirective = Array.isArray(cleanTimeWindows) && cleanTimeWindows.length > 0
+    ? `\nCRITICAL MANDATE (VERIFIED CLEAN TEMPORAL SEGMENTS): AI Local Gatekeeper telah memverifikasi segmen-segmen waktu bersih berikut: [${cleanTimeWindows.map(w => `${w.start}s-${w.end}s`).join(', ')}]. Anda HANYA BOLEH memilih timestamps di dalam rentang waktu yang terverifikasi bersih ini! DILARANG KERAS memilih timestamps di luar segmen bersih ini.\n`
+    : '';
+
+  const genAI = new GoogleGenerativeAI(geminiKey);
+  const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
+Evaluate the provided ${youtubeUrls.length} YouTube videos carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
+${violationBlacklistWarning}
+${cleanWindowsDirective}
+
+${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
+
+CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP GEOMETRY RULE)
+- 9:16 CROP GEOMETRY MANDATE (HORIZONTAL 16:9 vs VERTICAL 9:16 SOURCE VIDEOS):
+  * HORIZONTAL 16:9 VIDEOS: The final Short uses ONLY the central 9:16 vertical strip (the middle 56.25% width: horizontal X from 22% to 78%). The entire outer left side (0% to 22%) and outer right side (78% to 100%) ARE COMPLETELY DISCARDED AND CUT OFF BY FFMPEG!
+    CRITICAL RULE: DO NOT REJECT HORIZONTAL 16:9 VIDEOS FOR CORNER LOGOS LOCATED IN THE FAR-RIGHT (X > 78%) OR FAR-LEFT (X < 22%) EDGES! Only reject if a digital watermark or channel logo directly intrudes into the central 56% peragaan area.
+  * VERTICAL 9:16 VIDEOS (SHORTS / REELS / TIKTOK): ZERO HORIZONTAL CROPPING OCCURS! ANY watermark or creator text overlay anywhere in the frame (including corners) CANNOT be cropped out and MUST BE REJECTED IMMEDIATELY!
+- STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME (THE CENTRAL 56% ZONE):
+  * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH!
+- PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
+  * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "SilverCrest", "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
+
+CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GRAPHIC OVERLAYS
+- HARD REJECT CRITERIA (IMMEDIATE ZERO TOLERANCE INSIDE 9:16 CROP):
+  * TRANSLUCENT SPECIFICATION BOXES, DIMENSION LABELS, & CALLOUT OVERLAYS added in video post-production ARE 100% FORBIDDEN!
+  * NON-TEXT GRAPHIC OVERLAYS: Pointing arrows, highlight circles, animated emojis, stickers, or floating price badges.
+  * CREATOR PROMOTIONAL TEXT: "da di deskripsi", "link di bio", "klik keranjang kuning".
+  * STATIC TEXT BANNERS: Colored background cards or lower-third bars.
+  * SPEECH DIALOGUE & SUBTITLES: Speech dialogue captions, translated subtitles, or lyric bars.
+- REJECT ONLY IF:
+  * Grafis animasi overlay, stiker kartun, badge spesifikasi mengambang, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
+- PHYSICAL PRODUCT TEXT EXCEPTION IS STRICT:
+  * "hasOnlyPhysicalProductText" ONLY applies to physical text manufactured, stamped, molded, or laser-engraved onto the metallic/plastic body of the physical product itself.
+
+${buildFaceAndMotionCriterion(niche, clipSec)}
+
+CRITERION 4B: PRODUCT HANDS-ON SHOWCASE & CLEAN FOOTAGE (UNBOXING SHOWCASE WELCOMED)
+- VIDEO UNBOXING / HANDS-ON REVIEW SANGAT DITERIMA KARENA MEMILIKI VARIASI VISUAL PRODUK YANG KAYA.
+- YANG DILARANG HANYALAH KEMASAN KOSONG / KARDUS SAJA: Jangan pilih frame yang hanya menampilkan kardus kosong atau buku manual tanpa produk.
+- Frame unboxing yang menampilkan PRODUK FISIK SECARA JELAS (produk dipegang, dinyalakan, diuji coba) adalah FOOTAGE EMAS AFFILIATE!
+
+CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOOTAGE
+- DILARANG KERAS MEMILIH CUPLIKAN DENGAN ORIENTASI KAMERA MIRING 90 DERAJAT ATAU BER-PILLARBOX HITAM TEBAL!
+
+CRITERION 5: MULTI-VIDEO DIVERSITY & ANTI-REPETITION MANDATE (CRITICAL RULE!)
+- You have been provided with ${youtubeUrls.length} different videos. Your goal is to construct a highly engaging, varied product ad by extracting the best moments across ALL provided videos.
+- Every selected clip MUST specify "sourceVideoIndex" (0 to ${youtubeUrls.length - 1}) corresponding to the order of the videos provided.
+- MANDATORY VISUAL & ACTION DIVERSITY: Choose shots with distinct angles, backgrounds, or phases of demonstration. A combination of clips from DIFFERENT source videos is highly encouraged to maximize diversity!
+- Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long) from across the ${youtubeUrls.length} videos.
+
+Output valid JSON ONLY with this exact format:
+If ACCEPTED (found good clips from any of the videos):
+{
+  "status": "accept",
+  "detectedProduct": "<nama produk>",
+  "isExactProductMatch": true,
+  "hasTargetProductInEverySelectedFrame": true,
+  "isFacelessIn916Frame": true,
+  "hasHumanOrFaceAnywhereInVideo": false,
+  "hasOnlyPhysicalProductText": true,
+  "selectedClips": [
+    { "sourceVideoIndex": 0, "timestamp": 10, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "reason": "Hook pembuka produk" },
+    { "sourceVideoIndex": 1, "timestamp": 25, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "reason": "Variasi sudut dari video 2" },
+    { "sourceVideoIndex": 0, "timestamp": 45, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "reason": "Hasil akhir masakan" }
+  ],
+  "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk",
+  "hasProductBrand": false,
+  "detectedBrand": "none"
+}
+
+If REJECTED (Only reject if ALL videos are completely unusable):
+{
+  "status": "reject",
+  "detectedProduct": "<nama produk di video>",
+  "reason": "<PILIH SATU alasan akurat mengapa SEMUA video ditolak: 'Terdapat grafis animasi overlay/stiker di semua video' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Produk tidak cocok'>"
+}
+
+CRITICAL RULES FOR OUTPUT:
+1. "isExactProductMatch": Set to true if the item demonstrated in the videos matches "${coreNoun}".
+2. DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA! Berikan SATU alasan tunggal yang presisi.`;
+
+  const candidateModels = [
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-3.6-flash',
+    'gemini-3.7-flash',
+    'gemini-2.5-flash-lite',
+    'gemini-3.5-flash-lite',
+  ];
+  let parsed = null;
+  let activeGeminiModel = candidateModels[0];
+  let lastGeminiErr = null;
+  let allQuotaErrors = true;
+
+  for (let i = 0; i < candidateModels.length; i++) {
+    const modelName = candidateModels[i];
+    try {
+      console.log(`[Gemini Multi-Video Stream] Calling model [${i + 1}/${candidateModels.length}]: ${modelName} for ${youtubeUrls.length} URLs...`);
+      activeGeminiModel = modelName;
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.2,
+          mediaResolution: 'MEDIA_RESOLUTION_LOW',
+        },
+      });
+
+      trackBandwidth('aiRequests', 3500, `Gemini Multi-Video Stream (${modelName})`);
+      const contentParts = youtubeUrls.map((url) => ({
+        fileData: { fileUri: url, mimeType: 'video/mp4' },
+        videoMetadata: { fps: 0.5 },
+      }));
+      if (refImageInlineData) {
+        contentParts.push(refImageInlineData);
+      }
+      contentParts.push({ text: videoPrompt });
+
+      const result = await model.generateContent(contentParts);
+      const rawText = result.response.text();
+      console.log(`[Gemini Multi-Video Stream ${modelName}] Response:`, rawText);
+      parsed = repairJson(rawText);
+      if (parsed && (parsed.status || parsed.selectedClips || parsed.reason)) {
+        break;
+      }
+    } catch (gemErr) {
+      lastGeminiErr = gemErr;
+      const isQuota = isQuotaError(gemErr);
+      if (!isQuota) allQuotaErrors = false;
+      const isDailyQuota = isQuota && (gemErr.message?.toLowerCase().includes('per-day') || gemErr.message?.toLowerCase().includes('daily'));
+      console.warn(`[Gemini Multi-Video Stream] Model ${modelName} gagal: ${gemErr.message}. ${isQuota ? '⚠️ [Limit Kuota/Token Tercapai]' : ''}`);
+      if (isDailyQuota) {
+        console.warn('[Gemini Multi-Video Stream] ⛔ Kuota harian habis.');
+        break;
+      }
+    }
+  }
+
+  if (!parsed) {
+    const isLastQuota = isQuotaError(lastGeminiErr) || (lastGeminiErr?.status === 429) || (lastGeminiErr?.statusCode === 429);
+    if ((allQuotaErrors || isLastQuota) && candidateModels.length > 0) {
+      const quotaErr = new Error(`Model Gemini Visual telah mencapai batas kuota token: ${lastGeminiErr?.message}`);
+      quotaErr.isAllModelsQuotaExhausted = true;
+      quotaErr.isQuotaError = true;
+      throw quotaErr;
+    }
+    throw lastGeminiErr || new Error('Gemini Multi-Video Stream gagal menganalisa video.');
+  }
+
+  const rawStatus = String(parsed.status || '').toLowerCase().trim();
+  const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
+  const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
+  const isMatchFalse = parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky || parsed.isUsableSourceVideo === false;
+  
+  const hasUsableClips = Array.isArray(parsed.selectedClips) && parsed.selectedClips.length >= 2;
+  
+  const auditEntriesValid = !hasUsableClips || parsed.selectedClips.every((a) =>
+      Number.isFinite(Number(a?.timestamp)) && a.containsTargetProduct === true && a.isPackaging !== true && a.isActiveProductDemo === true
+  );
+
+  const selectedProductProofFailure = hasUsableClips && !auditEntriesValid;
+  const isFatalMismatch = isMatchFalse || isBulky;
+  const shouldReject = isFatalMismatch || selectedProductProofFailure || (isRejectStatus && !hasUsableClips && !allowFallbackClips);
+
+  if (shouldReject) {
+    let rejectionMsg = String(parsed.reason || parsed.rejectionReason || '').trim() || 'Video ditolak oleh AI: Tidak memenuhi syarat affiliate faceless / bersih.';
+    console.warn(`[Gemini Multi-Video Stream] ⛔ VIDEO RESMI DITOLAK OLEH AI: ${rejectionMsg}`);
+    const rejectError = new Error(`Video ditolak oleh Gemini: ${rejectionMsg}`);
+    rejectError.isAiRejection = true;
+    rejectError.rejectionReason = rejectionMsg;
+    throw rejectError;
+  }
+
+  let candidateClips = [];
+  const acceptedStartsByVideo = {};
+  
+  if (Array.isArray(parsed.selectedClips)) {
+    for (const clipData of parsed.selectedClips) {
+      const sec = Number(clipData.timestamp);
+      const vidIdx = Number(clipData.sourceVideoIndex) || 0;
+      
+      if (isNaN(sec) || sec < 0 || sec > totalDuration || vidIdx < 0 || vidIdx >= youtubeUrls.length) continue;
+      if (!acceptedStartsByVideo[vidIdx]) acceptedStartsByVideo[vidIdx] = [];
+
+      if (allViolationTimestamps.length > 0 && allViolationTimestamps.some(vt => Math.abs(vt - sec) < 3.0)) continue;
+
+      const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
+      let startSec = Math.max(0, Math.min(totalDuration - clipSec, Math.round(sec * 10) / 10));
+      if (startSec < minSafeStart) startSec = Math.min(totalDuration - clipSec, minSafeStart);
+      
+      if (acceptedStartsByVideo[vidIdx].some((prev) => Math.abs(prev - startSec) < Math.max(clipSec, 4.0))) continue;
+      
+      acceptedStartsByVideo[vidIdx].push(startSec);
+      const endSec = Math.round((startSec + clipSec) * 10) / 10;
+      
+      candidateClips.push({
+        candidateUrl: youtubeUrls[vidIdx], // Penting agar videoFilterService / downloader bisa download URL yang benar
+        startSeconds: startSec,
+        endSeconds: endSec,
+        duration: clipSec,
+        startTime: formatSeconds(startSec),
+        endTime: formatSeconds(endSec),
+        reason: clipData.reason || `Cuplikan produk dari video ${vidIdx + 1}`,
+        isCleanAffiliateShot: true,
+        hasProductBrand: Boolean(parsed.hasProductBrand),
+        reframe: { ...DEFAULT_REFRAME, renderMode: 'stage_80' },
+      });
+    }
+  }
+
+  const hasProductBrand = Boolean(parsed.hasProductBrand);
+  const detectedBrand = (parsed.detectedBrand || '').trim() || (hasProductBrand ? 'Brand Terdeteksi' : 'none');
+  const allowHflip = hasProductBrand ? false : (parsed.allowHflip !== false);
+
+  const clips = normalizeClipPlan(candidateClips, totalDuration, {
+    allowFallback: allowFallbackClips,
+    frameAudit: [],
+    hasProductBrand,
+    allowHflip,
+    sceneDuration: clipSec,
+  });
+  
+  const duration = clips.reduce((total, clip) => total + (clip.endSeconds - clip.startSeconds), 0);
+
+  onProgress({
+    step: 'gemini_vision',
+    message: `${activeGeminiModel} selected ${clips.length} clean ${clipSec}s product shots from ${youtubeUrls.length} videos (${duration.toFixed(1)}s total).`,
+    progress: 55,
+  });
+
+  return {
+    detectedProduct: (parsed.detectedProduct || '').trim() || productTitle,
+    startTime: clips[0]?.startTime || "00:00:00",
+    endTime: clips[clips.length - 1]?.endTime || "00:00:00",
+    startSeconds: clips[0]?.startSeconds || 0,
+    endSeconds: clips[clips.length - 1]?.endSeconds || 0,
+    duration,
+    productHook: parsed.productHook || getDynamicProductHookFallback(productTitle),
+    hasProductBrand,
+    detectedBrand,
+    allowHflip,
+    reframe: clips[0]?.reframe || { ...DEFAULT_REFRAME, renderMode: 'stage_80' },
+    clips,
+  };
+}
+
+/**
  * Fallback Video Analysis using Google Gemini File API (Gemini 1.5 Flash).
  * Uploads video directly to Google's File API, allowing native video comprehension
  * without relying on frame extraction.

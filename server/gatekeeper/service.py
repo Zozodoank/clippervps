@@ -443,25 +443,13 @@ class TextGatekeeper:
                 if br_cov >= 0.010:
                     return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kanan bawah / BR (coverage {br_cov * 100:.1f}%)", corner_activations
 
-                # ── Deteksi Teks Mengambang di Area Tengah Frame (Center Float Zone) ──
-                # Menangkap angka mengambang / badge harga di tengah-tengah frame yang bukan di sudut dan bukan di bawah
-                # Contoh: angka "99", counter views, floating price tag di tengah konten
-                mid_top = int(target_h * 0.30)
-                mid_bottom = int(target_h * 0.70)
-                mid_left = int(target_w * 0.20)
-                mid_right = int(target_w * 0.80)
-                mid_zone = text_mask[mid_top:mid_bottom, mid_left:mid_right]
-                mid_zone_area = float((mid_bottom - mid_top) * (mid_right - mid_left))
-                mid_cov = int(np.count_nonzero(mid_zone)) / max(1.0, mid_zone_area)
-                if mid_cov >= 0.018:
-                    return True, total_cov, bottom_cov, f"Teks mengambang di area tengah frame 9:16 (center coverage {mid_cov * 100:.1f}%)", corner_activations
-
                 if bottom_cov >= self.max_bottom_coverage:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)", corner_activations
                 if top_cov >= 0.018:
                     return True, total_cov, bottom_cov, f"Teks headline / overlay di area atas (coverage {top_cov * 100:.1f}%)", corner_activations
                 if total_cov >= self.max_total_coverage:
                     return True, total_cov, bottom_cov, f"Teks mendominasi frame (coverage {total_cov * 100:.1f}%)", corner_activations
+
 
                 return False, total_cov, bottom_cov, "Teks dalam batas aman (DBNet bersih)", corner_activations
             except Exception as e:

@@ -14,6 +14,7 @@ import { extractFrames } from './services/frameExtractor.js';
 import {
   selectHighlightWithAI,
   analyzeYouTubeVideoWithGemini,
+  analyzeMultipleYouTubeVideosWithGemini,
   getDirectGeminiApiKey,
   generateAdAdvisorScriptWithAI,
   detectPhoneticLexiconWithAI,
@@ -2341,25 +2342,62 @@ export async function runStage1Pipeline({
             });
 
             try {
-              const testHl = await selectHighlightWithAI({
-                apiKey,
-                aiProvider,
-                frames: testPool,
-                videoPath: null,
-                youtubeUrl: null,
-                videoMetadata: { duration: 600, title: productTitle },
-                productTitle,
-                productDescription,
-                productImage: effectiveProductImage,
-                shopeeLink,
-                sceneDuration,
-                allowFallbackClips: true,
-                introCutoffSec: 0,
-                isVideoFirst: Boolean(options.isVideoFirst),
-                niche: options.niche || 'kitchen_tools',
-                creativePlan,
-                onProgress: updateProgress,
-              });
+              const reqEng = (options.aiProvider || aiProvider || process.env.ACTIVE_AI_ENGINE || '').toLowerCase();
+              const isGemini = reqEng === 'gemini' || reqEng === 'gemini_direct' || (process.env.GEMINI_API_KEY && reqEng !== 'openrouter');
+              const hasGemini = Boolean(getDirectGeminiApiKey(apiKey));
+              
+              let testHl;
+              
+              if (isGemini && hasGemini) {
+                const validUrls = Array.from(new Set(preferredSoFar.map(c => c.candidate.url).filter(Boolean)));
+                
+                updateProgress({
+                  step: 'gemini_vision',
+                  message: `Google Gemini 3.6 Flash Stream menganalisa ${validUrls.length} video sekaligus...`,
+                  progress: 38,
+                  status: 'running',
+                });
+                
+                testHl = await analyzeMultipleYouTubeVideosWithGemini({
+                  youtubeUrls: validUrls,
+                  apiKey,
+                  productTitle,
+                  productDescription,
+                  productImage: effectiveProductImage,
+                  shopeeLink,
+                  sceneDuration,
+                  allowFallbackClips: true,
+                  totalDuration: 600,
+                  introCutoffSec: 0,
+                  discardedFaceTimestamps: [],
+                  discardedViolationTimestamps: [],
+                  cleanTimeWindows: [],
+                  verifiedSegments: [],
+                  isVideoFirst: Boolean(options.isVideoFirst),
+                  niche: options.niche || 'kitchen_tools',
+                  onProgress: updateProgress,
+                });
+              } else {
+                testHl = await selectHighlightWithAI({
+                  apiKey,
+                  aiProvider,
+                  frames: testPool,
+                  videoPath: null,
+                  youtubeUrl: null,
+                  videoMetadata: { duration: 600, title: productTitle },
+                  productTitle,
+                  productDescription,
+                  productImage: effectiveProductImage,
+                  shopeeLink,
+                  sceneDuration,
+                  allowFallbackClips: true,
+                  introCutoffSec: 0,
+                  isVideoFirst: Boolean(options.isVideoFirst),
+                  niche: options.niche || 'kitchen_tools',
+                  creativePlan,
+                  onProgress: updateProgress,
+                });
+              }
 
               // 1. TANGANI FRAME YANG DITOLAK OLEH AI VISION:
               if (testHl && Array.isArray(testHl.rejectedFrames) && testHl.rejectedFrames.length > 0) {
