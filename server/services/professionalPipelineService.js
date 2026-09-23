@@ -151,24 +151,50 @@ export function conformClipsToVoiceover({ clips = [], script = '', audioDuration
   const starts = extractScriptSceneStarts(script);
   const planShots = Array.isArray(creativePlan.shots) ? creativePlan.shots : [];
 
-  let desired = [];
-  if (starts.length >= 2) {
-    const relevantStarts = starts.slice(0, clips.length);
-    for (let i = 0; i < clips.length; i++) {
-      const start = relevantStarts[i] ?? (i * audioDuration / clips.length);
-      const next = relevantStarts[i + 1] ?? audioDuration;
-      desired.push(Math.max(0.8, next - start));
+  // Hitung target jumlah adegan yang dibutuhkan agar pacing visual tetap dinamis (~2.5s - 3.8s per cut)
+  const targetSceneCount = Math.max(
+    clips.length,
+    starts.length,
+    Math.ceil(audioDuration / 3.5)
+  );
+
+  // Jika jumlah klip visual lebih sedikit daripada adegan yang dibutuhkan oleh audio voiceover,
+  // ekspansi klip dengan variasi reframe alternatif (stage 80 vs center crop) agar pacing Reels tetap hidup
+  let targetClips = [...clips];
+  if (targetClips.length < targetSceneCount && targetClips.length > 0) {
+    const originalCount = targetClips.length;
+    for (let i = originalCount; i < targetSceneCount; i++) {
+      const baseClip = targetClips[i % originalCount];
+      const altRenderMode = (i % 2 === 0) ? 'stage_80' : 'center_crop';
+      targetClips.push({
+        ...baseClip,
+        isConformedLoop: true,
+        reframe: {
+          ...(baseClip.reframe || {}),
+          renderMode: altRenderMode,
+        },
+      });
     }
-  } else {
-    desired = clips.map((_, i) => Number(planShots[i]?.targetSec) || (audioDuration / clips.length));
   }
 
-  const mins = clips.map((_, i) => Number(planShots[i]?.minSec) || 1.5);
-  const maxs = clips.map((_, i) => Number(planShots[i]?.maxSec) || 4.2);
+  let desired = [];
+  if (starts.length >= 2) {
+    for (let i = 0; i < targetClips.length; i++) {
+      const start = starts[i] ?? (i * audioDuration / targetClips.length);
+      const next = starts[i + 1] ?? audioDuration;
+      desired.push(Math.max(1.0, next - start));
+    }
+  } else {
+    desired = targetClips.map((_, i) => Number(planShots[i]?.targetSec) || (audioDuration / targetClips.length));
+  }
+
+  const avgNeeded = audioDuration / targetClips.length;
+  const mins = targetClips.map((_, i) => Math.min(Number(planShots[i]?.minSec) || 1.5, Math.max(1.0, avgNeeded * 0.6)));
+  const maxs = targetClips.map((_, i) => Math.max(Number(planShots[i]?.maxSec) || 4.2, avgNeeded * 1.4));
   const fitted = distributeTotal(desired, audioDuration, mins, maxs);
 
-  return clips.map((clip, i) => {
-    const duration = Math.max(1.5, Number(fitted[i] || clip.duration || 3));
+  return targetClips.map((clip, i) => {
+    const duration = Math.max(1.2, Number(fitted[i] || clip.duration || 3));
     const startSeconds = Number(clip.startSeconds) || 0;
     return {
       ...clip,

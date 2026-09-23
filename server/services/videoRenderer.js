@@ -203,16 +203,16 @@ export async function mergeVoiceoverAndBurnSubtitles({
   const rawVideoDur = await getMediaDurationSec(silentVideoPath, ffmpegPath) || Number(targetDurationSec) || 24;
   const audioDuration = await getMediaDurationSec(voiceoverAudioPath, ffmpegPath);
 
-  // Professional policy: NEVER loop visual footage just to cover an oversized voiceover.
-  // The caller must conform the edit to actual TTS timing before final merge.
-  if (audioDuration && audioDuration > rawVideoDur + 0.40) {
-    throw new Error(
-      `VOICEOVER_LONGER_THAN_VIDEO_REQUIRES_CONFORM: audio=${audioDuration.toFixed(2)}s video=${rawVideoDur.toFixed(2)}s`
-    );
+  let needVideoPad = false;
+  let padDuration = 0;
+  if (audioDuration && audioDuration > rawVideoDur + 0.30) {
+    padDuration = +(audioDuration - rawVideoDur + 0.35).toFixed(2);
+    needVideoPad = true;
+    console.log(`[VideoRenderer Final] ⚡ Voiceover (${audioDuration.toFixed(2)}s) lebih panjang dari video visual (${rawVideoDur.toFixed(2)}s). Melakukan hold-frame natural (+${padDuration}s) pada visual penutup agar seluruh naskah & CTA selesai sempurna...`);
   }
 
   const videoDuration = audioDuration && audioDuration > 0
-    ? Math.max(3, Math.min(rawVideoDur, audioDuration + 0.30))
+    ? Math.max(rawVideoDur, audioDuration + 0.25)
     : rawVideoDur;
 
   onProgress({
@@ -245,13 +245,18 @@ export async function mergeVoiceoverAndBurnSubtitles({
     const filterChains = [];
     let videoMap = '0:v';
 
+    if (needVideoPad && padDuration > 0) {
+      filterChains.push(`[0:v]tpad=stop_mode=clone:stop_duration=${padDuration}[v_padded]`);
+      videoMap = '[v_padded]';
+    }
+
     if (srtPath && fs.existsSync(srtPath)) {
       const sanitizedSrtPath = srtPath.replace(/\\/g, '/').replace(/:/g, '\\:');
       const isAss = sanitizedSrtPath.endsWith('.ass');
       const subFilter = isAss
         ? `ass='${sanitizedSrtPath}'`
         : `subtitles='${sanitizedSrtPath}':force_style='Fontname=Arial,Fontsize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=3,Outline=3,Shadow=1.5,MarginV=120,Alignment=2,Bold=1'`;
-      filterChains.push(`[0:v]${subFilter}[vsub]`);
+      filterChains.push(`${videoMap}${subFilter}[vsub]`);
       videoMap = '[vsub]';
     }
 
@@ -405,9 +410,10 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
 
       normalized.push({
         startSeconds,
-        duration: Math.max(1.5, Math.min(4.5, clipDuration)),
+        duration: Math.max(1.2, Math.min(8.0, clipDuration)),
         videoPath: clip?.videoPath || clip?.sourceVideo || null,
         candidateIndex: clip?.candidateIndex !== undefined ? clip.candidateIndex : null,
+        isConformedLoop: Boolean(clip?.isConformedLoop),
         reframe: {
           renderMode: effectiveRenderMode,
           ...(clip?.reframe || {}),
@@ -416,19 +422,21 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
           hasProductBrand: clip?.hasProductBrand !== undefined ? clip.hasProductBrand : clip?.reframe?.hasProductBrand,
         },
       });
-      if (normalized.length === 12) break; // Max 12 clips (support up to ~35s)
+      if (normalized.length === 16) break; // Support up to 16 cuts for long voiceover
     }
   }
 
   if (normalized.length) {
-    // Deduplikasi ketat: Pastikan tidak ada klip yang identik atau berjarak < 2 detik dari video yang sama
+    // Deduplikasi ketat: Pastikan tidak ada klip yang identik dari video yang sama
+    // Jangan buang klip yang sengaja diekspansi untuk memenuhi voiceover (isConformedLoop)!
     const deduplicated = [];
     for (const c of normalized) {
-      const isDuplicate = deduplicated.some(existing => {
+      const isDuplicate = !c.isConformedLoop && deduplicated.some(existing => {
         const sameVideo = (existing.videoPath && c.videoPath && existing.videoPath === c.videoPath) ||
           (existing.candidateIndex !== null && existing.candidateIndex !== undefined && existing.candidateIndex === c.candidateIndex) ||
           (!existing.videoPath && !c.videoPath && existing.candidateIndex === c.candidateIndex);
-        return sameVideo && Math.abs(existing.startSeconds - c.startSeconds) < 6.0;
+        const sameMode = existing.reframe?.renderMode === c.reframe?.renderMode;
+        return sameVideo && sameMode && !existing.isConformedLoop && Math.abs(existing.startSeconds - c.startSeconds) < 6.0;
       });
       if (!isDuplicate) {
         deduplicated.push(c);
