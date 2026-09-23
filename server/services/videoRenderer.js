@@ -203,7 +203,8 @@ export async function mergeVoiceoverAndBurnSubtitles({
   if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
   const rawVideoDur = await getMediaDurationSec(silentVideoPath, ffmpegPath) || Number(targetDurationSec) || 24;
-  const audioDuration = await getMediaDurationSec(voiceoverAudioPath, ffmpegPath);
+  const hasVoiceover = voiceoverAudioPath && fs.existsSync(voiceoverAudioPath);
+  const audioDuration = hasVoiceover ? await getMediaDurationSec(voiceoverAudioPath, ffmpegPath) : 0;
 
   const MIN_VIDEO_DURATION = 18.0;
   const effectiveAudioDuration = audioDuration && audioDuration > 0 ? audioDuration : rawVideoDur;
@@ -228,7 +229,12 @@ export async function mergeVoiceoverAndBurnSubtitles({
   });
 
   return new Promise((resolve, reject) => {
-    const inputArgs = ['-i', silentVideoPath, '-i', voiceoverAudioPath];
+    const inputArgs = ['-i', silentVideoPath];
+    if (hasVoiceover) {
+      inputArgs.push('-i', voiceoverAudioPath);
+    } else {
+      inputArgs.push('-f', 'lavfi', '-t', effectiveFinalDuration.toFixed(3), '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100');
+    }
     let nextInputIndex = 2;
 
     const hasMusic = Boolean(backgroundMusicPath && fs.existsSync(backgroundMusicPath));
