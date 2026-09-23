@@ -255,9 +255,9 @@ class FaceGatekeeper:
         return True, "Wajah manusia valid"
 
     def detect(self, image_bgr, niche="kitchen_tools"):
-        h, w = image_bgr.shape[:2]
-        if h < 30 or w < 30:
-            return False, 0.0, None, "Dimensi frame terlalu kecil"
+        # ATAS PERMINTAAN USER: Matikan deteksi wajah lokal (YuNet/MediaPipe) sepenuhnya.
+        # Biarkan Gemini Filter 3 yang bertugas membuang frame wajah.
+        return False, 0.0, None, "Local Face Detection Disabled"
 
         # 1. MediaPipe BlazeFace
         if self.mp_detector:
