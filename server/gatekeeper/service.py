@@ -313,8 +313,9 @@ class TextGatekeeper:
     Deteksi teks, watermark pojok, subtitle terbakar, dan promo banner.
     Memeriksa 4 sudut frame secara ketat untuk menangkap watermark sekecil 2-5% zona.
     """
-    def __init__(self, max_total_coverage=0.022, max_bottom_coverage=0.020):
-        # Threshold diperketat: subtitle >= 2.0% area bawah, total teks >= 2.2% frame, sudut >= 1.5%
+    def __init__(self, max_total_coverage=0.015, max_bottom_coverage=0.013):
+        # Threshold diperketat (2026-09-23): subtitle >= 1.3% area bawah, total teks >= 1.5% frame, sudut >= 1.0%
+        # Lebih agresif untuk menangkap angka/badge kecil mengambang, overlay samar, dan teks semi-transparan
         self.max_total_coverage = max_total_coverage
         self.max_bottom_coverage = max_bottom_coverage
         self.ort_session = None
@@ -357,11 +358,11 @@ class TextGatekeeper:
             contours, _ = cv2.findContours(dilated_banner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for cnt in contours:
                 bx, by, bw, bh = cv2.boundingRect(cnt)
-                # Kartu banner atau badge spesifikasi (>= 22% lebar frame) dan tinggi 4%-35% frame
-                if bw >= int(160 * 0.22) and int(280 * 0.04) <= bh <= int(280 * 0.35):
-                    if (bw * bh) > (160 * 280 * 0.025) and (by + bh / 2) > (280 * 0.10):
+                # Kartu banner atau badge spesifikasi (>= 20% lebar frame) dan tinggi 4%-35% frame
+                if bw >= int(160 * 0.20) and int(280 * 0.04) <= bh <= int(280 * 0.35):
+                    if (bw * bh) > (160 * 280 * 0.020) and (by + bh / 2) > (280 * 0.08):
                         inner_edge_density = np.count_nonzero(edges[by:by+bh, bx:bx+bw]) / float(bw * bh)
-                        if inner_edge_density > 0.14:
+                        if inner_edge_density > 0.10:
                             return True, 0.10, 0.12, f"Badge spesifikasi / kartu teks statis terdeteksi ({bw}x{bh}px)", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
         except Exception:
             pass
@@ -385,8 +386,9 @@ class TextGatekeeper:
                 outputs = self.ort_session.run(None, {input_name: blob})
                 prob_map = outputs[0][0, 0]
 
-                # Binary segmentation at 0.28 probability threshold
-                text_mask = prob_map > 0.28
+                # Binary segmentation at 0.22 probability threshold (diperketat dari 0.28)
+                # Menangkap teks semi-transparan, overlay samar, dan angka mengambang kecil
+                text_mask = prob_map > 0.22
                 total_text_pixels = int(np.count_nonzero(text_mask))
                 total_cov = total_text_pixels / float(target_h * target_w)
 
@@ -417,6 +419,8 @@ class TextGatekeeper:
                 bottom_cov = int(np.count_nonzero(bottom_mask)) / float((target_h - bottom_cut) * target_w) if ((target_h - bottom_cut) * target_w) > 0 else 0.0
 
                 # ── Deteksi Komponen Terhubung di Sudut (Watermark Kecil / Ikon Logo / Callout Badge) ──
+                # Threshold blob diperketat: area >= 12px, dimensi >= 5px (dari 18px / 7px)
+                # Agar angka mengambang kecil ("99", badge harga) juga tertangkap
                 for c_name, c_zone in [("TL", tl_zone), ("TR", tr_zone), ("BL", bl_zone), ("BR", br_zone)]:
                     c_uint8 = c_zone.astype(np.uint8)
                     n_cc, _, stats_cc, _ = cv2.connectedComponentsWithStats(c_uint8)
@@ -424,24 +428,37 @@ class TextGatekeeper:
                         blob_area = stats_cc[k, cv2.CC_STAT_AREA]
                         bw = stats_cc[k, cv2.CC_STAT_WIDTH]
                         bh = stats_cc[k, cv2.CC_STAT_HEIGHT]
-                        # Karakter teks/badge di sudut: lebar >= 7px dan tinggi >= 7px dengan area >= 18px
-                        if blob_area >= 18 and bw >= 7 and bh >= 7:
-                            return True, total_cov, bottom_cov, f"Watermark / badge teks terdeteksi di sudut {c_name} ({bw}x{bh}px)", corner_activations
+                        # Karakter teks/badge di sudut: lebar >= 5px dan tinggi >= 5px dengan area >= 12px
+                        if blob_area >= 12 and bw >= 5 and bh >= 5:
+                            return True, total_cov, bottom_cov, f"Watermark / badge teks terdeteksi di sudut {c_name} ({bw}x{bh}px, area={blob_area}px)", corner_activations
 
-                # ── Ambang Batas Ketat Per-Zona ──
-                # Sudut TL / TR / BL / BR: >= 1.5% zona sudah dianggap watermark / badge digital
-                if tl_cov >= 0.015:
+                # ── Ambang Batas Ketat Per-Zona (diperketat dari 1.5% menjadi 1.0%) ──
+                # Sudut TL / TR / BL / BR: >= 1.0% zona sudah dianggap watermark / badge digital
+                if tl_cov >= 0.010:
                     return True, total_cov, bottom_cov, f"Watermark di pojok kiri atas / TL (coverage {tl_cov * 100:.1f}%)", corner_activations
-                if tr_cov >= 0.015:
+                if tr_cov >= 0.010:
                     return True, total_cov, bottom_cov, f"Watermark di pojok kanan atas / TR (coverage {tr_cov * 100:.1f}%)", corner_activations
-                if bl_cov >= 0.015:
+                if bl_cov >= 0.010:
                     return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kiri bawah / BL (coverage {bl_cov * 100:.1f}%)", corner_activations
-                if br_cov >= 0.015:
+                if br_cov >= 0.010:
                     return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kanan bawah / BR (coverage {br_cov * 100:.1f}%)", corner_activations
+
+                # ── Deteksi Teks Mengambang di Area Tengah Frame (Center Float Zone) ──
+                # Menangkap angka mengambang / badge harga di tengah-tengah frame yang bukan di sudut dan bukan di bawah
+                # Contoh: angka "99", counter views, floating price tag di tengah konten
+                mid_top = int(target_h * 0.30)
+                mid_bottom = int(target_h * 0.70)
+                mid_left = int(target_w * 0.20)
+                mid_right = int(target_w * 0.80)
+                mid_zone = text_mask[mid_top:mid_bottom, mid_left:mid_right]
+                mid_zone_area = float((mid_bottom - mid_top) * (mid_right - mid_left))
+                mid_cov = int(np.count_nonzero(mid_zone)) / max(1.0, mid_zone_area)
+                if mid_cov >= 0.018:
+                    return True, total_cov, bottom_cov, f"Teks mengambang di area tengah frame 9:16 (center coverage {mid_cov * 100:.1f}%)", corner_activations
 
                 if bottom_cov >= self.max_bottom_coverage:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)", corner_activations
-                if top_cov >= 0.025:
+                if top_cov >= 0.018:
                     return True, total_cov, bottom_cov, f"Teks headline / overlay di area atas (coverage {top_cov * 100:.1f}%)", corner_activations
                 if total_cov >= self.max_total_coverage:
                     return True, total_cov, bottom_cov, f"Teks mendominasi frame (coverage {total_cov * 100:.1f}%)", corner_activations
@@ -473,12 +490,13 @@ class TextGatekeeper:
 
         corner_activations = {"TL": round(tl_sobel, 4), "TR": round(tr_sobel, 4), "BL": round(bl_sobel, 4), "BR": round(br_sobel, 4)}
 
-        if tl_sobel >= 0.028 or tr_sobel >= 0.028 or bl_sobel >= 0.028 or br_sobel >= 0.028:
-            c_name = "TL" if tl_sobel >= 0.028 else ("TR" if tr_sobel >= 0.028 else ("BL" if bl_sobel >= 0.028 else "BR"))
-            return True, total_cov, bottom_cov, f"Watermark terdeteksi di sudut {c_name} (Sobel)", corner_activations
-        if bottom_cov >= 0.035:
+        # Sobel fallback threshold diperketat (dari 0.028/0.035/0.040 menjadi 0.020/0.025/0.030)
+        if tl_sobel >= 0.020 or tr_sobel >= 0.020 or bl_sobel >= 0.020 or br_sobel >= 0.020:
+            c_name = "TL" if tl_sobel >= 0.020 else ("TR" if tr_sobel >= 0.020 else ("BL" if bl_sobel >= 0.020 else "BR"))
+            return True, total_cov, bottom_cov, f"Watermark terdeteksi di sudut {c_name} (Sobel, threshold diperketat)", corner_activations
+        if bottom_cov >= 0.025:
             return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (Sobel)", corner_activations
-        if total_cov >= 0.040:
+        if total_cov >= 0.030:
             return True, total_cov, bottom_cov, f"Densitas teks/grafis dominan (Sobel)", corner_activations
 
         return False, total_cov, bottom_cov, "Teks dalam batas aman (Sobel)", corner_activations
