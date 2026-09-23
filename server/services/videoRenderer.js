@@ -428,12 +428,12 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
         const sameVideo = (existing.videoPath && c.videoPath && existing.videoPath === c.videoPath) ||
           (existing.candidateIndex !== null && existing.candidateIndex !== undefined && existing.candidateIndex === c.candidateIndex) ||
           (!existing.videoPath && !c.videoPath && existing.candidateIndex === c.candidateIndex);
-        return sameVideo && Math.abs(existing.startSeconds - c.startSeconds) < 2.0;
+        return sameVideo && Math.abs(existing.startSeconds - c.startSeconds) < 6.0;
       });
       if (!isDuplicate) {
         deduplicated.push(c);
       } else {
-        console.log(`[normalizeRenderClips] ⚠️ Membuang klip duplikat pada timestamp ${c.startSeconds}s.`);
+        console.log(`[normalizeRenderClips] ⚠️ Membuang klip duplikat / berjarak terlalu dekat (< 6s) pada timestamp ${c.startSeconds}s.`);
       }
     }
 

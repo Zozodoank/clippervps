@@ -3213,8 +3213,8 @@ export function build7SlotStoryboardClips({
     const ts = Number(f?.timestamp) || 0;
     const previous = selectedTimestampsByCandidate.get(cand) || [];
 
-    // Same-source scenes must be separated by at least one full scene duration.
-    if (previous.some((p) => Math.abs(p - ts) < Math.max(clipSec, 3.5))) return false;
+    // Same-source scenes must be separated by at least 8.0s to ensure a visibly different moment/action
+    if (previous.some((p) => Math.abs(p - ts) < 8.0)) return false;
 
     return true;
   };
@@ -3344,10 +3344,10 @@ export function build7SlotStoryboardClips({
       startSec = minSafeStart;
     }
 
-    // Universal anti-overlap rule: same source video must use non-overlapping clips.
+    // Universal anti-overlap rule: same source video must use non-overlapping clips separated by at least 8.0s
     const collides = storyboardClips.some(sc =>
       sc.candidateIndex === candIdx &&
-      Math.abs(sc.startSeconds - startSec) < Math.max(clipSec, 3.5)
+      Math.abs(sc.startSeconds - startSec) < 8.0
     );
     if (collides) {
       console.warn(`[build7SlotStoryboardClips] Slot #${config.slot} bentrok dengan clip sebelumnya pada video yang sama; slot dilewati.`);
