@@ -1819,11 +1819,12 @@ export async function runStage1Pipeline({
     if (rawVideoPath) {
       try {
         const rawDur = Number(videoMeta?.duration) || 300;
-        const rawInterval = Math.max(1, Math.floor(rawDur / 30));
-        updateProgress({ step: 'frames_raw', message: `Mengekstrak 30 frame video 1080p untuk analisa AI (interval ${rawInterval}s)...`, progress: 38, status: 'running' });
+        const rawInterval = Math.max(1.5, Math.floor(rawDur / 80));
+        const maxFrames = Math.min(120, Math.floor(rawDur / rawInterval));
+        updateProgress({ step: 'frames_raw', message: `Mengekstrak ${maxFrames} frame rapat video 1080p untuk analisa AI (interval ${rawInterval.toFixed(1)}s)...`, progress: 38, status: 'running' });
         const { frames: rawFrames } = await extractFrames(rawVideoPath, rawFramesDir, updateProgress, {
           sampleIntervalSec: rawInterval,
-          maxSampleFrames: 30,
+          maxSampleFrames: maxFrames,
           duration: rawDur,
         });
 
@@ -2333,7 +2334,7 @@ export async function runStage1Pipeline({
 
         // Coba jalankan AI Storyboard jika sudah ada cukup frame
         if ((bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) || totalCleanFrames >= 8) {
-          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 30 })
+          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 120 })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
           if (testPool.length >= 2) {
@@ -2488,7 +2489,7 @@ export async function runStage1Pipeline({
       if (!hl && candidateResults.length > 0) {
         candidateResults = choosePreferredCandidateSet(candidateResults);
         if (candidateResults.length > 0) {
-          pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 })
+          pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 120 })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
           if (pooledFrames.length >= 2) {
