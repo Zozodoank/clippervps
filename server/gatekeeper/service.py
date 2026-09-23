@@ -358,11 +358,15 @@ class TextGatekeeper:
             contours, _ = cv2.findContours(dilated_banner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for cnt in contours:
                 bx, by, bw, bh = cv2.boundingRect(cnt)
-                # Kartu banner atau badge spesifikasi (>= 20% lebar frame) dan tinggi 4%-35% frame
-                if bw >= int(160 * 0.20) and int(280 * 0.04) <= bh <= int(280 * 0.35):
-                    if (bw * bh) > (160 * 280 * 0.020) and (by + bh / 2) > (280 * 0.08):
+                # Abaikan kontour yang melebar hampir selebar frame (kemungkinan tepi produk/latar)
+                if bw >= int(160 * 0.90):
+                    continue
+                # Kartu banner atau badge spesifikasi (>= 25% lebar frame) dan tinggi 5%-30% frame
+                if bw >= int(160 * 0.25) and int(280 * 0.05) <= bh <= int(280 * 0.30):
+                    if (bw * bh) > (160 * 280 * 0.030) and (by + bh / 2) > (280 * 0.10):
                         inner_edge_density = np.count_nonzero(edges[by:by+bh, bx:bx+bw]) / float(bw * bh)
-                        if inner_edge_density > 0.10:
+                        # Dinaikkan: 35% edge density agar hanya kotak teks padat yang terdeteksi
+                        if inner_edge_density > 0.35:
                             return True, 0.10, 0.12, f"Badge spesifikasi / kartu teks statis terdeteksi ({bw}x{bh}px)", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
         except Exception:
             pass
@@ -419,8 +423,8 @@ class TextGatekeeper:
                 bottom_cov = int(np.count_nonzero(bottom_mask)) / float((target_h - bottom_cut) * target_w) if ((target_h - bottom_cut) * target_w) > 0 else 0.0
 
                 # ── Deteksi Komponen Terhubung di Sudut (Watermark Kecil / Ikon Logo / Callout Badge) ──
-                # Threshold blob diperketat: area >= 12px, dimensi >= 5px (dari 18px / 7px)
-                # Agar angka mengambang kecil ("99", badge harga) juga tertangkap
+                # Threshold blob sangat diperketat: area >= 80px, dimensi >= 14x10px
+                # Menghindari noise JPEG kecil, artefak kompresi, dan tepi produk fisik yang terdeteksi
                 for c_name, c_zone in [("TL", tl_zone), ("TR", tr_zone), ("BL", bl_zone), ("BR", br_zone)]:
                     c_uint8 = c_zone.astype(np.uint8)
                     n_cc, _, stats_cc, _ = cv2.connectedComponentsWithStats(c_uint8)
@@ -428,19 +432,19 @@ class TextGatekeeper:
                         blob_area = stats_cc[k, cv2.CC_STAT_AREA]
                         bw = stats_cc[k, cv2.CC_STAT_WIDTH]
                         bh = stats_cc[k, cv2.CC_STAT_HEIGHT]
-                        # Karakter teks/badge di sudut: lebar >= 5px dan tinggi >= 5px dengan area >= 12px
-                        if blob_area >= 12 and bw >= 5 and bh >= 5:
+                        # Karakter teks/badge di sudut: harus berukuran cukup besar dan bukan noise JPEG kecil
+                        if blob_area >= 80 and bw >= 14 and bh >= 10:
                             return True, total_cov, bottom_cov, f"Watermark / badge teks terdeteksi di sudut {c_name} ({bw}x{bh}px, area={blob_area}px)", corner_activations
 
-                # ── Ambang Batas Ketat Per-Zona (diperketat dari 1.5% menjadi 1.0%) ──
-                # Sudut TL / TR / BL / BR: >= 1.0% zona sudah dianggap watermark / badge digital
-                if tl_cov >= 0.010:
+                # ── Ambang Batas Ketat Per-Zona (dinaikkan dari 1% menjadi 3%) ──
+                # Sudut TL / TR / BL / BR: >= 3% zona baru dianggap watermark digital nyata
+                if tl_cov >= 0.030:
                     return True, total_cov, bottom_cov, f"Watermark di pojok kiri atas / TL (coverage {tl_cov * 100:.1f}%)", corner_activations
-                if tr_cov >= 0.010:
+                if tr_cov >= 0.030:
                     return True, total_cov, bottom_cov, f"Watermark di pojok kanan atas / TR (coverage {tr_cov * 100:.1f}%)", corner_activations
-                if bl_cov >= 0.010:
+                if bl_cov >= 0.030:
                     return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kiri bawah / BL (coverage {bl_cov * 100:.1f}%)", corner_activations
-                if br_cov >= 0.010:
+                if br_cov >= 0.030:
                     return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kanan bawah / BR (coverage {br_cov * 100:.1f}%)", corner_activations
 
                 if bottom_cov >= self.max_bottom_coverage:
