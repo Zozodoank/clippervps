@@ -1599,7 +1599,6 @@ CRITERIA FOR ACCEPTANCE (ALL MUST BE TRUE):
 5. Real authentic physical demonstration (5 to 8 clean clips across the storyboard for full 30 to 35 second video ad).
 
 Output strictly valid JSON with this exact schema:
-If ACCEPTED:
 {
   "status": "accept",
   "detectedProduct": "<nama produk di video>",
@@ -1616,48 +1615,43 @@ If ACCEPTED:
   "hasStaticChannelLogoIn916Frame": false,
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
+  "rejectedFrames": [
+    {
+      "frameIndex": 2,
+      "timestamp": 12.5,
+      "reason": "Menampilkan wajah orang / subtitle ucapan / watermark / meteran jahit / angka mengambang '99' / bukan produk target"
+    }
+  ],
+  "acceptedFrames": [1, 3, 5, 7, 8, 10],
+  "missingSlots": ["clip3_action_demo", "clip4_action_demo_diff"],
+  "suggestedSearchQueries": ["${effectiveTitle} demo", "${effectiveTitle} cara pakai"],
   "storyboard": {
-    "clip1_full_product": 2,
-    "clip2_feature": 5,
-    "clip3_action_demo": 9,
-    "clip4_action_demo_diff": 14,
-    "clip5_action_demo": 19,
-    "clip6_full_product": 25,
-    "clip7_full_product": 28
+    "clip1_full_product": 1,
+    "clip2_feature": 3,
+    "clip3_action_demo": 5,
+    "clip4_action_demo_diff": 7,
+    "clip5_action_demo": 8,
+    "clip6_full_product": 10,
+    "clip7_full_product": 10
   },
   "reframeBySlot": {
     "clip1_full_product": {"focusXStart": 0.50, "focusYStart": 0.55, "focusXEnd": 0.52, "focusYEnd": 0.55},
     "clip2_feature": {"focusXStart": 0.48, "focusYStart": 0.55, "focusXEnd": 0.53, "focusYEnd": 0.57}
   },
-  "frames": [2, 5, 9, 14, 19, 25, 28],
+  "frames": [1, 3, 5, 7, 8, 10, 10],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
-  "detectedBrand": "none"
+  "detectedBrand": "none",
+  "reason": "<Ringkasan evaluasi jika ada frame ditolak atau status partial/reject>"
 }
 
-If REJECTED:
-{
-  "status": "reject",
-  "detectedProduct": "<nama produk di video>",
-  "isExactProductMatch": true,
-  "isFacelessIn916Frame": false,
-  "hasHumanOrFaceAnywhereInFrames": false,
-  "hasFaceIn916Frame": false,
-  "hasAnimatedGraphicOverlayIn916Frame": false,
-  "hasBumperPhotoInFrame": false,
-  "hasStaticChannelLogoIn916Frame": false,
-  "hasWatermarkIn916Frame": false,
-  "hasSocialOrChannelLogoIn916Frame": false,
-  "hasSubtitlesIn916Frame": false,
-  "hasFloatingTextIn916Frame": false,
-  "hasOnlyPhysicalProductText": false,
-  "isAiGeneratedOrSynthetic": false,
-  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker di dalam frame 9:16 tengah' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
-}
-
-CRITICAL RULES FOR REJECTION OUTPUT:
-1. "isExactProductMatch": Set to true if the item demonstrated in the video matches "${effectiveTitle}", even if rejected for policy. Set to false ONLY if the product is physically different.
-2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
+CRITICAL MANDATE FOR FRAME AUDIT & REJECTION REPORTING:
+1. "rejectedFrames": You MUST inspect every single frame and list ALL frames that violate QC (human faces/heads, dialogue subtitles, promo cards, watermarks, floating numbers/stickers like '99', tape measures/rulers, or empty packaging without target product).
+   Specify "frameIndex" (1-indexed matching frame #1, #2, ...), "timestamp" (approx seconds), and an explicit "reason".
+2. "acceptedFrames": List every clean, faceless, hands-on demonstration frame index.
+3. "missingSlots": If the pool of clean frames cannot fill all 7 diverse storyboard slots without repetition, list the unfilled slot keys (e.g. ["clip3_action_demo", "clip4_action_demo_diff"]).
+4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage (e.g. "${effectiveTitle} demo", "${effectiveTitle} cara pakai").
+5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
 
   // Bound frames to at most 30 keyframes for Gemini Vision / AI APIs
   let evalFrames = frames || [];
@@ -1754,12 +1748,15 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
      * JIKA HANYA 1 VIDEO SUMBER YANG TERSEDIA:
        PILIH 7 SLOT DENGAN VARIASI MAKSIMAL: pilih momen-momen dengan perbedaan sudut pandang (angle 45°, top-down), zoom hero shot, macro close-up tekstur/motif, dan aksi pemutaran/penyajian yang paling kontras dari video tersebut.
 7. Output Format:
-   - Isi objek "storyboard" dengan 7 indeks frame (bisa berupa angka N atau {"frameIndex": N, "candidateIndex": C}).
-   - Isi "reframeBySlot" untuk setiap slot dengan focusXStart/focusYStart/focusXEnd/focusYEnd (semua 0.0-1.0) berdasarkan posisi produk pada awal dan akhir momen yang dipilih. Gunakan perubahan kecil dan natural; tujuan utamanya menjaga produk di safe-zone vertikal, bukan membuat gerakan kamera palsu berlebihan.
+   - WAJIB laporkan "rejectedFrames": Daftar rincian semua frame yang ditolak ([{"frameIndex": N, "timestamp": T, "reason": "alasan"}]).
+   - WAJIB laporkan "acceptedFrames": Daftar indeks frame yang bersih dan faceless ([1, 2, ...]).
+   - Laporkan "missingSlots": Slot storyboard yang masih kosong jika footage belum cukup beragam ([ "clip3_action_demo", ... ]).
+   - Berikan "suggestedSearchQueries": Kata kunci pencarian video pengganti di YouTube untuk mencari footage tambahan.
+   - Isi objek "storyboard" dengan 7 indeks frame terbaik dari acceptedFrames.
+   - Isi "reframeBySlot" untuk setiap slot dengan focusXStart/focusYStart/focusXEnd/focusYEnd.
    - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
    - Isi "frameAudit" untuk SETIAP frame yang dipilih: [{"frameIndex": N, "timestamp": 10.0, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}].
-   - Jangan pernah menandai frame tanpa produk target sebagai containsTargetProduct=true.
-   - Output {"status": "accept", "detectedProduct": "<nama produk>", "isExactProductMatch": true, "hasTargetProductInEverySelectedFrame": true, "isFacelessIn916Frame": true, "hasHumanOrFaceAnywhereInFrames": false, "hasSubtitlesIn916Frame": false, "hasFloatingTextIn916Frame": false, "hasFaceIn916Frame": false, "hasWatermarkIn916Frame": false, "hasSocialOrChannelLogoIn916Frame": false, "hasAnimatedGraphicOverlayIn916Frame": false, "hasBumperPhotoInFrame": false, "hasStaticChannelLogoIn916Frame": false, "storyboard": {"clip1_full_product": N1, "clip2_feature": N2, "clip3_action_demo": N3, "clip4_action_demo_diff": N4, "clip5_action_demo": N5, "clip6_full_product": N6, "clip7_full_product": N7}, "frames": [N1, N2, N3, N4, N5, N6, N7], "productHook": "Hook pembuka 3 detik dinamis (tanpa kata fix)", "hasProductBrand": false}`;
+   - Output JSON lengkap sesuai skema terstruktur.`;
 
   const messageContent = [
     { type: 'text', text: userPrompt },
@@ -1905,6 +1902,86 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         selectedIndices.length >= 3 &&
         (parsed.hasTargetProductInEverySelectedFrame === false || (selectedFrameAudit.length > 0 && !hasCompleteSelectedFrameAudit));
 
+      // ── EKSTRAKSI & NORMALISASI REJECTED & ACCEPTED FRAMES ──
+      let normalizedRejectedFrames = [];
+      if (Array.isArray(parsed.rejectedFrames)) {
+        normalizedRejectedFrames = parsed.rejectedFrames.map(rf => {
+          if (!rf) return null;
+          const fIdx = Number(rf.frameIndex ?? rf.frame ?? rf.index);
+          const matchedFrame = Number.isFinite(fIdx) && fIdx >= 1 && fIdx <= evalFrames.length ? evalFrames[fIdx - 1] : null;
+          return {
+            frameIndex: Number.isFinite(fIdx) ? fIdx : null,
+            timestamp: Number.isFinite(Number(rf.timestamp)) ? Number(rf.timestamp) : (matchedFrame?.timestamp ?? null),
+            reason: String(rf.reason || rf.rejectionReason || 'Ditolak AI Vision').trim(),
+            filePath: matchedFrame?.filePath || null,
+            candidateIndex: matchedFrame?.candidateIndex !== undefined ? matchedFrame.candidateIndex : null,
+            videoId: matchedFrame?.videoId || matchedFrame?.candidate?.id || null,
+          };
+        }).filter(Boolean);
+      }
+
+      // Gabungkan frameAudit yang tidak memenuhi syarat jika belum ada di rejectedFrames
+      if (Array.isArray(parsed.frameAudit)) {
+        for (const audit of parsed.frameAudit) {
+          const aIdx = Number(audit?.frameIndex);
+          if (Number.isFinite(aIdx) && aIdx >= 1 && aIdx <= evalFrames.length) {
+            const isBad = audit.containsTargetProduct === false || audit.isPackaging === true || audit.isMachine === true || audit.isActiveProductDemo === false;
+            if (isBad && !normalizedRejectedFrames.some(r => r.frameIndex === aIdx)) {
+              const matchedF = evalFrames[aIdx - 1];
+              normalizedRejectedFrames.push({
+                frameIndex: aIdx,
+                timestamp: matchedF?.timestamp ?? audit.timestamp ?? null,
+                reason: audit.reason || audit.visualDescription || 'Tidak memenuhi kualifikasi peragaan aktif produk target',
+                filePath: matchedF?.filePath || null,
+                candidateIndex: matchedF?.candidateIndex !== undefined ? matchedF.candidateIndex : null,
+                videoId: matchedF?.videoId || null,
+              });
+            }
+          }
+        }
+      }
+
+      let normalizedAcceptedFrames = [];
+      if (Array.isArray(parsed.acceptedFrames)) {
+        normalizedAcceptedFrames = parsed.acceptedFrames
+          .map(f => Number(f?.frameIndex ?? f?.frame ?? f))
+          .filter(f => Number.isFinite(f) && f >= 1 && f <= evalFrames.length);
+      } else if (Array.isArray(parsed.frames)) {
+        normalizedAcceptedFrames = [...new Set(parsed.frames.map(f => Number(f?.frameIndex ?? f?.frame ?? f)).filter(f => Number.isFinite(f) && f >= 1 && f <= evalFrames.length))];
+      }
+
+      let normalizedMissingSlots = Array.isArray(parsed.missingSlots) ? parsed.missingSlots.map(s => String(s).trim()).filter(Boolean) : [];
+      let normalizedSuggestedQueries = Array.isArray(parsed.suggestedSearchQueries) ? parsed.suggestedSearchQueries.map(q => String(q).trim()).filter(Boolean) : [];
+
+      console.log(`\n======================================================`);
+      console.log(`[AIService Vision] 🔍 LAPORAN AUDIT FRAME OLEH GEMINI (${activeModel}):`);
+      console.log(`  - Status Evaluasi : ${rawStatus || 'accept'} (Produk Fisik Cocok: ${!isMatchFalse ? 'YA' : 'TIDAK'})`);
+      console.log(`  - Frame Bersih Diterima (${normalizedAcceptedFrames.length} frame): [${normalizedAcceptedFrames.map(i => `#${i}`).join(', ') || 'kosong'}]`);
+      if (normalizedRejectedFrames.length > 0) {
+        console.log(`  - ❌ Frame Ditolak (${normalizedRejectedFrames.length} frame):`);
+        normalizedRejectedFrames.forEach(rf => {
+          const candStr = rf.candidateIndex !== null && rf.candidateIndex !== undefined ? ` [Cand #${rf.candidateIndex + 1}]` : '';
+          const tsStr = rf.timestamp !== null && rf.timestamp !== undefined ? ` (${Number(rf.timestamp).toFixed(1)}s)` : '';
+          console.log(`     * Frame #${rf.frameIndex}${tsStr}${candStr}: ${rf.reason}`);
+        });
+      }
+      if (normalizedMissingSlots.length > 0) {
+        console.log(`  - ⚠️ Storyboard Slot yang Kurang: [${normalizedMissingSlots.join(', ')}]`);
+      }
+      if (normalizedSuggestedQueries.length > 0) {
+        console.log(`  - 💡 Saran Kueri Video Pengganti: ${normalizedSuggestedQueries.join(' | ')}`);
+      }
+      console.log(`======================================================\n`);
+
+      if (normalizedRejectedFrames.length > 0) {
+        onProgress({
+          step: 'gemini_vision',
+          message: `AI mendeteksi ${normalizedRejectedFrames.length} frame ditolak (${normalizedRejectedFrames.map(r => `#${r.frameIndex}`).join(', ')}). ${normalizedMissingSlots.length > 0 ? `Slot kurang: [${normalizedMissingSlots.join(', ')}]. ` : ''}Memproses footage bersih...`,
+          progress: 42,
+          status: 'running',
+        });
+      }
+
       // Penolakan FATAL video HANYA jika produk benar-benar salah/berbeda, buatan AI/CGI, atau perabot dilarang
       const isFatalMismatch = isMatchFalse || selectedFrameProofFailure || isSynthetic || isBulky || (isRejectStatus && (reasonLower.includes('tidak cocok') || reasonLower.includes('pasar barat') || reasonLower.includes('bukan produk')));
 
@@ -1914,6 +1991,9 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         const rejectError = new Error(`Video ditolak oleh AI (${activeModel}): ${rejectionMsg}`);
         rejectError.isAiRejection = true;
         rejectError.rejectionReason = rejectionMsg;
+        rejectError.rejectedFrames = normalizedRejectedFrames;
+        rejectError.missingSlots = normalizedMissingSlots;
+        rejectError.suggestedSearchQueries = normalizedSuggestedQueries;
         throw rejectError;
       }
 
@@ -2019,6 +2099,29 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         progress: 55
       });
 
+      if (!clips || clips.length === 0) {
+        console.warn(`[AIService ${provider} ${activeModel}] ⚠️ Footage saat ini belum menghasilkan cuplikan yang memenuhi syarat storyboard. Mengembalikan status kekurangan footage ke backend...`);
+        return {
+          detectedProduct: (parsed.detectedProduct || '').trim() || productTitle,
+          startTime: '00:00',
+          endTime: '00:00',
+          startSeconds: 0,
+          endSeconds: 0,
+          duration: 0,
+          productHook: parsed.productHook || getDynamicProductHookFallback(productTitle),
+          hasProductBrand,
+          detectedBrand,
+          allowHflip,
+          reframe: DEFAULT_REFRAME,
+          clips: [],
+          rejectedFrames: normalizedRejectedFrames,
+          acceptedFrames: normalizedAcceptedFrames,
+          missingSlots: normalizedMissingSlots.length > 0 ? normalizedMissingSlots : ['clip1_full_product', 'clip2_feature', 'clip3_action_demo'],
+          suggestedSearchQueries: normalizedSuggestedQueries,
+          reason: reasonText || 'Cuplikan bersih tidak mencukupi untuk storyboard 7-slot'
+        };
+      }
+
       return {
         detectedProduct: (parsed.detectedProduct || '').trim() || productTitle,
         startTime: clips[0].startTime,
@@ -2032,6 +2135,10 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         allowHflip,
         reframe: clips[0].reframe,
         clips,
+        rejectedFrames: normalizedRejectedFrames,
+        acceptedFrames: normalizedAcceptedFrames,
+        missingSlots: normalizedMissingSlots,
+        suggestedSearchQueries: normalizedSuggestedQueries,
       };
     } catch (err) {
       if (err.isAiRejection || String(err?.message || '').toLowerCase().includes('ditolak oleh ai') || String(err?.message || '').toLowerCase().includes('ai menolak video')) {

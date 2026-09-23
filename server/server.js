@@ -2034,23 +2034,100 @@ export async function runStage1Pipeline({
         throw new Error(`Tidak ditemukan video YouTube yang cocok untuk "${productTitle}": ${lastRejectionError?.rejectionReason || 'kandidat kosong'}.`);
       }
 
-      const MAX_STREAM_VIDEOS = 5;
+      let maxStreamVideos = 8; // Adaptif hingga 8 video agar footage cukup bervariasi dan tidak gagal
       let streamedCount = 0;
       let candidatePoolIndex = 0;
       let candidateResults = [];
       let hl = null;
       let pooledFrames = [];
+      const blacklistedFramePaths = new Set();
+      const retainedCleanFrames = [];
 
-      console.log(`[Job ${jobId}] Memulai Multi-Video Stream & Harvesting adaptif (maksimal stream ${MAX_STREAM_VIDEOS} video, target klip 30-35s) untuk "${productTitle}"...`);
+      // Helper: Pemanenan adaptif video pengganti di YouTube jika AI menolak frame atau slot kurang
+      const harvestAdaptiveReplacementCandidates = async ({
+        querySuggestions = [],
+        missingSlots = [],
+        reason = '',
+      } = {}) => {
+        const prodInfo = extractCoreProductInfo(productTitle, productDescription);
+        const b = (prodInfo.brand || options.brand || '').trim();
+        const p = (prodInfo.coreProductNoun || prodInfo.cleanTitle || productTitle || '').trim();
+        const combinedBP = (b && p && normalizeText(b) !== normalizeText(p)) ? `${b} ${p}` : (p || b);
 
-      while (streamedCount < MAX_STREAM_VIDEOS) {
-        // 1. Jika antrean candidatePool habis sebelum kuota stream 5 video tercapai, cari kandidat tambahan
+        const customQueries = [];
+        if (querySuggestions && Array.isArray(querySuggestions)) {
+          customQueries.push(...querySuggestions);
+        }
+
+        // Jika slot peragaan/aksi kurang, cari video demo aktif
+        const needsAction = missingSlots.some(s => String(s).includes('action') || String(s).includes('demo') || String(s).includes('result'));
+        if (needsAction) {
+          customQueries.push(
+            `${combinedBP} cara pakai`,
+            `${combinedBP} demo`,
+            `${combinedBP} tutorial`,
+            `${combinedBP} hands on`
+          );
+        } else {
+          customQueries.push(
+            `${combinedBP} review`,
+            `${combinedBP} unboxing`,
+            `${combinedBP} preview`
+          );
+        }
+        customQueries.push(
+          `${combinedBP} tanpa bicara`,
+          `${cleanTitle(productTitle)} review`,
+          `${cleanTitle(productTitle)} demo`
+        );
+
+        const validQueries = [...new Set(customQueries.filter(q => q && q.length > 3))];
+
+        console.log(`[Job ${jobId}] 🔎 Merespons laporan AI (${reason || 'frame ditolak / slot kurang'}). Mencari video pengganti baru di YouTube...`);
+
+        for (const query of validQueries) {
+          try {
+            updateProgress({
+              message: `Mencari video pengganti di YouTube: "${query.slice(0, 32)}..."`,
+              status: 'running',
+            });
+            const altResults = await searchMultiEngineVideos(query, {
+              limit: 6,
+              excludeVideoIds: usedVids,
+              strictIdentity: false,
+              youtubeOnly: true,
+            });
+
+            if (altResults && altResults.length > 0) {
+              let addedCount = 0;
+              for (const cand of altResults) {
+                const candVid = extractVideoId(cand.url) || cand.id;
+                if (candVid && !usedVids.has(candVid) && !candidatePool.some(t => (t.url && t.url === cand.url) || (t.id && t.id === cand.id))) {
+                  candidatePool.push(cand);
+                  addedCount++;
+                }
+              }
+              if (addedCount > 0) {
+                console.log(`[Job ${jobId}] 🎯 Menemukan ${addedCount} video baru dari kueri "${query}"! Total antrean kandidat: ${candidatePool.length}`);
+                break;
+              }
+            }
+          } catch (searchErr) {
+            console.warn(`[Job ${jobId}] Pencarian pengganti "${query}" gagal: ${searchErr.message}`);
+          }
+        }
+      };
+
+      console.log(`[Job ${jobId}] Memulai Multi-Video Stream & Harvesting adaptif (maksimal stream ${maxStreamVideos} video, target klip 30-35s) untuk "${productTitle}"...`);
+
+      while (streamedCount < maxStreamVideos) {
+        // 1. Jika antrean candidatePool habis sebelum kuota stream tercapai, cari kandidat pengganti tambahan
         if (candidatePoolIndex >= candidatePool.length) {
-          if (searchIteration >= 3) {
+          if (searchIteration >= 4) {
             console.warn(`[Job ${jobId}] Mencapai batas maksimal iterasi pencarian (${searchIteration}). Menghentikan pencarian video tambahan.`);
             break;
           }
-          console.log(`[Job ${jobId}] Kuota stream masih tersedia (${streamedCount}/${MAX_STREAM_VIDEOS}). Mencari kandidat YouTube tambahan untuk "${productTitle}"...`);
+          console.log(`[Job ${jobId}] Kuota stream masih tersedia (${streamedCount}/${maxStreamVideos}). Mencari kandidat YouTube tambahan untuk "${productTitle}"...`);
           searchIteration++;
           let fresh = await discoverYouTubeCandidatesForProduct({
             productTitle,
@@ -2062,29 +2139,10 @@ export async function runStage1Pipeline({
           });
 
           if (!fresh || fresh.length === 0) {
-            // Coba variasi kata kunci alternatif (brand + tipe produk, review, demo)
-            const b = (explicitBrand || productInfo.brand || '').trim();
-            const p = (explicitProductType || productInfo.coreProductNoun || '').trim();
-            const combinedBP = (b && p && normalizeText(b) !== normalizeText(p)) ? `${b} ${p}` : (p || b);
-            const extraQueries = [
-              combinedBP ? `${combinedBP} review` : '',
-              combinedBP ? `${combinedBP} demo` : '',
-              combinedBP,
-            ].filter(q => q && q.length > 3 && (!b || !p || normalizeText(q) !== normalizeText(`${b} ${b}`)));
-
-            for (const altQuery of extraQueries) {
-              const altResults = await searchMultiEngineVideos(altQuery, {
-                limit: 8,
-                excludeVideoIds: usedVids,
-                strictIdentity: false,
-                youtubeOnly: true,
-                onProgress: (p) => updateProgress({ message: `Mencari video variasi: "${altQuery}"...`, status: 'running' }),
-              });
-              if (altResults && altResults.length > 0) {
-                fresh = altResults;
-                break;
-              }
-            }
+            await harvestAdaptiveReplacementCandidates({
+              missingSlots: ['action_demo', 'feature'],
+              reason: 'Antrean kandidat kosong sebelum kuota stream terpenuhi',
+            });
           }
 
           if (fresh && fresh.length > 0) {
@@ -2108,11 +2166,11 @@ export async function runStage1Pipeline({
         const candVid = extractVideoId(candidate.url) || candidate.id;
         if (candVid) usedVids.add(candVid);
 
-        const candLabel = `Kandidat #${candidatePoolIndex} (Stream ${streamedCount + 1}/${MAX_STREAM_VIDEOS})`;
+        const candLabel = `Kandidat #${candidatePoolIndex} (Stream ${streamedCount + 1}/${maxStreamVideos})`;
         updateProgress({
           step: 'stream_sampling',
           message: `[${candLabel}] Memeriksa metadata: "${(candidate.title || productTitle).slice(0, 32)}..."`,
-          progress: 18 + Math.round((streamedCount / MAX_STREAM_VIDEOS) * 18),
+          progress: 18 + Math.round((streamedCount / maxStreamVideos) * 18),
           status: 'running',
         });
 
@@ -2147,8 +2205,8 @@ export async function runStage1Pipeline({
 
         updateProgress({
           step: 'stream_sampling',
-          message: `[${candLabel}] Streaming & sampling frame (${streamedCount}/${MAX_STREAM_VIDEOS}): "${(candMeta.title || candidate.title || productTitle).slice(0, 32)}..."`,
-          progress: 18 + Math.round((streamedCount / MAX_STREAM_VIDEOS) * 18),
+          message: `[${candLabel}] Streaming & sampling frame (${streamedCount}/${maxStreamVideos}): "${(candMeta.title || candidate.title || productTitle).slice(0, 32)}..."`,
+          progress: 18 + Math.round((streamedCount / maxStreamVideos) * 18),
           status: 'running',
         });
 
@@ -2258,23 +2316,22 @@ export async function runStage1Pipeline({
         const hasRemainingPool = candidatePoolIndex < candidatePool.length;
 
         // DYNAMIC MULTI-VIDEO HARVESTING FOR REELS:
-        // Jangan langsung berhenti di 1 video jika masih ada kandidat lain yang belum di-stream!
-        // Usahakan mengumpulkan minimal 2 video terverifikasi (atau stream minimal 2-3 video)
-        // agar video reels memiliki variasi sudut kamera, pencahayaan, dan latar belakang berbeda!
+        // Usahakan mengumpulkan minimal 2 video terverifikasi agar memiliki variasi sudut kamera & latar belakang berbeda!
         const targetMultiSources = 2;
         const shouldKeepHarvesting = verifiedCandidatesCount < targetMultiSources &&
           hasRemainingPool &&
-          streamedCount < Math.min(3, MAX_STREAM_VIDEOS);
+          streamedCount < Math.min(3, maxStreamVideos);
 
         if (shouldKeepHarvesting) {
           console.log(`[Job ${jobId}] 🎬 Multi-video harvesting: Sudah dapat ${verifiedCandidatesCount} video terverifikasi. Terus stream kandidat berikutnya untuk mendapatkan variasi sudut kamera & latar belakang...`);
           continue;
         }
 
-        // Jika satu sumber terverifikasi sudah kaya adegan (>= 8 frame) atau gabungan sudah >= 8 frame:
-        // Coba jalankan AI Storyboard untuk melihat apakah jumlah frame dan cuplikan terpenuhi!
+        // Coba jalankan AI Storyboard jika sudah ada cukup frame
         if ((bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) || totalCleanFrames >= 8) {
-          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 30 });
+          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 30 })
+            .filter(f => !blacklistedFramePaths.has(f.filePath));
+
           if (testPool.length >= 2) {
             updateProgress({
               step: 'gemini_vision',
@@ -2304,18 +2361,73 @@ export async function runStage1Pipeline({
                 onProgress: updateProgress,
               });
 
-              if (testHl && Array.isArray(testHl.clips) && testHl.clips.length >= 3) {
-                console.log(`[Job ${jobId}] ✅ AI Vision berhasil memilih ${testHl.clips.length} cuplikan produk dari ${preferredSoFar.length} video!`);
+              // 1. TANGANI FRAME YANG DITOLAK OLEH AI VISION:
+              if (testHl && Array.isArray(testHl.rejectedFrames) && testHl.rejectedFrames.length > 0) {
+                console.log(`[Job ${jobId}] 🧹 Mengeliminasi ${testHl.rejectedFrames.length} frame yang ditolak AI dari bank footage aktif...`);
+                for (const rf of testHl.rejectedFrames) {
+                  if (rf.filePath) blacklistedFramePaths.add(rf.filePath);
+                }
+                for (const candRes of candidateResults) {
+                  if (Array.isArray(candRes.cleanFrames)) {
+                    candRes.cleanFrames = candRes.cleanFrames.filter(f => !blacklistedFramePaths.has(f.filePath));
+                  }
+                }
+              }
+
+              // 2. SIMPAN FRAME BERSIH YANG DITERIMA AI:
+              if (testHl && Array.isArray(testHl.acceptedFrames) && testHl.acceptedFrames.length > 0) {
+                for (const aIdx of testHl.acceptedFrames) {
+                  const accF = testPool[aIdx - 1];
+                  if (accF && accF.filePath && !blacklistedFramePaths.has(accF.filePath) && !retainedCleanFrames.some(rc => rc.filePath === accF.filePath)) {
+                    retainedCleanFrames.push(accF);
+                  }
+                }
+              }
+
+              const currentClips = Array.isArray(testHl?.clips) ? testHl.clips : [];
+              const hasMissingSlots = Array.isArray(testHl?.missingSlots) && testHl.missingSlots.length > 0;
+              const multiCandidateCount = new Set(currentClips.map(c => c.candidateIndex ?? 0)).size;
+
+              // Kondisi sukses:
+              // - Memiliki minimal 5 klip ATAU
+              // - Memiliki minimal 3 klip dengan variasi multi-kandidat (>= 2 video berbeda) dan tanpa slot hilang fatal
+              const isSatisfactory = currentClips.length >= 5 || (currentClips.length >= 3 && multiCandidateCount >= 2 && !hasMissingSlots);
+
+              if (isSatisfactory) {
+                console.log(`[Job ${jobId}] ✅ AI Vision berhasil memilih ${currentClips.length} cuplikan produk dari ${preferredSoFar.length} video (Multi-sumber: ${multiCandidateCount} video)!`);
                 hl = testHl;
-                pooledFrames = testPool;
+                pooledFrames = testPool.filter(f => !blacklistedFramePaths.has(f.filePath));
                 candidateResults = preferredSoFar;
                 break; // Berhasil dan frame terpenuhi! Hentikan streaming loop.
               } else {
-                console.warn(`[Job ${jobId}] ⚠️ AI Vision menghasilkan cuplikan kurang (< 3 klip). Melanjutkan pencarian kandidat (stream ${streamedCount}/${MAX_STREAM_VIDEOS})...`);
-                lastRejectionError = new Error('AI Vision menghasilkan cuplikan kurang (< 3 klip).');
+                const missingNames = testHl?.missingSlots?.length > 0 ? testHl.missingSlots.join(', ') : 'kurang variasi adegan/sumber';
+                console.warn(`[Job ${jobId}] ⚠️ Cuplikan AI belum lengkap (${currentClips.length} klip, slot kurang: [${missingNames}]). Merespons dengan mencari video baru pengganti di YouTube...`);
+                
+                // Respons adaptif: panen video baru di YouTube
+                await harvestAdaptiveReplacementCandidates({
+                  querySuggestions: testHl?.suggestedSearchQueries || [],
+                  missingSlots: testHl?.missingSlots || [],
+                  reason: `Slot kurang: ${missingNames}`,
+                });
+
+                lastRejectionError = new Error(`AI Vision membutuhkan video pengganti untuk slot: [${missingNames}].`);
               }
             } catch (aiErr) {
-              console.warn(`[Job ${jobId}] ⚠️ Gemini Vision menolak storyboard dari footage ini: ${aiErr.message}. Kuota stream: ${streamedCount}/${MAX_STREAM_VIDEOS}. Mencari kandidat berikutnya...`);
+              console.warn(`[Job ${jobId}] ⚠️ Gemini Vision melaporkan kendala pada footage: ${aiErr.message}.`);
+              
+              if (Array.isArray(aiErr.rejectedFrames)) {
+                for (const rf of aiErr.rejectedFrames) {
+                  if (rf.filePath) blacklistedFramePaths.add(rf.filePath);
+                }
+              }
+
+              // Respons adaptif: panen video baru di YouTube
+              await harvestAdaptiveReplacementCandidates({
+                querySuggestions: aiErr.suggestedSearchQueries || [],
+                missingSlots: aiErr.missingSlots || [],
+                reason: aiErr.message,
+              });
+              
               lastRejectionError = aiErr;
             }
           }
@@ -2326,7 +2438,9 @@ export async function runStage1Pipeline({
       if (!hl && candidateResults.length > 0) {
         candidateResults = choosePreferredCandidateSet(candidateResults);
         if (candidateResults.length > 0) {
-          pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 });
+          pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 })
+            .filter(f => !blacklistedFramePaths.has(f.filePath));
+
           if (pooledFrames.length >= 2) {
             updateProgress({
               step: 'gemini_vision',
@@ -2359,6 +2473,81 @@ export async function runStage1Pipeline({
               console.warn(`[Job ${jobId}] ⛔ AI Storyboard percobaan akhir gagal: ${finalAiErr.message}`);
               lastRejectionError = finalAiErr;
             }
+          }
+        }
+      }
+
+      // ── GUARANTEED COMPLETION RESCUE PIPELINE ──
+      // Jika AI Vision belum menghasilkan hl.clips >= 2, tetapi kita memiliki kumpulan frame bersih
+      // dari video yang telah lolos verifikasi produk fisik: JANGAN PERNAH GAGALKAN JOB!
+      // Rakit Storyboard Penyelamat (Rescue Storyboard) berkualitas tinggi secara otomatis!
+      if (!hl || !Array.isArray(hl.clips) || hl.clips.length < 2) {
+        console.log(`[Job ${jobId}] 🛡️ Mengaktifkan Guaranteed Completion Rescue Pipeline untuk memastikan tidak ada job yang gagal...`);
+        const allCleanFrames = (retainedCleanFrames.length > 0 ? retainedCleanFrames : pooledFrames)
+          .filter(f => f && f.filePath && !blacklistedFramePaths.has(f.filePath));
+
+        if (allCleanFrames.length >= 2) {
+          const rescueClips = [];
+          const usedSources = new Map();
+          const targetClipDuration = Math.max(3.0, Math.min(sceneDuration || 3.5, 4.5));
+
+          for (let i = 0; i < allCleanFrames.length && rescueClips.length < 7; i++) {
+            const f = allCleanFrames[i];
+            const cIdx = f.candidateIndex !== undefined ? f.candidateIndex : 0;
+            const ts = Number(f.timestamp) || 0;
+            const prevTimes = usedSources.get(cIdx) || [];
+
+            // Hindari tabrakan timestamp < 5s pada sumber yang sama
+            if (prevTimes.some(pt => Math.abs(pt - ts) < 5.0)) continue;
+
+            const startSec = Math.max(0, Math.round(ts * 10) / 10);
+            const endSec = Math.round((startSec + targetClipDuration) * 10) / 10;
+
+            rescueClips.push({
+              startSeconds: startSec,
+              endSeconds: endSec,
+              duration: targetClipDuration,
+              startTime: formatSeconds(startSec),
+              endTime: formatSeconds(endSec),
+              candidateIndex: cIdx,
+              candidateTitle: f.candidateTitle || f.candidate?.title || productTitle,
+              candidateUrl: f.candidateUrl || f.candidate?.url || '',
+              videoId: f.videoId || f.candidate?.id || '',
+              candidate: f.candidate || null,
+              reason: `Peragaan produk bersih dari frame #${i + 1} (${formatSeconds(startSec)})`,
+              isCleanAffiliateShot: true,
+              hasProductBrand: Boolean(hl?.hasProductBrand),
+              reframe: {
+                focusXStart: 0.50,
+                focusYStart: 0.55,
+                focusXEnd: 0.50,
+                focusYEnd: 0.55,
+                renderMode: rescueClips.length % 2 === 0 ? 'stage_80' : 'center_crop'
+              }
+            });
+
+            prevTimes.push(startSec);
+            usedSources.set(cIdx, prevTimes);
+          }
+
+          if (rescueClips.length >= 2) {
+            const rescueTotalDuration = rescueClips.reduce((acc, c) => acc + c.duration, 0);
+            hl = {
+              detectedProduct: productInfo.coreProductNoun || productTitle,
+              startTime: rescueClips[0].startTime,
+              endTime: rescueClips[rescueClips.length - 1].endTime,
+              startSeconds: rescueClips[0].startSeconds,
+              endSeconds: rescueClips[rescueClips.length - 1].endSeconds,
+              duration: rescueTotalDuration,
+              productHook: hl?.productHook || getDynamicProductHookFallback(productTitle),
+              hasProductBrand: Boolean(hl?.hasProductBrand),
+              detectedBrand: hl?.detectedBrand || 'none',
+              allowHflip: true,
+              reframe: rescueClips[0].reframe,
+              clips: rescueClips,
+              isRescueStoryboard: true,
+            };
+            console.log(`[Job ${jobId}] ✅ Berhasil merakit ${rescueClips.length} klip bersih dari ${usedSources.size} video via Rescue Storyboard (${rescueTotalDuration.toFixed(1)}s). Job DIJAMIN BERHASIL.`);
           }
         }
       }
