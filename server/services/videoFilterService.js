@@ -193,10 +193,10 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
 
   if (directVideoFormats.length > 0) {
     const chosenFormat =
-      directVideoFormats.find(f => f.format_id === '18') ||
-      directVideoFormats.find(f => f.ext === 'mp4' && f.height && f.height <= 360) ||
+      directVideoFormats.find(f => f.format_id === '135') || // 480p
+      directVideoFormats.find(f => f.ext === 'mp4' && f.height && f.height === 480) ||
+      directVideoFormats.find(f => f.format_id === '18') || // 360p
       directVideoFormats.find(f => f.ext === 'mp4' && f.height && f.height <= 480) ||
-      directVideoFormats.find(f => f.height && f.height <= 360) ||
       directVideoFormats.find(f => f.height && f.height <= 480) ||
       directVideoFormats[0];
     if (chosenFormat?.url) {
@@ -214,7 +214,7 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
     const streamArgs = [
       ...getYtDlpBaseArgs(),
       '-g',
-      '-f', '18/bestvideo[ext=mp4][protocol=https][height<=360]/bestvideo[ext=mp4][protocol=https][height<=480]/best[protocol=https][height<=360]/bestvideo[protocol=https][height<=360]/worstvideo[protocol=https]/best',
+      '-f', '135/18/bestvideo[ext=mp4][protocol=https][height<=480]/bestvideo[ext=mp4][protocol=https][height<=360]/best[protocol=https][height<=480]/bestvideo[protocol=https][height<=480]/worstvideo[protocol=https]/best',
       '--no-playlist',
       url
     ];
@@ -623,7 +623,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
         '-sn',
         '-dn',
         '-frames:v', '1',
-        '-vf', 'scale=-2:270',
+        '-vf', 'scale=-2:480',
         '-q:v', '3',
         outputPath
       ]);
@@ -709,7 +709,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
           '-i', streamUrl,
           '-ss', String(point.timestamp),
           '-frames:v', '1',
-          '-vf', 'scale=-2:360',
+          '-vf', 'scale=-2:480',
           '-q:v', '3',
           outputPath
         ]);
@@ -1507,7 +1507,7 @@ export async function sampleDenseClustersAroundCleanFrames(streamUrl, outputDir,
         '-i', streamUrl,
         '-an', '-sn', '-dn',
         '-frames:v', '1',
-        '-vf', 'scale=-2:270',
+        '-vf', 'scale=-2:480',
         '-q:v', '3',
         outputPath
       ]);

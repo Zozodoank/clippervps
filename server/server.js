@@ -3797,9 +3797,15 @@ async function runAutoStage1Worker(run) {
       if (!jobSuccess) {
         run.failedJobs++;
         updateAutoRun(run, {
+          status: 'stopped',
           failedJobs: run.failedJobs,
-          message: `❌ [${targetLabel}] Gagal menemukan video bersih untuk: "${keyword.slice(0, 30)}..."`,
+          message: `🛑 Auto Mode berhenti karena 1 produk gagal diproses (Sesuai aturan "Stop on Failure").`,
+          progress: 100,
+          finishedAt: new Date().toISOString(),
+          currentJobId: null,
+          currentProductTitle: null,
         });
+        break;
       }
 
       // If user stopped auto mode, break immediately after current job finishes!
