@@ -2846,13 +2846,28 @@ export async function runStage1Pipeline({
           }
 
           if (gkRes && Array.isArray(gkRes.allFrames)) {
-            // Discard only if there is a severe violation: presenter face, paper manual, or burned watermark
+            // Discard if there is any violation: presenter face, paper manual, graphic overlay, or burned text/watermark
             const dirtyDet = gkRes.allFrames.find(f => {
               if (f.status === 'clean') return false;
               if (f.stage === 'face') return true;
               if (f.stage === 'paper_manual') return true;
               if (f.stage === 'graphic_overlay') return true;
-              if (f.stage === 'text' && (Number(f.totalCoverage) > 0.05 || Number(f.bottomCoverage) > 0.05)) return true;
+              if (f.stage === 'text') {
+                const total = Number(f.totalCoverage) || 0;
+                const bottom = Number(f.bottomCoverage) || 0;
+                const corners = f.cornerActivations || {};
+                const maxCorner = Math.max(
+                  Number(corners.TL) || 0,
+                  Number(corners.TR) || 0,
+                  Number(corners.BL) || 0,
+                  Number(corners.BR) || 0
+                );
+                return total > 0.015 || bottom > 0.015 || maxCorner >= 0.012 ||
+                  String(f.reason || '').toLowerCase().includes('watermark') ||
+                  String(f.reason || '').toLowerCase().includes('teks') ||
+                  String(f.reason || '').toLowerCase().includes('badge');
+              }
+              if (f.decision === 'REJECT' || f.status === 'discarded') return true;
               return false;
             });
             if (dirtyDet) {

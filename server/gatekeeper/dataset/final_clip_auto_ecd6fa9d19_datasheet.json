@@ -1,0 +1,46 @@
+[
+  {
+    "filename": "clip_auto_ecd6fa9d19_spec_badge_32cm_t003.jpg",
+    "original_filename": "frame_006.jpg",
+    "video_source": "silent_clip_auto_ecd6fa9d19.mp4",
+    "product_name": "Debellin Cookware Granite Wok 32 cm",
+    "timestamp_sec": 3.0,
+    "time_formatted": "00:03",
+    "label": "rejected",
+    "category": "reject_translucent_spec_badge",
+    "category_label": "📝 Reject: Badge Spesifikasi Transparan (< 32cm / Glass Lid) Mengambang",
+    "split": "train",
+    "reason": "Kotak badge transparan abu-abu dengan teks putih '< 32cm / Glass Lid' di pojok kiri bawah frame 9:16.",
+    "text_details": {
+      "type": "translucent_specification_overlay",
+      "text": "< 32cm Glass Lid",
+      "position": "bottom_left",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_ecd6fa9d19"
+  },
+  {
+    "filename": "clip_auto_ecd6fa9d19_spec_badge_32cm_t005.jpg",
+    "original_filename": "frame_010.jpg",
+    "video_source": "silent_clip_auto_ecd6fa9d19.mp4",
+    "product_name": "Debellin Cookware Granite Wok 32 cm",
+    "timestamp_sec": 5.0,
+    "time_formatted": "00:05",
+    "label": "rejected",
+    "category": "reject_translucent_spec_badge",
+    "category_label": "📝 Reject: Badge Spesifikasi Transparan (< 32cm / Glass Lid) Mengambang",
+    "split": "val",
+    "reason": "Kotak badge transparan abu-abu dengan teks putih '< 32cm / Glass Lid' di pojok kiri bawah frame 9:16.",
+    "text_details": {
+      "type": "translucent_specification_overlay",
+      "text": "< 32cm Glass Lid",
+      "position": "bottom_left",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_ecd6fa9d19"
+  }
+]

@@ -313,8 +313,8 @@ class TextGatekeeper:
     Deteksi teks, watermark pojok, subtitle terbakar, dan promo banner.
     Memeriksa 4 sudut frame secara ketat untuk menangkap watermark sekecil 2-5% zona.
     """
-    def __init__(self, max_total_coverage=0.038, max_bottom_coverage=0.025):
-        # Threshold diperketat: subtitle >= 2.5% area bawah, total teks >= 3.8% frame
+    def __init__(self, max_total_coverage=0.022, max_bottom_coverage=0.020):
+        # Threshold diperketat: subtitle >= 2.0% area bawah, total teks >= 2.2% frame, sudut >= 1.5%
         self.max_total_coverage = max_total_coverage
         self.max_bottom_coverage = max_bottom_coverage
         self.ort_session = None
@@ -333,7 +333,7 @@ class TextGatekeeper:
                     providers=["CPUExecutionProvider"]
                 )
                 self.backend = "dbnet_onnx"
-                print("  [TextGatekeeper] ✅ DBNet PP-OCRv4 ONNX Text & 4-Corner Watermark Detection aktif.")
+                print("  [TextGatekeeper] ✅ DBNet PP-OCRv4 ONNX Text & 4-Corner Watermark Detection aktif (736px high-res).")
             except Exception as e:
                 print(f"  [TextGatekeeper] ⚠️ Gagal memuat DBNet ONNX: {e}")
 
@@ -347,33 +347,32 @@ class TextGatekeeper:
         if crop_area < 100:
             return False, 0.0, 0.0, "Frame terlalu kecil", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
 
-        # ── Deteksi Kotak Banner Berlatar Warna / Teks Statis (Promo Card / Lower-Third) ──
+        # ── Deteksi Kotak Banner Berlatar Warna / Badge Spesifikasi / Teks Statis ──
         try:
             small_color = cv2.resize(crop_bgr, (160, 280), interpolation=cv2.INTER_AREA)
             gray_small = cv2.cvtColor(small_color, cv2.COLOR_BGR2GRAY)
             edges = cv2.Canny(gray_small, 50, 150)
-            k_banner = cv2.getStructuringElement(cv2.MORPH_RECT, (15, 3))
+            k_banner = cv2.getStructuringElement(cv2.MORPH_RECT, (11, 3))
             dilated_banner = cv2.dilate(edges, k_banner)
             contours, _ = cv2.findContours(dilated_banner, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             for cnt in contours:
                 bx, by, bw, bh = cv2.boundingRect(cnt)
-                # Kartu banner lebar (>= 40% lebar frame 9:16) dan tinggi 5%-35% frame
-                if bw >= int(160 * 0.40) and int(280 * 0.05) <= bh <= int(280 * 0.35):
-                    if (bw * bh) > (160 * 280 * 0.06) and (by + bh / 2) > (280 * 0.12):
+                # Kartu banner atau badge spesifikasi (>= 22% lebar frame) dan tinggi 4%-35% frame
+                if bw >= int(160 * 0.22) and int(280 * 0.04) <= bh <= int(280 * 0.35):
+                    if (bw * bh) > (160 * 280 * 0.025) and (by + bh / 2) > (280 * 0.10):
                         inner_edge_density = np.count_nonzero(edges[by:by+bh, bx:bx+bw]) / float(bw * bh)
-                        if inner_edge_density > 0.16:
-                            return True, 0.10, 0.12, f"Banner promosi / kartu teks statis terdeteksi ({bw}x{bh}px)", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
+                        if inner_edge_density > 0.14:
+                            return True, 0.10, 0.12, f"Badge spesifikasi / kartu teks statis terdeteksi ({bw}x{bh}px)", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
         except Exception:
             pass
 
-        # ── Jalur 1: DBNet PP-OCRv4 ONNX Inference ──
+        # ── Jalur 1: DBNet PP-OCRv4 ONNX Inference (High-Res 736px, Aspect-Preserved) ──
         if self.ort_session:
             try:
-                target_size = 320
-                scale_h = target_size / h
-                scale_w = target_size / w
-                target_w = max(32, int(w * scale_w / 32) * 32)
-                target_h = max(32, int(h * scale_h / 32) * 32)
+                target_size = 736
+                scale = target_size / max(h, w)
+                target_w = max(32, int(round(w * scale / 32.0)) * 32)
+                target_h = max(32, int(round(h * scale / 32.0)) * 32)
 
                 resized = cv2.resize(crop_bgr, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
                 rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
@@ -386,12 +385,12 @@ class TextGatekeeper:
                 outputs = self.ort_session.run(None, {input_name: blob})
                 prob_map = outputs[0][0, 0]
 
-                # Binary segmentation at 0.28 probability threshold (sedikit lebih sensitif terhadap watermark transparan)
+                # Binary segmentation at 0.28 probability threshold
                 text_mask = prob_map > 0.28
                 total_text_pixels = int(np.count_nonzero(text_mask))
                 total_cov = total_text_pixels / float(target_h * target_w)
 
-                # Definisi 4 Zona Sudut (Watermark biasanya di 35% vertikal & 45% horizontal sudut)
+                # Definisi 4 Zona Sudut (Watermark/callout di 35% vertikal & 45% horizontal sudut)
                 top_cut = int(target_h * 0.35)
                 bottom_cut = int(target_h * 0.65)
                 left_cut = int(target_w * 0.45)
@@ -417,8 +416,7 @@ class TextGatekeeper:
                 bottom_mask = text_mask[bottom_cut:, :]
                 bottom_cov = int(np.count_nonzero(bottom_mask)) / float((target_h - bottom_cut) * target_w) if ((target_h - bottom_cut) * target_w) > 0 else 0.0
 
-                # ── Deteksi Komponen Terhubung di Sudut (Watermark Kecil / Ikon Logo) ──
-                # Tangkap jika ada blob teks di sudut berukuran >= 16 piksel
+                # ── Deteksi Komponen Terhubung di Sudut (Watermark Kecil / Ikon Logo / Callout Badge) ──
                 for c_name, c_zone in [("TL", tl_zone), ("TR", tr_zone), ("BL", bl_zone), ("BR", br_zone)]:
                     c_uint8 = c_zone.astype(np.uint8)
                     n_cc, _, stats_cc, _ = cv2.connectedComponentsWithStats(c_uint8)
@@ -426,24 +424,24 @@ class TextGatekeeper:
                         blob_area = stats_cc[k, cv2.CC_STAT_AREA]
                         bw = stats_cc[k, cv2.CC_STAT_WIDTH]
                         bh = stats_cc[k, cv2.CC_STAT_HEIGHT]
-                        # Karakter teks/logo di sudut: lebar >= 8px dan tinggi >= 8px dengan area >= 20px
-                        if blob_area >= 20 and bw >= 8 and bh >= 8:
-                            return True, total_cov, bottom_cov, f"Watermark / logo kecil terdeteksi di sudut {c_name} ({bw}x{bh}px)", corner_activations
+                        # Karakter teks/badge di sudut: lebar >= 7px dan tinggi >= 7px dengan area >= 18px
+                        if blob_area >= 18 and bw >= 7 and bh >= 7:
+                            return True, total_cov, bottom_cov, f"Watermark / badge teks terdeteksi di sudut {c_name} ({bw}x{bh}px)", corner_activations
 
                 # ── Ambang Batas Ketat Per-Zona ──
-                # Sudut TL / TR / BL / BR: >= 2.0% zona sudah dianggap watermark
-                if tl_cov >= 0.020:
+                # Sudut TL / TR / BL / BR: >= 1.5% zona sudah dianggap watermark / badge digital
+                if tl_cov >= 0.015:
                     return True, total_cov, bottom_cov, f"Watermark di pojok kiri atas / TL (coverage {tl_cov * 100:.1f}%)", corner_activations
-                if tr_cov >= 0.020:
+                if tr_cov >= 0.015:
                     return True, total_cov, bottom_cov, f"Watermark di pojok kanan atas / TR (coverage {tr_cov * 100:.1f}%)", corner_activations
-                if bl_cov >= 0.020:
-                    return True, total_cov, bottom_cov, f"Watermark di pojok kiri bawah / BL (coverage {bl_cov * 100:.1f}%)", corner_activations
-                if br_cov >= 0.020:
-                    return True, total_cov, bottom_cov, f"Watermark di pojok kanan bawah / BR (coverage {br_cov * 100:.1f}%)", corner_activations
+                if bl_cov >= 0.015:
+                    return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kiri bawah / BL (coverage {bl_cov * 100:.1f}%)", corner_activations
+                if br_cov >= 0.015:
+                    return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kanan bawah / BR (coverage {br_cov * 100:.1f}%)", corner_activations
 
                 if bottom_cov >= self.max_bottom_coverage:
                     return True, total_cov, bottom_cov, f"Subtitle terbakar di area bawah (coverage {bottom_cov * 100:.1f}%)", corner_activations
-                if top_cov >= 0.032:
+                if top_cov >= 0.025:
                     return True, total_cov, bottom_cov, f"Teks headline / overlay di area atas (coverage {top_cov * 100:.1f}%)", corner_activations
                 if total_cov >= self.max_total_coverage:
                     return True, total_cov, bottom_cov, f"Teks mendominasi frame (coverage {total_cov * 100:.1f}%)", corner_activations
@@ -475,12 +473,12 @@ class TextGatekeeper:
 
         corner_activations = {"TL": round(tl_sobel, 4), "TR": round(tr_sobel, 4), "BL": round(bl_sobel, 4), "BR": round(br_sobel, 4)}
 
-        if tl_sobel >= 0.035 or tr_sobel >= 0.035 or bl_sobel >= 0.035 or br_sobel >= 0.035:
-            c_name = "TL" if tl_sobel >= 0.035 else ("TR" if tr_sobel >= 0.035 else ("BL" if bl_sobel >= 0.035 else "BR"))
+        if tl_sobel >= 0.028 or tr_sobel >= 0.028 or bl_sobel >= 0.028 or br_sobel >= 0.028:
+            c_name = "TL" if tl_sobel >= 0.028 else ("TR" if tr_sobel >= 0.028 else ("BL" if bl_sobel >= 0.028 else "BR"))
             return True, total_cov, bottom_cov, f"Watermark terdeteksi di sudut {c_name} (Sobel)", corner_activations
-        if bottom_cov >= 0.045:
+        if bottom_cov >= 0.035:
             return True, total_cov, bottom_cov, f"Pola subtitle terbakar di area bawah (Sobel)", corner_activations
-        if total_cov >= 0.055:
+        if total_cov >= 0.040:
             return True, total_cov, bottom_cov, f"Densitas teks/grafis dominan (Sobel)", corner_activations
 
         return False, total_cov, bottom_cov, "Teks dalam batas aman (Sobel)", corner_activations
@@ -501,8 +499,8 @@ class SceneGatekeeper:
     elemen unboxing yang berantakan, logo transparan, atau framing produk yang kurang fokus.
     Nilai 0.62 menjadi batas pemisah zona uncertain vs reject.
     """
-    CLEAN_CONF_THRESHOLD = 0.74
-    UNCERTAIN_CONF_THRESHOLD = 0.60
+    CLEAN_CONF_THRESHOLD = 0.78
+    UNCERTAIN_CONF_THRESHOLD = 0.62
 
     def __init__(self):
         self.ort_session = None
@@ -706,7 +704,11 @@ class FrameGatekeeper:
     @staticmethod
     def crop_9_16(image):
         h, w = image.shape[:2]
-        target_w = int(h * 9.0 / 16.0)
+        # Untuk video landscape 16:9, area panggung (stage_80) yang terlihat di canvas 9:16
+        # mencakup lebar hingga h * (1080 / 1536) ~= h * 0.7031 (lebih lebar dari 9:16 murni 0.5625).
+        # Gunakan rasio stage_80 agar teks/watermark di pinggir area peragaan tidak lolos dari inspeksi!
+        ratio = (1080.0 / 1536.0) if w > h else (9.0 / 16.0)
+        target_w = int(h * ratio)
         if target_w >= w:
             return image
         x_start = (w - target_w) // 2
@@ -884,7 +886,7 @@ class FrameGatekeeper:
         }
 
     def process_batch(self, frame_items, niche="kitchen_tools",
-                      min_consecutive_clean=2, min_clean_duration=1.5):
+                      min_consecutive_clean=3, min_clean_duration=4.0):
         """
         Memproses batch frame dengan logika:
         1. Static frame detection (MAD & edge difference)

@@ -604,6 +604,7 @@ CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP GEO
 
 CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GRAPHIC OVERLAYS
 - HARD REJECT CRITERIA (IMMEDIATE ZERO TOLERANCE INSIDE 9:16 CROP):
+  * TRANSLUCENT SPECIFICATION BOXES, DIMENSION LABELS, & CALLOUT OVERLAYS: Semi-transparent badges, gray/white floating boxes, or labels stating dimensions (e.g. '< 32cm', '24cm', '5L', 'Glass Lid', '1000W', arrow dimension indicators '<--->', or product specification tags) added in video post-production ARE 100% FORBIDDEN ARTIFICIAL OVERLAYS!
   * NON-TEXT GRAPHIC OVERLAYS: Pointing arrows (panah penunjuk merah/kuning), highlight circles/rectangles, animated emojis, stickers, subscription/bell/like buttons, floating price badges, or discount callouts added by video editors.
   * CREATOR PROMOTIONAL TEXT: "da di deskripsi", "link di bio", "klik keranjang kuning", "cek bio", "follow", or running text captions.
   * STATIC TEXT BANNERS: Colored background cards (kotak warna kuning/merah/putih dengan tulisan), lower-third bars, or digital promo stickers.
@@ -615,8 +616,9 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GR
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
 - REJECT ONLY IF:
   * Kartu bumper foto / slide diam mendominasi isi video (video berupa kumpulan foto/slideshow statis).
-  * Grafis animasi overlay, panah penunjuk, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
-- ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable. Paper manuals, brochures, and packaging labels are NOT exempt!
+  * Grafis animasi overlay, panah penunjuk, stiker kartun, badge spesifikasi mengambang, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
+- PHYSICAL PRODUCT TEXT EXCEPTION IS STRICT:
+  * "hasOnlyPhysicalProductText" ONLY applies to physical text manufactured, stamped, molded, or laser-engraved onto the metallic/plastic body of the physical product itself (like the brand name on the bottom of a pan or button labels). ANY floating digital box, callout card, or translucent badge on top of the video is NOT physical product text and MUST BE REJECTED! Paper manuals, brochures, and packaging labels are NOT exempt!
 
 ${buildFaceAndMotionCriterion(niche, clipSec)}
 
@@ -713,10 +715,13 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
   const candidateModels = [
-    'gemini-flash-latest',
+    'gemini-2.5-flash',
     'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-3.6-flash',
+    'gemini-3.7-flash',
+    'gemini-2.5-flash-lite',
     'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
   ];
   let parsed = null;
   let activeGeminiModel = candidateModels[0];
@@ -2363,7 +2368,7 @@ Check:
 4. Subtitle block is legible and stays in a reasonable lower-middle safe zone; it must not cover the product's key mechanism in most frames.
 5. No black/blank frame or broken render.
 6. No talking-head/visible face that violates the faceless edit policy.
-7. No third-party creator watermark, social handle, channel logo, or source identity remains visible in the final 9:16 frame. Physical branding printed on the target product is allowed.
+7. No third-party creator watermark, social handle, channel logo, or source identity remains visible in the final 9:16 frame. No floating specification boxes, dimension markers (e.g. '< 32cm', 'Glass Lid', capacity/wattage badges), animated arrows, price tags, or foreign creator overlays. Physical branding printed directly on the target product is allowed.
 8. Composition looks intentional for vertical 9:16.
 
 Be conservative but do not reject for normal hard cuts, minor color differences, hands, or our own subtitles.
@@ -2377,6 +2382,7 @@ Return strict JSON:
   "subtitleSafe": true,
   "faceOrTalkingHead": false,
   "sourceWatermarkOrCreatorLogo": false,
+  "hasFloatingTextOrSpecificationBadge": false,
   "brokenFrame": false,
   "confidence": 0.0,
   "reason": ""
@@ -2397,7 +2403,7 @@ Review these final rendered frames as one finished short-form edit.`;
       } catch {}
     }
     if (typeof imgUrl === 'string' && imgUrl.startsWith('data:image/')) {
-      content.push({ type: 'image_url', image_url: { url: imgUrl, detail: 'low' } });
+      content.push({ type: 'image_url', image_url: { url: imgUrl, detail: 'auto' } });
     }
   }
 
@@ -2435,6 +2441,7 @@ Review these final rendered frames as one finished short-form edit.`;
         parsed.subtitleSafe !== false &&
         parsed.faceOrTalkingHead !== true &&
         parsed.sourceWatermarkOrCreatorLogo !== true &&
+        parsed.hasFloatingTextOrSpecificationBadge !== true &&
         parsed.brokenFrame !== true &&
         confidence >= 0.70;
 
