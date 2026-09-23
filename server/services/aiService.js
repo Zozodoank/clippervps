@@ -614,9 +614,11 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GR
   * Video TETAP DITERIMA (status: 'accept') asalkan bagian peragaan produk setelahnya bersih dan faceless.
   * GEMINI WAJIB MEMBUANG INTRO TERSEBUT dengan cara: HANYA memilih timestamps klip yang dimulai SETELAH INTRO SELESAI (misal: mulai detik >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
-- REJECT ONLY IF:
-  * Kartu bumper foto / slide diam mendominasi isi video (video berupa kumpulan foto/slideshow statis).
-  * Grafis animasi overlay, panah penunjuk, stiker kartun, badge spesifikasi mengambang, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
+- SELECTION MANDATE (CRITICAL):
+  * Every single timestamp you select MUST BE 100% FREE of any floating text, subtitles, dimension badges, or watermarks! If a scene has text overlay, DO NOT select it!
+- REJECT ENTIRE VIDEO IF:
+  * Kartu bumper foto / slide diam mendominasi isi video.
+  * Teks overlay, stiker, atau subtitle muncul mendominasi sehingga Anda TIDAK BISA menemukan minimal 4 cuplikan bersih (clean clips).
 - PHYSICAL PRODUCT TEXT EXCEPTION IS STRICT:
   * "hasOnlyPhysicalProductText" ONLY applies to physical text manufactured, stamped, molded, or laser-engraved onto the metallic/plastic body of the physical product itself (like the brand name on the bottom of a pan or button labels). ANY floating digital box, callout card, or translucent badge on top of the video is NOT physical product text and MUST BE REJECTED! Paper manuals, brochures, and packaging labels are NOT exempt!
 
@@ -1103,8 +1105,10 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GR
   * CREATOR PROMOTIONAL TEXT: "da di deskripsi", "link di bio", "klik keranjang kuning".
   * STATIC TEXT BANNERS: Colored background cards or lower-third bars.
   * SPEECH DIALOGUE & SUBTITLES: Speech dialogue captions, translated subtitles, or lyric bars.
-- REJECT ONLY IF:
-  * Grafis animasi overlay, stiker kartun, badge spesifikasi mengambang, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
+- SELECTION MANDATE (CRITICAL):
+  * Every single timestamp you select in 'selectedClips' MUST BE 100% FREE of any floating text, subtitles, dimension badges, or watermarks! If a scene has a text overlay, DO NOT select it!
+- REJECT ENTIRE VIDEO IF:
+  * Teks overlay, stiker, atau subtitle mendominasi semua video sehingga Anda TIDAK BISA menemukan cuplikan yang benar-benar bersih.
 - PHYSICAL PRODUCT TEXT EXCEPTION IS STRICT:
   * "hasOnlyPhysicalProductText" ONLY applies to physical text manufactured, stamped, molded, or laser-engraved onto the metallic/plastic body of the physical product itself.
 
@@ -1452,11 +1456,12 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO AN
   * Video TETAP DITERIMA (status: 'accept') asalkan bagian peragaan produk setelahnya bersih dan faceless.
   * GEMINI WAJIB MEMBUANG INTRO TERSEBUT dengan cara: HANYA memilih timestamps klip yang dimulai SETELAH INTRO SELESAI (misal: mulai detik >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
   * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
-- REJECT ONLY IF:
-  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS: Ada banner teks statis, kartu persegi berlatar warna, atau kartu promo.
-  * Kartu bumper foto / slide diam mendominasi isi tengah video (video berupa kumpulan foto/slideshow statis).
-  * Grafis animasi overlay, stiker kartun, atau subtitle ucapan menutupi peragaan produk fisik di dalam frame 9:16 tengah secara terus-menerus sehingga tidak ada cukup cuplikan bersih.
-  * Speech dialogue captions, translated subtitles, lyric bars, running dialogue text, or FLOATING PROMOTIONAL TEXT (price tags, discount callouts, feature arrows, Chinese floating text, text stickers) are visible inside the central 9:16 frame.
+- SELECTION MANDATE (CRITICAL):
+  * Every single timestamp you select MUST BE 100% FREE of any floating text, subtitles, dimension badges, colored cards, or watermarks! If a scene has text overlay, DO NOT select it!
+- REJECT ENTIRE VIDEO IF:
+  * STATIC TEXT BANNERS & COLORED BACKGROUND CARDS mendominasi video.
+  * Kartu bumper foto / slide diam mendominasi isi video.
+  * Speech dialogue captions, translated subtitles, or FLOATING PROMOTIONAL TEXT appear constantly, making it impossible to find enough clean clips.
 - ONLY physical text printed directly on the physical product body ('Power', 'ON/OFF', volume numbers) is acceptable. Paper manuals, brochures, and packaging labels are NOT exempt!
 
 ${buildFaceAndMotionCriterion(niche, clipSec)}
