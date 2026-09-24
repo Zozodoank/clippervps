@@ -80,6 +80,7 @@ import {
 } from '../services/professionalPipelineService.js';
 import { runFinalMasterQc } from '../services/finalMasterQcService.js';
 import { activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, updateAutoRun } from '../store/jobStore.js';
+import { heavyTaskQueue } from './queueManager.js';
 import { isValidHttpUrl, resolveOutputVideoPath, sanitizeCaptionText, isQuotaErrorMessage } from '../utils/jobHelpers.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../services/antiDupService.js';
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../services/quotaService.js';
@@ -90,7 +91,7 @@ const tempDir = path.join(__dirname, '..', 'temp');
 const outputDir = path.join(__dirname, '..', 'output');
 const rejectedYunetDir = path.join(__dirname, '..', 'rejected_frames', 'yunet');
 
-export async function runStage1Pipeline({
+async function _runStage1Pipeline({
   jobId,
   youtubeUrl,
   targetCandidates = null,
@@ -3221,7 +3222,7 @@ export function syncVideoToAndroidStorage(finalOutputPath, finalFileName, projec
   }
 }
 
-export async function processJobVoiceover(jobId, customScript = null, options = {}) {
+async function _processJobVoiceover(jobId, customScript = null, options = {}) {
   let job = activeJobs.get(jobId);
   if (!job && fs.existsSync(jobsFilePath)) {
     try {
@@ -3410,3 +3411,12 @@ export async function processJobVoiceover(jobId, customScript = null, options = 
   }
 }
 
+
+
+export function runStage1Pipeline(args) {
+  return heavyTaskQueue(() => _runStage1Pipeline(args));
+}
+
+export function processJobVoiceover(jobId, customScript, options) {
+  return heavyTaskQueue(() => _processJobVoiceover(jobId, customScript, options));
+}

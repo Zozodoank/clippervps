@@ -1,19 +1,30 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getDailyOutputVideoStats } from '../server.js'; // Needed by publicAutoRunState
+import Database from 'better-sqlite3';
+import { getDailyOutputVideoStats } from '../server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-export const jobsFilePath = path.join(__dirname, '..', 'jobs.json');
+export const jobsFilePath = path.join(__dirname, '..', 'jobs.db');
 
-export const activeJobs = new Map();
-
-export const jobProgress = new Map();
-
-export const autoRuns = new Map();
-
-export const autoRetryRuns = new Map();
+// Inisialisasi SQLite
+const db = new Database(jobsFilePath);
+db.pragma('journal_mode = WAL');
+db.exec(`
+  CREATE TABLE IF NOT EXISTS jobs (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS auto_runs (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS auto_retry_runs (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  );
+`);
 
 export function sanitizeJobForDisk(job) {
   if (!job || typeof job !== 'object') return job;
@@ -24,70 +35,99 @@ export function sanitizeJobForDisk(job) {
   return clone;
 }
 
-export function atomicWriteJsonSync(filePath, data) {
-  const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tmpPath, filePath);
+// Proxy untuk activeJobs agar kompatibel dengan API Map
+export const activeJobs = {
+  get: (id) => {
+    const row = db.prepare('SELECT data FROM jobs WHERE id = ?').get(id);
+    return row ? JSON.parse(row.data) : undefined;
+  },
+  set: (id, data) => {
+    const cleanJob = sanitizeJobForDisk(data);
+    db.prepare('INSERT OR REPLACE INTO jobs (id, data) VALUES (?, ?)').run(id, JSON.stringify(cleanJob));
+    return activeJobs;
+  },
+  delete: (id) => {
+    const res = db.prepare('DELETE FROM jobs WHERE id = ?').run(id);
+    return res.changes > 0;
+  },
+  has: (id) => {
+    return !!db.prepare('SELECT 1 FROM jobs WHERE id = ?').get(id);
+  },
+  entries: function* () {
+    for (const row of db.prepare('SELECT id, data FROM jobs').iterate()) {
+      yield [row.id, JSON.parse(row.data)];
+    }
+  },
+  values: function* () {
+    for (const row of db.prepare('SELECT data FROM jobs').iterate()) {
+      yield JSON.parse(row.data);
+    }
+  },
+  get size() {
+    return db.prepare('SELECT COUNT(*) as count FROM jobs').get().count;
+  }
+};
+
+export const autoRuns = {
+  get: (id) => {
+    const row = db.prepare('SELECT data FROM auto_runs WHERE id = ?').get(id);
+    return row ? JSON.parse(row.data) : undefined;
+  },
+  set: (id, data) => {
+    db.prepare('INSERT OR REPLACE INTO auto_runs (id, data) VALUES (?, ?)').run(id, JSON.stringify(data));
+    return autoRuns;
+  },
+  delete: (id) => {
+    const res = db.prepare('DELETE FROM auto_runs WHERE id = ?').run(id);
+    return res.changes > 0;
+  },
+  values: function* () {
+    for (const row of db.prepare('SELECT data FROM auto_runs').iterate()) {
+      yield JSON.parse(row.data);
+    }
+  }
+};
+
+export const autoRetryRuns = {
+  get: (id) => {
+    const row = db.prepare('SELECT data FROM auto_retry_runs WHERE id = ?').get(id);
+    return row ? JSON.parse(row.data) : undefined;
+  },
+  set: (id, data) => {
+    db.prepare('INSERT OR REPLACE INTO auto_retry_runs (id, data) VALUES (?, ?)').run(id, JSON.stringify(data));
+    return autoRetryRuns;
+  },
+  delete: (id) => {
+    const res = db.prepare('DELETE FROM auto_retry_runs WHERE id = ?').run(id);
+    return res.changes > 0;
+  },
+  values: function* () {
+    for (const row of db.prepare('SELECT data FROM auto_retry_runs').iterate()) {
+      yield JSON.parse(row.data);
+    }
+  }
+};
+
+export const jobProgress = new Map();
+
+// Legacy functions from JSON era (now no-ops or adapted)
+export function atomicWriteJsonSync(filePath, data) {} 
+export function persistJob(jobId, jobData) {
+  activeJobs.set(jobId, jobData);
+}
+export function deletePersistedJob(jobId) {
+  activeJobs.delete(jobId);
 }
 
 export function loadJobsFromDisk() {
-  try {
-    if (fs.existsSync(jobsFilePath)) {
-      const raw = fs.readFileSync(jobsFilePath, 'utf-8');
-      const obj = JSON.parse(raw);
-      let modified = false;
-      for (const [jobId, jobData] of Object.entries(obj)) {
-        if (jobData.geminiApiKey || jobData.apiKey || jobData.openRouterApiKey) {
-          delete jobData.geminiApiKey;
-          delete jobData.apiKey;
-          delete jobData.openRouterApiKey;
-          modified = true;
-        }
-        // Jangan hapus job apapun agar riwayat history pengguna tidak hilang!
-        // Jika status masih 'running' saat server start, ubah menjadi 'stopped'
-        if (jobData.stage === 'running') {
-          jobData.stage = 'stopped';
-          jobData.message = 'Proses dihentikan karena server di-restart.';
-          modified = true;
-        }
-        activeJobs.set(jobId, jobData);
-      }
-      if (modified) {
-        atomicWriteJsonSync(jobsFilePath, obj);
-      }
-      console.log(`[Jobs] Loaded ${activeJobs.size} persisted job(s) from disk.`);
+  console.log(\`[Jobs] SQLite Database initialized. Active jobs: \${activeJobs.size}\`);
+  // Reset stuck jobs
+  for (const [jobId, jobData] of activeJobs.entries()) {
+    if (jobData.stage === 'running') {
+      jobData.stage = 'stopped';
+      jobData.message = 'Proses dihentikan karena server di-restart.';
+      activeJobs.set(jobId, jobData);
     }
-  } catch (err) {
-    console.warn('[Jobs] Could not load jobs.json:', err.message);
-  }
-}
-
-export function persistJob(jobId, jobData) {
-  try {
-    let existing = {};
-    if (fs.existsSync(jobsFilePath)) {
-      existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
-    }
-    const cleanJob = sanitizeJobForDisk(jobData);
-    existing[jobId] = {
-      ...cleanJob,
-      updatedAt: new Date().toISOString(),
-    };
-    atomicWriteJsonSync(jobsFilePath, existing);
-  } catch (err) {
-    console.warn(`[Jobs] Could not persist job ${jobId}:`, err.message);
-  }
-}
-
-export function deletePersistedJob(jobId) {
-  try {
-    if (fs.existsSync(jobsFilePath)) {
-      const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
-      delete existing[jobId];
-      atomicWriteJsonSync(jobsFilePath, existing);
-    }
-  } catch (err) {
-    console.warn(`[Jobs] Could not delete job ${jobId} from disk:`, err.message);
   }
 }
 
@@ -96,7 +136,7 @@ export function updateJobProgress(jobId, data) {
     ? { step: 'processing', message: data, progress: 50, jobId, status: 'running' }
     : { status: 'running', ...data, jobId };
   jobProgress.set(jobId, payload);
-  console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message || ''}`);
+  console.log(\`[Job \${jobId}] [\${payload.progress || 0}%] \${payload.message || ''}\`);
 }
 
 export function publicAutoRetryState(run) {
@@ -137,11 +177,10 @@ export function publicAutoRunState(run) {
 export function updateAutoRun(run, patch) {
   Object.assign(run, patch, { updatedAt: new Date().toISOString() });
   autoRuns.set(run.runId, run);
-  console.log(`[Auto ${run.runId}] [${run.progress || 0}%] ${run.message || run.status}`);
+  console.log(\`[Auto \${run.runId}] [\${run.progress || 0}%] \${run.message || run.status}\`);
 }
 
 export function getLatestAutoRun() {
   const all = Array.from(autoRuns.values()).sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
   return all[0] || null;
 }
-
