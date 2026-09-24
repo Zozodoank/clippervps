@@ -807,7 +807,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
-export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 25, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
+export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
   try {
     const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
     if (validFrames.length === 0) return null;
