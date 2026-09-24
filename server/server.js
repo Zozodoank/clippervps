@@ -2217,9 +2217,8 @@ export async function runStage1Pipeline({
         let sampleRes;
         try {
           const candDur = candMeta.duration || 300;
-          // Porsi dinamis interval 1.5 detik per frame. 
-          // Maks 150 frame per kandidat karena di Auto Mode bisa ada 3-5 kandidat sekaligus (total 450-750 frame).
-          const candMaxFrames = Math.min(150, Math.floor(candDur / 1.5));
+          // Sesuai instruksi: 5 menit (300s) = 200 frame, 6 menit (360s) = 240 frame. Rasio utuh (1.5s per frame).
+          const candMaxFrames = Math.floor(candDur / 1.5);
           
           sampleRes = await sampleFramesFromStream(candStreamUrl, candFramesDir, {
             duration: candDur,
