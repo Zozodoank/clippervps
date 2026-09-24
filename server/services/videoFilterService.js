@@ -860,7 +860,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   }
 
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
-  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 25, onProgress, niche });
+  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 300, onProgress, niche });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
     const cleanFrames = aiResult.allFrames
@@ -1573,7 +1573,7 @@ export async function sampleDenseClustersAroundCleanFrames(streamUrl, outputDir,
 
   // Verifikasi cepat dengan AI Gatekeeper jika aktif
   try {
-    const gkRes = await callAIGatekeeperMicroservice(denseFrames, { timeoutSec: 10 });
+    const gkRes = await callAIGatekeeperMicroservice(denseFrames, { timeoutSec: 300 });
     if (gkRes && Array.isArray(gkRes.allFrames)) {
       const cleanPaths = new Set(gkRes.allFrames.filter(f => f.status === 'clean').map(f => f.filePath));
       return denseFrames.filter(f => cleanPaths.has(f.filePath));
