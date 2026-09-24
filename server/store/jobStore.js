@@ -11,7 +11,7 @@ export function setDailyStatsProvider(fn) {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-export const jobsFilePath = path.join(__dirname, '..', 'jobs.db');
+export const jobsFilePath = process.env.JOBS_DB_PATH || path.join(__dirname, '..', 'jobs.db');
 
 // Inisialisasi SQLite
 const db = new Database(jobsFilePath);
