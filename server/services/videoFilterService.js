@@ -9,6 +9,7 @@ import { trackBandwidth, trackSavedBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isTitleMatchingProduct } from './discoveryService.js';
 import { getSmartProxyArgs } from './downloader.js';
 import { classifyPipelineError } from './networkDiagnosticService.js';
+import { getNichePreset } from '../config/nichePresets.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -276,9 +277,15 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal 15 menit (900 detik).` };
   }
 
-  // 1A. Resolusi Maksimal Video (Wajib tersedia minimal 480p/720p; tolak video 144p/240p/360p buram)
-  if (metadata.maxHeight > 0 && metadata.maxWidth > 0 && metadata.maxHeight < 480 && metadata.maxWidth < 480) {
-    return { eligible: false, reason: `Resolusi maksimal video (${metadata.maxWidth}x${metadata.maxHeight}) di bawah standar 480p/720p.` };
+  // 1A. Resolusi Maksimal Video (WAJIB tersedia minimal 720p HD; tolak sumber buram 144p/240p/360p/480p).
+  //     Diperiksa dari resolusi MAKSIMAL YANG TERSEDIA di YouTube (maxHeight/maxWidth), BUKAN dari stream
+  //     preview 480p yang sengaja dipakai untuk sampling hemat kuota. Render akhir tetap men-scale ke 1080x1920.
+  //     Aturan orientation-agnostic: sisi TERPENDEK dari sumber maksimal harus >= 720p (720p landscape 1280x720,
+  //     maupun short vertikal 720x1280 lolos; sedangkan 854x480 / 540x960 yang buram ditolak).
+  const knownDims = [Number(metadata.maxWidth) || 0, Number(metadata.maxHeight) || 0].filter(d => d > 0);
+  const shortSide = knownDims.length > 0 ? Math.min(...knownDims) : 0;
+  if (shortSide > 0 && shortSide < 720) {
+    return { eligible: false, reason: `Resolusi maksimal video (${metadata.maxWidth}x${metadata.maxHeight}) di bawah standar 720p (sisi terpendek ${shortSide}p). Sumber buram ditolak; sistem akan mencari kandidat lebih tajam.` };
   }
 
   const titleLower = (metadata.title || '').toLowerCase();
@@ -508,8 +515,9 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 }
 
 /**
- * ── TAHAP 2: SAMPLING FRAME LANGSUNG DARI STREAM URL (~2MB KUOTA) ────────────
- * Uses FFmpeg to extract 30 frames directly from the stream URL without downloading full video.
+ * ── TAHAP 2: SAMPLING FRAME LANGSUNG DARI STREAM URL ─────────────────────────
+ * Uses FFmpeg to extract frames densely ( caller-requested dur/1.5 -> 200@5mnt, 240@6mnt, cap 500 )
+ * directly from the stream URL without downloading the full video.
  */
 export async function sampleFramesFromStream(streamUrl, outputDir, {
   duration = 60,
@@ -534,8 +542,11 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   // Dense Temporal Sampling untuk Video Target 3 - 10 Menit (150s - 600s):
   // Menjamin seluruh rekaman demonstrasi fisik produk terinspeksi tanpa blind spot besar,
   // sekaligus melewati iklan/intro bumper awal (skip first 6-12s).
+  // DENSE FULL (permintaan user, berlaku di SEMUA perangkat termasuk Termux):
+  // hormati jumlah frame yang diminta caller (dur/1.5) -> 5 menit = 200 frame, 6 menit = 240 frame, dst.
+  // Cap absolut 500 agar video berdurasi ~1 jam tidak membuat server OOM / kebanjiran seek.
   const requestedMax = Number(maxSampleFrames) > 0 ? Number(maxSampleFrames) : (isMobile ? 38 : 45);
-  const safeMax = Math.max(15, Math.min(55, requestedMax));
+  const safeMax = Math.max(15, Math.min(500, requestedMax));
 
   const samplePoints = [];
   if (Array.isArray(customTimestamps) && customTimestamps.length > 0) {
@@ -548,41 +559,20 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     const safeEnd = Math.max(safeStart + 15.0, safeDuration - 8.0);
     const effectiveSpan = Math.max(1, safeEnd - safeStart);
 
-    if (safeDuration <= 300) {
-      // Video 3 - 5 menit (150s - 300s): Sampling sekuensial rapat tiap ~4-6 detik di seluruh video
-      const step = Math.max(3.5, Math.min(6.5, effectiveSpan / safeMax));
-      let cur = safeStart;
-      let pIdx = 1;
-      while (cur <= safeEnd && pIdx <= safeMax) {
-        samplePoints.push({ index: pIdx++, timestamp: Math.round(cur * 10) / 10 });
-        cur += step;
-      }
-    } else {
-      // Video 5 - 10 menit (300s - 600s): 8-10 kluster temporal rapat (4 frame per kluster: ts, ts+1.8s, ts+3.6s, ts+5.4s)
-      // Memberikan toleransi tinggi: jika 1 frame terkena glitch, 3 frame lainnya tetap membentuk Clean Temporal Segment
-      const numClusters = Math.max(6, Math.min(10, Math.floor(safeMax / 4)));
-      const clusterSpan = effectiveSpan - 6.0;
-      const clusterInterval = clusterSpan > 0 ? (clusterSpan / (numClusters + 1)) : 0;
-      let pIdx = 1;
-      for (let c = 1; c <= numClusters; c++) {
-        const baseTs = Math.round((safeStart + (c * clusterInterval)) * 10) / 10;
-        samplePoints.push({ index: pIdx++, timestamp: baseTs });
-        if (baseTs + 1.8 <= safeEnd && pIdx <= safeMax) {
-          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 1.8) * 10) / 10 });
-        }
-        if (baseTs + 3.6 <= safeEnd && pIdx <= safeMax) {
-          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 3.6) * 10) / 10 });
-        }
-        if (baseTs + 5.4 <= safeEnd && pIdx <= safeMax) {
-          samplePoints.push({ index: pIdx++, timestamp: Math.round((baseTs + 5.4) * 10) / 10 });
-        }
-      }
+    // Sampling seragam RAPAT di SELURUH video (bukan klaster hemat) untuk semua durasi & perangkat.
+    // interval = rentang aman / jumlah frame target (mis. 280s / 200 = 1.4s). Floor 0.5s jaga-jaga.
+    const interval = Math.max(0.5, effectiveSpan / safeMax);
+    let cur = safeStart;
+    let pIdx = 1;
+    while (cur <= safeEnd && pIdx <= safeMax) {
+      samplePoints.push({ index: pIdx++, timestamp: Math.round(cur * 10) / 10 });
+      cur += interval;
     }
   }
 
   onProgress({
     step: 'stream_sampling',
-    message: `Sampling ${samplePoints.length} keyframe visual adaptif langsung dari stream URL (${isMobile ? 'mode mobile efisien' : 'fast seek'})...`,
+    message: `Sampling padat ${samplePoints.length} keyframe visual langsung dari stream URL (${isMobile ? 'Termux - padat penuh' : 'fast seek - padat penuh'})...`,
     progress: 25,
   });
 
@@ -789,7 +779,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   }
   // Include network packet overhead (~200KB)
   sampledBytes = Math.max(sampledBytes, 0.8 * 1024 * 1024);
-  trackBandwidth('streamSampling', sampledBytes, `Sampling 20 frame stream URL (~${(sampledBytes / (1024 * 1024)).toFixed(2)} MB)`);
+  trackBandwidth('streamSampling', sampledBytes, `Sampling ${frames.length} frame stream URL (~${(sampledBytes / (1024 * 1024)).toFixed(2)} MB)`);
 
   onProgress({
     step: 'stream_sampling_done',
@@ -807,13 +797,14 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
-export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
+export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, onProgress = () => {}, niche = 'kitchen_tools', facePolicy = 'strict' } = {}) {
   try {
     const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
     if (validFrames.length === 0) return null;
 
     const payload = JSON.stringify({
       niche,
+      facePolicy,
       minConsecutiveClean: GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES,
       minCleanDuration: GATEKEEPER_CONFIG.MIN_CLEAN_DURATION_SEC,
       frames: validFrames.map(f => ({
@@ -847,6 +838,18 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
 }
 
 /**
+ * Tentukan face policy untuk satu niche (Fase 3, data-driven — TANPA if(niche) di service):
+ * 'presenter_only' bila ada slot dengan facePolicy tersebut di preset (gadget: slot 5 review kamera),
+ * selain itu 'strict' (perilaku lama — kitchen tidak pernah berubah).
+ */
+export function resolveNicheFacePolicy(niche) {
+  const preset = getNichePreset(niche);
+  const slots = Array.isArray(preset?.slotsConfig) ? preset.slotsConfig : [];
+  const nonStrict = slots.find(s => s.facePolicy && s.facePolicy !== 'strict');
+  return nonStrict ? nonStrict.facePolicy : 'strict';
+}
+
+/**
  * ── TAHAP 2: INSPEKSI & FILTER FRAME LOKAL (AI GATEKEEPER + HEURISTIK FALLBACK) ──
  * Memeriksa frame visual yang telah disampel di server lokal sebelum mengirim ke AI utama.
  * Tahap 1: MediaPipe Face Detection (100% faceless).
@@ -854,16 +857,19 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
  * Tahap 3: MobileNetV3 (membuang bumper foto statis & kartun/animasi).
  * Tahap 4: Clean Temporal Segment Validation (hanya meloloskan segmen kontinu >= 3 frame / 4.0s).
  */
-export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {}, niche = 'kitchen_tools' } = {}) {
+export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {}, niche = 'kitchen_tools', facePolicy = null } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
-    return { eligible: false, cleanFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
+    return { eligible: false, cleanFrames: [], cameraResultEligibleFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
   }
 
+  // Policy diturunkan dari preset niche (data-driven) kecuali caller eksplisit mengirim nilai lain
+  const activeFacePolicy = facePolicy || resolveNicheFacePolicy(niche);
+
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
-  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 300, onProgress, niche });
+  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 300, onProgress, niche, facePolicy: activeFacePolicy });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
-    const cleanFrames = aiResult.allFrames
+    const allClean = aiResult.allFrames
       .filter(f => f.status === 'clean')
       .map(f => {
         const orig = frameByPath.get(f.filePath) || {};
@@ -878,6 +884,13 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
           base64: b64,
         };
       });
+
+    // FACE POLICY (Fase 3): frame clean yang flagged cameraResultEligible (lolos presenter_only:
+    // ada wajah konten tapi wajah kreator TETAP terblokir) TIDAK digabung ke cleanFrames utama.
+    // Keduanya tetap object frame yang sama (identitas objek) sehingga pool terpisah aman.
+    // Perbandingan eksplisit === true: flag cacat (misal string dari gatekeeper) dianggap frame bersih biasa.
+    const cleanFrames = allClean.filter(f => f.cameraResultEligible !== true);
+    const cameraResultEligibleFrames = allClean.filter(f => f.cameraResultEligible === true);
 
     const discardedFrames = aiResult.allFrames
       .filter(f => f.status !== 'clean')
@@ -895,7 +908,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       : (aiResult.reason || `Video ditolak: Cuplikan bersih terlalu sedikit (${cleanFrames.length} frame peragaan). Tidak cukup variasi visual.`);
 
     if (isEligible) {
-      console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame VERIFIED_CLEAN (${verifiedSegments.length} segmen kontinu, ${aiResult.benchmarks?.totalMs || 0}ms).`);
+      console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame VERIFIED_CLEAN (${verifiedSegments.length} segmen kontinu, ${aiResult.benchmarks?.totalMs || 0}ms)${cameraResultEligibleFrames.length > 0 ? ` + ${cameraResultEligibleFrames.length} frame eligible-camera (pool terpisah)` : ''}.`);
     } else {
       console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper: Hanya ${cleanFrames.length}/${frames.length} frame bersih (${rejectReason}).`);
     }
@@ -910,6 +923,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     return {
       eligible: isEligible,
       cleanFrames,
+      cameraResultEligibleFrames,
       discardedFrames,
       reason: rejectReason || aiResult.reason,
       verifiedSegments,
@@ -917,6 +931,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       discardedViolationTimestamps,
       hasOpeningIntro: Boolean(aiResult.hasOpeningIntro),
       introCutoffSec: aiResult.introCutoffSec || 0.0,
+      facePolicy: activeFacePolicy,
       gatekeeperBackend: 'ai_gatekeeper_v2_temporal'
     };
   }
@@ -1317,16 +1332,23 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
  * Memfilter frame visual dari 1 kandidat secara granular per frame:
  * Membuang frame yang tidak sesuai (wajah/bumper/teks), dan MENYIMPAN seluruh frame peragaan produk yang bersih!
  */
-export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null, niche = 'kitchen_tools' } = {}) {
-  const result = await inspectFramesLocally(frames, { allowPartialClean: true, niche });
+export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0, candidate = null, niche = 'kitchen_tools', facePolicy = null } = {}) {
+  const result = await inspectFramesLocally(frames, { allowPartialClean: true, niche, facePolicy });
 
-  const clean = (result.cleanFrames || []).map(f => ({
+  const stampCandidate = (f) => ({
     ...f,
     candidateIndex,
     candidateTitle: candidate?.title || '',
     candidateUrl: candidate?.url || '',
     videoId: candidate?.id || '',
     candidate,
+  });
+
+  const clean = (result.cleanFrames || []).map(stampCandidate);
+  // Pool terpisah: frame bebas-wajah-kreator tapi ada wajah konten (khusus niche dengan slot presenter_only)
+  const eligibleCamera = (result.cameraResultEligibleFrames || []).map(f => ({
+    ...stampCandidate(f),
+    isCameraResultEligible: true,
   }));
 
   const isEligible = clean.length > 0;
@@ -1335,6 +1357,7 @@ export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0
     candidate,
     eligible: isEligible,
     cleanFrames: clean,
+    cameraResultEligibleFrames: eligibleCamera,
     verifiedSegments: result.verifiedSegments || [],
     discardedFaceTimestamps: result.discardedFaceTimestamps || [],
     discardedViolationTimestamps: result.discardedViolationTimestamps || [],
@@ -1348,11 +1371,11 @@ export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0
  * Menggabungkan (pooling) frame-frame bersih dari hingga 5 kandidat video menjadi satu kumpulan ~30 frame pilihan.
  * Menjamin distribusi berimbang antar kandidat dan menyematkan metadata sumber agar AI dapat menandai klipnya.
  *
- * @param {Array<{ candidateIndex: number, candidate: object, cleanFrames: Array }>} candidateResults
- * @param {{ maxTotalFrames?: number }} options
+ * @param {Array<{ candidateIndex: number, candidate: object, cleanFrames: Array, cameraResultEligibleFrames?: Array }>} candidateResults
+ * @param {{ maxTotalFrames?: number, includeEligible?: boolean }} options
  * @returns {Array<{ candidateIndex: number, candidate: object, timestamp: number, filePath: string, displayLabel: string }>}
  */
-export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30 } = {}) {
+export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30, includeEligible = false } = {}) {
   const valid = (candidateResults || []).filter(c => Array.isArray(c.cleanFrames) && c.cleanFrames.length > 0);
   if (valid.length === 0) return [];
 
@@ -1429,7 +1452,28 @@ export function poolMultiCandidateFrames(candidateResults, { maxTotalFrames = 30
     }
   }
 
-  return pooled.slice(0, maxTotalFrames);
+  const eligiblePool = [];
+  if (includeEligible) {
+    // FACE POLICY (Fase 3): frame cameraResultEligible DITAMBAHKAN setelah pool utama (bukan digabung
+    // ke distribusi round-robin) agar slot storyboard dengan policy presenter_only tetap punya stok.
+    for (const item of valid) {
+      for (const f of (item.cameraResultEligibleFrames || [])) {
+        if (!f) continue;
+        eligiblePool.push({
+          ...f,
+          candidateIndex: item.candidateIndex,
+          candidate: item.candidate || {},
+          candidateTitle: item.candidate?.title || '',
+          candidateUrl: item.candidate?.url || '',
+          videoId: item.candidate?.id || item.candidate?.url || '',
+          displayLabel: `Video #${item.candidateIndex + 1} (${formatSecondsLocal(f.timestamp)}) [camera-result]`,
+          isCameraResultEligible: true,
+        });
+      }
+    }
+  }
+
+  return pooled.slice(0, maxTotalFrames).concat(eligiblePool);
 }
 
 function formatSecondsLocal(secs) {

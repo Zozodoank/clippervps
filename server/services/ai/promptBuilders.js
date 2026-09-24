@@ -1,5 +1,6 @@
 import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from '../discoveryService.js';
-import { getNichePreset } from '../../config/nichePresets.js';
+import { getNichePreset, getSlotFacePolicy } from '../../config/nichePresets.js';
+import { formatSeconds, DEFAULT_REFRAME } from './aiValidators.js';
 
 export function truncateProductDescription(desc = '', maxChars = 500) {
   const clean = String(desc || '').replace(/\s+/g, ' ').trim();
@@ -409,6 +410,12 @@ export function build7SlotStoryboardClips({
 
   const storyboardClips = [];
 
+  // FACE POLICY (Fase 4, data-driven): frame camera-eligible hanya boleh dipakai slot yang
+  // mendeklarasikan policy non-strict di preset (gadget slot 5 review kamera = presenter_only).
+  // Slot tanpa facePolicy = 'strict' helper getSlotFacePolicy -> perilaku lama tak berubah (kitchen).
+  const slotFacePolicies = slotsConfig.map((sc) => getSlotFacePolicy(preset, sc?.key) || 'strict');
+  const isCameraEligibleFrame = (f) => Boolean(f && (f.isCameraResultEligible === true || f.cameraResultEligible === true));
+
   const getFrameByIdx = (idx) => {
     if (typeof idx !== 'number' || isNaN(idx) || idx < 1 || idx > totalFramesCount) return null;
     return validFrames[idx - 1];
@@ -504,9 +511,12 @@ export function build7SlotStoryboardClips({
     .sort((a, b) => b.count - a.count);
   const primaryCandidate = sourceRank[0]?.candidateIndex ?? null;
 
-  const isUsableDistinctFrame = (f) => {
+  const isUsableDistinctFrame = (f, facePolicy = 'strict') => {
     if (!f || isForbiddenFrame(f)) return false;
 
+    // FACE POLICY (Fase 4): slot strict DILARANG memakai frame camera-eligible (ada wajah konten,
+    // misal reviewer di layar review kamera) walaupun frame itu ikut terpool untuk slot presenter_only.
+    if (facePolicy !== 'presenter_only' && isCameraEligibleFrame(f)) return false;
     const key = getFrameKey(f);
     if (selectedFrameKeys.has(key)) return false;
 
@@ -520,7 +530,7 @@ export function build7SlotStoryboardClips({
     return true;
   };
 
-  const chooseDistinctFrame = (preferred, preferredCandidate = null) => {
+  const chooseDistinctFrame = (preferred, preferredCandidate = null, facePolicy = 'strict') => {
     // Phase 1: strictly try the required source for this scene.
     if (preferredCandidate !== null) {
       const required = [];
@@ -533,16 +543,16 @@ export function build7SlotStoryboardClips({
       }
 
       for (const f of required) {
-        if (isUsableDistinctFrame(f)) return f;
+        if (isUsableDistinctFrame(f, facePolicy)) return f;
       }
     }
 
     // If the primary source cannot satisfy this role, allow another independently
     // verified source rather than leaving the slot empty. Product verification happened
     // before pooling, so this remains identity-safe.
-    if (preferred && isUsableDistinctFrame(preferred)) return preferred;
+    if (preferred && isUsableDistinctFrame(preferred, facePolicy)) return preferred;
     for (const f of validFrames) {
-      if (isUsableDistinctFrame(f)) return f;
+      if (isUsableDistinctFrame(f, facePolicy)) return f;
     }
     return null;
   };
@@ -555,6 +565,7 @@ export function build7SlotStoryboardClips({
     const config = slotsConfig[sIdx];
     let frameObj = null;
     let chosenIdx = rawSlotIndices[sIdx];
+    const slotPolicy = slotFacePolicies[sIdx] || 'strict';
 
     if (chosenIdx) {
       frameObj = getFrameByIdx(chosenIdx);
@@ -575,9 +586,15 @@ export function build7SlotStoryboardClips({
         if (heroFromPool) {
           frameObj = heroFromPool;
         } else {
-          // Fallback: ambil frame awal paling bersih (detik 1-8)
-          const earlyFrame = validFrames.find(f => (f.timestamp || 0) >= 1.0 && (f.timestamp || 0) <= 8.0) || validFrames[0];
-          frameObj = earlyFrame;
+          // FACE POLICY (Fase 4): slot presenter_only lebih dulu pakai stok pool kamera khusus
+          const eligibleStock = validFrames.find((f) => isCameraEligibleFrame(f) && !isForbiddenFrame(f));
+          if (slotPolicy === 'presenter_only' && eligibleStock) {
+            frameObj = eligibleStock;
+          } else {
+            // Fallback: ambil frame awal paling bersih (detik 1-8), tanpa frame camera-eligible
+            const earlyFrame = validFrames.find(f => (f.timestamp || 0) >= 1.0 && (f.timestamp || 0) <= 8.0 && !isCameraEligibleFrame(f)) || validFrames[0];
+            frameObj = earlyFrame;
+          }
         }
       }
     } else if (config.slot === 2) {
@@ -609,6 +626,11 @@ export function build7SlotStoryboardClips({
       }
     } else if (config.slot === 5) {
       // Slot 5: Action demo 3 (rinsing / proof / result)
+      if (!frameObj && slotPolicy === 'presenter_only') {
+        // FACE POLICY (Fase 4): slot review kamera (gadget slot 5) prioritaskan bukti kamera
+        // dari pool cameraResultEligible (wajah konten oke, wajah kreator tetap terblokir gatekeeper)
+        frameObj = validFrames.find(f => isCameraEligibleFrame(f) && !isForbiddenFrame(f)) || null;
+      }
       if (!frameObj) {
         const resultCandidateIdx = Math.min(totalFramesCount, Math.max(6, Math.floor(totalFramesCount * 0.78)));
         frameObj = getFrameByIdx(resultCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 8)];
@@ -624,10 +646,10 @@ export function build7SlotStoryboardClips({
 
     // Multi-candidate diversity: Prioritaskan frame pilihan AI jika valid dan distinct
     let distinctFrame = null;
-    if (frameObj && isUsableDistinctFrame(frameObj)) {
+    if (frameObj && isUsableDistinctFrame(frameObj, slotPolicy)) {
       distinctFrame = frameObj;
     } else {
-      distinctFrame = chooseDistinctFrame(frameObj, targetCandidate);
+      distinctFrame = chooseDistinctFrame(frameObj, targetCandidate, slotPolicy);
     }
 
     if (!distinctFrame) {
@@ -668,6 +690,8 @@ export function build7SlotStoryboardClips({
       candidateUrl: frameObj?.candidateUrl || frameObj?.candidate?.url || '',
       videoId: frameObj?.videoId || frameObj?.candidate?.id || '',
       candidate: frameObj?.candidate || null,
+      // Provenance frame anchor (Fase 5): dipakai gerbang face-policy validateScriptSlotAlignment
+      sourceFramePath: frameObj?.filePath || '',
       storyboardSlot: config.slot,
       storyboardRole: config.role,
       datasetTag: config.datasetTag,

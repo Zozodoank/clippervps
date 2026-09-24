@@ -2255,11 +2255,29 @@ export async function verifyFinalRenderedFramesWithAI({
   productTitle = '',
   productFingerprint = null,
   niche = 'kitchen_tools',
+  sceneVoSegments = null,
   onProgress = () => {},
 } = {}) {
   if (!Array.isArray(frames) || frames.length < 3) {
     return { passed: false, reason: 'Frame final terlalu sedikit untuk QC visual.' };
   }
+
+  // SCENE<->VO LOCKSTEP QC (Fase 6): bila segment plan tersedia, AI diminta menilai
+  // visualMatchesNarration PER adegan. Pipeline kitchen tidak pernah mengirim sceneVoSegments
+  // => prompt & perilaku identik dengan sebelumnya.
+  const narrationMap = Array.isArray(sceneVoSegments) && sceneVoSegments.length > 0
+    ? sceneVoSegments
+        .map((s) => {
+          const claim = String(s.visualClaim || '').trim();
+          const vo = String(s.voLine || '').trim();
+          if (!claim && !vo) return '';
+          const t0 = Number(s.timeStart) || 0;
+          const t1 = t0 + (Number(s.duration) || 0);
+          return `- Window ${t0.toFixed(1)}s-${t1.toFixed(1)}s (slot ${s.slot}): VO="${vo}" KLAIM VISUAL WAJIB TAMPIL="${claim}"`;
+        })
+        .filter(Boolean)
+        .join('\n')
+    : '';
 
   const selectedEngine = (aiProvider || process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
   const { client, models, provider } = getAiClientConfig({ apiKeyOverride: apiKey, aiProvider: selectedEngine });
@@ -2278,7 +2296,15 @@ Check:
 5. No black/blank frame or broken render.
 6. No talking-head/visible face that violates the faceless edit policy.
 7. No third-party creator watermark, social handle, channel logo, or source identity remains visible in the final 9:16 frame. No floating specification boxes, dimension markers (e.g. '< 32cm', 'Glass Lid', capacity/wattage badges), animated arrows, price tags, or foreign creator overlays. Physical branding printed directly on the target product is allowed.
-8. Composition looks intentional for vertical 9:16.
+8. Composition looks intentional for vertical 9:16.${narrationMap ? `
+9. NARRATION-TO-VISUAL MATCH (STRICT LOCKSTEP EDIT): gunakan daftar window narasi di bawah. Untuk setiap frame,
+   periksa apakah adegan yang tampak sungguh memperlihatkan klaim visual window terkait.
+   Set "narrationMismatch": true bila ada adegan yang jelas-jelas TIDAK mendukung klaim voiceover-nya
+   (misal VO bicara kamera tapi frame menampilkan bodi samping, atau VO bicara layar tapi frame hanya hero shot).
+   Jangan menolak karena perbedaan halus/interpretasi; hanya mismatch nyata dan jelas.
+
+LOCKSTEP PLAN (frame dikirim berurutan sesuai posisi waktunya):
+${narrationMap}` : ''}
 
 Be conservative but do not reject for normal hard cuts, minor color differences, hands, or our own subtitles.
 Return strict JSON:
@@ -2292,7 +2318,9 @@ Return strict JSON:
   "faceOrTalkingHead": false,
   "sourceWatermarkOrCreatorLogo": false,
   "hasFloatingTextOrSpecificationBadge": false,
-  "brokenFrame": false,
+  "brokenFrame": false,${narrationMap ? `
+  "narrationMismatch": false,
+  "mismatchDetail": "",` : ''}
   "confidence": 0.0,
   "reason": ""
 }`;
@@ -2352,6 +2380,7 @@ Review these final rendered frames as one finished short-form edit.`;
         parsed.sourceWatermarkOrCreatorLogo !== true &&
         parsed.hasFloatingTextOrSpecificationBadge !== true &&
         parsed.brokenFrame !== true &&
+        parsed.narrationMismatch !== true &&
         confidence >= 0.70;
 
       return {

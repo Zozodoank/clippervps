@@ -78,7 +78,9 @@ import {
   buildCreativeShotPlan,
   describeCreativePlan,
   conformClipsToVoiceover,
-  choosePreferredCandidateSet
+  choosePreferredCandidateSet,
+  validateScriptSlotAlignment,
+  buildSceneVoSegments
 } from '../services/professionalPipelineService.js';
 import { runFinalMasterQc } from '../services/finalMasterQcService.js';
 import { activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, updateAutoRun } from '../store/jobStore.js';
@@ -1029,9 +1031,12 @@ async function _runStage1Pipeline({
         }
 
         // Filter granular per-frame: buang frame wajah/intro/rusak/subtitle keras, simpan frame peragaan produk!
+        // FACE POLICY (Fase 4): niche diteruskan agar preset gadget mengaktifkan facePolicy
+        // presenter_only di gatekeeper → pool cameraResultEligible terbentuk (kitchen: tetap strict).
         const frameFilterRes = await filterCandidateFramesPerFrame(sampleRes.frames, {
           candidateIndex: currentCandIdx,
           candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
+          niche: options.niche || jobMeta.niche || 'kitchen_tools',
         });
 
         console.log(`[Job ${jobId}] [${candLabel}] Hasil filter frame: ${frameFilterRes.cleanFrames.length} frame peragaan tangan disimpan (${frameFilterRes.discardedCount} frame wajah/intro disingkirkan).`);
@@ -1105,6 +1110,7 @@ async function _runStage1Pipeline({
           candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
           videoMeta: candMeta,
           cleanFrames: frameFilterRes.cleanFrames,
+          cameraResultEligibleFrames: frameFilterRes.cameraResultEligibleFrames || [],
           discardedFaceTimestamps: frameFilterRes.discardedFaceTimestamps || [],
           discardedViolationTimestamps: frameFilterRes.discardedViolationTimestamps || [],
           cleanTimeWindows: (frameFilterRes.verifiedSegments || []).map(s => ({ start: s.startSec, end: s.endSec })),
@@ -1132,7 +1138,7 @@ async function _runStage1Pipeline({
 
         // Coba jalankan AI Storyboard jika sudah ada cukup frame
         if ((bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) || totalCleanFrames >= 8) {
-          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 500 })
+          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 500, includeEligible: true })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
           if (testPool.length >= 2) {
@@ -1287,7 +1293,7 @@ async function _runStage1Pipeline({
       if (!hl && candidateResults.length > 0) {
         candidateResults = choosePreferredCandidateSet(candidateResults);
         if (candidateResults.length > 0) {
-          pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 500 })
+          pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 500, includeEligible: true })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
           if (pooledFrames.length >= 2) {
@@ -2024,6 +2030,7 @@ async function _runStage1Pipeline({
           script: scriptData.voiceoverScript || rawVoiceScript,
           audioDurationSec,
           creativePlan,
+          niche: options.niche || jobMeta.niche || 'kitchen_tools',
         });
         const conformedDuration = conformedClips.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
 
@@ -2037,6 +2044,41 @@ async function _runStage1Pipeline({
 
           highlight.clips = conformedClips;
           highlight.duration = conformedDuration;
+
+          // ── SCENE <-> VO LOCKSTEP (Fase 5): validasi alignment + bangun segment plan ──
+          // Segment plan [{slot, timeStart, voLine, visualClaim}] dipakai QC visualMatchesNarration.
+          try {
+            const alignmentNiche = options.niche || jobMeta.niche || 'kitchen_tools';
+            const eligibleFramePaths = new Set(
+              (pooledFrames || []).filter(f => f.isCameraResultEligible === true).map(f => f.filePath).filter(Boolean)
+            );
+            const alignment = validateScriptSlotAlignment({
+              clips: conformedClips,
+              creativePlan,
+              scenes: scriptData.scenes || [],
+              niche: alignmentNiche,
+              eligibleFramePaths,
+            });
+            if (alignment.errors.length > 0) {
+              console.warn(`[Job ${jobId}] ⛔ [SceneVoLockstep] ${alignment.errors.length} pelanggaran alignment:`);
+              alignment.errors.forEach(e => console.warn(`[Job ${jobId}]   • ${e}`));
+            }
+            alignment.warnings.forEach(w => console.warn(`[Job ${jobId}] ⚠️ [SceneVoLockstep] ${w}`));
+            jobMeta.sceneVoSegments = buildSceneVoSegments({
+              clips: conformedClips,
+              scenes: scriptData.scenes || [],
+              creativePlan,
+              niche: alignmentNiche,
+            });
+            jobMeta.sceneVoAlignment = { ok: alignment.ok, errors: alignment.errors, warnings: alignment.warnings, strict: alignment.strictMode };
+            // Simpan anchor frame kamera (eligible) agar QC pasca-conform ulang bisa memvalidasi gerbang face policy
+            jobMeta.cameraEligibleFramePaths = Array.from(eligibleFramePaths);
+            activeJobs.set(jobId, jobMeta);
+            console.log(`[Job ${jobId}] 🔗 [SceneVoLockstep] ${jobMeta.sceneVoSegments.length} segmen terkunci ke VO (strict=${alignment.strictMode}, ok=${alignment.ok}).`);
+          } catch (lockErr) {
+            // Lockstep bersifat aditif — kegagalan analisa tidak boleh menggagalkan render
+            console.warn(`[Job ${jobId}] [SceneVoLockstep] Analisa alignment dilewati (${lockErr.message}).`);
+          }
 
           await renderSilentAntiDetectionVideo({
             inputVideo: rawVideoPath,
@@ -2122,6 +2164,8 @@ async function _runStage1Pipeline({
           backgroundMusicPath,
           musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
           sfxEvents,
+          sceneVoSegments: jobMeta.sceneVoSegments || null,
+          sceneVoAlignment: jobMeta.sceneVoAlignment || null,
           onProgress: updateProgress,
         });
 

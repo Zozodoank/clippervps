@@ -3,6 +3,8 @@
  * Pure functions only: no network, no filesystem, no AI calls.
  */
 
+import { getNichePreset, getSlotFacePolicy } from '../config/nichePresets.js';
+
 function normalizeText(value = '') {
   return String(value || '')
     .toLowerCase()
@@ -145,12 +147,16 @@ export function distributeTotal(rawDurations, total, mins, maxs) {
   return out;
 }
 
-export function conformClipsToVoiceover({ clips = [], script = '', audioDurationSec = 0, creativePlan = {} } = {}) {
+export function conformClipsToVoiceover({ clips = [], script = '', audioDurationSec = 0, creativePlan = {}, niche = 'kitchen_tools' } = {}) {
   if (!Array.isArray(clips) || clips.length === 0) return [];
   const MIN_CONFORM_DURATION = 18.0;
   const audioDuration = Math.max(MIN_CONFORM_DURATION, Number(audioDurationSec) || clips.reduce((s, c) => s + (Number(c.duration) || 3), 0));
   const starts = extractScriptSceneStarts(script);
   const planShots = Array.isArray(creativePlan.shots) ? creativePlan.shots : [];
+
+  // FACE POLICY (Fase 4): niche dengan strictSceneVoSync=true (gadget_smartphone) MELARANG
+  // ekspansi loop klip — jumlah adegan WAJIB sama persis dengan baris voiceover (lockstep Scene<->VO).
+  const strictSceneVoSync = Boolean(getNichePreset(niche)?.strictSceneVoSync);
 
   // Hitung target jumlah adegan yang dibutuhkan agar pacing visual tetap dinamis (~2.5s - 3.8s per cut)
   const targetSceneCount = Math.max(
@@ -162,7 +168,7 @@ export function conformClipsToVoiceover({ clips = [], script = '', audioDuration
   // Jika jumlah klip visual lebih sedikit daripada adegan yang dibutuhkan oleh audio voiceover,
   // ekspansi klip dengan variasi reframe alternatif (stage 80 vs center crop) agar pacing Reels tetap hidup
   let targetClips = [...clips];
-  if (targetClips.length < targetSceneCount && targetClips.length > 0) {
+  if (!strictSceneVoSync && targetClips.length < targetSceneCount && targetClips.length > 0) {
     const originalCount = targetClips.length;
     for (let i = originalCount; i < targetSceneCount; i++) {
       const baseClip = targetClips[i % originalCount];
@@ -229,4 +235,107 @@ export function choosePreferredCandidateSet(candidateResults = []) {
     }
   }
   return selected;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SCENE <-> VOICEOVER LOCKSTEP (Fase 5, khusus niche strictSceneVoSync)
+// Segment plan: [{ slot, timeStart, voLine, visualClaim }] — satu entri per klip final,
+// dipakai QC visualMatchesNarration dan perbaikan per-adegan.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function scenesToSlotKeys(niche = '', scenes = []) {
+  const preset = getNichePreset(niche);
+  const slots = Array.isArray(preset?.slotsConfig) ? preset.slotsConfig : [];
+  return (Array.isArray(scenes) ? scenes : []).map((s, i) => {
+    const explicit = String(s?.storyboardSlotKey || s?.slotKey || '').trim();
+    if (explicit && slots.some(sl => sl.key === explicit)) return explicit;
+    const byIndex = slots[i]?.key || '';
+    return byIndex;
+  });
+}
+
+/**
+ * Validasi alignment naskah <-> slot storyboard. Hanya MENGHASILKAN ERROR bila strictMode=true
+ * (niche strictSceneVoSync). Untuk niche non-strict, hasil dipakai sebagai warning informatif saja.
+ */
+export function validateScriptSlotAlignment({
+  clips = [],
+  creativePlan = {},
+  scenes = [],
+  niche = 'kitchen_tools',
+  eligibleFramePaths = null,
+} = {}) {
+  const preset = getNichePreset(niche);
+  const strictMode = Boolean(preset?.strictSceneVoSync);
+  const errors = [];
+  const warnings = [];
+  const planShots = Array.isArray(creativePlan?.shots) ? creativePlan.shots : [];
+  const clipList = Array.isArray(clips) ? clips : [];
+  const sceneList = Array.isArray(scenes) ? scenes : [];
+
+  // 1) Lockstep 1:1: jumlah klip == jumlah baris voiceover scene (ekspansi loop dilarang)
+  if (strictMode && sceneList.length > 0 && clipList.length !== sceneList.length) {
+    errors.push(`Jumlah klip visual (${clipList.length}) != jumlah baris voiceover scene (${sceneList.length}) - lockstep Scene<->VO melanggar.`);
+  }
+
+  // 2) Urutan storyboardSlot harus monotonik sesuai formula slot preset
+  const slotsSeq = clipList.map(c => Number(c?.storyboardSlot) || 0);
+  for (let i = 1; i < slotsSeq.length; i++) {
+    if (slotsSeq[i] > 0 && slotsSeq[i - 1] > 0 && slotsSeq[i] <= slotsSeq[i - 1]) {
+      warnings.push(`Urutan slot storyboard tidak naik pada klip #${i + 1} (${slotsSeq[i - 1]} -> ${slotsSeq[i]}).`);
+    }
+  }
+
+  // 3) Gerbang Face Policy provenance frame: slot strict DILARANG bersumber dari frame camera-eligible
+  const eligibleSet = eligibleFramePaths && typeof eligibleFramePaths.has === 'function' ? eligibleFramePaths : null;
+  if (eligibleSet) {
+    clipList.forEach((c, i) => {
+      const slotKey = c?.storyboardSlotKey || scenesToSlotKeys(niche, sceneList)[i] || '';
+      const policy = slotKey ? getSlotFacePolicy(preset, slotKey) : 'strict';
+      const framePath = c?.sourceFramePath || c?.anchorFramePath || '';
+      if (policy !== 'presenter_only' && framePath && eligibleSet.has(framePath)) {
+        errors.push(`Klip slot #${i + 1} (${slotKey || 'tanpa-key'}) bersumber dari frame camera-eligible padahal policy strict.`);
+      }
+    });
+  }
+
+  return { ok: errors.length === 0, errors, warnings, strictMode };
+}
+
+/**
+ * Bangun segment plan lockstep dari klip final + scene naskah.
+ * timeStart = detik klip ke-0 (akumulasi durasi render), voLine = baris scene slot terkait,
+ * visualClaim = klaim visual yang HARUS tampak di adegan (bahan QC visualMatchesNarration).
+ */
+export function buildSceneVoSegments({
+  clips = [],
+  scenes = [],
+  creativePlan = {},
+  niche = 'kitchen_tools',
+} = {}) {
+  const clipList = Array.isArray(clips) ? clips : [];
+  const sceneList = Array.isArray(scenes) ? scenes : [];
+  const planShots = Array.isArray(creativePlan?.shots) ? creativePlan.shots : [];
+  const slotKeys = scenesToSlotKeys(niche, sceneList);
+  let cursor = 0;
+  return clipList.map((c, i) => {
+    const duration = Number(c?.duration) || 0;
+    const timeStart = +(cursor).toFixed(3);
+    cursor += duration;
+    const slotIdx = (Number(c?.storyboardSlot) || (i + 1)) - 1;
+    const scene = sceneList[i] || sceneList[slotIdx] || null;
+    const slotKey = c?.storyboardSlotKey || slotKeys[i] || planShots[i]?.role || `scene_${i + 1}`;
+    const rawVo = String(scene?.voiceover || '').trim();
+    return {
+      slot: Number(c?.storyboardSlot) || (i + 1),
+      slotKey,
+      facePolicy: getSlotFacePolicy(getNichePreset(niche), slotKey) || 'strict',
+      timeStart,
+      duration,
+      voLine: rawVo.replace(/^\[[^\]]*\]\s*/, ''),
+      visualClaim: String(scene?.visualDescription || planShots[i]?.purpose || c?.creativePurpose || '').trim(),
+      sourceVideoId: c?.videoId || c?.candidate?.id || '',
+      sourceStartSeconds: Number(c?.startSeconds) || 0,
+    };
+  });
 }

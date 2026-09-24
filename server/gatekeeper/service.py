@@ -160,7 +160,7 @@ class FaceGatekeeper:
         except Exception as e:
             pass
 
-    def _is_valid_human_face(self, image_bgr, bbox, score, landmarks=None):
+    def _is_valid_human_face(self, image_bgr, bbox, score, landmarks=None, min_score=0.94):
         """
         Penyaring Semantik Pasca-Deteksi (Post-Processing Semantic Verification Gate):
         Membedakan wajah vlogger/presenter manusia asli dari tangan, perkakas dapur,
@@ -172,8 +172,8 @@ class FaceGatekeeper:
         # 1. Ambang batas keyakinan (Score Threshold) sangat ketat:
         # Ditingkatkan ke 94.0% agar YuNet tidak agresif memblokir non-wajah (seperti tombol alat dapur).
         # Wajah yang tidak tertangkap di sini akan ditangani oleh Gemini Filter 3.
-        if score < 0.94:
-            return False, f"Score di bawah batas presenter ({score * 100:.1f}% < 94.0%)"
+        if score < min_score:
+            return False, f"Score di bawah batas presenter ({score * 100:.1f}% < {min_score * 100:.1f}%)"
 
         # 2. Batas dimensi geometris frame:
         # Bounding box tidak boleh melampaui lebar frame utuh (ciri khas bidikan makro tangan/alas meja)
@@ -254,9 +254,80 @@ class FaceGatekeeper:
 
         return True, "Wajah manusia valid"
 
+    @staticmethod
+    def _iou(box_a, box_b):
+        ax1, ay1, aw, ah = box_a
+        bx1, by1, bw, bh = box_b
+        ix = max(0, min(ax1 + aw, bx1 + bw) - max(ax1, bx1))
+        iy = max(0, min(ay1 + ah, by1 + bh) - max(ay1, by1))
+        inter = ix * iy
+        union = aw * ah + bw * bh - inter
+        return float(inter) / float(union) if union > 0 else 0.0
+
+    @staticmethod
+    def classify_face(frame_shape, box, temporal_hits=0):
+        """Klasifikasi wajah: 'presenter' (blokir) vs 'content' (boleh untuk slot
+        ber-facePolicy presenter_only, misal uji kamera niche smartphone).
+        Urutan aturan sesuai spesifikasi Fase 2; ragukan = presenter (fail-safe)."""
+        fh, fw = frame_shape
+        bx, by, bw, bh = box
+        frame_area = float(max(1, fw * fh))
+        area_ratio = (bw * bh) / frame_area
+        face_cy = by + bh / 2.0
+
+        # a. PRESENTER: wajah besar & dominan di paruh atas frame (talking-head / kreator pegang HP)
+        if area_ratio >= 0.06 and face_cy < 0.55 * fh:
+            return "presenter"
+        # b. PRESENTER: posisi stabil lintas >= 3 frame berurutan (hits dihitung track temporal)
+        if temporal_hits >= 2:
+            return "presenter"
+        # c. CONTENT: wajah kecil (pejalan kaki / wajah dalam sample foto hasil kamera)
+        if area_ratio < 0.03:
+            return "content"
+        # d. Region layar perangkat/viewfinder belum terdeteksi di pipeline CPU ini ->
+        # e. FALLBACK konservatif: ragukan = PRESENTER
+        return "presenter"
+
+    def detect_faces(self, image_bgr, min_score=0.60):
+        """Daftar wajah manusia valid (box + score) untuk policy presenter_only.
+        Mode strict TIDAK memakai method ini — deteksi lokal sengaja nonaktif
+        (keputusan user: wajah disaring Gemini Filter 3), jadi niche lain tak terpengaruh."""
+        faces = []
+        h, w = image_bgr.shape[:2]
+        if self.mp_detector:
+            try:
+                rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+                results = self.mp_detector.detect(mp_image)
+                for det in (getattr(results, "detections", None) or []):
+                    score = det.categories[0].score if det.categories else 0.0
+                    bbox = det.bounding_box
+                    box = [max(0, int(bbox.origin_x)), max(0, int(bbox.origin_y)), int(bbox.width), int(bbox.height)]
+                    if self._is_valid_human_face(image_bgr, box, score, min_score=min_score)[0]:
+                        faces.append({"box": box, "score": float(score), "kind": self.classify_face((h, w), box)})
+            except Exception:
+                pass
+        if self.yunet_detector:
+            try:
+                self.yunet_detector.setInputSize((w, h))
+                _, dets = self.yunet_detector.detect(image_bgr)
+                if dets is not None:
+                    for face in dets:
+                        score = float(face[-1])
+                        box = [int(face[0]), int(face[1]), int(face[2]), int(face[3])]
+                        landmarks = [float(face[i]) for i in range(4, 14)]
+                        if self._is_valid_human_face(image_bgr, box, score, landmarks, min_score=min_score)[0]:
+                            if not any(self._iou(box, f["box"]) > 0.4 for f in faces):
+                                faces.append({"box": box, "score": score, "kind": self.classify_face((h, w), box)})
+            except Exception:
+                pass
+        return faces
+
     def detect(self, image_bgr, niche="kitchen_tools"):
         # ATAS PERMINTAAN USER: Matikan deteksi wajah lokal (YuNet/MediaPipe) sepenuhnya.
         # Biarkan Gemini Filter 3 yang bertugas membuang frame wajah.
+        # CATATAN FASE 2: jalur ini tetap untuk policy 'strict' (semua niche lama).
+        # Policy 'presenter_only' memakai detect_faces() + classify_face() di process_single_frame.
         return False, 0.0, None, "Local Face Detection Disabled"
 
         # 1. MediaPipe BlazeFace
@@ -303,6 +374,34 @@ class FaceGatekeeper:
                 pass
 
         return False, 0.0, None, "Bersih (faceless)"
+
+
+def apply_temporal_presenter_track(single_verdicts, iou_thresh=0.55, min_hits=2):
+    """Fase 2 (policy presenter_only): wajah 'content' yang bertahan di posisi sama
+    (IoU >= 0.55) pada >= min_hits frame kronologis sebelumnya adalah PRESENTER statis
+    (kreator di depan kamera), bukan konten sample foto. Frame-nya di-discard.
+    Frame clean yang masih punya wajah content murni diberi flag cameraResultEligible."""
+    history = []
+    for v in single_verdicts:
+        faces = v.get("faces") or []
+        for f in faces:
+            hits = 0
+            for prev_boxes in reversed(history):
+                if any(FaceGatekeeper._iou(pb, f["box"]) >= iou_thresh for pb in prev_boxes):
+                    hits += 1
+                else:
+                    break
+            if hits >= min_hits:
+                f["kind"] = "presenter"
+        history.append([f["box"] for f in faces])
+        if faces and any(f["kind"] == "presenter" for f in faces) and v.get("status") != "discarded":
+            v["status"] = "discarded"
+            v["stage"] = "face"
+            v["decision"] = "REJECT"
+            v["reason"] = "Wajah persisten di posisi sama lintas >= 3 frame (presenter statis, policy presenter_only)"
+        elif faces and v.get("status") in ("clean",) and all(f["kind"] == "content" for f in faces):
+            v["cameraResultEligible"] = True
+    return single_verdicts
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -724,7 +823,7 @@ class FrameGatekeeper:
         x_start = (w - target_w) // 2
         return image[:, x_start:x_start + target_w]
 
-    def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools"):
+    def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools", face_policy="strict"):
         """
         Mengevaluasi satu frame secara independen dan mengembalikan hasil lengkap:
         - status: 'clean' | 'uncertain' | 'discarded'
@@ -787,19 +886,36 @@ class FrameGatekeeper:
             }
 
         # ── TAHAP 1A: Face Detection pada Crop 9:16 ──
-        has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = self.face_gate.detect(crop, niche=niche)
-        if has_face_crop:
-            return {
-                "filePath": file_path,
-                "timestamp": timestamp,
-                "status": "discarded",
-                "stage": "face",
-                "reason": face_reason_crop,
-                "confidence": round(face_conf_crop, 3),
-                "box": face_box_crop,
-                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
-                "decision": "REJECT"
-            }
+        content_faces = []
+        if face_policy == "presenter_only":
+            for f in self.face_gate.detect_faces(crop):
+                if f["kind"] == "presenter":
+                    return {
+                        "filePath": file_path,
+                        "timestamp": timestamp,
+                        "status": "discarded",
+                        "stage": "face",
+                        "reason": f"Presenter terdeteksi di crop 9:16 (policy presenter_only, score {f['score'] * 100:.1f}%)",
+                        "confidence": round(f["score"], 3),
+                        "box": f["box"],
+                        "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                        "decision": "REJECT"
+                    }
+                content_faces.append({**f, "region": "crop"})
+        else:
+            has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = self.face_gate.detect(crop, niche=niche)
+            if has_face_crop:
+                return {
+                    "filePath": file_path,
+                    "timestamp": timestamp,
+                    "status": "discarded",
+                    "stage": "face",
+                    "reason": face_reason_crop,
+                    "confidence": round(face_conf_crop, 3),
+                    "box": face_box_crop,
+                    "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                    "decision": "REJECT"
+                }
 
         # ── TAHAP 1B: Face Detection pada Full Frame 16:9 ──
         # Hanya tolak jika wajah bertabrakan dengan jendela crop 9:16 yang akan ditampilkan.
@@ -809,22 +925,41 @@ class FrameGatekeeper:
         x_start = max(0, (w - target_w) // 2)
         x_end = min(w, x_start + target_w)
 
-        has_face_full, face_conf_full, face_box_full, face_reason_full = self.face_gate.detect(img, niche=niche)
-        if has_face_full and face_box_full:
-            bx, by, bw, bh = face_box_full
-            face_overlaps_crop = not (bx + bw < x_start or bx > x_end)
-            if face_overlaps_crop:
-                return {
-                    "filePath": file_path,
-                    "timestamp": timestamp,
-                    "status": "discarded",
-                    "stage": "face",
-                    "reason": f"Presenter terdeteksi di area crop 9:16: {face_reason_full}",
-                    "confidence": round(face_conf_full, 3),
-                    "box": face_box_full,
-                    "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
-                    "decision": "REJECT"
-                }
+        if face_policy == "presenter_only":
+            for f in self.face_gate.detect_faces(img):
+                bx, by, bw, bh = f["box"]
+                if bx + bw < x_start or bx > x_end:
+                    continue  # wajah di luar jendela crop 9:16 -> terpotong otomatis saat render
+                if f["kind"] == "presenter":
+                    return {
+                        "filePath": file_path,
+                        "timestamp": timestamp,
+                        "status": "discarded",
+                        "stage": "face",
+                        "reason": f"Presenter terdeteksi di area crop 9:16 (policy presenter_only, score {f['score'] * 100:.1f}%)",
+                        "confidence": round(f["score"], 3),
+                        "box": f["box"],
+                        "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                        "decision": "REJECT"
+                    }
+                content_faces.append({**f, "region": "full"})
+        else:
+            has_face_full, face_conf_full, face_box_full, face_reason_full = self.face_gate.detect(img, niche=niche)
+            if has_face_full and face_box_full:
+                bx, by, bw, bh = face_box_full
+                face_overlaps_crop = not (bx + bw < x_start or bx > x_end)
+                if face_overlaps_crop:
+                    return {
+                        "filePath": file_path,
+                        "timestamp": timestamp,
+                        "status": "discarded",
+                        "stage": "face",
+                        "reason": f"Presenter terdeteksi di area crop 9:16: {face_reason_full}",
+                        "confidence": round(face_conf_full, 3),
+                        "box": face_box_full,
+                        "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                        "decision": "REJECT"
+                    }
 
         # ── TAHAP 2: Text & 4-Corner Watermark Detection ──
         has_text, total_cov, bottom_cov, text_reason, corner_acts = self.text_gate.detect(crop, niche=niche)
@@ -892,11 +1027,12 @@ class FrameGatekeeper:
             "totalCoverage": round(total_cov, 3),
             "bottomCoverage": round(bottom_cov, 3),
             "cornerActivations": corner_acts,
+            "faces": content_faces,
             "decision": "CANDIDATE_CLEAN"
         }
 
     def process_batch(self, frame_items, niche="kitchen_tools",
-                      min_consecutive_clean=3, min_clean_duration=4.0):
+                      min_consecutive_clean=3, min_clean_duration=4.0, face_policy="strict"):
         """
         Memproses batch frame dengan logika:
         1. Static frame detection (MAD & edge difference)
@@ -964,7 +1100,7 @@ class FrameGatekeeper:
         for item in time_sorted:
             path = item["filePath"]
             ts = item["timestamp"]
-            v = self.process_single_frame(path, ts, niche=niche)
+            v = self.process_single_frame(path, ts, niche=niche, face_policy=face_policy)
 
             # Jika terdeteksi statis dan berada di badan video (> 3.0s):
             if path in static_indices and ts > 3.0 and v["status"] != "discarded":
@@ -975,6 +1111,11 @@ class FrameGatekeeper:
 
             v["motionScore"] = motion_scores.get(path, 0.0)
             single_verdicts.append(v)
+
+        # ── 2B. Temporal Presenter Track (khusus policy presenter_only) ──
+        # Wajah 'content' yang persisten di posisi sama lintas frame = presenter statis.
+        if face_policy == "presenter_only":
+            apply_temporal_presenter_track(single_verdicts)
 
         # ── 3. Temporal Watermark Aggregation (Multi-Frame Persistence Tracker) ──
         # Watermark biasanya berada di sudut yang sama persisten lintas >= 2 frame.
@@ -1139,8 +1280,10 @@ class FrameGatekeeper:
             "status": "success",
             "eligible": eligible,
             "reason": summary_reason,
+            "facePolicy": face_policy,
             "totalFrames": len(frame_items),
             "cleanFramesCount": total_clean_count,
+            "cameraResultEligibleCount": sum(1 for f in clean_frames if f.get("cameraResultEligible")),
             "discardedFramesCount": len(discarded_frames),
             "introCutoffSec": intro_cutoff_sec,
             "hasOpeningIntro": intro_cutoff_sec > 0.0,
@@ -1183,7 +1326,9 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                     "minConsecutiveClean": 2,
                     "minCleanDurationSec": 1.5,
                     "cleanConfidenceThreshold": SceneGatekeeper.CLEAN_CONF_THRESHOLD,
-                    "uncertainThreshold": SceneGatekeeper.UNCERTAIN_CONF_THRESHOLD
+                    "uncertainThreshold": SceneGatekeeper.UNCERTAIN_CONF_THRESHOLD,
+                    "facePolicySupported": ["strict", "presenter_only"],
+                    "facePolicyDefault": "strict"
                 },
                 "models": {
                     "face": GATEKEEPER.face_gate.backend if GATEKEEPER else "unknown",
@@ -1202,6 +1347,9 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 payload = json.loads(raw_body)
                 frames = payload.get("frames", [])
                 niche = payload.get("niche", "kitchen_tools")
+                face_policy = str(payload.get("facePolicy", "strict")).strip().lower()
+                if face_policy not in ("strict", "presenter_only"):
+                    face_policy = "strict"
                 min_consec = int(payload.get("minConsecutiveClean", 2))
                 min_dur = float(payload.get("minCleanDuration", 1.5))
 
@@ -1212,7 +1360,8 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 res = GATEKEEPER.process_batch(
                     frames, niche=niche,
                     min_consecutive_clean=min_consec,
-                    min_clean_duration=min_dur
+                    min_clean_duration=min_dur,
+                    face_policy=face_policy
                 )
                 self._send_json(200, res)
             except Exception as err:

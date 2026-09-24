@@ -76,9 +76,11 @@ import {
   buildCreativeShotPlan,
   describeCreativePlan,
   conformClipsToVoiceover,
-  choosePreferredCandidateSet
+  choosePreferredCandidateSet,
+  validateScriptSlotAlignment,
+  buildSceneVoSegments
 } from '../services/professionalPipelineService.js';
-import { runFinalMasterQc } from '../services/finalMasterQcService.js';
+import { runFinalMasterQc, auditSceneVoLockstep } from '../services/finalMasterQcService.js';
 import { activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, updateAutoRun } from '../store/jobStore.js';
 import { heavyTaskQueue } from './queueManager.js';
 import { isValidHttpUrl, resolveOutputVideoPath, sanitizeCaptionText, isQuotaErrorMessage } from '../utils/jobHelpers.js';
@@ -132,10 +134,34 @@ export async function conformExistingJobEditToAudio({
     script,
     audioDurationSec,
     creativePlan,
+    // FACE POLICY (Fase 4): niche diteruskan agar strictSceneVoSync melarang loop expansion
+    niche: job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools'),
   });
   if (!conformedClips.length) {
     return { silentDurationSec, audioDurationSec, conformed: false };
   }
+
+  // Fase 6: segment plan Scene<->VO dihitung ulang setiap conform agar lockstep tetap akurat
+  const conformNiche = job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools');
+  const eligibleCamPaths = new Set(
+    (Array.isArray(job.pooledFrames) ? job.pooledFrames : [])
+      .filter(f => f && f.isCameraResultEligible === true && f.filePath)
+      .map(f => f.filePath)
+  );
+  const conformScenes = Array.isArray(job.script?.scenes) ? job.script.scenes : [];
+  job.sceneVoAlignment = validateScriptSlotAlignment({
+    clips: conformedClips,
+    creativePlan,
+    scenes: conformScenes,
+    niche: conformNiche,
+    eligibleFramePaths: eligibleCamPaths.size > 0 ? eligibleCamPaths : null,
+  });
+  job.sceneVoSegments = buildSceneVoSegments({
+    clips: conformedClips,
+    scenes: conformScenes,
+    creativePlan,
+    niche: conformNiche,
+  });
 
   onProgress({
     step: 'edit_conform',
@@ -194,6 +220,8 @@ export async function runProfessionalFinalQcWithRepair({
   backgroundMusicPath = '',
   musicVolume = 0.10,
   sfxEvents = [],
+  sceneVoSegments = null,
+  sceneVoAlignment = null,
   onProgress = () => {},
 } = {}) {
   const finalQcFramesDir = path.join(tempDir, `job_${jobId}`, 'final_qc_frames');
@@ -205,6 +233,13 @@ export async function runProfessionalFinalQcWithRepair({
       expectedDurationSec,
       subtitlePath: srtPath,
     });
+
+    // GATE DETERMINISTIK (Fase 6): Scene<->VO lockstep — 0 biaya AI, niche non-strict selalu PASS
+    const lockstep = auditSceneVoLockstep({ niche, segments: sceneVoSegments, alignment: sceneVoAlignment });
+    if (!lockstep.passed) {
+      technical.passed = false;
+      technical.issues = Array.from(new Set([...(technical.issues || []), ...lockstep.issues]));
+    }
 
     let visual = {
       passed: true,
@@ -228,6 +263,7 @@ export async function runProfessionalFinalQcWithRepair({
           productTitle,
           productFingerprint,
           niche,
+          sceneVoSegments,
           onProgress,
         });
       } catch (err) {
@@ -490,6 +526,8 @@ async function _processJobVoiceover(jobId, customScript = null, options = {}) {
       reframe: job.highlight?.reframe || {},
       backgroundMusicPath: options.backgroundMusicPath || process.env.BACKGROUND_MUSIC_PATH || '',
       musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
+      sceneVoSegments: job.sceneVoSegments || null,
+      sceneVoAlignment: job.sceneVoAlignment || null,
       onProgress: updateProgress,
     });
     if (!finalQc.passed) {

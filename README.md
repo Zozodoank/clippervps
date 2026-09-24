@@ -44,8 +44,8 @@ flowchart TD
     L --> M[Grounded Script + TTS]
     M --> N[Conform Visual Cut ke Timing Voiceover Nyata]
     N --> O[Subtitle ASS + Optional Music Ducking + SFX]
-    O --> P[Final Technical Master QC]
-    P --> Q[AI Final Visual QC]
+    O --> P[Final Technical Master QC + Scene-VO Lockstep Gate]
+    P --> Q[AI Final Visual QC + visualMatchesNarration per adegan]
     Q -->|Crop gagal| R[Auto Repair: Fit Canvas + Render Ulang]
     R --> P
     Q -->|PASS| S[Final 1080x1920 Siap Upload]
@@ -59,6 +59,14 @@ flowchart TD
 - **Pacing adaptif:** durasi scene tidak lagi dipaksa sama. Hook bisa pendek, demonstrasi bisa lebih panjang sesuai kebutuhan.
 - **Voiceover mengontrol final timing:** setelah TTS selesai, visual dikonform ulang ke durasi suara aktual. Video tidak di-loop untuk menutupi voiceover yang terlalu panjang.
 - **Final Master QC wajib:** job baru dianggap selesai setelah lolos pemeriksaan resolusi, durasi, audio, black/freeze frame, subtitle safe-zone, dan visual composition final.
+
+### Face Policy & Scene↔VO Lockstep (khusus niche `gadget_smartphone`)
+
+Dikelola **100% lewat data di `server/config/nichePresets.js`** — tidak ada `if (niche)` di service:
+
+- **`facePolicy: 'presenter_only'` pada slot 5 (review kamera):** gatekeeper (port 5050) tetap memblokir wajah kreator yang memegang kamera (klasifikasi presenter vs wajah konten lewat ukuran face, kestabilan temporal IoU, dan fail-safe konservatif), tetapi hasil foto/video review dengan wajah reviewer di dalam frame TIDAK dibuang. Frame tersebut masuk pool terpisah `cameraResultEligibleFrames` yang **hanya** boleh dipakai slot ber-policy `presenter_only`. Niche lain (kitchen) selalu `strict` = perilaku lama, face detection lokal tetap per mandat Anda (diserahkan ke Gemini Filter 3).
+- **`strictSceneVoSync: true` pada preset gadget:** ekspansi loop klip saat conform dilarang; jumlah adegan wajib sama persis dengan baris voiceover. Segment plan `[{slot, timeStart, voLine, visualClaim}]` dihitung setiap conform (`sceneVoSegments` di job), divalidasi `validateScriptSlotAlignment`, dan dijadikan bahan Final QC: gate deterministik `auditSceneVoLockstep` + pemeriksaan AI `visualMatchesNarration` per adegan (field `narrationMismatch`).
+- Test regresi: `server/tests/facePolicy.test.js`, `storyboardFacePolicy.test.js`, `sceneVoLockstep.test.js`, `qcLockstep.test.js`, dan `server/gatekeeper/test_face_policy.py`.
 
 ### Konfigurasi finishing opsional
 

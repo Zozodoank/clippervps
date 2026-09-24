@@ -227,6 +227,8 @@ router.post('/upload-voiceover', upload.single('audio'), async (req, res) => {
       reframe: job.highlight?.reframe || {},
       backgroundMusicPath: process.env.BACKGROUND_MUSIC_PATH || '',
       musicVolume: Number(process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
+      sceneVoSegments: job.sceneVoSegments || null,
+      sceneVoAlignment: job.sceneVoAlignment || null,
       onProgress: updateProgress,
     });
     if (!finalQc.passed) {
