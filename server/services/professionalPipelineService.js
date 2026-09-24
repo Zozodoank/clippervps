@@ -126,7 +126,7 @@ export function extractScriptSceneStarts(script = '') {
     .filter((v) => Number.isFinite(v));
 }
 
-function distributeTotal(rawDurations, total, mins, maxs) {
+export function distributeTotal(rawDurations, total, mins, maxs) {
   const out = rawDurations.map((d, i) => Math.max(mins[i], Math.min(maxs[i], d)));
   let delta = total - out.reduce((a, b) => a + b, 0);
 

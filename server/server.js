@@ -101,6 +101,10 @@ import {
 } from './services/professionalPipelineService.js';
 import { runFinalMasterQc } from './services/finalMasterQcService.js';
 import { jobsFilePath, activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, publicAutoRetryState, publicAutoRunState, updateAutoRun, getLatestAutoRun } from './store/jobStore.js';
+import { loadedEnvFiles, cleanEnvValue, isPlaceholderEnvValue, reloadEnvironment } from './utils/envLoader.js';
+import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from './services/quotaService.js';
+import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from './services/antiDupService.js';
+import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from './utils/jobHelpers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -131,56 +135,9 @@ const PLACEHOLDER_ENV_VALUES = new Set([
   'your_cobalt_api_key_here',
 ]);
 
-let loadedEnvFiles = [];
 
-function cleanEnvValue(value) {
-  let cleaned = String(value || '').trim();
-  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
-    cleaned = cleaned.slice(1, -1).trim();
-  }
-  return cleaned;
-}
 
-function isPlaceholderEnvValue(value) {
-  return PLACEHOLDER_ENV_VALUES.has(cleanEnvValue(value).toLowerCase());
-}
 
-export function reloadEnvironment() {
-  const loaded = [];
-  for (const envPath of envCandidates) {
-    if (fs.existsSync(envPath)) {
-      try {
-        const raw = fs.readFileSync(envPath, 'utf8').replace(/^\uFEFF/, '');
-        const parsed = dotenv.parse(raw);
-        for (const [key, value] of Object.entries(parsed)) {
-          const cleaned = cleanEnvValue(value);
-          if (isPlaceholderEnvValue(cleaned)) continue;
-          process.env[key] = cleaned;
-          process.env[key.toUpperCase()] = cleaned;
-        }
-        const lines = raw.split(/\r?\n/);
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) continue;
-          const eqIdx = trimmed.indexOf('=');
-          if (eqIdx > 0) {
-            const k = trimmed.slice(0, eqIdx).replace(/^\uFEFF/, '').trim();
-            const v = cleanEnvValue(trimmed.slice(eqIdx + 1));
-            if (v && !isPlaceholderEnvValue(v)) {
-              process.env[k] = v;
-              process.env[k.toUpperCase()] = v;
-            }
-          }
-        }
-        loaded.push(envPath);
-      } catch (err) {
-        console.warn(`[Env] Could not load ${envPath}:`, err.message);
-      }
-    }
-  }
-  loadedEnvFiles = [...new Set(loaded)];
-  return loadedEnvFiles;
-}
 
 reloadEnvironment();
 
@@ -289,24 +246,7 @@ function tokenAuthMiddleware(req, res, next) {
 
 app.use(tokenAuthMiddleware);
 
-function isValidHttpUrl(value) {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
 
-function resolveOutputVideoPath(filename) {
-  const safeName = String(filename || '').trim();
-  if (!/^(silent|final)_clip_[a-zA-Z0-9_-]+\.mp4$/.test(safeName)) {
-    return null;
-  }
-  const resolved = path.resolve(outputDir, safeName);
-  const outputRoot = path.resolve(outputDir) + path.sep;
-  return resolved.startsWith(outputRoot) ? resolved : null;
-}
 
 /**
  * Strict motion audit for selected footage.
@@ -424,167 +364,14 @@ setInterval(() => {
 
 const DEFAULT_DAILY_VIDEO_LIMIT = 20;
 
-export function getDailyOutputVideoLimit() {
-  const envVal = parseInt(process.env.DAILY_VIDEO_LIMIT, 10);
-  return (!isNaN(envVal) && envVal > 0) ? envVal : DEFAULT_DAILY_VIDEO_LIMIT;
-}
 
-/**
- * Hitung jumlah video output unik yang berhasil diproduksi hari ini (kalender lokal).
- * Mencegah pemblokiran IP YouTube/API dengan membatasi maksimal 20 video sehari.
- */
-export function getDailyOutputVideoStats() {
-  const limit = getDailyOutputVideoLimit();
-  const now = new Date();
-  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-  const startOfDayMs = startOfDay.getTime();
-
-  const uniqueJobIdsToday = new Set();
-  const completedVideosToday = [];
-
-  // 1. Cek dari memory activeJobs (termasuk hasil load jobs.json)
-  for (const [jobId, job] of activeJobs.entries()) {
-    const isCompleted = job.stage === 'completed' || job.hasFinalVideo || (job.stage === 'stage1_completed' && job.hasSilentVideo);
-    if (!isCompleted) continue;
-
-    const timestampStr = job.completedAt || job.updatedAt || job.createdAt;
-    const jobTime = timestampStr ? new Date(timestampStr).getTime() : 0;
-
-    const filePath = job.finalLocalPath || job.silentLocalPath;
-    const fileExists = filePath && fs.existsSync(filePath);
-
-    if (fileExists && jobTime >= startOfDayMs) {
-      uniqueJobIdsToday.add(jobId);
-      completedVideosToday.push({
-        jobId,
-        productTitle: job.productTitle || jobId,
-        time: new Date(jobTime).toISOString(),
-        type: job.hasFinalVideo ? 'final' : 'silent',
-      });
-    }
-  }
-
-  // 2. Cross-check langsung ke file fisik di direktori output
-  try {
-    if (fs.existsSync(outputDir)) {
-      const files = fs.readdirSync(outputDir);
-      for (const file of files) {
-        if (!file.endsWith('.mp4')) continue;
-        const match = file.match(/^(?:final|silent)_clip_(.+)\.mp4$/);
-        if (match && match[1]) {
-          const jobId = match[1];
-          if (!uniqueJobIdsToday.has(jobId)) {
-            try {
-              const stat = fs.statSync(path.join(outputDir, file));
-              if (stat.mtimeMs >= startOfDayMs) {
-                uniqueJobIdsToday.add(jobId);
-                completedVideosToday.push({
-                  jobId,
-                  productTitle: jobId,
-                  time: stat.mtime.toISOString(),
-                  type: file.startsWith('final') ? 'final' : 'silent',
-                });
-              }
-            } catch {}
-          }
-        }
-      }
-    }
-  } catch {}
-
-  const count = uniqueJobIdsToday.size;
-  const remaining = Math.max(0, limit - count);
-  const isLimitReached = count >= limit;
-
-  return {
-    limit,
-    count,
-    remaining,
-    isLimitReached,
-    date: startOfDay.toLocaleDateString('sv'), // YYYY-MM-DD
-    resetAt: new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000).toISOString(),
-    videos: completedVideosToday,
-  };
-}
 
 /** Helper: get all YouTube video IDs from existing active & successfully completed jobs across all multi-video harvesting clips */
-function getAllUsedYouTubeVideoIds() {
-  const used = new Set();
-  for (const job of activeJobs.values()) {
-    // Only exclude video if the job actually SUCCEEDED or is currently processing
-    if (job.stage === 'completed' || job.stage === 'awaiting_voiceover' || job.stage === 'running') {
-      if (job.youtubeUrl) {
-        const vid = extractVideoId(job.youtubeUrl);
-        if (vid) used.add(vid);
-      }
-      // Multi-video harvesting: capture all candidate video IDs used in the storyboard clips!
-      if (Array.isArray(job.highlight?.clips)) {
-        for (const clip of job.highlight.clips) {
-          const cvid = clip.videoId || extractVideoId(clip.candidateUrl) || clip.candidate?.id;
-          if (cvid) used.add(cvid);
-        }
-      }
-      // Also capture all accepted candidates from candidateResults
-      if (Array.isArray(job.candidateResults)) {
-        for (const c of job.candidateResults) {
-          const cvid = c.id || extractVideoId(c.url);
-          if (cvid) used.add(cvid);
-        }
-      }
-    }
-  }
-  return used;
-}
 
 /** Helper: get all brand + product noun pairs generated today to prevent duplicate exact models/brands in Auto Mode while maximizing brand/type variety */
-function getAllUsedBrandProductPairsToday() {
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const usedPairs = new Set();
-  for (const job of activeJobs.values()) {
-    if (job.stage === 'completed' || job.stage === 'awaiting_voiceover' || job.stage === 'running') {
-      const jobDate = (job.createdAt || job.updatedAt || '').slice(0, 10);
-      if (jobDate === todayStr || !job.createdAt) {
-        const brand = (job.brand || '').toLowerCase().trim();
-        const noun = (job.coreProductNoun || '').toLowerCase().trim();
-        if (brand && noun) {
-          usedPairs.add(`${brand} ${noun}`);
-        } else if (noun) {
-          usedPairs.add(noun);
-        }
-        const prodTitle = (job.productTitle || job.cleanProductTitle || '').toLowerCase().trim();
-        if (prodTitle) {
-          const info = extractCoreProductInfo(prodTitle);
-          const infoBrand = (info.brand || '').toLowerCase().trim();
-          const infoNoun = (info.coreProductNoun || '').toLowerCase().trim();
-          if (infoBrand && infoNoun) {
-            usedPairs.add(`${infoBrand} ${infoNoun}`);
-          } else if (infoNoun) {
-            usedPairs.add(infoNoun);
-          }
-        }
-      }
-    }
-  }
-  return usedPairs;
-}
 
-function getAllUsedProductNounsToday() {
-  return getAllUsedBrandProductPairsToday();
-}
 
-function isVideoFilePath(p) {
-  if (!p) return false;
-  const lower = p.toLowerCase();
-  return !['.m4a', '.mp3', '.aac', '.wav', '.opus'].some(ext => lower.endsWith(ext)) &&
-    ['.mp4', '.webm', '.mkv', '.mov'].some(ext => lower.endsWith(ext));
-}
 
-function isQuotaErrorMessage(msg = '') {
-  const lower = String(msg).toLowerCase();
-  return lower.includes('saldo') || lower.includes('insufficient') ||
-    lower.includes('balance') || lower.includes('quota') || lower.includes('kuota') ||
-    lower.includes('credit') || lower.includes('resource_exhausted') || lower.includes('429');
-}
 
 // ─── API Routes ──────────────────────────────────────────────────────────────
 
@@ -660,16 +447,6 @@ app.get('/api/network-diagnostic', async (req, res) => {
   }
 });
 
-function sanitizeCaptionText(caption = '', job = null) {
-  return formatEnrichedCaption({
-    caption,
-    productTitle: job?.productTitle || job?.videoTitle || '',
-    productDescription: job?.productDescription || '',
-    sampleContext: job?.sampleContext || null,
-    scenes: job?.scenes || [],
-    platform: 'clipper',
-  });
-}
 const stripShopeeLinkFromCaption = sanitizeCaptionText;
 
 // 2. Get all jobs history

@@ -24,13 +24,13 @@ function runFfmpeg(args, timeoutMs = 90000) {
   });
 }
 
-function parseDuration(text = '') {
+export function parseDuration(text = '') {
   const m = String(text).match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
   if (!m) return null;
   return Number(m[1]) * 3600 + Number(m[2]) * 60 + Number(m[3]);
 }
 
-function parseResolution(text = '') {
+export function parseResolution(text = '') {
   const lines = String(text).split(/\r?\n/);
   for (const line of lines) {
     if (!/Video:/i.test(line)) continue;
