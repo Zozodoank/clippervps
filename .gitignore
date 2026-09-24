@@ -12,6 +12,9 @@ server/bin/
 server/jobs.json
 server/bandwidth_stats.json
 server/used_keywords.json
+*.db
+*.db-wal
+*.db-shm
 *.mp4
 *.mp3
 *.jpg
