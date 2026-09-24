@@ -1,4 +1,4 @@
-import { repairJson, formatSeconds, normalizeClipPlan } from './ai/aiValidators.js';
+import { formatSeconds, normalizeClipPlan } from './ai/aiValidators.js';
 export { formatSeconds, normalizeClipPlan };
 import { defaultGeminiDirectModels, getDirectGeminiApiKey, getDirectGeminiClientConfig, getAiClientConfig, formatApiError, isQuotaError, isDailyQuotaExhaustedError, resolveImageBufferAndBase64 } from './ai/aiClient.js';
 export { defaultGeminiDirectModels, getDirectGeminiApiKey, getDirectGeminiClientConfig, isQuotaError, isDailyQuotaExhaustedError, resolveImageBufferAndBase64 };
@@ -2790,7 +2790,7 @@ Return strict JSON in this format:
 // Moved sanitizeScriptVocabulary to ai/promptBuilders.js
 
 // Robust JSON parser with auto-repair for truncated output
-function repairJson(raw) {
+export function repairJson(raw) {
   if (!raw || typeof raw !== 'string') return {};
   const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
   try {
@@ -2836,7 +2836,6 @@ function repairJson(raw) {
   }
 }
 
-// Moved to ai/aiValidators.js
 
 
 

@@ -6,6 +6,23 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Load .env from multiple candidate paths. Keep server/.env as the primary
+// Termux/local source, but still accept root-level .env files for portability.
+const envCandidates = [
+  path.join(__dirname, '..', '.env'),
+  path.join(__dirname, '..', '.env.txt'),
+  path.join(__dirname, '..', '..', '.env'),
+  path.join(__dirname, '..', '..', '.env.txt'),
+  path.join(process.cwd(), '.env'),
+  path.join(process.cwd(), '.env.txt')
+];
+
+const PLACEHOLDER_ENV_VALUES = new Set([
+  '',
+  'your_gemini_api_key_here',
+  'your_aivene_api_key_here',
+  'your_cobalt_api_key_here',
+]);
 export let loadedEnvFiles = [];
 
 export function cleanEnvValue(value) {

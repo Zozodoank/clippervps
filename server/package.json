@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "vitest"
+    "test": "vitest",
+    "check:syntax": "node --check store/jobStore.js && node --check services/quotaService.js && node --check services/antiDupService.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

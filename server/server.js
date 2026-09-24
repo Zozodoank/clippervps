@@ -100,12 +100,15 @@ import {
   choosePreferredCandidateSet
 } from './services/professionalPipelineService.js';
 import { runFinalMasterQc } from './services/finalMasterQcService.js';
-import { jobsFilePath, activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, publicAutoRetryState, publicAutoRunState, updateAutoRun, getLatestAutoRun } from './store/jobStore.js';
+import { jobsFilePath, activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, publicAutoRetryState, publicAutoRunState, updateAutoRun, getLatestAutoRun, setDailyStatsProvider } from './store/jobStore.js';
 import { loadedEnvFiles, cleanEnvValue, isPlaceholderEnvValue, reloadEnvironment } from './utils/envLoader.js';
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from './services/quotaService.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from './services/antiDupService.js';
 import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from './utils/jobHelpers.js';
 import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover } from './worker/pipelineWorker.js';
+
+setDailyStatsProvider(getDailyOutputVideoStats);
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -118,23 +121,6 @@ process.on('unhandledRejection', (reason) => {
   console.error('⚠️ [UnhandledRejection Guard]:', reason?.message || reason);
 });
 
-// Load .env from multiple candidate paths. Keep server/.env as the primary
-// Termux/local source, but still accept root-level .env files for portability.
-const envCandidates = [
-  path.join(__dirname, '.env'),
-  path.join(__dirname, '.env.txt'),
-  path.join(__dirname, '..', '.env'),
-  path.join(__dirname, '..', '.env.txt'),
-  path.join(process.cwd(), '.env'),
-  path.join(process.cwd(), '.env.txt')
-];
-
-const PLACEHOLDER_ENV_VALUES = new Set([
-  '',
-  'your_gemini_api_key_here',
-  'your_aivene_api_key_here',
-  'your_cobalt_api_key_here',
-]);
 
 
 

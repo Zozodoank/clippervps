@@ -8,9 +8,9 @@ import crypto from 'crypto';
 import multer from 'multer';
 import { exec, spawn, execSync } from 'child_process';
 
-import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
-import { downloadYouTubeVideo, extractVideoId, isLocalPortListening } from '../services/downloader.js';
-import { extractFrames } from '../services/frameExtractor.js';
+import { checkSystemDependencies, getFFmpegPath } from '../../services/binaryChecker.js';
+import { downloadYouTubeVideo, extractVideoId, isLocalPortListening } from '../../services/downloader.js';
+import { extractFrames } from '../../services/frameExtractor.js';
 import {
   selectHighlightWithAI,
   analyzeYouTubeVideoWithGemini,
@@ -23,15 +23,15 @@ import {
   getDynamicProductHookFallback,
   verifyProductCandidateWithAI,
   verifyFinalRenderedFramesWithAI
-} from '../services/aiService.js';
-import { generateSrtSubtitles } from '../services/subtitleService.js';
-import { loadEnglishDictionary, saveToEnglishDictionary } from '../services/dictionaryService.js';
+} from '../../services/aiService.js';
+import { generateSrtSubtitles } from '../../services/subtitleService.js';
+import { loadEnglishDictionary, saveToEnglishDictionary } from '../../services/dictionaryService.js';
 import {
   renderSilentAntiDetectionVideo,
   mergeVoiceoverAndBurnSubtitles,
   getMediaDurationSec,
   getVideoDimensions
-} from '../services/videoRenderer.js';
+} from '../../services/videoRenderer.js';
 import {
   generateVoiceoverTTS,
   cleanScriptForTTS,
@@ -39,7 +39,7 @@ import {
   DEFAULT_GEMINI_TTS_MODEL,
   DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
   DEFAULT_GEMINI_TTS_VOICE
-} from '../services/ttsService.js';
+} from '../../services/ttsService.js';
 import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
@@ -49,22 +49,22 @@ import {
   poolMultiCandidateFrames,
   callAIGatekeeperMicroservice,
   sampleDenseClustersAroundCleanFrames
-} from '../services/videoFilterService.js';
+} from '../../services/videoFilterService.js';
 import {
   getPublicIpAddress,
   classifyPipelineError,
   checkYouTubeHealth
-} from '../services/networkDiagnosticService.js';
+} from '../../services/networkDiagnosticService.js';
 import {
   getBandwidthStats,
   resetBandwidthStats,
   trackSavedBandwidth
-} from '../services/bandwidthTracker.js';
+} from '../../services/bandwidthTracker.js';
 import {
   cleanupTempFiles,
   deleteJobTempDirectory,
   deleteJobFiles
-} from '../services/cleaner.js';
+} from '../../services/cleaner.js';
 import {
   discoverShopeeProducts,
   discoverBrandedShopeeProduct,
@@ -90,22 +90,22 @@ import {
   isProductTitleUsed,
   getUsedKeywordsStats,
   clearUsedKeywords
-} from '../services/discoveryService.js';
-import { getAllNiches, getNichePreset } from '../config/nichePresets.js';
+} from '../../services/discoveryService.js';
+import { getAllNiches, getNichePreset } from '../../config/nichePresets.js';
 import {
   buildProductFingerprint,
   buildCreativeShotPlan,
   describeCreativePlan,
   conformClipsToVoiceover,
   choosePreferredCandidateSet
-} from '../services/professionalPipelineService.js';
-import { runFinalMasterQc } from '../services/finalMasterQcService.js';
-import { jobsFilePath, activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, publicAutoRetryState, publicAutoRunState, updateAutoRun, getLatestAutoRun } from '../store/jobStore.js';
-import { loadedEnvFiles, cleanEnvValue, isPlaceholderEnvValue, reloadEnvironment } from '../utils/envLoader.js';
-import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../services/quotaService.js';
-import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../services/antiDupService.js';
-import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from '../utils/jobHelpers.js';
-import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover } from '../worker/pipelineWorker.js';
+} from '../../services/professionalPipelineService.js';
+import { runFinalMasterQc } from '../../services/finalMasterQcService.js';
+import { jobsFilePath, activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, publicAutoRetryState, publicAutoRunState, updateAutoRun, getLatestAutoRun } from '../../store/jobStore.js';
+import { loadedEnvFiles, cleanEnvValue, isPlaceholderEnvValue, reloadEnvironment } from '../../utils/envLoader.js';
+import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../../services/quotaService.js';
+import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../../services/antiDupService.js';
+import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from '../../utils/jobHelpers.js';
+import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover } from '../../worker/pipelineWorker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

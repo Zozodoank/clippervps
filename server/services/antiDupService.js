@@ -1,4 +1,6 @@
 import { activeJobs } from '../store/jobStore.js';
+import { extractVideoId } from './downloader.js';
+import { extractCoreProductInfo } from './discoveryService.js';
 
 export function getAllUsedYouTubeVideoIds() {
   const used = new Set();

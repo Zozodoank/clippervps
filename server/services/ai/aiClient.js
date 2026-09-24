@@ -205,7 +205,7 @@ export function getAiClientConfig({ apiKeyOverride, aiProvider } = {}) {
 /**
  * Helper to format AI API errors into clear Indonesian messages.
  */
-function formatApiError(err, modelName = 'AI', provider = 'AI') {
+export function formatApiError(err, modelName = 'AI', provider = 'AI') {
   const status = err.status || err.statusCode;
   const message = err.message || '';
 

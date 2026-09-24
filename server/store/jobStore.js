@@ -2,7 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
-import { getDailyOutputVideoStats } from '../server.js';
+
+// Provider di-inject oleh server.js untuk mencegah circular dependency jobStore <-> server.js
+let dailyStatsProvider = () => null;
+export function setDailyStatsProvider(fn) {
+  dailyStatsProvider = fn;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -120,7 +125,7 @@ export function deletePersistedJob(jobId) {
 }
 
 export function loadJobsFromDisk() {
-  console.log(\`[Jobs] SQLite Database initialized. Active jobs: \${activeJobs.size}\`);
+  console.log(`[Jobs] SQLite Database initialized. Active jobs: ${activeJobs.size}`);
   // Reset stuck jobs
   for (const [jobId, jobData] of activeJobs.entries()) {
     if (jobData.stage === 'running') {
@@ -136,7 +141,7 @@ export function updateJobProgress(jobId, data) {
     ? { step: 'processing', message: data, progress: 50, jobId, status: 'running' }
     : { status: 'running', ...data, jobId };
   jobProgress.set(jobId, payload);
-  console.log(\`[Job \${jobId}] [\${payload.progress || 0}%] \${payload.message || ''}\`);
+  console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message || ''}`);
 }
 
 export function publicAutoRetryState(run) {
@@ -153,7 +158,7 @@ export function publicAutoRetryState(run) {
 }
 
 export function publicAutoRunState(run) {
-  const dailyStats = getDailyOutputVideoStats();
+  const dailyStats = dailyStatsProvider() || { limit: 0, count: 0, remaining: 0, isLimitReached: false, videos: [] };
   if (!run) return { status: 'idle', dailyStats };
   return {
     runId: run.runId,
@@ -177,7 +182,7 @@ export function publicAutoRunState(run) {
 export function updateAutoRun(run, patch) {
   Object.assign(run, patch, { updatedAt: new Date().toISOString() });
   autoRuns.set(run.runId, run);
-  console.log(\`[Auto \${run.runId}] [\${run.progress || 0}%] \${run.message || run.status}\`);
+  console.log(`[Auto ${run.runId}] [${run.progress || 0}%] ${run.message || run.status}`);
 }
 
 export function getLatestAutoRun() {
