@@ -3908,45 +3908,55 @@ async function runAutoStage1Worker(run) {
         break;
       } catch (err) {
         console.warn(`[Auto] Multi-video harvesting failed for ${keyword}:`, err.message);
-        // Delete temporary files ONLY IF the job did NOT already save a media asset
-        const existingJob = activeJobs.get(autoJobId);
-        const hasSavedMedia = existingJob && (existingJob.finalLocalPath || existingJob.silentLocalPath || existingJob.downloadedVideoPath);
-        if (!hasSavedMedia) {
-          deleteJobFiles(autoJobId, outputDir, tempDir);
-          activeJobs.delete(autoJobId);
-          deletePersistedJob(autoJobId);
-        } else {
-          const savedItemTitle = existingJob.productTitle || currentCandidateTitle;
-          run.successfulJobs++;
-          jobSuccess = true;
-          markKeywordAsUsed(keyword, { productTitle: savedItemTitle, jobId: autoJobId, source: 'auto_worker' });
-          
-          const dailyStatsAfterMedia = getDailyOutputVideoStats();
-          console.log(`[Auto] 🛑 Menghentikan Auto Mode setelah video tersimpan (kebijakan aman 1 job per generate autorun).`);
-          updateAutoRun(run, {
-            status: 'completed',
-            message: `✅ Auto Mode selesai: 1 video berhasil disimpan ("${savedItemTitle.slice(0, 30)}...").`,
-            progress: 100,
-            finishedAt: new Date().toISOString(),
-            currentJobId: null,
-            currentProductTitle: null,
-            dailyStats: dailyStatsAfterMedia,
-          });
-          break;
-        }
-
-        run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
-
-        // Pengecekan Error Kritis untuk Menghentikan Auto Mode secara Tepat:
+        
         const msg = (err.message || '').toLowerCase();
+        const isMasterQcFailed = msg.includes('final_master_qc_failed');
 
-        // 1. YouTube IP Block / Bot Detection / HTTP 429 (Stop Auto Mode untuk mencegah ban/looping sia-sia)
+        // 1. YouTube IP Block / Bot Detection / HTTP 429
         const isYouTubeBotBlock = (
           msg.includes('youtube membatasi') ||
           msg.includes('memblokir ip') ||
           msg.includes('bot detection') ||
           (msg.includes('youtube') && (msg.includes('429') || msg.includes('too many requests') || msg.includes('sign in to confirm')))
         );
+
+        // 2. YouTube Cookies / Authentication Error
+        const isYouTubeAuthError = msg.includes('from-browser') || msg.includes('--cookies') ||
+          msg.includes('cookies for the authentication') || msg.includes('login required') || msg.includes('private video') ||
+          (msg.includes('yt-dlp') && msg.includes('authentication'));
+
+        // 3. Limit Kuota Model Gemini AI (Visual atau TTS)
+        const isYouTubeError = isYouTubeBotBlock || isYouTubeAuthError || msg.includes('youtube') || msg.includes('yt-dlp');
+        const isQuota = !isYouTubeError && Boolean(
+          err.isAllModelsQuotaExhausted ||
+          err.isQuotaError ||
+          isQuotaErrorMessage(err.message) ||
+          msg.includes('resource_exhausted') ||
+          (msg.includes('quota') && !msg.includes('disk')) ||
+          (msg.includes('kuota') && !msg.includes('lokal')) ||
+          msg.includes('rate_limit') ||
+          (msg.includes('rate limit') && msg.includes('gemini')) ||
+          ((err.status === 429 || err.statusCode === 429) && !isYouTubeError) ||
+          (msg.includes('gemini') && (msg.includes('limit') || msg.includes('exhausted') || msg.includes('too many requests')))
+        );
+
+        // Hapus file temporary dan hapus job dari riwayat JIKA:
+        // - Tidak ada media yang berhasil di-download
+        // - ATAU Gagal Final QC (berarti video kotor/watermark, tidak layak disimpan!)
+        const existingJob = activeJobs.get(autoJobId);
+        const hasSavedMedia = existingJob && (existingJob.finalLocalPath || existingJob.silentLocalPath || existingJob.downloadedVideoPath);
+        
+        if (!hasSavedMedia || isMasterQcFailed) {
+          deleteJobFiles(autoJobId, outputDir, tempDir);
+          activeJobs.delete(autoJobId);
+          deletePersistedJob(autoJobId);
+        } else {
+          console.log(`[Auto] ⚠️ Video mentah/bisu tersimpan untuk Job ${autoJobId} (Terkendala TTS/AI). Job dipertahankan di riwayat.`);
+        }
+
+        run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
+
+        // Evaluasi apakah harus berhenti total atau lanjut mencari video lain (Self-Healing)
         if (isYouTubeBotBlock) {
           console.error(`[Auto] 🛑 YouTube memblokir/membatasi IP server (HTTP 429 / Bot Detection). Menghentikan Auto Mode.`);
           updateAutoRun(run, {
@@ -3960,10 +3970,6 @@ async function runAutoStage1Worker(run) {
           return;
         }
 
-        // 2. YouTube Cookies / Authentication Error
-        const isYouTubeAuthError = msg.includes('from-browser') || msg.includes('--cookies') ||
-          msg.includes('cookies for the authentication') || msg.includes('login required') || msg.includes('private video') ||
-          (msg.includes('yt-dlp') && msg.includes('authentication'));
         if (isYouTubeAuthError) {
           const isProxyActive = isLocalPortListening(10808) || Boolean(process.env.PROXY_URL || process.env.RESIDENTIAL_PROXY);
           const isCookiesDisabled = process.env.DISABLE_COOKIES === 'true' || process.env.NO_COOKIES === 'true';
@@ -3984,21 +3990,6 @@ async function runAutoStage1Worker(run) {
           }
         }
 
-        // 3. Limit Kuota Model Gemini AI (Visual atau TTS)
-        const isYouTubeError = isYouTubeBotBlock || isYouTubeAuthError || msg.includes('youtube') || msg.includes('yt-dlp');
-        const isQuota = !isYouTubeError && Boolean(
-          err.isAllModelsQuotaExhausted ||
-          err.isQuotaError ||
-          isQuotaErrorMessage(err.message) ||
-          msg.includes('resource_exhausted') ||
-          (msg.includes('quota') && !msg.includes('disk')) ||
-          (msg.includes('kuota') && !msg.includes('lokal')) ||
-          msg.includes('rate_limit') ||
-          (msg.includes('rate limit') && msg.includes('gemini')) ||
-          ((err.status === 429 || err.statusCode === 429) && !isYouTubeError) ||
-          (msg.includes('gemini') && (msg.includes('limit') || msg.includes('exhausted') || msg.includes('too many requests')))
-        );
-
         if (isQuota) {
           console.error(`[Auto] 🛑 Limit kuota/rate limit Gemini (Visual atau TTS) telah habis: ${err.message}. Menghentikan Auto Mode.`);
           quotaExhausted = true;
@@ -4006,7 +3997,6 @@ async function runAutoStage1Worker(run) {
           break;
         }
 
-        // 4. Fatal authentication error (401 with invalid api key)
         const isFatalAuth = (err.status === 401 || err.statusCode === 401) && (msg.includes('api key') || msg.includes('unauthorized'));
         if (isFatalAuth) {
           console.error('[Auto] API Key tidak valid. Menghentikan Auto Mode.');
