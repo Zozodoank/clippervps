@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { activeJobs } from '../store/jobStore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const outputDir = path.join(__dirname, '..', '..', 'output'); // output is in project root, so ../../output
+const outputDir = path.join(__dirname, '..', 'output'); // server/output
 const DEFAULT_DAILY_VIDEO_LIMIT = 20;
 export function getDailyOutputVideoLimit() {
   const envVal = parseInt(process.env.DAILY_VIDEO_LIMIT, 10);

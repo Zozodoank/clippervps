@@ -143,9 +143,7 @@ const PLACEHOLDER_ENV_VALUES = new Set([
 
 
 // Directories
-const tempDir = path.join(__dirname, 'temp');
-const outputDir = path.join(__dirname, 'output');
-const uploadsDir = path.join(tempDir, 'uploads');
+import { outputDir, tempDir, uploadsDir } from '../../utils/paths.js';
 const rejectedYunetDir = path.join(__dirname, 'rejected_frames', 'yunet');
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });

@@ -90,6 +90,11 @@ export const autoRuns = {
     for (const row of db.prepare('SELECT data FROM auto_runs').iterate()) {
       yield JSON.parse(row.data);
     }
+  },
+  entries: function* () {
+    for (const row of db.prepare('SELECT id, data FROM auto_runs').iterate()) {
+      yield [row.id, JSON.parse(row.data)];
+    }
   }
 };
 
@@ -109,6 +114,11 @@ export const autoRetryRuns = {
   values: function* () {
     for (const row of db.prepare('SELECT data FROM auto_retry_runs').iterate()) {
       yield JSON.parse(row.data);
+    }
+  },
+  entries: function* () {
+    for (const row of db.prepare('SELECT id, data FROM auto_retry_runs').iterate()) {
+      yield [row.id, JSON.parse(row.data)];
     }
   }
 };
