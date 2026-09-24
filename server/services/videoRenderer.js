@@ -253,7 +253,7 @@ export async function mergeVoiceoverAndBurnSubtitles({
     }
 
     const filterChains = [];
-    let videoMap = '0:v';
+    let videoMap = '[0:v]';
 
     if (needVideoPad && padDuration > 0) {
       filterChains.push(`[0:v]tpad=stop_mode=clone:stop_duration=${padDuration}[v_padded]`);
