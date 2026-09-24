@@ -44,16 +44,7 @@ const __dirname = path.dirname(__filename);
 
 // Moved to ai/aiClient.js
 
-const DEFAULT_REFRAME = {
-  focusX: 0.5,
-  focusY: 0.5,
-  cropStrategy: 'faceless_product_hands_avoid_creator_text',
-  renderMode: 'stage_80',
-  avoidTextZones: [],
-  avoidFaceZones: ['top', 'upper_middle'],
-  faceSafety: true,
-  notes: '',
-};
+
 
 // Moved to ai/aiClient.js
 
@@ -2847,69 +2838,17 @@ function repairJson(raw) {
 
 // Moved to ai/aiValidators.js
 
-function parseTimeToSeconds(timeStr) {
-  if (typeof timeStr === 'number') return timeStr;
-  if (!timeStr) return 0;
-  const parts = timeStr.toString().split(':').map(Number);
-  if (parts.length === 3) {
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  }
-  if (parts.length === 2) {
-    return parts[0] * 60 + parts[1];
-  }
-  return parseFloat(timeStr) || 0;
-}
 
-function normalizeReframe(reframe = {}) {
-  const focusX = clampNumber(reframe.focusX, 0, 1, DEFAULT_REFRAME.focusX);
-  const focusY = clampNumber(reframe.focusY, 0, 1, DEFAULT_REFRAME.focusY);
-  const avoidTextZones = Array.isArray(reframe.avoidTextZones)
-    ? reframe.avoidTextZones.filter(Boolean).map((zone) => zone.toString().slice(0, 40))
-    : [];
-  const avoidFaceZones = Array.isArray(reframe.avoidFaceZones)
-    ? reframe.avoidFaceZones.filter(Boolean).map((zone) => zone.toString().slice(0, 40))
-    : DEFAULT_REFRAME.avoidFaceZones;
 
-  const validRenderModes = ['stage_80', 'square_stage', 'fit_canvas', 'vertical_crop'];
-  const renderMode = validRenderModes.includes(reframe.renderMode) ? reframe.renderMode : 'stage_80';
 
-  return {
-    focusX,
-    focusY,
-    focusXStart: clampNumber(reframe.focusXStart, 0, 1, focusX),
-    focusXEnd: clampNumber(reframe.focusXEnd, 0, 1, focusX),
-    focusYStart: clampNumber(reframe.focusYStart, 0, 1, focusY),
-    focusYEnd: clampNumber(reframe.focusYEnd, 0, 1, focusY),
-    dynamicTracking: reframe.dynamicTracking !== false,
-    renderMode,
-    cropStrategy: (reframe.cropStrategy || DEFAULT_REFRAME.cropStrategy).toString().slice(0, 80),
-    avoidTextZones,
-    avoidFaceZones,
-    faceSafety: reframe.faceSafety !== false,
-    allowHflip: reframe.allowHflip !== false,
-    hasProductBrand: Boolean(reframe.hasProductBrand),
-    notes: (reframe.notes || DEFAULT_REFRAME.notes).toString().slice(0, 180),
-  };
-}
 
 // Moved build7SlotStoryboardClips to ai/promptBuilders.js
 
 // Moved to ai/aiValidators.js
 
-function hasSourceIdentityRisk(rawClip = {}) {
-  if (rawClip.sourceOwnerIdentityVisible === true) return true;
 
-  const risk = (rawClip.sourceIdentityRisk || '').toString().toLowerCase().trim();
-  if (!risk || risk === 'none' || risk === 'low' || risk === 'false' || risk === 'no') return false;
 
-  return true;
-}
 
-function clampNumber(value, min, max, fallback) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return fallback;
-  return Math.min(max, Math.max(min, number));
-}
 
 function buildFallbackScenes(productName, segmentDuration, sceneDuration = 3.3) {
   const totalDuration = Math.max(15, Math.min(45, Math.round(Number(segmentDuration) || 24)));
