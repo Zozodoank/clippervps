@@ -13,7 +13,8 @@ const dirsToCheck = [
   'store',
   'api/routes',
   'worker',
-  'utils'
+  'utils',
+  'config'
 ];
 
 let failed = false;
@@ -22,7 +23,7 @@ for (const dir of dirsToCheck) {
   const fullPath = path.join(serverDir, dir);
   if (!fs.existsSync(fullPath)) continue;
   
-  const files = fs.readdirSync(fullPath).filter(f => f.endsWith('.js'));
+  const files = fs.readdirSync(fullPath).filter(f => f.endsWith('.js') || f.endsWith('.mjs'));
   for (const file of files) {
     const filePath = path.join(fullPath, file);
     try {
