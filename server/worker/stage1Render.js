@@ -416,9 +416,14 @@ async function _runStage1Pipeline({
           }
 
           if (activeStreamUrl) {
+            // Sampling padat penuh sesuai konfigurasi (rasio 1.5s/frame): 5 menit = 200 frame,
+            // 6 menit = 240 frame, dst. Cap absolut 500 agar video durasi panjang tidak OOM.
+            // (Dulu hardcoded 42 -> hanya ~40 frame terpakai, inkonsisten dgn jalur kandidat & cache.)
+            const targetDur = Number(meta.duration) || 300;
+            const targetMaxFrames = Math.min(500, Math.max(15, Math.floor(targetDur / 1.5)));
             const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
               duration: meta.duration,
-              maxSampleFrames: 42,
+              maxSampleFrames: targetMaxFrames,
               onProgress: updateProgress,
             });
             if (res?.frames && res.frames.length >= 5) {
