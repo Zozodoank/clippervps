@@ -132,10 +132,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Directories
-const tempDir = path.join(__dirname, 'temp');
-const outputDir = path.join(__dirname, 'output');
-const uploadsDir = path.join(tempDir, 'uploads');
-const rejectedYunetDir = path.join(__dirname, 'rejected_frames', 'yunet');
+import { tempDir, outputDir, uploadsDir, rejectedYunetDir } from './utils/paths.js';
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });

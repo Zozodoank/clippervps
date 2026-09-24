@@ -6,16 +6,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load .env from multiple candidate paths. Keep server/.env as the primary
-// Termux/local source, but still accept root-level .env files for portability.
-const envCandidates = [
-  path.join(__dirname, '..', '.env'),
-  path.join(__dirname, '..', '.env.txt'),
-  path.join(__dirname, '..', '..', '.env'),
-  path.join(__dirname, '..', '..', '.env.txt'),
-  path.join(process.cwd(), '.env'),
-  path.join(process.cwd(), '.env.txt')
-];
+import { envCandidates } from './paths.js';
 
 const PLACEHOLDER_ENV_VALUES = new Set([
   '',
