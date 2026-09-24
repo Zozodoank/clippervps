@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
-import { spawn, execSync, exec } from 'child_process';
+import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { extractFrames } from '../services/frameExtractor.js';
@@ -43,9 +43,7 @@ import {
   filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
   callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames,
-  extractSingleFrameAsync,
-  auditRealMotionFromFrames
+  sampleDenseClustersAroundCleanFrames
 } from '../services/videoFilterService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
@@ -94,6 +92,54 @@ import { processJobVoiceover, runProfessionalFinalQcWithRepair } from './finaliz
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Helper functions (defined locally — not exported from any service module)
+function auditRealMotionFromFrames(framePaths = []) {
+  const paths = Array.isArray(framePaths) ? framePaths.filter(Boolean) : [];
+  if (paths.length < 4) return { checked: false, likelyStatic: false, similarities: [] };
+  const ffmpegPath = getFFmpegPath();
+  const similarities = [];
+  for (let i = 1; i < paths.length; i++) {
+    try {
+      const res = spawnSync(ffmpegPath, [
+        '-hide_banner', '-loglevel', 'error',
+        '-i', paths[i - 1],
+        '-i', paths[i],
+        '-lavfi', 'ssim=stats_file=-',
+        '-f', 'null', '-'
+      ], { encoding: 'utf8', timeout: 5000 });
+      const text = String(res.stderr || '') + '\n' + String(res.stdout || '');
+      const matches = [...text.matchAll(/All:([0-9.]+)/g)];
+      const last = matches.length ? Number(matches[matches.length - 1][1]) : NaN;
+      if (Number.isFinite(last)) similarities.push(last);
+    } catch {}
+  }
+  if (similarities.length < 3) return { checked: false, likelyStatic: false, similarities };
+  const sorted = [...similarities].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)];
+  const verySimilarCount = similarities.filter(v => v >= 0.985).length;
+  const likelyStatic = verySimilarCount >= Math.max(3, Math.ceil(similarities.length * 0.70));
+  return { checked: true, likelyStatic, similarities, median };
+}
+
+function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const ffmpegPath = getFFmpegPath();
+    const proc = spawn(ffmpegPath, [
+      '-y', '-ss', String(timestampSec), '-i', videoPath,
+      '-vframes', '1', '-q:v', '2', outputPath,
+    ], { stdio: 'ignore' });
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      resolve(false);
+    }, timeoutMs);
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 && fs.existsSync(outputPath));
+    });
+    proc.on('error', () => { clearTimeout(timer); resolve(false); });
+  });
+}
 
 async function _runStage1Pipeline({
   jobId,
