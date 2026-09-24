@@ -100,6 +100,7 @@ import {
   choosePreferredCandidateSet
 } from './services/professionalPipelineService.js';
 import { runFinalMasterQc } from './services/finalMasterQcService.js';
+import { jobsFilePath, activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, publicAutoRetryState, publicAutoRunState, updateAutoRun, getLatestAutoRun } from './store/jobStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -190,7 +191,6 @@ const PORT = process.env.PORT || 5000;
 const tempDir = path.join(__dirname, 'temp');
 const outputDir = path.join(__dirname, 'output');
 const uploadsDir = path.join(tempDir, 'uploads');
-const jobsFilePath = path.join(__dirname, 'jobs.json');
 const rejectedYunetDir = path.join(__dirname, 'rejected_frames', 'yunet');
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -381,91 +381,16 @@ function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs 
 // ─── Persistent Job Store ────────────────────────────────────────────────────
 
 /** In-memory stores */
-const activeJobs = new Map();
-const jobProgress = new Map();
-const autoRuns = new Map();
-const autoRetryRuns = new Map();
 
 /** Sanitizes a job object so sensitive user API keys are never written to disk */
-function sanitizeJobForDisk(job) {
-  if (!job || typeof job !== 'object') return job;
-  const clone = { ...job };
-  delete clone.geminiApiKey;
-  delete clone.apiKey;
-  delete clone.openRouterApiKey;
-  return clone;
-}
 
 /** Atomically writes JSON to disk to avoid 0-byte corruptions on crash/restart */
-function atomicWriteJsonSync(filePath, data) {
-  const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
-  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tmpPath, filePath);
-}
 
 /** Load jobs from disk into memory without losing history */
-function loadJobsFromDisk() {
-  try {
-    if (fs.existsSync(jobsFilePath)) {
-      const raw = fs.readFileSync(jobsFilePath, 'utf-8');
-      const obj = JSON.parse(raw);
-      let modified = false;
-      for (const [jobId, jobData] of Object.entries(obj)) {
-        if (jobData.geminiApiKey || jobData.apiKey || jobData.openRouterApiKey) {
-          delete jobData.geminiApiKey;
-          delete jobData.apiKey;
-          delete jobData.openRouterApiKey;
-          modified = true;
-        }
-        // Jangan hapus job apapun agar riwayat history pengguna tidak hilang!
-        // Jika status masih 'running' saat server start, ubah menjadi 'stopped'
-        if (jobData.stage === 'running') {
-          jobData.stage = 'stopped';
-          jobData.message = 'Proses dihentikan karena server di-restart.';
-          modified = true;
-        }
-        activeJobs.set(jobId, jobData);
-      }
-      if (modified) {
-        atomicWriteJsonSync(jobsFilePath, obj);
-      }
-      console.log(`[Jobs] Loaded ${activeJobs.size} persisted job(s) from disk.`);
-    }
-  } catch (err) {
-    console.warn('[Jobs] Could not load jobs.json:', err.message);
-  }
-}
 
 /** Save a single job entry to disk */
-function persistJob(jobId, jobData) {
-  try {
-    let existing = {};
-    if (fs.existsSync(jobsFilePath)) {
-      existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
-    }
-    const cleanJob = sanitizeJobForDisk(jobData);
-    existing[jobId] = {
-      ...cleanJob,
-      updatedAt: new Date().toISOString(),
-    };
-    atomicWriteJsonSync(jobsFilePath, existing);
-  } catch (err) {
-    console.warn(`[Jobs] Could not persist job ${jobId}:`, err.message);
-  }
-}
 
 /** Delete a job from disk */
-function deletePersistedJob(jobId) {
-  try {
-    if (fs.existsSync(jobsFilePath)) {
-      const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
-      delete existing[jobId];
-      atomicWriteJsonSync(jobsFilePath, existing);
-    }
-  } catch (err) {
-    console.warn(`[Jobs] Could not delete job ${jobId} from disk:`, err.message);
-  }
-}
 
 loadJobsFromDisk();
 
@@ -815,13 +740,6 @@ app.delete('/api/jobs/:jobId', (req, res) => {
   res.json({ success: true, jobId });
 });
 
-function updateJobProgress(jobId, data) {
-  const payload = typeof data === 'string'
-    ? { step: 'processing', message: data, progress: 50, jobId, status: 'running' }
-    : { status: 'running', ...data, jobId };
-  jobProgress.set(jobId, payload);
-  console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message || ''}`);
-}
 
 // 3b. Retry / Regenerate an existing completed or failed job with fresh 1080p video & voiceover
 app.post('/api/jobs/:jobId/retry', async (req, res) => {
@@ -948,18 +866,6 @@ app.post('/api/jobs/:jobId/retry', async (req, res) => {
 
 // ─── 3c. Auto Retry Engine for Exact Product Match ───────────────────────────
 
-function publicAutoRetryState(run) {
-  if (!run) return { status: 'idle' };
-  return {
-    jobId: run.jobId,
-    status: run.status,
-    attemptCount: run.attemptCount || 0,
-    currentVideoTitle: run.currentVideoTitle || '',
-    message: run.message || '',
-    startedAt: run.startedAt,
-    updatedAt: run.updatedAt,
-  };
-}
 
 async function runAutoRetryWorker(jobId, run) {
   try {
@@ -3656,38 +3562,8 @@ app.post('/api/generate', async (req, res) => {
 
 // ─── Auto Mode State & Endpoints ─────────────────────────────────────────────
 
-function publicAutoRunState(run) {
-  const dailyStats = getDailyOutputVideoStats();
-  if (!run) return { status: 'idle', dailyStats };
-  return {
-    runId: run.runId,
-    status: run.status,
-    maxJobs: run.maxJobs,
-    successfulJobs: run.successfulJobs,
-    failedJobs: run.failedJobs,
-    skippedProducts: run.skippedProducts,
-    currentJobId: run.currentJobId,
-    currentProductTitle: run.currentProductTitle,
-    message: run.message,
-    progress: run.progress,
-    startedAt: run.startedAt,
-    updatedAt: run.updatedAt,
-    finishedAt: run.finishedAt || null,
-    failures: run.failures.slice(-10),
-    dailyStats,
-  };
-}
 
-function updateAutoRun(run, patch) {
-  Object.assign(run, patch, { updatedAt: new Date().toISOString() });
-  autoRuns.set(run.runId, run);
-  console.log(`[Auto ${run.runId}] [${run.progress || 0}%] ${run.message || run.status}`);
-}
 
-function getLatestAutoRun() {
-  const all = Array.from(autoRuns.values()).sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
-  return all[0] || null;
-}
 
 async function runAutoStage1Worker(run) {
   try {
