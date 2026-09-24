@@ -14,6 +14,7 @@ export const NICHE_PRESETS = {
     tagline: 'Video affiliate alat dapur, perabot praktis & pembersih faceless hands-on.',
     visualFocus: 'Demonstrasi alat dapur fisik pada bahan masakan, wajan, kompor, atau meja.',
     badgeColor: '#10b981',
+    outroBumper: 'kitchen_outro.mp4',
     slotsConfig: [
       {
         slot: 1,
@@ -179,6 +180,7 @@ export const NICHE_PRESETS = {
     tagline: 'Video YouTube Shorts review smartphone, spesifikasi kencang, gaming & B-roll kamera faceless.',
     visualFocus: 'B-roll fisik smartphone: bodi belakang mewah, bezel layar tipis, scrolling AMOLED 120Hz, performa gaming, dan uji kamera outdoor/still photo.',
     badgeColor: '#3b82f6',
+    outroBumper: 'gadget_outro.mp4',
     slotsConfig: [
       {
         slot: 1,

@@ -639,3 +639,36 @@ function mergeAudioOnlyFallback({
     reject(new Error(`Failed to spawn FFmpeg for fallback merge: ${err.message}`));
   });
 }
+
+/**
+ * Menambahkan video bumper outro ke akhir video menggunakan FFmpeg concat demuxer (lossless).
+ */
+export async function appendBumperVideo({ mainVideoPath, bumperVideoPath, outputVideoPath }) {
+  const ffmpegPath = getFFmpegPath();
+  const outDir = path.dirname(outputVideoPath);
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+
+  const listPath = path.join(outDir, `concat_list_${Date.now()}.txt`);
+  const formatPath = (p) => p.replace(/\\\\/g, '/').replace(/'/g, "'\\\\''");
+  const listContent = `file '${formatPath(mainVideoPath)}'\nfile '${formatPath(bumperVideoPath)}'\n`;
+  fs.writeFileSync(listPath, listContent, 'utf8');
+
+  return new Promise((resolve, reject) => {
+    const args = ['-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', '-y', outputVideoPath];
+    const proc = spawn(ffmpegPath, args);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      try { fs.unlinkSync(listPath); } catch(e) {}
+      if (code === 0 && fs.existsSync(outputVideoPath)) {
+        resolve({ success: true, finalPath: outputVideoPath });
+      } else {
+        reject(new Error(`Gagal menempelkan bumper video: ${stderr.slice(-300)}`));
+      }
+    });
+    proc.on('error', (err) => {
+      try { fs.unlinkSync(listPath); } catch(e) {}
+      reject(new Error(`Gagal spawn FFmpeg untuk bumper: ${err.message}`));
+    });
+  });
+}
