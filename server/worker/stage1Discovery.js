@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import { spawn, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
-import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
+import { downloadYouTubeVideo, extractVideoId, isLocalPortListening } from '../services/downloader.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
   selectHighlightWithAI,
@@ -68,7 +68,8 @@ import {
   isKeywordUsed,
   isProductTitleUsed,
   getUsedKeywordsStats,
-  clearUsedKeywords
+  clearUsedKeywords,
+  searchMultiEngineVideos
 } from '../services/discoveryService.js';
 import { getAllNiches, getNichePreset } from '../config/nichePresets.js';
 import {

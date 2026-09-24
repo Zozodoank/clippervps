@@ -44,7 +44,7 @@ import {
   callAIGatekeeperMicroservice,
   sampleDenseClustersAroundCleanFrames
 } from '../services/videoFilterService.js';
-import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
+import { classifyPipelineError, checkYouTubeHealth, getPublicIpAddress } from '../services/networkDiagnosticService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
 import { cleanupTempFiles, deleteJobTempDirectory, deleteJobFiles } from '../services/cleaner.js';
 import {

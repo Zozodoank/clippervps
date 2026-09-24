@@ -16,7 +16,8 @@ import {
   formatSeconds,
   getDynamicProductHookFallback,
   verifyProductCandidateWithAI,
-  verifyFinalRenderedFramesWithAI
+  verifyFinalRenderedFramesWithAI,
+  getDirectGeminiApiKey
 } from '../services/aiService.js';
 import { generateSrtSubtitles } from '../services/subtitleService.js';
 import { loadEnglishDictionary, saveToEnglishDictionary } from '../services/dictionaryService.js';
@@ -42,7 +43,9 @@ import {
   filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
   callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
+  sampleDenseClustersAroundCleanFrames,
+  extractSingleFrameAsync,
+  auditRealMotionFromFrames
 } from '../services/videoFilterService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
@@ -68,7 +71,8 @@ import {
   isKeywordUsed,
   isProductTitleUsed,
   getUsedKeywordsStats,
-  clearUsedKeywords
+  clearUsedKeywords,
+  searchMultiEngineVideos
 } from '../services/discoveryService.js';
 import { getAllNiches, getNichePreset } from '../config/nichePresets.js';
 import {
@@ -86,7 +90,7 @@ import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsed
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../services/quotaService.js';
 
 import { tempDir, outputDir, uploadsDir, rejectedYunetDir, cookiesPath, serverRoot } from '../utils/paths.js';
-import { processJobVoiceover } from './finalizationService.js';
+import { processJobVoiceover, runProfessionalFinalQcWithRepair } from './finalizationService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
