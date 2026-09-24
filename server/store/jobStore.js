@@ -136,13 +136,20 @@ export function deletePersistedJob(jobId) {
 
 export function loadJobsFromDisk() {
   console.log(`[Jobs] SQLite Database initialized. Active jobs: ${activeJobs.size}`);
-  // Reset stuck jobs
+  // Reset stuck jobs. PENTING: kumpulkan dulu dalam array, baru tulis DI LUAR iterasi.
+  // activeJobs.entries() memakai better-sqlite3 .iterate(); memanggil activeJobs.set()
+  // (INSERT/REPLACE) sementara cursor iterate() masih terbuka pada koneksi yang sama
+  // melempar "This database connection is busy executing a query" dan menjatuhkan boot.
+  const stuckJobs = [];
   for (const [jobId, jobData] of activeJobs.entries()) {
     if (jobData.stage === 'running') {
-      jobData.stage = 'stopped';
-      jobData.message = 'Proses dihentikan karena server di-restart.';
-      activeJobs.set(jobId, jobData);
+      stuckJobs.push([jobId, jobData]);
     }
+  }
+  for (const [jobId, jobData] of stuckJobs) {
+    jobData.stage = 'stopped';
+    jobData.message = 'Proses dihentikan karena server di-restart.';
+    activeJobs.set(jobId, jobData);
   }
 }
 

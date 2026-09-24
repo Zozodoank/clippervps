@@ -43,4 +43,18 @@ describe('Modules Wiring Smoke Test', () => {
     expect(activeJobs).toBeDefined();
     expect(typeof activeJobs.size).toBe('number');
   });
+
+  it('loadJobsFromDisk resets a stuck "running" job WITHOUT throwing (better-sqlite3 iterate+write regression)', () => {
+    const jobId = 'test_stuck_running';
+    activeJobs.set(jobId, { id: jobId, stage: 'running', message: 'sedang diproses' });
+    try {
+      // Old code wrote via activeJobs.set() inside activeJobs.entries() (.iterate()) and
+      // threw "This database connection is busy executing a query", crashing boot.
+      expect(() => loadJobsFromDisk()).not.toThrow();
+      const after = activeJobs.get(jobId);
+      expect(after.stage).toBe('stopped');
+    } finally {
+      activeJobs.delete(jobId);
+    }
+  });
 });
