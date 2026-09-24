@@ -151,6 +151,38 @@ export function loadJobsFromDisk() {
     jobData.message = 'Proses dihentikan karena server di-restart.';
     activeJobs.set(jobId, jobData);
   }
+
+  // Reset autoRuns/autoRetryRuns non-terminal yang YATIM. Setelah proses restart, TIDAK ADA
+  // worker yang berjalan (worker hanya dibuat oleh /auto/start di proses ini), sehingga baris
+  // auto_runs dengan status 'starting'/'running'/'stopping' yang tersimpan di DB adalah sisa
+  // proses lama. Tanpa rekonsiliasi ini, AutoModePanel (via /api/auto/status) menampilkan
+  // hantu "Auto Mode berjalan" padahal log diam, dan /auto/start bisa terblokir.
+  const NON_TERMINAL = new Set(['starting', 'running', 'stopping']);
+  const staleRuns = [];
+  for (const [runId, run] of autoRuns.entries()) {
+    if (run && NON_TERMINAL.has(run.status)) staleRuns.push([runId, run]);
+  }
+  for (const [runId, run] of staleRuns) {
+    const nowIso = new Date().toISOString();
+    run.status = 'stopped';
+    run.message = 'Auto Mode dihentikan karena server di-restart (tidak ada worker aktif).';
+    run.updatedAt = nowIso;
+    run.finishedAt = run.finishedAt || nowIso;
+    autoRuns.set(runId, run);
+  }
+  const staleRetries = [];
+  for (const [runId, run] of autoRetryRuns.entries()) {
+    if (run && NON_TERMINAL.has(run.status)) staleRetries.push([runId, run]);
+  }
+  for (const [runId, run] of staleRetries) {
+    run.status = 'stopped';
+    run.message = 'Auto Retry dihentikan karena server di-restart (tidak ada worker aktif).';
+    run.updatedAt = new Date().toISOString();
+    autoRetryRuns.set(runId, run);
+  }
+  if (staleRuns.length || staleRetries.length) {
+    console.log(`[Jobs] Rekonsiliasi ${staleRuns.length} autoRun & ${staleRetries.length} autoRetry yatim -> stopped.`);
+  }
 }
 
 export function updateJobProgress(jobId, data) {

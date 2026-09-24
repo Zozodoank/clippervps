@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../services/quotaService.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../services/antiDupService.js';
-import { loadJobsFromDisk, activeJobs } from '../store/jobStore.js';
+import { loadJobsFromDisk, activeJobs, autoRuns } from '../store/jobStore.js';
 
 import { serverRoot, outputDir, tempDir, uploadsDir, rejectedYunetDir, cookiesPath } from '../utils/paths.js';
 
@@ -55,6 +55,17 @@ describe('Modules Wiring Smoke Test', () => {
       expect(after.stage).toBe('stopped');
     } finally {
       activeJobs.delete(jobId);
+    }
+  });
+
+  it('loadJobsFromDisk reconciles a stale non-terminal autoRun to "stopped" (phantom Auto Mode fix)', () => {
+    const runId = 'test_orphan_autorun';
+    autoRuns.set(runId, { runId, status: 'stopping', failures: [], startedAt: new Date().toISOString() });
+    try {
+      expect(() => loadJobsFromDisk()).not.toThrow();
+      expect(autoRuns.get(runId).status).toBe('stopped');
+    } finally {
+      autoRuns.delete(runId);
     }
   });
 });
