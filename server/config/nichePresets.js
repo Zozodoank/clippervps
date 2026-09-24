@@ -181,6 +181,7 @@ export const NICHE_PRESETS = {
     visualFocus: 'B-roll fisik smartphone: bodi belakang mewah, bezel layar tipis, scrolling AMOLED 120Hz, performa gaming, dan uji kamera outdoor/still photo.',
     badgeColor: '#3b82f6',
     outroBumper: 'gadget_outro.mp4',
+    strictSceneVoSync: true,
     slotsConfig: [
       {
         slot: 1,
@@ -225,7 +226,8 @@ export const NICHE_PRESETS = {
         label: 'Uji Kamera Jernih: Video 4K & Foto Tajam',
         role: 'action_demo',
         datasetTag: 'valid_result',
-        description: 'Demonstrasi kamera: rekaman video stabil 4K 30fps atau sample foto jepretan malam/portrait jernih (didukung still photo zoom).'
+        description: 'Demonstrasi kamera: rekaman video stabil 4K 30fps atau sample foto jepretan malam/portrait jernih (didukung still photo zoom).',
+        facePolicy: 'presenter_only'
       },
       {
         slot: 6,
@@ -455,4 +457,20 @@ export function generateCombinatorialGadgetKeywords(count = 100, excludedSet = n
   }
 
   return Array.from(results);
+}
+
+/**
+ * Returns the facePolicy for a specific slot key within a niche preset.
+ * Defaults to 'strict' (standard blocking behaviour) if the slot does not
+ * declare an explicit facePolicy — ensuring kitchen_tools and any future
+ * niche without the field are completely unaffected.
+ *
+ * @param {object} nichePreset - A resolved preset object from getNichePreset().
+ * @param {string} slotKey    - The slot key, e.g. 'clip5_action_demo'.
+ * @returns {'strict'|'presenter_only'} The effective face policy for that slot.
+ */
+export function getSlotFacePolicy(nichePreset, slotKey) {
+  if (!nichePreset || !Array.isArray(nichePreset.slotsConfig)) return 'strict';
+  const slot = nichePreset.slotsConfig.find(s => s.key === slotKey);
+  return (slot && slot.facePolicy) ? slot.facePolicy : 'strict';
 }
