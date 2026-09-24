@@ -10,6 +10,7 @@
     "server": "npm --prefix server start",
     "server:dev": "npm --prefix server run dev",
     "client": "npm --prefix client run dev",
-    "dev": "node dev-runner.js"
+    "dev": "node dev-runner.js",
+    "dev:polling": "cross-env CHOKIDAR_USEPOLLING=1 node dev-runner.js"
   }
 }

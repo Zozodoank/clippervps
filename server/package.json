@@ -8,7 +8,8 @@
     "start": "node server.js",
     "dev": "node server.js",
     "test": "vitest",
-    "check:syntax": "node scripts/checkSyntax.mjs"
+    "check:syntax": "node scripts/checkSyntax.mjs",
+    "dev:polling": "cross-env CHOKIDAR_USEPOLLING=1 node server.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

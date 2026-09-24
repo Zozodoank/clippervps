@@ -132,7 +132,7 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Directories
-import { tempDir, outputDir, uploadsDir, rejectedYunetDir } from './utils/paths.js';
+import { tempDir, outputDir, uploadsDir, rejectedYunetDir, cookiesPath } from './utils/paths.js';
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
@@ -504,6 +504,13 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n======================================================`);
   console.log(`🎬 Local AI Affiliate Clipper Backend Server`);
   console.log(`🌐 Running at: http://localhost:${PORT}`);
+  console.log(`🖥️  Environment: ${process.platform} ${process.arch} (Node ${process.version})`);
+  console.log(`🍪 Cookies Found: ${fs.existsSync(cookiesPath) ? 'Yes (yt-dlp auth OK)' : 'No (download might fail)'}`);
+  if (process.arch === 'arm') {
+    console.log(`\n🚨 [WARNING] Node.js 32-bit (arm) terdeteksi!`);
+    console.log(`   Versi Node baru mungkin crash di proot-distro ARM32 (bug libuv armv7).`);
+    console.log(`   Sangat disarankan memakai OS proot-distro arm64 (glibc) atau Node v16.x.\n`);
+  }
   if (loadedEnvFiles.length) {
     console.log(`[Env] Loaded: ${loadedEnvFiles.map((envPath) => path.relative(path.resolve(__dirname, '..'), envPath).replace(/\\/g, '/')).join(', ')}`);
   }
