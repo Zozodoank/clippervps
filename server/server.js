@@ -4021,6 +4021,11 @@ async function runAutoStage1Worker(run) {
       if (!jobSuccess) {
         run.failedJobs++;
         console.warn(`[Auto] 🛑 Job untuk "${searchKeyword}" gagal diproses (misal: karena tertolak Final QC akibat watermark). Auto Mode melakukan "Self-Healing": melompati video ini dan lanjut mencari video bersih berikutnya.`);
+        
+        if (run.currentJobId) {
+          deleteJobTempDirectory(run.currentJobId, tempDir);
+        }
+
         updateAutoRun(run, {
           message: `⚠️ Job sebelumnya gagal (terkena AI Filter/Kotor). Melanjutkan ke pencarian video bersih berikutnya...`,
         });
