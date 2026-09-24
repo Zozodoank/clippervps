@@ -304,7 +304,8 @@ router.get('/open-folder', (req, res) => {
 // 10. Restart Server & Execute ./update.sh (Designed for VPS, Termux, Codespace & Local Dev)
 router.post('/restart', async (req, res) => {
   const { runUpdate = true, cleanReset = true } = req.body || {};
-  const rootDir = path.resolve(__dirname, '..');
+  // __dirname = server/api/routes -> repo root (tempat update.sh berada) = ../../..
+  const rootDir = path.resolve(__dirname, '../../..');
   const updateScriptPath = path.join(rootDir, 'update.sh');
 
   console.log(`[System] Received restart request (runUpdate=${runUpdate}, cleanReset=${cleanReset})...`);
@@ -351,7 +352,7 @@ router.post('/restart', async (req, res) => {
     try {
       console.log('[System] Membersihkan file cache sementara (riwayat jobs & video tetap aman)...');
       
-      if (fs.existsSync(tempUploads)) {
+      if (fs.existsSync(uploadsDir)) {
         const files = fs.readdirSync(uploadsDir);
         for (const file of files) {
           try { fs.unlinkSync(path.join(uploadsDir, file)); } catch {}
@@ -368,11 +369,12 @@ router.post('/restart', async (req, res) => {
     try {
       updateExitCode = await new Promise((resolve) => {
         const isWin = process.platform === 'win32';
-        // Di Linux: gunakan update.sh (git fetch + hard reset + npm install)
-        // Di Windows: langsung spawn 'git' tanpa shell mode (git.exe sudah ada di PATH)
+        // Di Linux/Termux: gunakan update.sh (pkill ffmpeg/yt-dlp + clean cache Vite + git fetch/reset --hard + npm install).
+        // Di Windows / saat update.sh tak tersedia: lakukan clean sync setara lewat git (fetch + hard reset) agar
+        // 100% sinkron tanpa konflik merge (sesuai janji "hard reset" di UI), dijalankan dari root repo.
         const child = !isWin && fs.existsSync(updateScriptPath)
           ? spawn('bash', [updateScriptPath], { cwd: rootDir })
-          : spawn('git', ['pull', 'origin', 'main'], { cwd: rootDir });
+          : spawn('git fetch origin main && git reset --hard origin/main', { cwd: rootDir, shell: true });
 
         child.stdout.on('data', (chunk) => { updateLog += chunk.toString(); });
         child.stderr.on('data', (chunk) => { updateLog += chunk.toString(); });
