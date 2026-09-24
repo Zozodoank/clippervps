@@ -1,28 +1,27 @@
-# 🎬 AI Affiliate Clipper VPS
+# 🎬 AI Affiliate Clipper
 
-> 🚀 **Project Status: Deployed on Ubuntu 22.04 LTS VPS**  
+> 💻 **Project Status: Berjalan sepenuhnya lokal (PC Windows & HP Android/Termux)**  
 > Repository GitHub: [https://github.com/Zozodoank/clippervps.git](https://github.com/Zozodoank/clippervps.git)  
-> Server Host: `208.76.40.194` | SSH Port: `14115` | Managed by **PM2** & **Cloudflare Tunnel**
+> Semua proses dieksekusi langsung di perangkat Anda — tanpa server cloud.
 
-Web application berbasis **React (Vite)** dan **Node.js (Express)** yang bertugas mengotomatisasi pengubahan video YouTube menjadi **video reels vertikal 9:16 viral & high-converting** untuk promosi **Shopee Affiliate Marketing**. Seluruh pemrosesan berat (download YouTube 1080p, ekstraksi frame, FFmpeg rendering, dan AI vision) dijalankan di server VPS cloud.
+Web application berbasis **React (Vite)** dan **Node.js (Express)** yang bertugas mengotomatisasi pengubahan video YouTube menjadi **video reels vertikal 9:16 viral & high-converting** untuk promosi **Shopee Affiliate Marketing**. Seluruh pemrosesan berat (download YouTube 1080p, ekstraksi frame, FFmpeg rendering, dan AI vision) dijalankan langsung di perangkat Anda (tanpa server cloud).
 
 ---
 
-## ⚡ Cara Menjalankan & Mengontrol VPS
+## ⚡ Cara Menjalankan Secara Lokal
 
-### 1. Dari Komputer / Laptop Windows (Metode Praktis)
-Cukup klik dua kali file **[`JALANKAN_VPS.cmd`](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/JALANKAN_VPS.cmd)** di folder ini:
-* **Menu [1]**: Jalankan aplikasi interaktif & otomatis forward port ke browser `http://localhost:3000`. Script otomatis memeriksa dan menarik update terbaru dari GitHub (`git fetch & git pull`) sebelum aplikasi dijalankan.
-* **Menu [2]**: Memantau log real-time server VPS (PM2).
-* **Menu [3]**: Menampilkan link publik Cloudflare Tunnel aktif.
-* **Menu [4]**: Membuka terminal bash VPS.
+### 1. Dari Komputer / Laptop Windows (Lokal)
+Jalankan dari terminal di folder proyek:
+```bash
+npm install
+npm run dev
+```
+`dev-runner.js` otomatis menyalakan Backend (`:5000`), Frontend (`:3000`), dan Gatekeeper (`:5050`). Buka browser di `http://localhost:3000`.
 
 ### 2. Dari HP Android (Termux)
-Panduan lengkap menjalankan dan menghubungkan dari HP Android dapat dilihat di:  
+Panduan lengkap menjalankan langsung di HP Android (Termux) dapat dilihat di:  
 👉 **[CARA_JALANKAN_TERMUX.md](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/CARA_JALANKAN_TERMUX.md)**
 
-### 3. Akses Publik (Cloudflare Tunnel)
-Aplikasi selalu aktif di background server VPS dan dapat diakses dari browser manapun melalui URL HTTPS publik yang tercatat di file `.env` (`CLOUDFLARE_TUNNEL_URL`).
 
 ---
 
@@ -160,7 +159,7 @@ npm run dev
 
 ---
 
-## ☁️ Panduan Codespaces & Termux (Hemat Kuota)
+## 💾 Panduan Hemat Kuota (Smart Two-Stage Download)
 
 Aplikasi secara default mengaktifkan fitur **Smart Two-Stage Download** untuk menghemat kuota internet hingga **90%**:
 1. **Tahap 1 (Analisa Ringan 360p):** Video diunduh dalam format ultra-ringan (hanya berukuran **~1 - 3 MB**) untuk diekstrak framenya dan dianalisis oleh AI Vision.

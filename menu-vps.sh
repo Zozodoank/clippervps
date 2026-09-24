@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Script Control Panel & Live Monitor untuk Termux / Linux Shell
+# Script Control Panel & Live Monitor untuk Termux / Linux Shell (Lokal)
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
@@ -7,10 +7,10 @@ cd "$DIR"
 while true; do
   clear
   echo "====================================================================="
-  echo "       🎬 CLIPPER VPS - CONTROL PANEL & MONITOR (TERMUX)"
+  echo "       🎬 CLIPPER - CONTROL PANEL & MONITOR (TERMUX)"
   echo "====================================================================="
   echo "  Status Service Background:"
-  pm2 list | grep -E "clipper|tunnel|gatekeeper" || pm2 list
+  pm2 list | grep -E "clipper|gatekeeper" || pm2 list
   echo "====================================================================="
   echo ""
   echo "  [1] 📋 LIHAT LOG REAL-TIME BACKGROUND (PM2 LOGS)"
@@ -19,17 +19,14 @@ while true; do
   echo "  [2] 🚀 JALANKAN DEV-RUNNER INTERAKTIF (FOREGROUND)"
   echo "      - Menjalankan node dev-runner.js langsung di layar Termux"
   echo ""
-  echo "  [3] 🌐 LIHAT LINK AKSES PUBLIK (Cloudflare Tunnel)"
-  echo "      - Mendapatkan link HTTPS untuk dibuka langsung di browser HP"
+  echo "  [3] 🔄 RESTART SERVICE (PM2 Restart)"
   echo ""
-  echo "  [4] 🔄 RESTART SERVICE DI VPS (PM2 Restart)"
-  echo ""
-  echo "  [5] 📊 CEK PENGGUNAAN RESOURCE (RAM, CPU, Disk)"
+  echo "  [4] 📊 CEK PENGGUNAAN RESOURCE (RAM, CPU, Disk)"
   echo ""
   echo "  [0] ❌ KELUAR KE SHELL BIASA"
   echo ""
   echo "====================================================================="
-  read -p "Pilih menu [1-5, 0]: " opt
+  read -p "Pilih menu [1-4, 0]: " opt
 
   case $opt in
     1)
@@ -59,33 +56,16 @@ while true; do
       ;;
     3)
       clear
-      echo "====================================================================="
-      echo "🌐 URL AKSES PUBLIK CLOUDFLARE TUNNEL"
-      echo "====================================================================="
-      URL=$(grep 'CLOUDFLARE_TUNNEL_URL' "$DIR/.env" | cut -d '=' -f2)
-      if [ -z "$URL" ]; then
-        URL=$(pm2 logs tunnel --lines 40 --nostream | grep -o 'https://.*\.trycloudflare\.com' | tail -n 1)
-      fi
-      echo ""
-      echo "Link HTTPS Aktif:"
-      echo "👉 $URL"
-      echo ""
-      echo "Salin link di atas dan buka di browser HP Anda."
-      echo "====================================================================="
-      read -p "Tekan Enter untuk kembali ke menu..."
-      ;;
-    4)
-      clear
-      echo "🔄 Merestart service clipper, tunnel & gatekeeper..."
+      echo "🔄 Merestart service clipper & gatekeeper..."
       git fetch origin main && git pull origin main
       pm2 restart all
       echo "✅ Selesai!"
       read -p "Tekan Enter untuk kembali ke menu..."
       ;;
-    5)
+    4)
       clear
       echo "====================================================================="
-      echo "📊 PENGGUNAAN RESOURCE VPS"
+      echo "📊 PENGGUNAAN RESOURCE (LOKAL)"
       echo "====================================================================="
       echo "=== RAM ==="
       free -h
@@ -100,7 +80,7 @@ while true; do
       ;;
     0)
       clear
-      echo "Keluar ke shell. Untuk membuka menu lagi, ketik: ~/clipperVPS/menu-vps.sh"
+      echo "Keluar ke shell. Untuk membuka menu lagi, ketik: $DIR/menu-vps.sh"
       break
       ;;
     *)

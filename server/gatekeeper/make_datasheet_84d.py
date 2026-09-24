@@ -120,6 +120,6 @@ def process_frames(frames_dir, video_id="84d2721052"):
     print("═══════════════════════════════════════════════════════════")
 
 if __name__ == "__main__":
-    frames_dir = sys.argv[1] if len(sys.argv) > 1 else "/home/ubuntu/clipperVPS/server/temp/inspect_84d2721052"
+    frames_dir = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "temp", "inspect_84d2721052")
     vid_id = sys.argv[2] if len(sys.argv) > 2 else "84d2721052"
     process_frames(frames_dir, vid_id)
