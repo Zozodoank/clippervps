@@ -173,7 +173,7 @@ router.get('/jobs', (req, res) => {
       ttsFallbackModel: job.ttsFallbackModel || 'gemini-2.5-flash-preview-tts',
       voiceoverAudioUrl: job.voiceoverAudioUrl || null,
       sampleContext: job.sampleContext || null,
-      caption: stripShopeeLinkFromCaption(job.caption || '', job),
+      caption: sanitizeCaptionText(job.caption || '', job),
       highlight: job.highlight || null,
       productHook: job.productHook || '',
       videoTitle: job.videoTitle || job.productTitle || '',
