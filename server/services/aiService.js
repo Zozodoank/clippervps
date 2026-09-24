@@ -1,3 +1,7 @@
+import { repairJson, formatSeconds, normalizeClipPlan } from './ai/aiValidators.js';
+export { formatSeconds, normalizeClipPlan };
+import { defaultGeminiDirectModels, getDirectGeminiApiKey, getDirectGeminiClientConfig, getAiClientConfig, formatApiError, isQuotaError, isDailyQuotaExhaustedError, resolveImageBufferAndBase64 } from './ai/aiClient.js';
+export { defaultGeminiDirectModels, getDirectGeminiApiKey, getDirectGeminiClientConfig, isQuotaError, isDailyQuotaExhaustedError, resolveImageBufferAndBase64 };
 import { truncateProductDescription, getDynamicProductHookFallback, buildNicheProductCriterion, buildFaceAndMotionCriterion, formatEnrichedCaption, sanitizeScriptVocabulary, build7SlotStoryboardClips } from './ai/promptBuilders.js';
 export { truncateProductDescription, getDynamicProductHookFallback, buildNicheProductCriterion, buildFaceAndMotionCriterion, formatEnrichedCaption, sanitizeScriptVocabulary, build7SlotStoryboardClips };
 import OpenAI from 'openai';
@@ -16,200 +20,29 @@ import { getNichePreset } from '../config/nichePresets.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const envCandidates = [
-  path.join(__dirname, '..', '.env'),
-  path.join(__dirname, '..', '.env.txt'),
-  path.join(__dirname, '..', '..', '.env'),
-  path.join(__dirname, '..', '..', '.env.txt'),
-  path.join(process.cwd(), 'server', '.env'),
-  path.join(process.cwd(), 'server', '.env.txt'),
-  path.join(process.cwd(), '.env'),
-  path.join(process.cwd(), '.env.txt'),
-];
+// Moved to ai/aiClient.js
 
-function cleanEnvKey(key) {
-  if (!key) return '';
-  let cleaned = String(key).trim();
-  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
-    cleaned = cleaned.slice(1, -1).trim();
-  }
-  return cleaned;
-}
+// Moved to ai/aiClient.js
 
-function loadEnvFromDisk() {
-  for (const envPath of envCandidates) {
-    if (fs.existsSync(envPath)) {
-      try {
-        const raw = fs.readFileSync(envPath, 'utf8').replace(/^\uFEFF/, '');
-        const parsed = dotenv.parse(raw);
-        for (const [key, value] of Object.entries(parsed)) {
-          const cleaned = cleanEnvKey(value);
-          if (cleaned && !cleaned.startsWith('your_') && !cleaned.endsWith('_here')) {
-            process.env[key] = cleaned;
-            process.env[key.toUpperCase()] = cleaned;
-          }
-        }
-        // Manual line-by-line fallback parser (handles Android/Google Drive line endings & BOM)
-        const lines = raw.split(/\r?\n/);
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith('#')) continue;
-          const eqIdx = trimmed.indexOf('=');
-          if (eqIdx > 0) {
-            const k = trimmed.slice(0, eqIdx).replace(/^\uFEFF/, '').trim();
-            const v = cleanEnvKey(trimmed.slice(eqIdx + 1));
-            if (v && !v.startsWith('your_') && !v.endsWith('_here')) {
-              process.env[k] = v;
-              process.env[k.toUpperCase()] = v;
-            }
-          }
-        }
-      } catch (err) {
-        console.warn(`[Peringatan] Gagal membaca file ${envPath}: ${err.message}. (Jika ini di Termux, mungkin masalah izin/permission. Coba jalankan: chmod 644 ${envPath})`);
-      }
-    }
-  }
-}
+// Moved to ai/aiClient.js
 
-// Daftar model OpenRouter gratis 100% (tidak pernah memotong saldo / dilarang menggunakan openrouter/auto & minimax)
-const defaultOpenRouterModels = [
-  "openrouter/free",
-  "google/gemini-2.0-flash-exp:free",
-  "meta-llama/llama-3.2-11b-vision-instruct:free",
-  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"
-];
+// Moved to ai/aiClient.js
 
-function isBannedOpenRouterModel(modelName) {
-  const m = String(modelName || '').trim().toLowerCase();
-  return (
-    m === 'openrouter/auto' ||
-    m === 'openrouter:auto' ||
-    m === 'auto' ||
-    m.endsWith('/auto') ||
-    m.endsWith(':auto') ||
-    m.includes('minimax')
-  );
-}
+// Moved to ai/aiClient.js
 
-function getEffectiveOpenRouterModels() {
-  loadEnvFromDisk();
-  const customModel = (process.env.OPENROUTER_MODEL || '').trim();
-  const models = [];
-  if (customModel && !customModel.startsWith('your_') && !customModel.endsWith('_here')) {
-    if (isBannedOpenRouterModel(customModel)) {
-      console.warn(`[AIService] ⚠️ Model '${customModel}' DITOLAK / DILARANG karena dapat menguras saldo OpenRouter (berbayar/auto-routing). Menggunakan model gratis (:free) saja.`);
-    } else {
-      models.push(customModel);
-    }
-  }
-  for (const m of defaultOpenRouterModels) {
-    if (!models.includes(m) && !isBannedOpenRouterModel(m)) {
-      models.push(m);
-    }
-  }
-  return models;
-}
+// Moved to ai/aiClient.js
 
-function getOpenRouterKeys(apiKeyOverride) {
-  loadEnvFromDisk();
-  const keys = [];
-  if (apiKeyOverride) {
-    const cleaned = cleanEnvKey(apiKeyOverride);
-    if (cleaned && !cleaned.startsWith('your_') && !cleaned.endsWith('_here')) {
-      keys.push(cleaned);
-    }
-  }
+// Moved to ai/aiClient.js
 
-  const envKeys = Object.keys(process.env).filter(k => k.startsWith('OPENROUTER_API_KEY')).sort();
+// Moved to ai/aiClient.js
 
-  for (const k of envKeys) {
-    const cleaned = cleanEnvKey(process.env[k]);
-    if (cleaned && !cleaned.startsWith('your_') && !cleaned.endsWith('_here')) {
-      if (!keys.includes(cleaned)) keys.push(cleaned);
-    }
-  }
-  return keys;
-}
+// Moved to ai/aiClient.js
 
-let currentOpenRouterKeyIndex = 0;
+// Moved to ai/aiClient.js
 
-export const defaultGeminiDirectModels = [
-  'gemini-3.5-flash-lite',
-  'gemini-3.6-flash',
-  'gemini-3.1-flash-lite',
-  'gemini-flash-latest',
-  'gemini-3.5-flash',
-];
+// Moved to ai/aiClient.js
 
-export function getDirectGeminiApiKey(apiKeyOverride) {
-  loadEnvFromDisk();
-  if (apiKeyOverride) {
-    const cleaned = cleanEnvKey(apiKeyOverride);
-    if (cleaned.startsWith('AIzaSy')) return cleaned;
-  }
-  return cleanEnvKey(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '');
-}
-
-export function getDirectGeminiClientConfig({ apiKeyOverride } = {}) {
-  const apiKey = getDirectGeminiApiKey(apiKeyOverride);
-  if (!apiKey || apiKey.startsWith('your_') || apiKey.endsWith('_here')) return null;
-
-  return {
-    client: new OpenAI({
-      apiKey,
-      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
-      timeout: 35000,
-      maxRetries: 0,
-    }),
-    models: defaultGeminiDirectModels,
-    provider: 'Google Gemini Direct',
-  };
-}
-
-function getAiClientConfig({ apiKeyOverride, aiProvider } = {}) {
-  loadEnvFromDisk();
-
-  const reqProvider = (aiProvider || '').trim().toLowerCase();
-  const envEngine = (process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
-  const selectedEngine = reqProvider || envEngine || 'gemini';
-
-  // Pola 2: FFmpeg + OpenRouter (hanya jika dipilih secara eksplisit oleh pengguna, bukan fallback)
-  if (selectedEngine === 'openrouter') {
-    const openRouterKeys = getOpenRouterKeys(apiKeyOverride);
-    if (openRouterKeys.length === 0) {
-      throw new Error('OPENROUTER_API_KEY belum disetel di server/.env untuk Pola FFmpeg + OpenRouter.');
-    }
-    const safeIndex = currentOpenRouterKeyIndex % openRouterKeys.length;
-    currentOpenRouterKeyIndex++;
-
-    console.log(`[AIService] Initialize OpenRouter Client: Key=${openRouterKeys[safeIndex].substring(0, 10)}... (Models: ${getEffectiveOpenRouterModels().join(', ')})`);
-
-    return {
-      client: new OpenAI({
-        apiKey: openRouterKeys[safeIndex],
-        baseURL: 'https://openrouter.ai/api/v1',
-        timeout: 120000,
-        defaultHeaders: {
-          "HTTP-Referer": "https://github.com/affiliate-clipper",
-          "X-Title": "AI Affiliate Clipper",
-        }
-      }),
-      models: getEffectiveOpenRouterModels(),
-      provider: 'OpenRouter',
-      keyIndex: safeIndex,
-      totalKeys: openRouterKeys.length
-    };
-  }
-
-  // Pola 1: Gemini File API + Gemini Direct (Jadikan DEFAULT)
-  const geminiConf = getDirectGeminiClientConfig({ apiKeyOverride });
-  if (geminiConf) {
-    console.log(`[AIService] Initialize Direct Google Gemini Client (${geminiConf.models[0]})...`);
-    return geminiConf;
-  }
-
-  throw new Error('GEMINI_API_KEY belum disetel di server/.env untuk Pola Gemini File API + Gemini.');
-}
+// Moved to ai/aiClient.js
 
 const DEFAULT_REFRAME = {
   focusX: 0.5,
@@ -222,129 +55,15 @@ const DEFAULT_REFRAME = {
   notes: '',
 };
 
-/**
- * Helper to format AI API errors into clear Indonesian messages.
- */
-function formatApiError(err, modelName = 'AI', provider = 'AI') {
-  const status = err.status || err.statusCode;
-  const message = err.message || '';
+// Moved to ai/aiClient.js
 
-  if (status === 402 || message.toLowerCase().includes('insufficient') || message.toLowerCase().includes('balance') || message.toLowerCase().includes('quota') || message.toLowerCase().includes('credit')) {
-    return `Saldo / Kuota ${provider} API Anda tidak mencukupi. Silakan periksa akun ${provider} Anda.`;
-  }
-  if (status === 402 || message.toLowerCase().includes('more credits') || message.toLowerCase().includes('can only afford')) {
-    return `Saldo / Credit OpenRouter Anda tidak mencukupi untuk memproses video ini. Silakan lakukan top-up (Deposit) di https://openrouter.ai/settings/credits.`;
-  }
-  if (status === 401 || message.toLowerCase().includes('invalid api key') || message.toLowerCase().includes('unauthorized') || message.toLowerCase().includes('api_key_invalid')) {
-    return `${provider} API Key tidak valid atau tidak memiliki izin akses. Silakan periksa kembali API Key Anda di file server/.env.`;
-  }
-  if (status === 429 || message.toLowerCase().includes('rate limit') || message.toLowerCase().includes('resource_exhausted')) {
-    return `Batas frekuensi permintaan (Rate Limit) ${provider} tercapai. Silakan tunggu beberapa saat dan coba lagi.`;
-  }
-  if (status === 404 || message.toLowerCase().includes('model_not_found') || message.toLowerCase().includes('does not exist')) {
-    return `Semua model fallback gagal. Model terakhir yang dicoba ('${modelName}') tidak tersedia di akun ${provider} Anda.`;
-  }
-  return `${provider} API Error (${modelName}): ${message}`;
-}
-
-export function isQuotaError(err) {
-  if (!err) return false;
-  const status = err.status || err.statusCode;
-  const message = String(err.message || '').toLowerCase();
-  return (
-    status === 429 ||
-    status === 402 ||
-    message.includes('429') ||
-    message.includes('resource_exhausted') ||
-    message.includes('quota') ||
-    message.includes('kuota') ||
-    message.includes('rate limit') ||
-    message.includes('rate_limit') ||
-    message.includes('saldo') ||
-    message.includes('insufficient') ||
-    message.includes('credits') ||
-    message.includes('tokens')
-  );
-}
+// Moved to ai/aiClient.js
 
 // Moved truncateProductDescription to ai/promptBuilders.js
 
-export function isDailyQuotaExhaustedError(err) {
-  if (!err) return false;
-  const message = String(err.message || '').toLowerCase();
-  return (
-    message.includes('perday') ||
-    message.includes('per day') ||
-    message.includes('daily') ||
-    message.includes('requests per day') ||
-    (message.includes('quota') && message.includes('exceeded') && !message.includes('minute'))
-  );
-}
+// Moved to ai/aiClient.js
 
-/**
- * Resolves an image source (data URI, local file path, or remote URL)
- * into a base64 string and MIME type for AI multimodal vision input.
- */
-export async function resolveImageBufferAndBase64(imageSource) {
-  if (!imageSource || typeof imageSource !== 'string') return null;
-
-  try {
-    const trimmed = imageSource.trim();
-
-    // 1. Data URI (e.g. data:image/jpeg;base64,...)
-    if (trimmed.startsWith('data:image/')) {
-      const match = trimmed.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
-      if (match) {
-        return {
-          mimeType: match[1],
-          base64: match[2],
-          dataUri: trimmed,
-        };
-      }
-    }
-
-    // 2. Local file path
-    if (fs.existsSync(trimmed)) {
-      const buf = fs.readFileSync(trimmed);
-      if (buf.length > 50) {
-        const ext = path.extname(trimmed).toLowerCase().replace('.', '');
-        const mimeType = ext === 'png' ? 'image/png' : (ext === 'webp' ? 'image/webp' : 'image/jpeg');
-        const b64 = buf.toString('base64');
-        return {
-          mimeType,
-          base64: b64,
-          dataUri: `data:${mimeType};base64,${b64}`,
-        };
-      }
-    }
-
-    // 3. Web URL (http / https)
-    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
-      const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36';
-      const res = await fetch(trimmed, {
-        headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (res && res.ok) {
-        const arrayBuf = await res.arrayBuffer();
-        const buf = Buffer.from(arrayBuf);
-        if (buf.length > 100) {
-          const contentType = res.headers.get('content-type') || 'image/jpeg';
-          const mimeType = contentType.split(';')[0].trim() || 'image/jpeg';
-          const b64 = buf.toString('base64');
-          return {
-            mimeType,
-            base64: b64,
-            dataUri: `data:${mimeType};base64,${b64}`,
-          };
-        }
-      }
-    }
-  } catch (err) {
-    console.warn(`[resolveImageBufferAndBase64] Gagal memuat referensi foto produk: ${err.message}`);
-  }
-  return null;
-}
+// Moved to ai/aiClient.js
 
 // Moved getDynamicProductHookFallback to ai/promptBuilders.js
 
@@ -3126,12 +2845,7 @@ function repairJson(raw) {
   }
 }
 
-// Helpers
-export function formatSeconds(secs) {
-  const m = Math.floor(secs / 60).toString().padStart(2, '0');
-  const s = Math.floor(secs % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
-}
+// Moved to ai/aiValidators.js
 
 function parseTimeToSeconds(timeStr) {
   if (typeof timeStr === 'number') return timeStr;
@@ -3180,218 +2894,7 @@ function normalizeReframe(reframe = {}) {
 
 // Moved build7SlotStoryboardClips to ai/promptBuilders.js
 
-export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.5 } = {}) {
-  // Adaptive cadence: individual clips may be shorter/longer according to creative role,
-  // while the default stays around 3.0-3.5s.
-  const defaultClipLength = Math.max(2.0, Math.min(4.0, Number(sceneDuration) || 3.2));
-  const sourceClips = Array.isArray(rawClips) ? rawClips : [];
-  const normalized = [];
-  let previousEnd = -1;
-
-  console.log(`[normalizeClipPlan] totalDuration=${totalDuration}s, rawClips=${sourceClips.length}, defaultClipLength=${defaultClipLength}s, frameAudit=${frameAudit.length}, hasProductBrand=${hasProductBrand}, allowHflip=${allowHflip}`);
-
-  // Build a set of timestamps containing detected floating text, subtitles, watermarks, faces, or amateur framing
-  const dirtyTimestamps = [];
-  if (Array.isArray(frameAudit)) {
-    for (const audit of frameAudit) {
-      const floatingText = (audit.detectedFloatingOverlay || audit.detectedFloatingOverlayText || audit.floatingText || '').toLowerCase().trim();
-      const hasFloatingOverlay = audit.hasFloatingOverlay === true ||
-        audit.hasFloatingOverlayText === true ||
-        (floatingText && floatingText !== 'none' && floatingText !== 'null' && floatingText !== 'false');
-
-      const isPhysicalBrand = audit.hasPhysicalBrandText === true ||
-        audit.hasPhysicalProductBrandOrText === true ||
-        (audit.detectedPhysicalBrand && audit.detectedPhysicalBrand.toLowerCase() !== 'none');
-
-      // Only reject legacy text if it is NOT physical brand
-      const legacyText = (audit.detectedText || '').toLowerCase().trim();
-      const isLegacySubtitle = !isPhysicalBrand && (audit.hasTextOrSubtitles === true || (legacyText && legacyText !== 'none' && legacyText !== 'null' && legacyText !== 'false'));
-      const hasFace = audit.hasFace === true;
-      const isPoorlyFramed = audit.isWellFramed === false;
-      // Hanya buang jika murni kardus kosong / bubble wrap tanpa produk
-      const isPurePackaging = audit.isPackaging === true ||
-        (audit.detectedAction && /(?:kardus\s+kosong|cardboard\s+box|bubble\s*wrap\s+only|resi\s+pengiriman|buka\s+kardus\s+kosong)/i.test(audit.detectedAction));
-
-      if (hasFloatingOverlay || isLegacySubtitle || hasFace || isPoorlyFramed || isPurePackaging) {
-        const sec = Math.round(parseTimeToSeconds(audit.timestamp ?? audit.frameIndex));
-        dirtyTimestamps.push(sec);
-      }
-    }
-  }
-
-  const previousEndsByCand = new Map();
-  const hasStoryboardSlots = sourceClips.some(c => c.storyboardSlot !== undefined);
-
-  for (const rawClip of sourceClips) {
-    const clipLength = Math.max(1.5, Math.min(4.5, Number(rawClip?.duration) || defaultClipLength));
-    let startSeconds = Math.max(0, Math.round(parseTimeToSeconds(rawClip?.startSeconds ?? rawClip?.startTime)));
-    const candKey = rawClip?.candidateIndex !== null && rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : 'default';
-    const prevEnd = previousEndsByCand.get(candKey) || 0;
-
-    // In storyboard mode, cuts can jump backwards to reprise full product hero shots
-    if (!hasStoryboardSlots && startSeconds < prevEnd) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s (Candidate ${candKey}): overlaps previous end ${prevEnd}s in same video`);
-      continue;
-    }
-    if (startSeconds + clipLength > totalDuration) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s: exceeds totalDuration ${totalDuration}s`);
-      continue;
-    }
-    if (rawClip?.isCleanAffiliateShot === false && rawClip?.hasFloatingOverlay === true) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s: hasFloatingOverlay=true`);
-      continue;
-    }
-    if (hasSourceIdentityRisk(rawClip)) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s: sourceIdentityRisk=${rawClip?.sourceIdentityRisk}`);
-      continue;
-    }
-
-    // Discard any clip that is purely empty packaging waste without product
-    const isPurePackagingClip = rawClip?.isPackaging === true ||
-      /(?:kardus\s+kosong|cardboard\s+box|bubble\s*wrap\s+only|resi\s+pengiriman|buka\s+kardus\s+kosong)/i.test(String(rawClip?.reason || ''));
-    if (isPurePackagingClip) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}s: empty packaging rejected`);
-      continue;
-    }
-
-    const endSeconds = startSeconds + clipLength;
-
-    // Discard any clip interval that covers dirty frames containing floating text/subtitles/watermarks/packaging
-    const overlapsDirtyFrame = dirtyTimestamps.some(ts => ts >= startSeconds && ts <= endSeconds);
-    if (overlapsDirtyFrame) {
-      console.log(`[normalizeClipPlan] Skip clip at ${startSeconds}-${endSeconds}s: overlaps frame with detected subtitle/watermark/empty packaging`);
-      continue;
-    }
-
-    const clipHasBrand = hasProductBrand || rawClip?.hasProductBrand === true || rawClip?.hasPhysicalBrandText === true || rawClip?.reframe?.hasProductBrand === true;
-    const clipAllowHflip = clipHasBrand ? false : (allowHflip !== false && rawClip?.allowHflip !== false && rawClip?.reframe?.allowHflip !== false);
-
-    normalized.push({
-      startSeconds,
-      endSeconds,
-      duration: clipLength,
-      startTime: formatSeconds(startSeconds),
-      endTime: formatSeconds(endSeconds),
-      candidateIndex: rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : null,
-      candidateTitle: rawClip?.candidateTitle || '',
-      candidateUrl: rawClip?.candidateUrl || '',
-      videoId: rawClip?.videoId || '',
-      videoPath: rawClip?.videoPath || null,
-      candidate: rawClip?.candidate || null,
-      storyboardSlot: rawClip?.storyboardSlot,
-      storyboardRole: rawClip?.storyboardRole,
-      datasetTag: rawClip?.datasetTag,
-      reason: (rawClip?.reason || 'Clean full-product affiliate shot.').toString().slice(0, 180),
-      hasProductBrand: clipHasBrand,
-      allowHflip: clipAllowHflip,
-      reframe: normalizeReframe({
-        ...rawClip?.reframe,
-        hasProductBrand: clipHasBrand,
-        allowHflip: clipAllowHflip,
-      }),
-    });
-    previousEndsByCand.set(candKey, endSeconds);
-    previousEnd = endSeconds;
-    if (normalized.length === 8) break; // Target 7-8 distinct clips (~30-35s)
-  }
-
-  console.log(`[normalizeClipPlan] Accepted ${normalized.length} valid clips from AI vision`);
-
-  // Urutkan klip berdasarkan storyboard slot atau urutan waktu alami
-  if (!hasStoryboardSlots) {
-    normalized.sort((a, b) => {
-      const candA = a.candidateIndex ?? 0;
-      const candB = b.candidateIndex ?? 0;
-      if (candA !== candB) return candA - candB;
-      return a.startSeconds - b.startSeconds;
-    });
-  } else {
-    normalized.sort((a, b) => (a.storyboardSlot || 0) - (b.storyboardSlot || 0));
-  }
-
-  const normalizedDuration = normalized.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
-  console.log(`[normalizeClipPlan] ✅ Mempertahankan ${normalized.length} klip bersih asli hasil kurasi (${normalizedDuration.toFixed(1)}s total) dengan pacing adaptif.`);
-
-  // Deduplikasi ketat: Pastikan tidak ada 2 klip dari kandidat yang sama dengan selisih waktu < 2.0 detik
-  const dedupedClips = [];
-  for (const c of normalized) {
-    const isDup = dedupedClips.some(e => {
-      // Di storyboard mode, lindungi Slot 6 dan Slot 7 (reprise visual produk utuh penutup/CTA)
-      if (hasStoryboardSlots && (c.storyboardSlot === 6 || c.storyboardSlot === 7)) {
-        if (e.storyboardSlot === c.storyboardSlot) return true;
-        if (e.storyboardSlot === 6 && c.storyboardSlot === 7 && Math.abs(e.startSeconds - c.startSeconds) < 1.0) return true;
-        return false;
-      }
-      return (
-        (e.candidateIndex === c.candidateIndex || (!e.candidateIndex && !c.candidateIndex)) &&
-        Math.abs(e.startSeconds - c.startSeconds) < Math.max(Number(c.duration) || defaultClipLength, 3.0)
-      );
-    });
-    if (!isDup) {
-      dedupedClips.push(c);
-    }
-  }
-
-  // Standar kualitas: Minimal 3 aksi berbeda agar video tidak monoton atau mengulang 1 gerakan
-  if (dedupedClips.length >= 3) {
-    return dedupedClips;
-  }
-
-  if (dedupedClips.length > 0 && allowFallback) {
-    return dedupedClips;
-  }
-
-  const cleanErr = new Error('AI menolak video ini: cuplikan aksi demonstrasi bersih terlalu sedikit (kurang dari 3 variasi aksi demonstrasi berbeda).');
-  cleanErr.isAiRejection = true;
-  cleanErr.rejectionReason = 'Cuplikan aksi demonstrasi bersih terlalu sedikit (kurang dari 3 variasi aksi demonstrasi berbeda).';
-  throw cleanErr;
-
-  // Fallback: build 10 to 12 evenly spaced clips (around 30 to 35 seconds total, exactly defaultClipLength per clip)
-  console.log(`[normalizeClipPlan] Building ~30-35s fallback clip plan for ${totalDuration}s video with defaultClipLength=${defaultClipLength}s`);
-  const fallbackClips = [];
-  const targetTotalSec = 33;
-  const fallbackTargetClips = Math.min(12, Math.max(10, Math.floor(Math.min(totalDuration, targetTotalSec) / defaultClipLength)));
-  const maxStart = Math.max(0, Math.floor(totalDuration - defaultClipLength));
-  // Avoid first 15-18% of video in fallback to bypass intro unboxing segments on YouTube
-  const fallbackStart = totalDuration > 30
-    ? Math.min(maxStart, Math.max(0, Math.floor(totalDuration * 0.18)))
-    : (totalDuration > 20 ? Math.min(maxStart, Math.max(0, Math.floor(totalDuration * 0.10))) : 0);
-  const fallbackLastStart = totalDuration > 30
-    ? Math.max(fallbackStart, Math.min(maxStart, Math.floor(totalDuration * 0.95) - defaultClipLength))
-    : maxStart;
-
-  const span = fallbackLastStart - fallbackStart;
-  const numSteps = Math.max(1, fallbackTargetClips - 1);
-  const stepSize = fallbackTargetClips > 1 ? span / numSteps : defaultClipLength;
-
-  let lastStart = -1;
-  for (let i = 0; i < fallbackTargetClips; i++) {
-    const rawStart = Math.round(fallbackStart + (i * stepSize));
-    const startSeconds = Math.min(maxStart, Math.max(lastStart + defaultClipLength, rawStart));
-    if (startSeconds + defaultClipLength > totalDuration) break;
-
-    fallbackClips.push({
-      startSeconds,
-      endSeconds: startSeconds + defaultClipLength,
-      duration: defaultClipLength,
-      startTime: formatSeconds(startSeconds),
-      endTime: formatSeconds(startSeconds + defaultClipLength),
-      reason: `Fallback ${defaultClipLength}s product shot.`,
-      hasProductBrand,
-      allowHflip,
-      reframe: normalizeReframe({
-        hasProductBrand,
-        allowHflip,
-      }),
-    });
-    lastStart = startSeconds;
-  }
-
-  if (!fallbackClips.length) {
-    throw new Error(`Video terlalu pendek untuk membuat potongan produk utama (minimal ${Math.round(defaultClipLength * 4)} detik).`);
-  }
-  return fallbackClips;
-}
+// Moved to ai/aiValidators.js
 
 function hasSourceIdentityRisk(rawClip = {}) {
   if (rawClip.sourceOwnerIdentityVisible === true) return true;
