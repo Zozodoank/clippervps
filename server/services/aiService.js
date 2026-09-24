@@ -2870,6 +2870,8 @@ CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
 - Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai selesai dengan tempo santai.
 
 STRICT RULES FOR VOICE OVER:
+- TONE & NATURALITAS: Hindari gaya bahasa kaku seperti membaca brosur atau berita. Bicaralah dengan gaya santai, luwes, dan kasual layaknya Anda sedang mereview langsung di depan kamera.
+- WAJIB BEREAKSI PADA ADEGAN: Voiceover harus mendeskripsikan secara spesifik apa yang SEDANG DITAMPILKAN di frame tersebut (misal: "Lihat deh desainnya...", "Layar depannya mulus banget kan..."). Jangan mengawang-awang atau bahas spesifikasi yang tidak terlihat.
 - NEVER mention unboxing cardboard boxes, bubble wrap, or plastic packaging. Focus 100% on phone aesthetics, UI, camera, performance, and battery.
 - Write in natural, engaging conversational Indonesian.
 - DILARANG KERAS menggunakan kata "kece" dan "kangen".
@@ -2890,6 +2892,8 @@ MANDATORY VISUAL GROUNDING (CRITICAL ANTI-HALLUCINATION RULE):
 - Setiap baris voiceover WAJIB mencerminkan bukti fisik yang tampak pada frame-frame foto yang dilampirkan (${trimmedFrames.length} frames).
 - DILARANG KERAS menyalin kalimat template generik seperti "busa melimpah", "kain biasa", "sela-sela sempit", "ergonomis anti selip", atau "murah meriah tidak bikin boros" jika aksi tersebut tidak tampak di frame gambar.
 - JIKA visual hanya menunjukkan makanan, wajan, cobek, bahan masakan, atau proses memasak tanpa demonstrasi target product, JANGAN membuat narasi seolah-olah target product sedang dipakai.
+- TONE & NATURALITAS: Hindari gaya bahasa kaku seperti membaca brosur atau SPG jualan. Bicaralah dengan gaya santai, luwes, kasual layaknya teman yang sedang merekomendasikan barang bagus.
+- WAJIB BEREAKSI PADA ADEGAN: Voiceover harus mendeskripsikan secara spesifik apa yang SEDANG DITAMPILKAN di frame tersebut (misal: "Liat deh waktu aku tuang air ini...", "Cara pakenya segampang ini tinggal pencet...").
 - DILARANG mengarang spesifikasi seperti bahan, kapasitas, ukuran, kecepatan, ketahanan, atau hasil tertentu kecuali terlihat jelas pada frame atau disebut eksplisit dalam deskripsi produk.
 - Jelaskan secara spesifik apa yang sedang didemonstrasikan tangan: cara memasang, memotong, mengupas, mengoperasikan tuas/alat, atau memperlihatkan hasil kerja produk.
 
