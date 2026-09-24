@@ -58,7 +58,7 @@ export async function extractFrames(videoPath, framesDir, onProgress = () => {},
     const args = [
       '-y',
       '-i', targetVideoPath,
-      '-vf', `fps=1/${safeInterval},crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',scale=-2:360`,
+      '-vf', `fps=1/${safeInterval},crop='min(iw,ih)':'ih',scale=-2:360`,
       '-q:v', '3',
       outputPattern
     ];
