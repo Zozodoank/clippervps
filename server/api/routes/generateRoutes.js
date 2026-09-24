@@ -110,41 +110,8 @@ import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExis
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Global crash guards to keep the server resilient against transient background socket/stream interruptions
-process.on('uncaughtException', (err) => {
-  console.error('⚠️ [UncaughtException Guard]:', err?.message || err);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('⚠️ [UnhandledRejection Guard]:', reason?.message || reason);
-});
-
-// Load .env from multiple candidate paths. Keep server/.env as the primary
-// Termux/local source, but still accept root-level .env files for portability.
-const envCandidates = [
-  path.join(__dirname, '.env'),
-  path.join(__dirname, '.env.txt'),
-  path.join(__dirname, '..', '.env'),
-  path.join(__dirname, '..', '.env.txt'),
-  path.join(process.cwd(), '.env'),
-  path.join(process.cwd(), '.env.txt')
-];
-
-const PLACEHOLDER_ENV_VALUES = new Set([
-  '',
-  'your_gemini_api_key_here',
-  'your_aivene_api_key_here',
-  'your_cobalt_api_key_here',
-]);
-
-
-
-
-
-
-
 // Directories
-import { outputDir, tempDir, uploadsDir } from '../../utils/paths.js';
-const rejectedYunetDir = path.join(__dirname, 'rejected_frames', 'yunet');
+import { outputDir, tempDir, uploadsDir, rejectedYunetDir, cookiesPath } from '../../utils/paths.js';
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });

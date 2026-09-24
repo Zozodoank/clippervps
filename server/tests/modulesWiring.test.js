@@ -3,6 +3,20 @@ import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../services/
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../services/antiDupService.js';
 import { loadJobsFromDisk, activeJobs } from '../store/jobStore.js';
 
+import { serverRoot, outputDir, tempDir, uploadsDir, rejectedYunetDir, cookiesPath } from '../utils/paths.js';
+
+describe('Path Resolution', () => {
+  it('all shared paths must live under server/ and never under api/routes', () => {
+    const norm = (p) => p.replace(/\\/g, '/');
+    for (const p of [outputDir, tempDir, uploadsDir, rejectedYunetDir, cookiesPath, serverRoot]) {
+      const normalizedPath = norm(p);
+      expect(normalizedPath).toMatch(/\/server(\/|$)/);
+      expect(normalizedPath).not.toContain('api/routes/');
+      expect(normalizedPath).not.toMatch(/api\/routes$/);
+    }
+  });
+});
+
 describe('Modules Wiring Smoke Test', () => {
   it('should successfully import and call quotaService methods', () => {
     const limit = getDailyOutputVideoLimit();

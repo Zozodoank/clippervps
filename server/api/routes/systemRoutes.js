@@ -110,41 +110,8 @@ import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExis
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Global crash guards to keep the server resilient against transient background socket/stream interruptions
-process.on('uncaughtException', (err) => {
-  console.error('⚠️ [UncaughtException Guard]:', err?.message || err);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('⚠️ [UnhandledRejection Guard]:', reason?.message || reason);
-});
-
-// Load .env from multiple candidate paths. Keep server/.env as the primary
-// Termux/local source, but still accept root-level .env files for portability.
-const envCandidates = [
-  path.join(__dirname, '.env'),
-  path.join(__dirname, '.env.txt'),
-  path.join(__dirname, '..', '.env'),
-  path.join(__dirname, '..', '.env.txt'),
-  path.join(process.cwd(), '.env'),
-  path.join(process.cwd(), '.env.txt')
-];
-
-const PLACEHOLDER_ENV_VALUES = new Set([
-  '',
-  'your_gemini_api_key_here',
-  'your_aivene_api_key_here',
-  'your_cobalt_api_key_here',
-]);
-
-
-
-
-
-
-
 // Directories
-import { outputDir, tempDir, uploadsDir } from '../../utils/paths.js';
-const rejectedYunetDir = path.join(__dirname, 'rejected_frames', 'yunet');
+import { outputDir, tempDir, uploadsDir, rejectedYunetDir, cookiesPath } from '../../utils/paths.js';
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
@@ -383,11 +350,11 @@ router.post('/restart', async (req, res) => {
   if (cleanReset) {
     try {
       console.log('[System] Membersihkan file cache sementara (riwayat jobs & video tetap aman)...');
-      const tempUploads = path.join(__dirname, 'temp', 'uploads');
+      
       if (fs.existsSync(tempUploads)) {
-        const files = fs.readdirSync(tempUploads);
+        const files = fs.readdirSync(uploadsDir);
         for (const file of files) {
-          try { fs.unlinkSync(path.join(tempUploads, file)); } catch {}
+          try { fs.unlinkSync(path.join(uploadsDir, file)); } catch {}
         }
       }
     } catch (cleanErr) {
@@ -461,8 +428,7 @@ router.post('/restart', async (req, res) => {
 
 // GET /api/cookies-status – check if cookies.txt is present on the server
 router.get('/cookies-status', (req, res) => {
-  const cookiesPath = path.join(__dirname, 'cookies.txt');
-  if (fs.existsSync(cookiesPath)) {
+    if (fs.existsSync(cookiesPath)) {
     const stat = fs.statSync(cookiesPath);
     res.json({ exists: true, sizeBytes: stat.size });
   } else {
@@ -479,8 +445,7 @@ router.post('/upload-cookies', express.text({ type: '*/*', limit: '10mb' }), (re
   if (!content.includes('youtube.com') && !content.includes('# Netscape HTTP Cookie File')) {
     return res.status(400).json({ success: false, error: 'File tidak terdeteksi sebagai YouTube cookies.txt yang valid. Pastikan Anda mengekspor cookies dari youtube.com.' });
   }
-  const cookiesPath = path.join(__dirname, 'cookies.txt');
-  fs.writeFileSync(cookiesPath, content, 'utf8');
+    fs.writeFileSync(cookiesPath, content, 'utf8');
   console.log(`[Cookies] cookies.txt saved to ${cookiesPath} (${content.length} bytes)`);
   res.json({ success: true, message: 'cookies.txt berhasil disimpan. Sekarang retry job Anda.' });
 });
