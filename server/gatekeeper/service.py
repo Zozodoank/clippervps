@@ -1330,7 +1330,7 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return True
-        except (BrokenPipeError, ConnectionResetError):
+        except ConnectionError:
             # Klien (Node) sudah menutup koneksi (abort/timeout) - hasil tidak bisa dikirim.
             return False
 
@@ -1383,12 +1383,16 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 )
                 if not self._send_json(200, res):
                     print(f"⚠️  [Gatekeeper] Klien terputus sebelum hasil {len(frames)} frame terkirim (batch dibuang; cek timeout pemanggil).")
-            except (BrokenPipeError, ConnectionResetError):
+            except ConnectionError:
+                # ConnectionError = induk dari BrokenPipeError / ConnectionResetError /
+                # ConnectionAbortedError. Di WINDOWS koneksi yang dibatalkan lokal mengangkat
+                # ConnectionAbortedError (WinError 10053/10054), BUKAN BrokenPipeError - jadi
+                # tuple lama meleset dan traceback tetap menyemprot ke terminal.
                 print("⚠️  [Gatekeeper] Klien menutup koneksi saat /filter-frames berlangsung; diabaikan.")
             except Exception as err:
                 try:
                     self._send_json(500, {"error": str(err)})
-                except (BrokenPipeError, ConnectionResetError):
+                except ConnectionError:
                     pass
         else:
             self._send_json(404, {"error": "Endpoint not found"})
@@ -1407,7 +1411,7 @@ class DegradedGatekeeperHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return True
-        except (BrokenPipeError, ConnectionResetError):
+        except ConnectionError:
             return False
 
     def do_GET(self):
@@ -1441,14 +1445,16 @@ def run_server(port=5050):
     server_address = ("127.0.0.1", port)
 
     class QuietThreadingHTTPServer(ThreadingHTTPServer):
-        """Sengaja membungkam traceback BrokenPipeError/ConnectionResetError dari klien
-        yang abort (mis. Node timeout saat batch 200 frame padat di Termux) - ini bukan
-        crash gatekeeper. Error sesungguhnya tetap dilog normal."""
+        """Sengaja membungkam traceback putus-koneksi dari klien yang abort (mis. Node
+        timeout / server di-restart saat batch 200 frame berjalan) - ini bukan crash
+        gatekeeper. Di Windows gejala aslinya ConnectionAbortedError (WinError 10053),
+        jadi tangkap ConnectionError (induk semua error socket), bukan hanya BrokenPipeError.
+        Error sesungguhnya tetap dilog normal."""
         daemon_threads = True
 
         def handle_error(self, request, client_address):
             exc = sys.exc_info()[1]
-            if isinstance(exc, (BrokenPipeError, ConnectionResetError, TimeoutError)):
+            if isinstance(exc, (ConnectionError, TimeoutError)):
                 print(f"⚠️  [Gatekeeper] Klien {client_address} terputus sebelum respons terkirim ({type(exc).__name__}) - diabaikan.")
                 return
             ThreadingHTTPServer.handle_error(self, request, client_address)
