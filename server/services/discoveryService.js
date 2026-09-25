@@ -1874,6 +1874,26 @@ export function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescripti
   };
 }
 
+/**
+ * Pilih query pencarian PERTAMA yang valid untuk Auto Mode: wajib memuat brand DAN
+ * (kata pertama tipe produk ATAU model spesifik).
+ * Niche smartphone: productType selalu kategori generik ("Smartphone") yang tidak
+ * muncul di query "brand model review" -> logika lama (hanya cek query[0] + tipe)
+ * menolak SEMUA produk HP dengan "query brand + type tidak valid". Helper ini
+ * memperbolehkan model sebagai identitas pengganti kata tipe.
+ */
+export function pickValidIdentitySearchQuery(brand = '', productType = '', model = '', searchQueries = []) {
+  const brandNorm = normalizeText(brand);
+  const typeFirstWord = normalizeText(productType).split(' ')[0];
+  const modelNorm = normalizeText(model || '');
+  if (!brandNorm || !Array.isArray(searchQueries)) return '';
+  return searchQueries.find((q) => {
+    const nq = normalizeText(q || '');
+    return Boolean(nq) && nq.includes(brandNorm) &&
+      ((Boolean(typeFirstWord) && nq.includes(typeFirstWord)) || (Boolean(modelNorm) && nq.includes(modelNorm)));
+  }) || '';
+}
+
 const brandedDiscoveryMisses = new Map();
 const BRANDED_DISCOVERY_MISS_COOLDOWN_MS = 15 * 60 * 1000;
 const BRANDED_DISCOVERY_MAX_BRANDS_PER_PASS = 8;

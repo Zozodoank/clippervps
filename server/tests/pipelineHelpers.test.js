@@ -1,6 +1,36 @@
 import { describe, it, expect } from 'vitest';
 import { distributeTotal } from '../services/professionalPipelineService.js';
 import { getNichePreset } from '../config/nichePresets.js';
+import { pickValidIdentitySearchQuery } from '../services/discoveryService.js';
+
+describe('pickValidIdentitySearchQuery (fix skip permanen niche smartphone)', () => {
+  // Data nyata dari log PC: produk "Oukitel WP500" selalu di-skip "query brand + type tidak valid"
+  it('smartphone: query brand+model valid meski productType generik tanpa kata "smartphone"', () => {
+    const kw = pickValidIdentitySearchQuery('Oukitel', 'Smartphone', 'WP500', [
+      'Oukitel WP500 review indonesia',
+      'Oukitel WP500 unboxing',
+    ]);
+    expect(kw).toBe('Oukitel WP500 review indonesia');
+  });
+
+  it('smartphone tanpa model: jatuh ke query yang memuat kata tipe', () => {
+    const kw = pickValidIdentitySearchQuery('Poco', 'Smartphone 5G', '', [
+      'poco review indonesia',
+      'poco X6 smartphone 5g',
+    ]);
+    expect(kw).toBe('poco X6 smartphone 5g');
+  });
+
+  it('tetap menolak query tanpa brand (identitas tidak terjaga)', () => {
+    const kw = pickValidIdentitySearchQuery('Infinix', 'Smartphone', 'Hot 40', ['realme gt neo review']);
+    expect(kw).toBe('');
+  });
+
+  it('kitchen: perilaku lama tetap lolos via kata tipe produk', () => {
+    const kw = pickValidIdentitySearchQuery('Gaabor', 'Air Fryer', '', ['gaabor air fryer demo']);
+    expect(kw).toBe('gaabor air fryer demo');
+  });
+});
 
 describe('Niche minVerifiedSources (gate multi-video harvesting)', () => {
   it('smartphone/gadget preset mengizinkan 1 sumber terverifikasi langsung diproses', () => {

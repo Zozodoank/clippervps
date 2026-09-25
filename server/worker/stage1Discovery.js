@@ -69,7 +69,8 @@ import {
   isProductTitleUsed,
   getUsedKeywordsStats,
   clearUsedKeywords,
-  searchMultiEngineVideos
+  searchMultiEngineVideos,
+  pickValidIdentitySearchQuery
 } from '../services/discoveryService.js';
 import { getAllNiches, getNichePreset } from '../config/nichePresets.js';
 import {
@@ -185,15 +186,16 @@ export async function runAutoStage1Worker(run) {
         continue;
       }
 
-      const searchKeyword = searchQueries[0];
-      if (
-        !searchKeyword ||
-        !normalizeText(searchKeyword).includes(normalizeText(brand)) ||
-        !normalizeText(searchKeyword).includes(normalizeText(productType).split(' ')[0])
-      ) {
+      // Ambil query PERTAMA yang valid (bukan hanya query[0]): WAJIB memuat brand DAN
+      // memuat kata tipe produk ATAU model spesifik.
+      // BUG LAMA (niche smartphone): productType selalu kategori generik "Smartphone",
+      // query[0] = "brand model review indonesia" (tanpa kata smartphone) -> SEMUA produk
+      // HP di-skip "query brand + type tidak valid" (skipProduk 26-31/run, 0 pernah diproses).
+      const searchKeyword = pickValidIdentitySearchQuery(brand, productType, model, searchQueries);
+      if (!searchKeyword) {
         run.skippedProducts++;
         updateAutoRun(run, {
-          message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": query brand + type tidak valid.`,
+          message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": tidak ada query yang memuat brand + type/model.`,
         });
         continue;
       }
