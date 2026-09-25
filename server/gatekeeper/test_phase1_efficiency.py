@@ -41,12 +41,14 @@ class CountingFace:
 
 
 class CountingText:
-    def __init__(self, dirty_at=None, always_dirty=False, sentinel=False):
+    def __init__(self, dirty_at=None, always_dirty=False, sentinel=False, dirty_indices=None):
         self.calls = 0
         self.dirty_at = dirty_at  # index pemanggilan ke-N mengembalikan has_text=True
         self.always_dirty = always_dirty
+        self.dirty_indices = dirty_indices  # himpunan index yang kotor (untuk uji probe)
         self._sentinel = sentinel
         self.sentinel_calls = 0
+        self.backend = "dbnet_onnx_stub"  # TextGatekeeper asli punya atribut ini
 
     def needs_full_text_check(self, crop_bgr):
         """Stub sentinel Sobel murah (versi asli ada di TextGatekeeper)."""
@@ -57,7 +59,8 @@ class CountingText:
         n = self.calls
         self.calls += 1
         corners = {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
-        dirty = self.always_dirty or (self.dirty_at is not None and n == self.dirty_at)
+        dirty = self.always_dirty or (self.dirty_at is not None and n == self.dirty_at) \
+            or (self.dirty_indices is not None and n in self.dirty_indices)
         if dirty:
             return True, 0.05, 0.04, "Watermark di pojok kanan bawah / BR (coverage 4.0%)", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.05}
         return False, 0.001, 0.001, "Teks dalam batas aman (stub)", corners
@@ -160,6 +163,38 @@ def main():
         for key in ("status", "eligible", "reason", "totalFrames", "cleanFramesCount",
                     "verifiedSegments", "cleanFrames", "discardedFrames", "allFrames", "benchmarks"):
             failures += check(f"kontrak respons: '{key}' ada", key in res2)
+
+        # ── 5. (#5) INSTRUMENTASI: bench per-tahap bersarang di benchmarks ──
+        bm = res2["benchmarks"]
+        failures += check("bench: stageMs ada", isinstance(bm.get("stageMs"), dict) and len(bm["stageMs"]) > 0, str(bm.get("stageMs")))
+        failures += check("bench: stageCounts ada", isinstance(bm.get("stageCounts"), dict), str(bm.get("stageCounts")))
+        failures += check("bench: rejectsByStage ada", isinstance(bm.get("rejectsByStage"), dict), str(bm.get("rejectsByStage")))
+        sc = bm.get("stageCounts", {})
+        failures += check("bench: frames_in == 12", sc.get("frames_in") == 12, f"({sc.get('frames_in')})")
+        failures += check("bench: yunet_crop & dbnet & mobilenet tercatat",
+                          sc.get("yunet_crop_calls", 0) > 0 and sc.get("dbnet_calls", 0) > 0 and sc.get("mobilenet_calls", 0) > 0,
+                          f"(crop={sc.get('yunet_crop_calls')} dbnet={sc.get('dbnet_calls')} scene={sc.get('mobilenet_calls')})")
+        failures += check("bench: face_caught_by_full_only nihil (stub tanpa wajah)",
+                          sc.get("face_caught_by_full_only", 0) == 0, f"({sc.get('face_caught_by_full_only', 0)})")
+        # bench instance lokal -> dua batch berurutan TIDAK boleh menumpuk (bukti anti-race).
+        failures += check("bench: lokal (dbnet_calls batch kecil != akumulasi dua batch)",
+                          res["benchmarks"]["stageCounts"].get("dbnet_calls", 0) <= 1)
+
+        # ── 6. (#2) WATERMARK PROBE: stateless, hanya text_gate, tidak sentuh face/scene ──
+        gatep = make_gate()
+        gatep.text_gate = CountingText(dirty_indices={0, 2, 4})
+        probe_items = write_frames(tmp, "moving", 5, start_ts=60.0)
+        pres = gatep.process_watermark_probe(probe_items, niche="kitchen_tools")
+        failures += check("probe: flag probe=True & status success", pres.get("probe") is True and pres.get("status") == "success")
+        failures += check("probe: wmCount==3 dari 5 titik", pres.get("wmCount") == 3 and pres.get("total") == 5, f"({pres.get('wmCount')}/{pres.get('total')})")
+        failures += check("probe: hanya DBNet yang dipanggil (tanpa face/scene)",
+                          gatep.face_gate.calls == 0 and gatep.scene_gate.calls == 0 and gatep.text_gate.calls == 5,
+                          f"(text={gatep.text_gate.calls} face={gatep.face_gate.calls} scene={gatep.scene_gate.calls})")
+        # Frame gagal decode TIDAK dihitung sebagai watermark & tidak menggagalkan probe.
+        probe_items2 = write_frames(tmp, "moving", 4, start_ts=80.0) + [{"filePath": os.path.join(tmp, "tidak_ada.jpg"), "timestamp": 99.0}]
+        pres2 = gatep.process_watermark_probe(probe_items2, niche="kitchen_tools")
+        failures += check("probe: frame gagal decode -> decoded<total & hit False", pres2["decoded"] == 4 and pres2["total"] == 5, f"(decoded={pres2['decoded']})")
+        failures += check("probe: hits adalah list bool seukuran total", isinstance(pres2["hits"], list) and len(pres2["hits"]) == 5)
 
     print("\nHASIL AKHIR:", "PASS" if failures == 0 else f"FAIL ({failures} pemeriksaan gagal)")
     return 1 if failures else 0

@@ -36,6 +36,7 @@ import json
 import time
 import math
 import argparse
+from collections import Counter, defaultdict
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 
 # VPS 2-core: batasi thread OpenMP/BLAS SEBELUM cv2/numpy/onnxruntime dimuat,
@@ -94,6 +95,46 @@ MODELS_DIR = os.path.join(CURRENT_DIR, "models")
 # frame kita berjarak ~1.5s. Cukup periksa 1 dari N frame; frame sisanya mewarisi hasil cek
 # terakhir. Set GK_TEXT_CHECK_STRIDE=1 untuk mengembalikan perilaku lama (DBNet tiap frame).
 TEXT_CHECK_STRIDE = max(1, int(os.environ.get("GK_TEXT_CHECK_STRIDE", "3") or 3))
+
+
+class _Bench:
+    """Akumulasi metrik per-tahap yang AMAN untuk ThreadingHTTPServer.
+    Instance dibuat LOKAL per process_batch (BUKAN global) supaya job yang
+    berjalan konkuren tidak saling mengotori angka."""
+    __slots__ = ("ns", "counts")
+
+    def __init__(self):
+        self.ns = defaultdict(int)
+        self.counts = defaultdict(int)
+
+    def tic(self):
+        return time.perf_counter_ns()
+
+    def toc(self, key, t0):
+        self.ns[key] += (time.perf_counter_ns() - t0)
+
+    def inc(self, key, n=1):
+        self.counts[key] += n
+
+    def to_payload(self):
+        # Konversi ns -> ms sekali di akhir; hindari print per-frame.
+        return {
+            "stageMs": {k: round(v / 1e6, 1) for k, v in self.ns.items()},
+            "stageCounts": {k: v for k, v in self.counts.items()},
+        }
+
+
+def _bench_time(bench, key, fn, *args, **kwargs):
+    """Jalankan fn. Bila bench aktif, kumpulkan waktu (ns) + jumlah pemanggilan.
+    bench=None (jalur non-batch) => panggil langsung fn tanpa overhead."""
+    if bench is None:
+        return fn(*args, **kwargs)
+    t0 = bench.tic()
+    try:
+        return fn(*args, **kwargs)
+    finally:
+        bench.toc(key, t0)
+        bench.inc(key + "_calls")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -859,7 +900,7 @@ class FrameGatekeeper:
         return image[:, x_start:x_start + target_w]
 
     def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools", face_policy="strict",
-                             image_bgr=None, run_text_check=True, inherited_text=None):
+                             image_bgr=None, run_text_check=True, inherited_text=None, bench=None):
         """
         Mengevaluasi satu frame secara independen dan mengembalikan hasil lengkap:
         - status: 'clean' | 'uncertain' | 'discarded'
@@ -944,7 +985,7 @@ class FrameGatekeeper:
                     }
                 content_faces.append({**f, "region": "crop"})
         else:
-            has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = self.face_gate.detect(crop, niche=niche)
+            has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = _bench_time(bench, "yunet_crop", self.face_gate.detect, crop, niche=niche)
             if has_face_crop:
                 return {
                     "filePath": file_path,
@@ -985,11 +1026,15 @@ class FrameGatekeeper:
                     }
                 content_faces.append({**f, "region": "full"})
         else:
-            has_face_full, face_conf_full, face_box_full, face_reason_full = self.face_gate.detect(img, niche=niche)
+            has_face_full, face_conf_full, face_box_full, face_reason_full = _bench_time(bench, "yunet_full", self.face_gate.detect, img, niche=niche)
             if has_face_full and face_box_full:
                 bx, by, bw, bh = face_box_full
                 face_overlaps_crop = not (bx + bw < x_start or bx > x_end)
                 if face_overlaps_crop:
+                    # 1A (crop) LOLOS tapi 1B (full) menangkap wajah yang menimpa jendela crop.
+                    # Metrik ini membuktikan nilai 1B sebelum seseorang memutus memangkasnya.
+                    if bench is not None:
+                        bench.inc("face_caught_by_full_only")
                     return {
                         "filePath": file_path,
                         "timestamp": timestamp,
@@ -1004,7 +1049,7 @@ class FrameGatekeeper:
 
         # ── TAHAP 2: Text & 4-Corner Watermark Detection (DBNet = stage termahal) ──
         if run_text_check:
-            has_text, total_cov, bottom_cov, text_reason, corner_acts = self.text_gate.detect(crop, niche=niche)
+            has_text, total_cov, bottom_cov, text_reason, corner_acts = _bench_time(bench, "dbnet", self.text_gate.detect, crop, niche=niche)
         else:
             # Warisi hasil DBNet frame sebelumnya. Watermark/subtitle bersifat persisten,
             # jadi frame yang dilewati TIDAK bisa lolos dari deteksi hanya karena di-skip.
@@ -1043,7 +1088,7 @@ class FrameGatekeeper:
             }
 
         # ── TAHAP 3: Scene Classifier (Strict 3-State: valid_real, uncertain, rejected) ──
-        scene_state, scene_conf, scene_reason = self.scene_gate.evaluate(crop)
+        scene_state, scene_conf, scene_reason = _bench_time(bench, "mobilenet", self.scene_gate.evaluate, crop)
         if scene_state == "rejected":
             return {
                 "filePath": file_path,
@@ -1092,6 +1137,7 @@ class FrameGatekeeper:
         4. Clean Temporal Segment Validation (HANYA segmen kontinu >= 3 frame / >= 4.0s yang dinyatakan VERIFIED_CLEAN)
         """
         start_time = time.time()
+        bench = _Bench()  # LOKAL per-request: ThreadingHTTPServer-safe (tak ada race antar job)
         if not frame_items:
             return {
                 "status": "success", "eligible": False, "reason": "Frame items kosong",
@@ -1132,7 +1178,9 @@ class FrameGatekeeper:
             path = item["filePath"]
             ts = item["timestamp"]
             frame_no += 1
+            bench.inc("frames_in")
 
+            t_dec = bench.tic()
             img = cv2.imread(path) if os.path.exists(path) else None
             small = cv2.resize(img, (80, 144)) if img is not None else None
 
@@ -1159,6 +1207,7 @@ class FrameGatekeeper:
                             single_verdicts[-1]["reason"] = f"Frame foto statis diam / freeze frame (MAD: {round(mad, 2)})"
                 except Exception:
                     pass
+            bench.toc("decode_static", t_dec)
 
             # DBNet dihemat otomatis: 1 dari TEXT_CHECK_STRIDE frame diperiksa, sisanya warisan.
             # SENTINEL: frame yang mau di-skip tetap disaring murah pakai Sobel. Kalau ada tanda
@@ -1171,7 +1220,7 @@ class FrameGatekeeper:
             elif img is None:
                 run_text_check = True
             else:
-                run_text_check = self.text_gate.needs_full_text_check(self.crop_9_16(img))
+                run_text_check = _bench_time(bench, "sobel_sentinel", self.text_gate.needs_full_text_check, self.crop_9_16(img))
 
             if is_static and ts > 3.0:
                 # Frame beku: TIDAK perlu face/text/scene sama sekali (toh dibuang).
@@ -1189,7 +1238,8 @@ class FrameGatekeeper:
             else:
                 v = self.process_single_frame(
                     path, ts, niche=niche, face_policy=face_policy,
-                    image_bgr=img, run_text_check=run_text_check, inherited_text=last_text_result
+                    image_bgr=img, run_text_check=run_text_check, inherited_text=last_text_result,
+                    bench=bench
                 )
 
             if run_text_check and v.get("stage") in ("passed", "text", "graphic_overlay", "scene", "uncertain_scene"):
@@ -1361,6 +1411,11 @@ class FrameGatekeeper:
         text_count = sum(1 for d in discarded_frames if d.get("stage") in ("text", "persistent_watermark"))
         static_count = sum(1 for d in discarded_frames if d.get("stage") == "static_frame")
 
+        # (#5) Reject-per-stage: agregat SEKALI dari daftar discard (nol risiko ada jalur terlewat).
+        rejects_by_stage = Counter()
+        for d in discarded_frames:
+            rejects_by_stage[d.get("stage") or "unknown"] += 1
+
         eligible = (has_verified_segment or total_clean_count >= min_consecutive_clean) and (total_clean_count >= min_consecutive_clean)
 
         if eligible:
@@ -1399,11 +1454,46 @@ class FrameGatekeeper:
                 "textCheckStride": TEXT_CHECK_STRIDE,
                 "dbnetCalls": dbnet_calls,
                 "dbnetInherited": max(0, len(time_sorted) - dbnet_calls),
-                "staticFramesSkippedInference": static_skipped
+                "staticFramesSkippedInference": static_skipped,
+                **bench.to_payload(),
+                "rejectsByStage": dict(rejects_by_stage)
             },
             "cleanFrames": clean_frames,
             "discardedFrames": discarded_frames,
             "allFrames": ordered_results
+        }
+
+    def process_watermark_probe(self, frame_items, niche="kitchen_tools"):
+        """(#2) Probe watermark STATELESS - hemat extraction pada video yang pasti mati.
+        HANYA menjalankan crop_9_16 + TextGatekeeper.detect produksi per frame, TANPA
+        static-detection, TANPA pewarisan DBNet, TANPA agregasi temporal. Karena itulah
+        aman dipanggil untuk beberapa frame tersebar; keputusan ambang global (mis. >=3/5)
+        dibuat di Node, bukan di sini. Frame gagal decode TIDAK dihitung sebagai watermark."""
+        hits = []
+        wm_count = 0
+        decoded = 0
+        bench = _Bench()
+        for item in frame_items:
+            fp = item.get("filePath") if isinstance(item, dict) else str(item)
+            img = cv2.imread(fp) if fp and os.path.exists(fp) else None
+            if img is None:
+                hits.append(False)
+                continue
+            decoded += 1
+            crop = self.crop_9_16(img)
+            has_text = bool(_bench_time(bench, "dbnet", self.text_gate.detect, crop, niche=niche)[0])
+            hits.append(has_text)
+            if has_text:
+                wm_count += 1
+        return {
+            "status": "success",
+            "probe": True,
+            "hits": hits,
+            "wmCount": wm_count,
+            "total": len(frame_items),
+            "decoded": decoded,
+            "backend": self.text_gate.backend,
+            "benchmarks": bench.to_payload(),
         }
 
 
@@ -1483,6 +1573,24 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 # ConnectionAbortedError (WinError 10053/10054), BUKAN BrokenPipeError - jadi
                 # tuple lama meleset dan traceback tetap menyemprot ke terminal.
                 print("⚠️  [Gatekeeper] Klien menutup koneksi saat /filter-frames berlangsung; diabaikan.")
+            except Exception as err:
+                try:
+                    self._send_json(500, {"error": str(err)})
+                except ConnectionError:
+                    pass
+        elif self.path == "/filter-watermark-probe":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                frames = payload.get("frames", [])
+                niche = payload.get("niche", "kitchen_tools")
+                if not frames:
+                    self._send_json(400, {"error": "Array 'frames' kosong"})
+                    return
+                res = GATEKEEPER.process_watermark_probe(frames, niche=niche)
+                self._send_json(200, res)
+            except ConnectionError:
+                print("⚠️  [Gatekeeper] Klien menutup koneksi saat /filter-watermark-probe; diabaikan.")
             except Exception as err:
                 try:
                     self._send_json(500, {"error": str(err)})

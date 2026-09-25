@@ -594,6 +594,58 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
+  // ── (#2) WATERMARK PROBE STATELESS — hemat bandwidth/decode SEBELUM dense sampling dibayar ──
+  // 5 frame tersebar dari daftar samplePoints -> /filter-watermark-probe (crop_9_16 + DBNet
+  // produksi, TANPA state temporal). Bila >=3/5 ber-watermark -> logo channel persisten ->
+  // matikan kandidat SEKARANG (lewati ~N seek FFmpeg). Guard KETAT: error/timeout/service mati
+  // atau decoded<5 => FALL THROUGH (jangan tolak kandidat hanya karena probe gagal). Matikan: GK_WATERMARK_PROBE=0.
+  if (process.env.GK_WATERMARK_PROBE !== '0' && samplePoints.length > 20) {
+    const probeFramePaths = [];
+    const cleanProbe = () => { for (const fp of probeFramePaths) { try { fs.unlinkSync(fp); } catch {} } };
+    try {
+      const pick = (frac) => samplePoints[Math.min(samplePoints.length - 1, Math.max(0, Math.round(frac * (samplePoints.length - 1))))];
+      const extractOne = (point, outPath) => new Promise((resolve) => {
+        const preSeek = Math.max(0, point.timestamp - 1.2);
+        const postSeek = Math.min(point.timestamp, 1.2);
+        const proc = spawn(ffmpegPath, [
+          '-y', '-user_agent', browserUserAgent, '-headers', browserHeaders,
+          '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2',
+          '-ss', preSeek.toFixed(2), '-i', streamUrl, '-ss', postSeek.toFixed(2),
+          '-an', '-sn', '-dn', '-frames:v', '1', '-vf', 'scale=-2:480', '-q:v', '3', outPath,
+        ]);
+        let done = false;
+        const timer = setTimeout(() => { if (!done) { done = true; try { proc.kill('SIGKILL'); } catch {} resolve(); } }, 8000);
+        proc.on('close', () => { if (!done) { done = true; clearTimeout(timer); resolve(); } });
+        proc.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolve(); } });
+      });
+      const probes = [0.10, 0.30, 0.50, 0.70, 0.90].map((f, i) => {
+        const p = pick(f);
+        return { timestamp: p.timestamp, file: path.join(outputDir, `probe_${String(i).padStart(2, '0')}.jpg`) };
+      });
+      for (const pr of probes) {
+        await extractOne(pr, pr.file);
+        if (fs.existsSync(pr.file) && fs.statSync(pr.file).size > 0) probeFramePaths.push(pr.file);
+      }
+      if (probeFramePaths.length >= 5) {
+        const res = await callWatermarkProbe(probeFramePaths.map(fp => ({ filePath: fp, timestamp: 0 })), { timeoutSec: 60 });
+        if (res && res.decoded >= 5 && res.wmCount >= 3) {
+          throw new Error(`PROBE_WATERMARK_REJECT:${res.wmCount}/${res.decoded}`);
+        }
+        console.log(`[VideoFilterService] 🔎 Probe watermark: ${res ? `${res.wmCount}/${res.decoded} titik kena` : 'service offline/degraded -> lanjut'}; dense sampling tetap jalan.`);
+      }
+      cleanProbe();
+    } catch (probeErr) {
+      cleanProbe();
+      const msg = String(probeErr?.message || '');
+      if (msg.startsWith('PROBE_WATERMARK_REJECT')) {
+        const frac = msg.split(':')[1] || '?/?';
+        console.warn(`[VideoFilterService] ⛔ Probe menolak kandidat: watermark persisten ${frac} titik awal -> hemat ${samplePoints.length} seek FFmpeg.`);
+        throw new Error(`Watermark persisten terdeteksi pada probe awal (${frac} titik tersebar). Candidate ditolak sebelum sampling padat demi hemat bandwidth/decode.`);
+      }
+      console.warn(`[VideoFilterService] Probe watermark dilewati (${msg || 'error'}); lanjut dense sampling.`);
+    }
+  }
+
   // Two-stage seek: fast coarse seek before -i (jumps in ~0.05s via HTTP range)
   // + accurate sub-second fine seek after -i (decodes only ~1s to reach exact frame).
   // This prevents landing on duplicate keyframes without ever downloading from byte 0.
@@ -849,6 +901,30 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
 }
 
 /**
+ * (#2) Panggil endpoint probe watermark STATELESS di gatekeeper (port 5050).
+ * Return {hits, wmCount, total, decoded, backend, benchmarks} atau NULL saat service mati /
+ * timeout / HTTP error / JSON tak valid. PEMANGGIL WAJIB memperlakukan null sebagai
+ * "fall-through": kandidat TIDAK boleh ditolak hanya karena probe gagal (gatekeeper degraded).
+ */
+export async function callWatermarkProbe(frames, { niche = 'kitchen_tools', timeoutSec = 60 } = {}) {
+  try {
+    const valid = (frames || []).filter(f => f && f.filePath && fs.existsSync(f.filePath));
+    if (valid.length === 0) return null;
+    const res = await fetch('http://127.0.0.1:5050/filter-watermark-probe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ niche, frames: valid.map(f => ({ filePath: f.filePath, timestamp: f.timestamp || 0 })) }),
+      signal: AbortSignal.timeout(timeoutSec * 1000),
+    });
+    if (!res.ok) return null;
+    const parsed = await res.json();
+    return (parsed && parsed.status === 'success') ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Tentukan face policy untuk satu niche (Fase 3, data-driven — TANPA if(niche) di service):
  * 'presenter_only' bila ada slot dengan facePolicy tersebut di preset (gadget: slot 5 review kamera),
  * selain itu 'strict' (perilaku lama — kitchen tidak pernah berubah).
@@ -944,6 +1020,13 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       console.log(`[inspectFramesLocally] 🤖 AI Local Gatekeeper: ${cleanFrames.length}/${frames.length} frame VERIFIED_CLEAN (${verifiedSegments.length} segmen kontinu, ${aiResult.benchmarks?.totalMs || 0}ms)${cameraResultEligibleFrames.length > 0 ? ` + ${cameraResultEligibleFrames.length} frame eligible-camera (pool terpisah)` : ''}.`);
     } else {
       console.warn(`[inspectFramesLocally] ⛔ AI Local Gatekeeper: Hanya ${cleanFrames.length}/${frames.length} frame bersih (${rejectReason}).`);
+    }
+
+    // (#5) Instrumentasi per-tahap: bongkar ke mana CPU habis (decode/statis vs yunet/dbnet/scene)
+    // dan gate mana over-reject. Muncul hanya bila gatekeeper mengirim bench baru (kompatibel mundur).
+    if (aiResult.benchmarks && (aiResult.benchmarks.stageMs || aiResult.benchmarks.rejectsByStage)) {
+      const bm = aiResult.benchmarks;
+      console.log(`[inspectFramesLocally] 📊 per-tahap(ms)=${JSON.stringify(bm.stageMs || {})} | calls=${JSON.stringify(bm.stageCounts || {})} | catchFullOnly=${bm.stageCounts?.face_caught_by_full_only ?? 0} | reject/stage=${JSON.stringify(bm.rejectsByStage || {})}`);
     }
 
     const discardedFaceTimestamps = discardedFrames
