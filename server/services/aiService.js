@@ -1,5 +1,5 @@
-import { formatSeconds, normalizeClipPlan } from './ai/aiValidators.js';
-export { formatSeconds, normalizeClipPlan };
+import { formatSeconds, normalizeClipPlan, DEFAULT_REFRAME, parseTimeToSeconds } from './ai/aiValidators.js';
+export { formatSeconds, normalizeClipPlan, DEFAULT_REFRAME, parseTimeToSeconds };
 import { defaultGeminiDirectModels, getDirectGeminiApiKey, getDirectGeminiClientConfig, getAiClientConfig, formatApiError, isQuotaError, isDailyQuotaExhaustedError, resolveImageBufferAndBase64 } from './ai/aiClient.js';
 export { defaultGeminiDirectModels, getDirectGeminiApiKey, getDirectGeminiClientConfig, isQuotaError, isDailyQuotaExhaustedError, resolveImageBufferAndBase64 };
 import { truncateProductDescription, getDynamicProductHookFallback, buildNicheProductCriterion, buildFaceAndMotionCriterion, formatEnrichedCaption, sanitizeScriptVocabulary, build7SlotStoryboardClips } from './ai/promptBuilders.js';
