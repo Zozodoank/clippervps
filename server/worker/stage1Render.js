@@ -681,7 +681,13 @@ async function _runStage1Pipeline({
     // Candidate harvesting may inspect multiple sources, but final editing does NOT require multi-source.
     // The verified-source selector prefers one consistent source whenever it already has rich footage.
     const preferMultiVideo = options.singleVideoOnly === true ? false : true;
-
+    
+    // MODE MANUAL KETAT (explicit_only): HANYA sumber eksplisit user (youtubeUrl + oemUrls) yang boleh
+    // diproses. DILARANG auto-search / multi-video harvesting / panen kandidat pengganti. Bila sumber
+    // tidak mencukupi -> gagal cepat minta URL tambahan, bukan diam-diam mencari sendiri.
+    // Opt-in murni: default OFF, perilaku semua pemanggil lama tidak berubah.
+    const explicitOnly = options.sourcePolicy === 'explicit_only';
+    
     if (!approved && currentYoutubeUrl && !preferMultiVideo) {
       try {
         const initialRes = await evaluateCandidate(currentYoutubeUrl, '', {
@@ -719,8 +725,8 @@ async function _runStage1Pipeline({
 
     // Jika belum disetujui atau masuk mode Multi-Video Harvesting: Jalankan Stream 3-5 Video & Frame Pooling!
     if (!approved) {
-      const allowAutoSearch = options.autoSearchFallback !== false && Boolean(productTitle);
-      if (!allowAutoSearch && !preferMultiVideo) {
+      const allowAutoSearch = !explicitOnly && options.autoSearchFallback !== false && Boolean(productTitle);
+      if (!allowAutoSearch && !preferMultiVideo && !explicitOnly) {
         throw lastRejectionError || new Error('Video ditolak oleh AI.');
       }
 
@@ -777,7 +783,7 @@ async function _runStage1Pipeline({
       // Visual/image search is intentionally reserved for future explicit modes.
       // Automatic candidates now come only from Brand + Model/Type identity queries.
       // 2. Multi-Engine Keyword Search jika belum mencapai target minimal 10 kandidat
-      while (searchIteration < 3 && candidatePool.length < 10) {
+      while (searchIteration < 3 && candidatePool.length < 10 && !explicitOnly) {
         const fresh = await discoverYouTubeCandidatesForProduct({
           productTitle,
           productDescription,
@@ -796,7 +802,7 @@ async function _runStage1Pipeline({
         searchIteration++;
       }
 
-      if (!candidatePool || candidatePool.length === 0) {
+      if (!explicitOnly && (!candidatePool || candidatePool.length === 0)) {
         // Coba variasi kata kunci alternatif (brand + model/tipe) sebelum menyerah
         const info = extractCoreProductInfo(productTitle, productDescription);
         const b = (info.brand || options.brand || '').trim();
@@ -835,6 +841,9 @@ async function _runStage1Pipeline({
       }
 
       if (!candidatePool || candidatePool.length === 0) {
+        if (explicitOnly) {
+          throw new Error(`Mode Manual Ketat (explicit_only): sumber yang Anda berikan tidak mencukupi untuk mengisi storyboard. Tambahkan URL YouTube / OEM lain yang layak, atau matikan explicit_only untuk mengizinkan pencarian otomatis.`);
+        }
         throw new Error(`Tidak ditemukan video YouTube yang cocok untuk "${productTitle}": ${lastRejectionError?.rejectionReason || 'kandidat kosong'}.`);
       }
 
@@ -853,6 +862,10 @@ async function _runStage1Pipeline({
         missingSlots = [],
         reason = '',
       } = {}) => {
+        if (explicitOnly) {
+          console.log(`[Job ${jobId}] 🔒 explicit_only: panen kandidat pengganti otomatis DILARANG.`);
+          return;
+        }
         const prodInfo = extractCoreProductInfo(productTitle, productDescription);
         const b = (prodInfo.brand || options.brand || '').trim();
         const p = (prodInfo.coreProductNoun || prodInfo.cleanTitle || productTitle || '').trim();
@@ -927,6 +940,10 @@ async function _runStage1Pipeline({
       while (streamedCount < maxStreamVideos) {
         // 1. Jika antrean candidatePool habis sebelum kuota stream tercapai, cari kandidat pengganti tambahan
         if (candidatePoolIndex >= candidatePool.length) {
+          if (explicitOnly) {
+            console.log(`[Job ${jobId}] 🔒 explicit_only: seluruh sumber eksplisit sudah diproses. Menghentikan stream tanpa pencarian otomatis.`);
+            break;
+          }
           if (searchIteration >= 4) {
             console.warn(`[Job ${jobId}] Mencapai batas maksimal iterasi pencarian (${searchIteration}). Menghentikan pencarian video tambahan.`);
             break;
@@ -991,10 +1008,19 @@ async function _runStage1Pipeline({
           continue;
         }
 
+        // Kandidat OEM manual: manusia sudah menjamin kecocokan produk -> lewati gerbang identitas-produk
+        // (title-match & benturan kategori), TETAP jalankan seluruh guard kualitas (durasi/resolusi/format/
+        // vlog/watermark/asing/iklan) di checkVideoMetadataCompliance.
+        const candIsManualOem = Boolean(
+          candidate?.manualOem ||
+          candidate?.source === 'manual_oem' ||
+          candidate?.skipGeminiProductMatch
+        );
         // Cek kepatuhan metadata dasar
         const comp = checkVideoMetadataCompliance(candMeta, productTitle, {
           ...options,
           isVisualSearch: Boolean(options.isVisualSearch || candidate.source === 'bing_visual_search'),
+          skipProductIdentityGates: candIsManualOem,
         });
         if (!comp.eligible) {
           console.log(`[Job ${jobId}] ⚠️ ${candLabel} metadata tidak lolos: ${comp.reason}. Melewati kandidat ini...`);
@@ -1053,11 +1079,7 @@ async function _runStage1Pipeline({
           continue;
         }
 
-        const isManualOem = Boolean(
-          candidate?.manualOem ||
-          candidate?.source === 'manual_oem' ||
-          candidate?.skipGeminiProductMatch
-        );
+        const isManualOem = candIsManualOem;
 
         let productVerification;
         if (isManualOem) {

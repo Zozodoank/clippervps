@@ -460,7 +460,10 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
 
   // 7. Kesesuaian Kategori Produk Target & Konflik Produk Berbeda
-  if (productTitle && productTitle.trim()) {
+  // NOTE: dilewati khusus untuk OEM manual (skipProductIdentityGates) karena manusia sudah
+  // menjamin kecocokan produk. Semua guard kualitas di atas (durasi/resolusi/format/vlog/
+  // watermark/asing/iklan) TETAP ditegakkan. Kandidat otomatis tidak pernah menyetel flag ini.
+  if (productTitle && productTitle.trim() && !options.skipProductIdentityGates) {
     const prodInfo = extractCoreProductInfo(productTitle, metadata.description || '');
     const coreNounLower = (prodInfo.coreProductNoun || '').toLowerCase();
     const targetTitleLower = productTitle.toLowerCase();
