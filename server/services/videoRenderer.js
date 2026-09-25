@@ -96,8 +96,11 @@ export async function renderSilentAntiDetectionVideo({
       for (const clip of selectedClips) {
         const sourceDuration = (clip.duration * safeSpeedMultiplier).toFixed(3);
         const clipVideo = clip.videoPath || targetVideo;
-        // Trim lebih rapi: hindari error keyframe dengan format time yang tepat
-        args.push('-ss', clip.startSeconds.toFixed(3), '-t', sourceDuration, '-i', clipVideo);
+        // Trim lebih rapi: hindari error keyframe dengan format time yang tepat.
+        // sourceOffsetSec > 0 bila klip berasal dari file hasil --download-sections (timeline file
+        // dimulai di sumber global `sourceOffsetSec`), jadi kurangkan agar '-ss' relatif ke file tsb.
+        const fileStartSec = Math.max(0, (Number(clip.startSeconds) || 0) - (Number(clip.sourceOffsetSec) || 0));
+        args.push('-ss', fileStartSec.toFixed(3), '-t', sourceDuration, '-i', clipVideo);
       }
 
       const filterChains = selectedClips.flatMap((clip, index) => {
@@ -422,6 +425,7 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
         startSeconds,
         duration: Math.max(1.2, Math.min(8.0, clipDuration)),
         videoPath: clip?.videoPath || clip?.sourceVideo || null,
+        sourceOffsetSec: Number(clip?.sourceOffsetSec) || 0,
         candidateIndex: clip?.candidateIndex !== undefined ? clip.candidateIndex : null,
         isConformedLoop: Boolean(clip?.isConformedLoop),
         reframe: {

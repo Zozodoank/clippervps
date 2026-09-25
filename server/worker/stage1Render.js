@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
+import { planSectionDownloads } from '../services/renderSections.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
   selectHighlightWithAI,
@@ -1438,6 +1439,13 @@ async function _runStage1Pipeline({
       // This map MUST exist before the progress calculation and download loop below.
       const downloadedCandidatesMap = new Map();
 
+      // #1 Download per-segmen (hemat kuota). DEFAULT OFF → jalur render identik dengan sebelumnya.
+      const useSections = process.env.RENDER_DOWNLOAD_SECTIONS === '1';
+      const secPadSec = Number(process.env.RENDER_SECTION_PAD || 2) || 2;
+      const secTailPadSec = Number(process.env.RENDER_SECTION_TAIL_PAD || 5) || 5;
+      const secGapSec = Number(process.env.RENDER_SECTION_GAP || 15) || 15;
+      if (useSections) console.log(`[Job ${jobId}] ✂️ RENDER_DOWNLOAD_SECTIONS aktif: unduh hanya rentang klip (pad ${secPadSec}s / ekor ${secTailPadSec}s / gap ${secGapSec}s).`);
+
       for (const candIdx of neededIndices) {
         const candObj = candidateResults.find(c => c.candidateIndex === candIdx)?.candidate || candidateResults[candIdx]?.candidate;
         if (!candObj?.url) continue;
@@ -1450,6 +1458,41 @@ async function _runStage1Pipeline({
         });
 
         try {
+          const candClips = hl.clips.filter(c => (c.candidateIndex ?? 0) === candIdx);
+          if (useSections && candClips.length > 0) {
+            const clusters = planSectionDownloads(candClips, {
+              padSec: secPadSec,
+              tailPadSec: secTailPadSec,
+              gapSec: secGapSec,
+              videoDuration: Number(candObj.duration) || 0,
+            });
+            let allClustersOk = clusters.length > 0;
+            for (let k = 0; k < clusters.length; k++) {
+              const cluster = clusters[k];
+              try {
+                const secDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
+                  quality: '1080p',
+                  prefix: `raw_cand_${candIdx}_sec${k}`,
+                  section: { startSec: cluster.startSec, endSec: cluster.endSec },
+                });
+                if (secDl?.filePath && fs.existsSync(secDl.filePath)) {
+                  if (!downloadedCandidatesMap.has(candIdx)) downloadedCandidatesMap.set(candIdx, secDl.filePath);
+                  cluster.refs.forEach(ref => { ref._cluster = { videoPath: secDl.filePath, sourceOffsetSec: cluster.sourceOffsetSec }; });
+                  console.log(`[Job ${jobId}] ✂️ Segmen #${k} kandidat #${candIdx + 1} (${cluster.startSec.toFixed(1)}-${cluster.endSec.toFixed(1)}s) terunduh (hemat kuota).`);
+                } else {
+                  allClustersOk = false;
+                }
+              } catch (secErr) {
+                allClustersOk = false;
+                console.warn(`[Job ${jobId}] ⚠️ Gagal unduh segmen #${k} kandidat #${candIdx + 1}: ${secErr.message}`);
+              }
+            }
+            if (allClustersOk) continue; // kandidat selesai via per-segmen
+            // Sebagian/gagal total: bersihkan penanda cluster lalu fallback ke unduhan penuh.
+            candClips.forEach(c => { delete c._cluster; });
+            console.warn(`[Job ${jobId}] 🔄 Segmen kandidat #${candIdx + 1} tidak lengkap; fallback ke unduhan penuh.`);
+          }
+
           const hdDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
             quality: '1080p',
             prefix: `raw_cand_${candIdx}`,
@@ -1530,6 +1573,11 @@ async function _runStage1Pipeline({
 
       // Petakan videoPath 1080p ke masing-masing klip yang terpilih
       hl.clips = hl.clips.map(c => {
+        // Klip yang sudah punya file segmen sendiri (mode --download-sections): pakai path + sourceOffsetSec-nya.
+        if (c._cluster) {
+          const { _cluster, ...rest } = c;
+          return { ...rest, videoPath: _cluster.videoPath, sourceOffsetSec: _cluster.sourceOffsetSec };
+        }
         const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
         let vPath = downloadedCandidatesMap.get(candIdx);
         if (!vPath) {
@@ -1541,6 +1589,7 @@ async function _runStage1Pipeline({
         return {
           ...c,
           videoPath: vPath,
+          sourceOffsetSec: 0,
         };
       }).filter(Boolean);
 

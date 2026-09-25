@@ -697,7 +697,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
 /**
  * Downloads a YouTube video with configurable quality (preview 360p vs full 1080p Full HD).
  */
-export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress = () => {}, { quality = '1080p', prefix = 'raw' } = {}) {
+export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress = () => {}, { quality = '1080p', prefix = 'raw', section = null } = {}) {
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
@@ -828,6 +828,12 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
       ...(process.env.DOWNLOAD_ARCHIVE_PATH
         ? ['--download-archive', process.env.DOWNLOAD_ARCHIVE_PATH]
         : []),
+      // #1 Hemat kuota: bila caller mengirim { startSec, endSec }, unduh HANYA rentang itu.
+      // --force-keyframes-at-cuts menjamin file dimulai TEPAT di startSec (sehingga
+      // sourceOffsetSec akurat untuk rebase '-ss' di renderer). Default: tanpa section = unduh penuh.
+      ...(section && Number.isFinite(section.startSec) && Number.isFinite(section.endSec) && section.endSec > section.startSec
+        ? ['--download-sections', `*${section.startSec.toFixed(3)}-${section.endSec.toFixed(3)}`, '--force-keyframes-at-cuts']
+        : []),
       '-o',
       outputTemplate,
       url,
@@ -904,11 +910,14 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
         const videoSize = fs.statSync(downloadedFile).size;
         trackBandwidth('videoDownload', videoSize, `Download video HD (${path.basename(downloadedFile)} - ${(videoSize / (1024 * 1024)).toFixed(2)} MB)`);
         if (!isPreview) {
-          console.log(`[Downloader] 📦 Render download: ${(videoSize / (1024 * 1024)).toFixed(2)} MB | maxH=${renderMaxH} | videoOnly=${renderVideoOnly} | ${path.basename(downloadedFile)}`);
+          const secInfo = (section && Number.isFinite(section.startSec) && Number.isFinite(section.endSec))
+            ? ` | SECTION ${section.startSec.toFixed(1)}-${section.endSec.toFixed(1)}s`
+            : '';
+          console.log(`[Downloader] 📦 Render download: ${(videoSize / (1024 * 1024)).toFixed(2)} MB | maxH=${renderMaxH} | videoOnly=${renderVideoOnly}${secInfo} | ${path.basename(downloadedFile)}`);
         }
 
         onProgress({ step: 'download', message: `Video download (${qualityLabel}) completed successfully.`, progress: 35 });
-        return { filePath: downloadedFile, metadata };
+        return { filePath: downloadedFile, metadata, sectionStart: section && Number.isFinite(section.startSec) ? section.startSec : 0 };
       }
     }
 
