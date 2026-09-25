@@ -877,7 +877,11 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   const activeFacePolicy = facePolicy || resolveNicheFacePolicy(niche);
 
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
-  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: 300, onProgress, niche, facePolicy: activeFacePolicy });
+  // Timeout SKALIK dengan jumlah frame: sampling padat (~200 frame/5mnt) di CPU 2-core Termux
+  // bisa melewati batas lama 300s; saat Node abort, gatekeeper menulis ke socket mati ->
+  // BrokenPipeError & hasil batch terbuang sia-sia. Beri jatah ~4s/frame + buffer, min 300s.
+  const gkTimeoutSec = Math.max(300, frames.length * 4 + 120);
+  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: gkTimeoutSec, onProgress, niche, facePolicy: activeFacePolicy });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
     const allClean = aiResult.allFrames

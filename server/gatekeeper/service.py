@@ -1309,12 +1309,17 @@ GATEKEEPER = None
 class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
     def _send_json(self, status_code, data):
         body = json.dumps(data).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+        except (BrokenPipeError, ConnectionResetError):
+            # Klien (Node) sudah menutup koneksi (abort/timeout) - hasil tidak bisa dikirim.
+            return False
 
     def do_GET(self):
         if self.path in ("/health", "/"):
@@ -1363,9 +1368,15 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                     min_clean_duration=min_dur,
                     face_policy=face_policy
                 )
-                self._send_json(200, res)
+                if not self._send_json(200, res):
+                    print(f"⚠️  [Gatekeeper] Klien terputus sebelum hasil {len(frames)} frame terkirim (batch dibuang; cek timeout pemanggil).")
+            except (BrokenPipeError, ConnectionResetError):
+                print("⚠️  [Gatekeeper] Klien menutup koneksi saat /filter-frames berlangsung; diabaikan.")
             except Exception as err:
-                self._send_json(500, {"error": str(err)})
+                try:
+                    self._send_json(500, {"error": str(err)})
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
         else:
             self._send_json(404, {"error": "Endpoint not found"})
 
@@ -1376,11 +1387,15 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
 class DegradedGatekeeperHandler(BaseHTTPRequestHandler):
     def _send_json(self, status_code, data):
         body = json.dumps(data).encode("utf-8")
-        self.send_response(status_code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.send_response(status_code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return True
+        except (BrokenPipeError, ConnectionResetError):
+            return False
 
     def do_GET(self):
         if self.path == "/health":
@@ -1411,14 +1426,28 @@ class DegradedGatekeeperHandler(BaseHTTPRequestHandler):
 def run_server(port=5050):
     global GATEKEEPER
     server_address = ("127.0.0.1", port)
+
+    class QuietThreadingHTTPServer(ThreadingHTTPServer):
+        """Sengaja membungkam traceback BrokenPipeError/ConnectionResetError dari klien
+        yang abort (mis. Node timeout saat batch 200 frame padat di Termux) - ini bukan
+        crash gatekeeper. Error sesungguhnya tetap dilog normal."""
+        daemon_threads = True
+
+        def handle_error(self, request, client_address):
+            exc = sys.exc_info()[1]
+            if isinstance(exc, (BrokenPipeError, ConnectionResetError, TimeoutError)):
+                print(f"⚠️  [Gatekeeper] Klien {client_address} terputus sebelum respons terkirim ({type(exc).__name__}) - diabaikan.")
+                return
+            ThreadingHTTPServer.handle_error(self, request, client_address)
+
     if not HAS_CV2 or not HAS_NUMPY:
         print(f"⚠️  [AI Gatekeeper] opencv-python-headless atau numpy belum terpasang.")
         print(f"   Service berjalan dalam mode FALLBACK pada http://127.0.0.1:{port}.")
         print(f"   (Untuk mengaktifkan model AI lokal, jalankan: pip install opencv-python-headless numpy onnxruntime)")
-        httpd = ThreadingHTTPServer(server_address, DegradedGatekeeperHandler)
+        httpd = QuietThreadingHTTPServer(server_address, DegradedGatekeeperHandler)
     else:
         GATEKEEPER = FrameGatekeeper()
-        httpd = ThreadingHTTPServer(server_address, GatekeeperHTTPHandler)
+        httpd = QuietThreadingHTTPServer(server_address, GatekeeperHTTPHandler)
         print(f"📡 [AI Gatekeeper Server v2.0] Mendengarkan pada http://127.0.0.1:{port}")
     try:
         httpd.serve_forever()
