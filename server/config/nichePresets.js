@@ -182,6 +182,9 @@ export const NICHE_PRESETS = {
     badgeColor: '#3b82f6',
     outroBumper: 'gadget_outro.mp4',
     strictSceneVoSync: true,
+    // Smartphone: 1 video terverifikasi LANGSUNG diproses; jangan paksa harvesting
+    // sumber ke-2 (b-roll faceless HP langka -> kandidat berikutnya terus di-skip & kuota terbuang).
+    minVerifiedSources: 1,
     slotsConfig: [
       {
         slot: 1,

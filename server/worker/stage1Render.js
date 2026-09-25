@@ -1130,8 +1130,12 @@ async function _runStage1Pipeline({
         const hasRemainingPool = candidatePoolIndex < candidatePool.length;
 
         // DYNAMIC MULTI-VIDEO HARVESTING FOR REELS:
-        // Usahakan mengumpulkan minimal 2 video terverifikasi agar memiliki variasi sudut kamera & latar belakang berbeda!
-        const targetMultiSources = 2;
+        // Jumlah SUMBER video terverifikasi minimum sebelum boleh langsung diproses.
+        // Default 2 (Kitchen: variasi sudut & latar). Smartphone/gadget preset memakai
+        // minVerifiedSources:1 -> begitu 1 video terverifikasi LANGSUNG diproses, jangan
+        // terus-terusan men-skip kandidat demi mengejar sumber ke-2 yang langka.
+        const nichePresetForSource = getNichePreset(options.niche || 'kitchen_tools');
+        const targetMultiSources = Math.max(1, Number(nichePresetForSource?.minVerifiedSources) || 2);
         const shouldKeepHarvesting = verifiedCandidatesCount < targetMultiSources &&
           hasRemainingPool &&
           streamedCount < Math.min(3, maxStreamVideos);
@@ -1250,8 +1254,10 @@ async function _runStage1Pipeline({
 
               // Kondisi sukses:
               // - Memiliki minimal 5 klip ATAU
-              // - Memiliki minimal 3 klip dengan variasi multi-kandidat (>= 2 video berbeda) dan tanpa slot hilang fatal
-              const isSatisfactory = currentClips.length >= 5 || (currentClips.length >= 3 && multiCandidateCount >= 2 && !hasMissingSlots);
+              // - Memiliki minimal 3 klip dengan variasi multi-kandidat dan tanpa slot hilang fatal.
+              //   Ambang variasi sumber mengikuti targetMultiSources (smartphone boleh 1 sumber penuh).
+              const minSourcesForSatisfactory = Math.min(2, targetMultiSources);
+              const isSatisfactory = currentClips.length >= 5 || (currentClips.length >= 3 && multiCandidateCount >= minSourcesForSatisfactory && !hasMissingSlots);
 
               if (isSatisfactory) {
                 console.log(`[Job ${jobId}] ✅ AI Vision berhasil memilih ${currentClips.length} cuplikan produk dari ${preferredSoFar.length} video (Multi-sumber: ${multiCandidateCount} video)!`);

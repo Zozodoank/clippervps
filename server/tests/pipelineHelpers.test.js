@@ -1,5 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import { distributeTotal } from '../services/professionalPipelineService.js';
+import { getNichePreset } from '../config/nichePresets.js';
+
+describe('Niche minVerifiedSources (gate multi-video harvesting)', () => {
+  it('smartphone/gadget preset mengizinkan 1 sumber terverifikasi langsung diproses', () => {
+    const preset = getNichePreset('gadget_smartphone');
+    const target = Math.max(1, Number(preset?.minVerifiedSources) || 2);
+    expect(target).toBe(1);
+  });
+
+  it('kitchen preset tetap butuh 2 sumber (default lama, tanpa regresi)', () => {
+    const preset = getNichePreset('kitchen_tools');
+    const target = Math.max(1, Number(preset?.minVerifiedSources) || 2);
+    expect(target).toBe(2);
+  });
+});
 
 describe('Pipeline Helpers', () => {
   describe('distributeTotal', () => {
