@@ -89,6 +89,12 @@ except ImportError:
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(CURRENT_DIR, "models")
 
+# Phase 1 hemat CPU (2026-09-25): DBNet PP-OCRv4 (input 736px) adalah stage TERBERAT di
+# gatekeeper, padahal overlay watermark/subtitle yang dicari bertahan berdetik-detik sementara
+# frame kita berjarak ~1.5s. Cukup periksa 1 dari N frame; frame sisanya mewarisi hasil cek
+# terakhir. Set GK_TEXT_CHECK_STRIDE=1 untuk mengembalikan perilaku lama (DBNet tiap frame).
+TEXT_CHECK_STRIDE = max(1, int(os.environ.get("GK_TEXT_CHECK_STRIDE", "3") or 3))
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. TAHAP 1: FACE DETECTOR (MediaPipe BlazeFace + OpenCV YuNet)
@@ -572,26 +578,7 @@ class TextGatekeeper:
                 pass
 
         # ── Jalur 2: Sobel Horizontal Gradient Fallback (4-Corner Inspection) ──
-        gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
-        grad_x = cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3)
-        abs_grad_x = cv2.convertScaleAbs(grad_x)
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 3))
-        connected = cv2.morphologyEx(abs_grad_x, cv2.MORPH_CLOSE, kernel)
-        _, connected = cv2.threshold(connected, 55, 255, cv2.THRESH_BINARY)
-
-        total_cov = float(cv2.countNonZero(connected)) / float(crop_area)
-        top_y = int(h * 0.35)
-        bottom_y = int(h * 0.65)
-        left_x = int(w * 0.45)
-        right_x = int(w * 0.55)
-
-        tl_sobel = float(cv2.countNonZero(connected[:top_y, :left_x])) / float(top_y * left_x) if (top_y * left_x) > 0 else 0.0
-        tr_sobel = float(cv2.countNonZero(connected[:top_y, right_x:])) / float(top_y * (w - right_x)) if (top_y * (w - right_x)) > 0 else 0.0
-        bl_sobel = float(cv2.countNonZero(connected[bottom_y:, :left_x])) / float((h - bottom_y) * left_x) if ((h - bottom_y) * left_x) > 0 else 0.0
-        br_sobel = float(cv2.countNonZero(connected[bottom_y:, right_x:])) / float((h - bottom_y) * (w - right_x)) if ((h - bottom_y) * (w - right_x)) > 0 else 0.0
-        bottom_cov = float(cv2.countNonZero(connected[bottom_y:, :])) / float((h - bottom_y) * w) if ((h - bottom_y) * w) > 0 else 0.0
-
+        tl_sobel, tr_sobel, bl_sobel, br_sobel, total_cov, bottom_cov = self._sobel_text_density(crop_bgr)
         corner_activations = {"TL": round(tl_sobel, 4), "TR": round(tr_sobel, 4), "BL": round(bl_sobel, 4), "BR": round(br_sobel, 4)}
 
         # Sobel fallback threshold diperketat (dari 0.028/0.035/0.040 menjadi 0.020/0.025/0.030)
@@ -604,6 +591,41 @@ class TextGatekeeper:
             return True, total_cov, bottom_cov, f"Densitas teks/grafis dominan (Sobel)", corner_activations
 
         return False, total_cov, bottom_cov, "Teks dalam batas aman (Sobel)", corner_activations
+
+    def _sobel_text_density(self, crop_bgr):
+        """Pengukuran murah densitas teks/grafis per zona (TANPA model ONNX).
+        Dipakai untuk Jalur 2 fallback DAN sebagai sentinel murah saat DBNet dihemat.
+        Return: (tl, tr, bl, br, total_cov, bottom_cov)."""
+        h, w = crop_bgr.shape[:2]
+        gray = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2GRAY)
+        grad_x = cv2.Sobel(gray, cv2.CV_16S, 1, 0, ksize=3)
+        abs_grad_x = cv2.convertScaleAbs(grad_x)
+
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (17, 3))
+        connected = cv2.morphologyEx(abs_grad_x, cv2.MORPH_CLOSE, kernel)
+        _, connected = cv2.threshold(connected, 55, 255, cv2.THRESH_BINARY)
+
+        crop_area = float(h * w)
+        total_cov = float(cv2.countNonZero(connected)) / crop_area if crop_area > 0 else 0.0
+        top_y = int(h * 0.35)
+        bottom_y = int(h * 0.65)
+        left_x = int(w * 0.45)
+        right_x = int(w * 0.55)
+
+        tl = float(cv2.countNonZero(connected[:top_y, :left_x])) / float(top_y * left_x) if (top_y * left_x) > 0 else 0.0
+        tr = float(cv2.countNonZero(connected[:top_y, right_x:])) / float(top_y * (w - right_x)) if (top_y * (w - right_x)) > 0 else 0.0
+        bl = float(cv2.countNonZero(connected[bottom_y:, :left_x])) / float((h - bottom_y) * left_x) if ((h - bottom_y) * left_x) > 0 else 0.0
+        br = float(cv2.countNonZero(connected[bottom_y:, right_x:])) / float((h - bottom_y) * (w - right_x)) if ((h - bottom_y) * (w - right_x)) > 0 else 0.0
+        bottom_cov = float(cv2.countNonZero(connected[bottom_y:, :])) / float((h - bottom_y) * w) if ((h - bottom_y) * w) > 0 else 0.0
+        return tl, tr, bl, br, total_cov, bottom_cov
+
+    def needs_full_text_check(self, crop_bgr):
+        """Sentinel murah sebelum DBNet dihemat (Fase 1): returns True bila ada TANDA tanda
+        teks/grafis di zona sudut atau bawah. Ambang yang dipakai SENGAJA lebih longgar dari
+        ambang DBNet (0.020/0.025/0.030 vs 0.012/0.013/0.012) supaya frame yang mencurigakan
+        selalu diperiksa penuh, bukan diwarisi."""
+        tl, tr, bl, br, total_cov, bottom_cov = self._sobel_text_density(crop_bgr)
+        return bool(max(tl, tr, bl, br) >= 0.020 or bottom_cov >= 0.025 or total_cov >= 0.030)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -836,37 +858,43 @@ class FrameGatekeeper:
         x_start = (w - target_w) // 2
         return image[:, x_start:x_start + target_w]
 
-    def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools", face_policy="strict"):
+    def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools", face_policy="strict",
+                             image_bgr=None, run_text_check=True, inherited_text=None):
         """
         Mengevaluasi satu frame secara independen dan mengembalikan hasil lengkap:
         - status: 'clean' | 'uncertain' | 'discarded'
         - stage: tahap rejection
         - cornerActivations: skor watermark 4 sudut (TL, TR, BL, BR)
-        """
-        if not os.path.exists(file_path):
-            return {
-                "filePath": file_path,
-                "timestamp": timestamp,
-                "status": "discarded",
-                "stage": "io_error",
-                "reason": "File frame tidak ditemukan di disk",
-                "confidence": 0.0,
-                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
-                "decision": "REJECT"
-            }
 
-        img = cv2.imread(file_path)
+        image_bgr: frame yang SUDAH di-decode oleh pemanggil. Tanpa ini satu frame di-decode
+        3x (2x di pass motion + 1x di sini) - pemborasan CPU terbesar kedua setelah DBNet.
+        run_text_check=False: DBNet dilewati dan hasil teks diambil dari inherited_text.
+        """
+        img = image_bgr
         if img is None:
-            return {
-                "filePath": file_path,
-                "timestamp": timestamp,
-                "status": "discarded",
-                "stage": "io_error",
-                "reason": "Format gambar corrupt / gagal dibaca cv2",
-                "confidence": 0.0,
-                "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
-                "decision": "REJECT"
-            }
+            if not os.path.exists(file_path):
+                return {
+                    "filePath": file_path,
+                    "timestamp": timestamp,
+                    "status": "discarded",
+                    "stage": "io_error",
+                    "reason": "File frame tidak ditemukan di disk",
+                    "confidence": 0.0,
+                    "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                    "decision": "REJECT"
+                }
+            img = cv2.imread(file_path)
+            if img is None:
+                return {
+                    "filePath": file_path,
+                    "timestamp": timestamp,
+                    "status": "discarded",
+                    "stage": "io_error",
+                    "reason": "Format gambar corrupt / gagal dibaca cv2",
+                    "confidence": 0.0,
+                    "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0},
+                    "decision": "REJECT"
+                }
 
         # ── TAHAP 0: Pemeriksaan Pillarbox / Black Bars ──
         has_pb, pb_ratio, pb_reason = detect_pillarbox(img)
@@ -974,8 +1002,18 @@ class FrameGatekeeper:
                         "decision": "REJECT"
                     }
 
-        # ── TAHAP 2: Text & 4-Corner Watermark Detection ──
-        has_text, total_cov, bottom_cov, text_reason, corner_acts = self.text_gate.detect(crop, niche=niche)
+        # ── TAHAP 2: Text & 4-Corner Watermark Detection (DBNet = stage termahal) ──
+        if run_text_check:
+            has_text, total_cov, bottom_cov, text_reason, corner_acts = self.text_gate.detect(crop, niche=niche)
+        else:
+            # Warisi hasil DBNet frame sebelumnya. Watermark/subtitle bersifat persisten,
+            # jadi frame yang dilewati TIDAK bisa lolos dari deteksi hanya karena di-skip.
+            has_text, total_cov, bottom_cov, text_reason, corner_acts = inherited_text or (
+                False, 0.0, 0.0, "Teks tidak diperiksa (tidak ada hasil acuan)",
+                {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
+            )
+            if has_text:
+                text_reason = f"{text_reason} - diwarisi dari frame bercek sebelumnya"
         if has_text:
             return {
                 "filePath": file_path,
@@ -1071,59 +1109,111 @@ class FrameGatekeeper:
         # Urutkan berdasarkan timestamp kronologis untuk analisa temporal
         time_sorted = sorted(normalized_items, key=lambda x: x["timestamp"])
 
-        # ── 1. Inter-Frame Motion & Static Frame Detection (MAD + Edge Variance) ──
-        static_indices = set()
+        # ── 1+2. SATU PASS KRONOLOGIS: motion murah dulu, AI hanya untuk frame yang layak ──
+        # VERSI LAMA (boros): frame di-decode 3x (2x di pass motion + 1x di pass evaluasi)
+        # DAN pipeline YuNet+DBNet+MobileNetV3 dijalankan untuk SEMUA frame, termasuk frame
+        # yang toh akhirnya dibuang sebagai foto statis. Untuk batch 500 frame di Termux
+        # 2-core inilah sumber utama macet/timeout.
+        # VERSI BARU: 1x decode per frame, thumbnail 80x144 ditahan untuk MAD/edge-diff
+        # (O(1) memori), frame statis langsung REJECT tanpa menyentuh model, dan DBNet
+        # hanya 1 dari TEXT_CHECK_STRIDE frame (hasilnya diwariskan ke frame sisanya).
         static_transitions = 0
         consecutive_pairs = 0
         motion_scores = {}
-
-        for i in range(len(time_sorted) - 1):
-            f1 = time_sorted[i]
-            f2 = time_sorted[i + 1]
-            dt = abs(f2["timestamp"] - f1["timestamp"])
-
-            # Bandingkan frame jika selisih waktu <= 3.5 detik
-            if dt <= 3.5 and os.path.exists(f1["filePath"]) and os.path.exists(f2["filePath"]):
-                consecutive_pairs += 1
-                try:
-                    img1 = cv2.imread(f1["filePath"])
-                    img2 = cv2.imread(f2["filePath"])
-                    if img1 is not None and img2 is not None:
-                        s1 = cv2.resize(img1, (80, 144))
-                        s2 = cv2.resize(img2, (80, 144))
-                        mad = float(cv2.absdiff(s1, s2).mean())
-
-                        g1 = cv2.cvtColor(s1, cv2.COLOR_BGR2GRAY)
-                        g2 = cv2.cvtColor(s2, cv2.COLOR_BGR2GRAY)
-                        e1 = cv2.Canny(g1, 50, 150)
-                        e2 = cv2.Canny(g2, 50, 150)
-                        edge_diff = float(cv2.absdiff(e1, e2).mean())
-
-                        motion_scores[f1["filePath"]] = round(mad, 2)
-                        # Gambar diam / beku jika MAD < 3.2 dan edge_diff < 4.0
-                        if mad < 3.2 and edge_diff < 4.0:
-                            static_transitions += 1
-                            static_indices.add(f1["filePath"])
-                            static_indices.add(f2["filePath"])
-                except Exception:
-                    pass
-
-        # ── 2. Evaluasi Single Frame ──
         single_verdicts = []
+        prev_small = None
+        prev_ts = 0.0
+        last_text_result = None
+        static_skipped = 0
+        dbnet_calls = 0
+        frame_no = 0
+
         for item in time_sorted:
             path = item["filePath"]
             ts = item["timestamp"]
-            v = self.process_single_frame(path, ts, niche=niche, face_policy=face_policy)
+            frame_no += 1
 
-            # Jika terdeteksi statis dan berada di badan video (> 3.0s):
-            if path in static_indices and ts > 3.0 and v["status"] != "discarded":
-                v["status"] = "discarded"
-                v["stage"] = "static_frame"
-                v["decision"] = "REJECT"
-                v["reason"] = f"Frame foto statis diam / freeze frame (MAD: {motion_scores.get(path, 0.0)})"
+            img = cv2.imread(path) if os.path.exists(path) else None
+            small = cv2.resize(img, (80, 144)) if img is not None else None
+
+            is_static = False
+            # Bandingkan frame jika selisih waktu <= 3.5 detik (aturan ambang lama dipertahankan)
+            if small is not None and prev_small is not None and abs(ts - prev_ts) <= 3.5:
+                consecutive_pairs += 1
+                try:
+                    mad = float(cv2.absdiff(prev_small, small).mean())
+                    e_prev = cv2.Canny(cv2.cvtColor(prev_small, cv2.COLOR_BGR2GRAY), 50, 150)
+                    e_cur = cv2.Canny(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), 50, 150)
+                    edge_diff = float(cv2.absdiff(e_prev, e_cur).mean())
+                    motion_scores[path] = round(mad, 2)
+                    # Gambar diam / beku jika MAD < 3.2 dan edge_diff < 4.0
+                    if mad < 3.2 and edge_diff < 4.0:
+                        static_transitions += 1
+                        is_static = True
+                        # Frame SEBELUMNYA bagian dari pasangan statis yang sama -> buang juga.
+                        # Keputusan REJECT yang sudah ada tidak ditimpa (sama-sama dibuang).
+                        if single_verdicts and prev_ts > 3.0 and single_verdicts[-1]["status"] != "discarded":
+                            single_verdicts[-1]["status"] = "discarded"
+                            single_verdicts[-1]["stage"] = "static_frame"
+                            single_verdicts[-1]["decision"] = "REJECT"
+                            single_verdicts[-1]["reason"] = f"Frame foto statis diam / freeze frame (MAD: {round(mad, 2)})"
+                except Exception:
+                    pass
+
+            # DBNet dihemat otomatis: 1 dari TEXT_CHECK_STRIDE frame diperiksa, sisanya warisan.
+            # SENTINEL: frame yang mau di-skip tetap disaring murah pakai Sobel. Kalau ada tanda
+            # teks/grafis di sudut/bawah, frame itu WAJIB di-check DBNet penuh -> overlay baru
+            # yang muncul di antara dua pemeriksaan tidak bisa lolos tanpa terdeteksi.
+            if TEXT_CHECK_STRIDE <= 1 or last_text_result is None:
+                run_text_check = True
+            elif frame_no % TEXT_CHECK_STRIDE == 0:
+                run_text_check = True
+            elif img is None:
+                run_text_check = True
+            else:
+                run_text_check = self.text_gate.needs_full_text_check(self.crop_9_16(img))
+
+            if is_static and ts > 3.0:
+                # Frame beku: TIDAK perlu face/text/scene sama sekali (toh dibuang).
+                v = {
+                    "filePath": path,
+                    "timestamp": ts,
+                    "status": "discarded",
+                    "stage": "static_frame",
+                    "decision": "REJECT",
+                    "confidence": 0.0,
+                    "reason": f"Frame foto statis diam / freeze frame (MAD: {motion_scores.get(path, 0.0)})",
+                    "cornerActivations": {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
+                }
+                static_skipped += 1
+            else:
+                v = self.process_single_frame(
+                    path, ts, niche=niche, face_policy=face_policy,
+                    image_bgr=img, run_text_check=run_text_check, inherited_text=last_text_result
+                )
+
+            if run_text_check and v.get("stage") in ("passed", "text", "graphic_overlay", "scene", "uncertain_scene"):
+                # Frame ini benar-benar melewati TAHAP 2 -> jadikan acuan warisan berikutnya.
+                last_text_result = (
+                    v.get("stage") == "text",
+                    float(v.get("totalCoverage") or 0.0),
+                    float(v.get("bottomCoverage") or 0.0),
+                    v.get("reason") or "",
+                    v.get("cornerActivations") or {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
+                )
+                dbnet_calls += 1
+            elif not run_text_check:
+                v["textInherited"] = True
 
             v["motionScore"] = motion_scores.get(path, 0.0)
             single_verdicts.append(v)
+
+            prev_small = small
+            prev_ts = ts
+
+        if static_skipped or dbnet_calls:
+            print(f"[Gatekeeper] ⚡ Hemat CPU batch: {static_skipped} frame statis dibuang TANPA inferensi, "
+                  f"DBNet {dbnet_calls}/{len(time_sorted)} pemanggilan (stride {TEXT_CHECK_STRIDE}).")
 
         # ── 2B. Temporal Presenter Track (khusus policy presenter_only) ──
         # Wajah 'content' yang persisten di posisi sama lintas frame = presenter statis.
@@ -1305,7 +1395,11 @@ class FrameGatekeeper:
             "benchmarks": {
                 "totalMs": round(elapsed_ms, 1),
                 "avgMsPerFrame": round(avg_ms, 1),
-                "fps": round(1000.0 / max(1.0, avg_ms), 1)
+                "fps": round(1000.0 / max(1.0, avg_ms), 1),
+                "textCheckStride": TEXT_CHECK_STRIDE,
+                "dbnetCalls": dbnet_calls,
+                "dbnetInherited": max(0, len(time_sorted) - dbnet_calls),
+                "staticFramesSkippedInference": static_skipped
             },
             "cleanFrames": clean_frames,
             "discardedFrames": discarded_frames,

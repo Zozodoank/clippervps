@@ -876,12 +876,30 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   // Policy diturunkan dari preset niche (data-driven) kecuali caller eksplisit mengirim nilai lain
   const activeFacePolicy = facePolicy || resolveNicheFacePolicy(niche);
 
+  // ── CAP BATCH GATEKEEPER (Fase 1 hemat CPU) ──
+  // Batch 500 frame (video ~12 menit, sampling dur/1.5) membuat Termux 2-core bekerja
+  // bermenit-menit dan Node harus memegang timeout raksasa. Pool frame di-subsample MERATA
+  // supaya tidak melewati GK_MAX_BATCH_FRAMES (default 240), TETAPI jarak antar frame hasil
+  // pemangkasan tidak boleh melewati 3.2s: gatekeeper hanya membandingkan pasangan frame
+  // berjarak <= 3.5s untuk mendeteksi foto statis - kalau jaraknya diregangkan lebih lebar,
+  // dedup statis mati dan AI justru bekerja penuh untuk semua frame.
+  const MAX_GATEKEEPER_FRAMES = Math.max(20, Number(process.env.GK_MAX_BATCH_FRAMES) || 240);
+  const spanSec = Math.max(0, Number(frames[frames.length - 1]?.timestamp || 0) - Number(frames[0]?.timestamp || 0));
+  const intervalCap = spanSec > 0 ? Math.floor(spanSec / 3.2) + 1 : frames.length;
+  const batchCap = Math.max(5, Math.min(MAX_GATEKEEPER_FRAMES, intervalCap));
+  let gkFrames = frames;
+  if (frames.length > batchCap) {
+    const step = frames.length / batchCap;
+    gkFrames = Array.from({ length: batchCap }, (_, i) => frames[Math.min(frames.length - 1, Math.floor(i * step))]);
+    console.log(`[inspectFramesLocally] 🧮 Batch gatekeeper dipangkas ${frames.length} -> ${gkFrames.length} frame (cap ${MAX_GATEKEEPER_FRAMES}, jarak hasil ~${(spanSec / Math.max(1, gkFrames.length)).toFixed(2)}s/frame)`);
+  }
+
   // ── 0. COBA EVALUASI DENGAN AI LOCAL GATEKEEPER (MediaPipe + DBNet + MobileNetV3) ──
   // Timeout SKALIK dengan jumlah frame: sampling padat (~200 frame/5mnt) di CPU 2-core Termux
   // bisa melewati batas lama 300s; saat Node abort, gatekeeper menulis ke socket mati ->
-  // BrokenPipeError & hasil batch terbuang sia-sia. Beri jatah ~4s/frame + buffer, min 300s.
-  const gkTimeoutSec = Math.max(300, frames.length * 4 + 120);
-  const aiResult = await callAIGatekeeperMicroservice(frames, { timeoutSec: gkTimeoutSec, onProgress, niche, facePolicy: activeFacePolicy });
+  // ConnectionAbortedError & hasil batch terbuang sia-sia. Beri jatah ~4s/frame + buffer, min 300s.
+  const gkTimeoutSec = Math.max(300, gkFrames.length * 4 + 120);
+  const aiResult = await callAIGatekeeperMicroservice(gkFrames, { timeoutSec: gkTimeoutSec, onProgress, niche, facePolicy: activeFacePolicy });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
     const allClean = aiResult.allFrames
