@@ -219,6 +219,24 @@ export async function runAutoStage1Worker(run) {
       });
 
       // ── STRATEGI VIDEO-FIRST: identity-only search ──
+      // SAME-PRODUCT RETENTION (permintaan user): begitu satu MERK + TYPE ditemukan, JANGAN
+      // lompat ke produk berbeda hanya karena satu kegagalan. Habiskan percobaan untuk merk+type
+      // YANG SAMA: tiap percobaan mencari ulang video-video baru identitas yang sama (video yang
+      // sudah dicoba dikecualikan) sampai pipeline sukses atau SAME_PRODUCT_MAX_ATTEMPTS habis.
+      const SAME_PRODUCT_MAX_ATTEMPTS = 3;
+      let jobSuccess = false;
+      let gaveUpOnProduct = false;
+      let failedAttemptsForProduct = 0;
+      for (let productAttempt = 1; productAttempt <= SAME_PRODUCT_MAX_ATTEMPTS; productAttempt++) {
+      if (run.status === 'stopping' || run.status === 'stopped') break;
+
+      if (productAttempt > 1) {
+        updateAutoRun(run, {
+          message: `[${targetLabel}] Merk+type sama belum lengkap — cari video BARU lagi untuk "${searchKeyword}" (percobaan ${productAttempt}/${SAME_PRODUCT_MAX_ATTEMPTS})...`,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 2000 + Math.floor(Math.random() * 2000)));
+      }
+
       let candidates = await searchMultiEngineVideos(searchKeyword, {
         limit: 16,
         excludeVideoIds: usedYouTubeVideoIds,
@@ -230,13 +248,15 @@ export async function runAutoStage1Worker(run) {
       // AutoRun uses direct YouTube search only. No marketplace image/reverse-search fallback. 
 
       if (!candidates || candidates.length === 0) {
-        run.skippedProducts++;
-        updateAutoRun(run, { message: `[${targetLabel}] Skip "${keyword}": Tidak ada video kandidat baru yang cocok.` });
-        continue;
+        if (productAttempt === 1) {
+          run.skippedProducts++;
+          updateAutoRun(run, { message: `[${targetLabel}] Skip "${keyword}": Tidak ada video kandidat baru yang cocok.` });
+        } else {
+          updateAutoRun(run, { message: `[${targetLabel}] Tak ada video kandidat baru tersisa untuk "${searchKeyword}" — lanjut ke produk lain.` });
+        }
+        gaveUpOnProduct = true;
+        break;
       }
-
-      let jobSuccess = false;
-      if (run.status === 'stopping' || run.status === 'stopped') break;
 
       const autoJobId = `auto_${crypto.randomBytes(5).toString('hex')}`;
       run.currentJobId = autoJobId;
@@ -406,24 +426,30 @@ export async function runAutoStage1Worker(run) {
           throw err;
         }
       }
+      if (!jobSuccess && !quotaExhausted) failedAttemptsForProduct++;
+      } // ⟵ akhir SAME-PRODUCT RETENTION loop (percobaan merk+type yang sama)
 
       if (quotaExhausted) {
         break;
       }
 
-      if (!jobSuccess) {
-        run.failedJobs++;
-        console.warn(`[Auto] 🛑 Job untuk "${searchKeyword}" gagal diproses (misal: karena tertolak Final QC akibat watermark). Auto Mode melakukan "Self-Healing": melompati video ini dan lanjut mencari video bersih berikutnya.`);
-        
-        if (run.currentJobId) {
-          deleteJobTempDirectory(run.currentJobId, tempDir);
-        }
-
-        updateAutoRun(run, {
-          message: `⚠️ Job sebelumnya gagal (terkena AI Filter/Kotor). Melanjutkan ke pencarian video bersih berikutnya...`,
-        });
-        continue;
+      if (jobSuccess) {
+        break; // produk berhasil; autorun berhenti (hanya 1 job per generate agar aman).
       }
+
+      if (failedAttemptsForProduct > 0) {
+        run.failedJobs++;
+        console.warn(`[Auto] 🛑 Produk "${searchKeyword}" gagal setelah ${failedAttemptsForProduct}x percobaan merk+type yang sama (tidak lagi lompat prematur ke produk berbeda). Auto Mode "Self-Healing": baru lanjut ke produk lain.`);
+      }
+
+      if (run.currentJobId) {
+        deleteJobTempDirectory(run.currentJobId, tempDir);
+      }
+
+      updateAutoRun(run, {
+        message: `⚠️ Produk "${searchKeyword}" gagal diproses (sudah diulang dengan merk+type yang sama). Melanjutkan ke pencarian video bersih berikutnya...`,
+      });
+      continue;
 
       // If user stopped auto mode, break immediately after current job finishes!
       if (run.status === 'stopping' || run.status === 'stopped') {
