@@ -526,6 +526,27 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 }
 
 /**
+ * Budget frame yang benar-benar akan DIPROSES Gatekeeper, dihitung dari effectiveSpan
+ * (bukan durasi mentah) agar basis hulu == basis hilir (spanSec aktual di
+ * inspectFramesLocally). Divisor 3.25 (BUKAN 3.2): interval grid jadi >= 3.25s sehingga
+ * intervalCap hilir (floor(span/3.2)+1) punya margin keketatan terhadap noise floating-point.
+ * Dengan 3.2, durasi yang eff/3.2-nya tepat integer (mis. span 96/560/640/720s) memicu
+ * off-by-one: span aktual grid (N-1)/N*span jatuh ke bawah kelipatan 3.2 saat di-floor.
+ * +1 juga dibuang: grid N titik menghasilkan span aktual (N-1)/N*span, bukan span penuh.
+ * Interval hasil tetap < 3.5s => invariant pairing statis Gatekeeper tidak pernah tembus.
+ *
+ * JAMINAN "subsample hilir = no-op" hanya berlaku di domain budget murni,
+ * yaitu ketika floor(effectiveSpan/3.25) berada di antara floor 15 dan cap GK_MAX_BATCH_FRAMES
+ * (dengan default 240: span efektif ~52s - 780s). Di luar rentang itu, clamp max(15)/min(cap)
+ * mengambil alih: input GK tetap identik dengan perilaku hari ini (subsample hilir sudah
+ * terjadi tanpa flag), tapi log "Batch gatekeeper dipangkas" mungkin masih muncul - BUKAN regresi.
+ */
+export function gatekeeperFrameBudget(effectiveSpanSec) {
+  const maxGk = Math.max(20, Number(process.env.GK_MAX_BATCH_FRAMES) || 240);
+  return Math.max(15, Math.min(maxGk, Math.floor(effectiveSpanSec / 3.25)));
+}
+
+/**
  * ── TAHAP 2: SAMPLING FRAME LANGSUNG DARI STREAM URL ─────────────────────────
  * Uses FFmpeg to extract frames densely ( caller-requested dur/1.5 -> 200@5mnt, 240@6mnt, cap 500 )
  * directly from the stream URL without downloading the full video.
@@ -570,12 +591,26 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     const safeEnd = Math.max(safeStart + 15.0, safeDuration - 8.0);
     const effectiveSpan = Math.max(1, safeEnd - safeStart);
 
+    // GK_ALIGN_SAMPLING (default OFF): samakan JUMLAH SEEK dengan budget yang bakal
+    // diproses Gatekeeper - frame di atas batchCap toh tidak pernah dibaca downstream
+    // (inspectFramesLocally meng-subsample merata, hanya hasil GK yang mengalir ke Stage F).
+    // Basis: effectiveSpan SETELAH trim tepi - sama persis dengan spanSec aktual di
+    // inspectFramesLocally, sehingga subsample hilir jadi no-op & log validasi bersih.
+    let maxPoints = safeMax;
+    if (process.env.GK_ALIGN_SAMPLING === '1') {
+      const budget = gatekeeperFrameBudget(effectiveSpan);
+      if (budget < maxPoints) {
+        console.log(`[VideoFilterService] 🧮 GK_ALIGN_SAMPLING: seek ${maxPoints} -> ${budget} frame (span efektif ${effectiveSpan.toFixed(0)}s, interval ~${(effectiveSpan / budget).toFixed(2)}s < 3.5s).`);
+        maxPoints = budget;
+      }
+    }
+
     // Sampling seragam RAPAT di SELURUH video (bukan klaster hemat) untuk semua durasi & perangkat.
     // interval = rentang aman / jumlah frame target (mis. 280s / 200 = 1.4s). Floor 0.5s jaga-jaga.
-    const interval = Math.max(0.5, effectiveSpan / safeMax);
+    const interval = Math.max(0.5, effectiveSpan / maxPoints);
     let cur = safeStart;
     let pIdx = 1;
-    while (cur <= safeEnd && pIdx <= safeMax) {
+    while (cur <= safeEnd && pIdx <= maxPoints) {
       samplePoints.push({ index: pIdx++, timestamp: Math.round(cur * 10) / 10 });
       cur += interval;
     }
