@@ -1,10 +1,10 @@
 # 🎬 AI Affiliate Clipper
 
-> 💻 **Project Status: Berjalan sepenuhnya lokal (PC Windows & HP Android/Termux)**  
+> 💻 **Project Status: Berjalan sepenuhnya lokal di perangkat Anda (PC Windows & HP Android/Termux)**  
 > Repository GitHub: [https://github.com/Zozodoank/clippervps.git](https://github.com/Zozodoank/clippervps.git)  
-> Semua proses dieksekusi langsung di perangkat Anda — tanpa server cloud.
+> Semua proses pemrosesan (analisa stream, ekstraksi frame, FFmpeg render, Gatekeeper AI lokal) dieksekusi langsung di perangkat Anda — tanpa server cloud. Hanya panggilan API AI (Google Gemini / OpenRouter) yang lewat jaringan.
 
-Web application berbasis **React (Vite)** dan **Node.js (Express)** yang bertugas mengotomatisasi pengubahan video YouTube menjadi **video reels vertikal 9:16 viral & high-converting** untuk promosi **Shopee Affiliate Marketing**. Seluruh pemrosesan berat (download YouTube 1080p, ekstraksi frame, FFmpeg rendering, dan AI vision) dijalankan langsung di perangkat Anda (tanpa server cloud).
+Web application berbasis **React (Vite)** dan **Node.js (Express)** yang bertugas mengotomatisasi pengubahan video YouTube menjadi **video reels vertikal 9:16 viral & high-converting** untuk promosi **Shopee Affiliate Marketing**. Seluruh pemrosesan berat (analisa stream, ekstraksi frame, FFmpeg rendering, dan AI vision) dijalankan langsung di perangkat Anda (tanpa server cloud).
 
 ---
 
@@ -37,7 +37,7 @@ flowchart TD
     F --> G[Verified Footage Library]
     G --> H[Story-First Creative Shot Plan]
     H --> I[AI Storyboard Solver]
-    I --> J[Download Hanya Source 1080p Terpilih]
+    I --> J[Download Source Terpilih - 1080p / segmen saja]
     J --> K[HD Clip Audit]
     K --> L[Adaptive 9:16 Reframe + Silent Edit]
     L --> M[Grounded Script + TTS]
@@ -159,11 +159,27 @@ npm run dev
 
 ---
 
-## 💾 Panduan Hemat Kuota (Smart Two-Stage Download)
+## 💾 Cara Sistem Menghemat Kuota
 
-Aplikasi secara default mengaktifkan fitur **Smart Two-Stage Download** untuk menghemat kuota internet hingga **90%**:
-1. **Tahap 1 (Analisa Ringan 360p):** Video diunduh dalam format ultra-ringan (hanya berukuran **~1 - 3 MB**) untuk diekstrak framenya dan dianalisis oleh AI Vision.
-2. **Eliminasi Cepat:** Jika kandidat video tidak cocok, kandidat langsung dibuang tanpa mengunduh video berat.
-3. **Tahap 2 (Unduh 1080p Full HD HANYA untuk Video yang Lolos):** Begitu AI memvalidasi video layak dipotong, barulah sistem mendownload video 1080p Full HD asli untuk proses pemotongan 9:16 vertikal dan dubbing voiceover.
+Sistem **tidak** mengunduh video penuh untuk menganalisa kandidat. Penghematan terjadi berlapis:
 
-*(Opsional)* Anda dapat mengatur `LOW_DATA_MODE=true` atau `LOW_DATA_MODE=false` di file `server/.env`.
+1. **Metadata-only (0 unduh video):** judul, durasi, resolusi maksimal, dan URL stream diambil lewat yt-dlp `--dump-json` (±30–600 KB/kandidat). Kandidat beresolusi <720p atau durasi di luar 50s–15mnt langsung ditolak di sini.
+2. **Frame sampling langsung dari stream HLS (tanpa unduh file):** ekstraksi ±200–500 frame (1 frame per 1,5 detik, cap 500) via FFmpeg *two-stage seek* (range-seek HTTP). Rata-rata ±1 MB, tapi bisa ~12–18 MB untuk video panjang yang di-sample penuh. Frame disaring **Gatekeeper lokal (port 5050) via localhost — 0 kuota internet.**
+3. **Watermark Probe (opsional, default ON):** sebelum dense sampling, 5 titik frame dicek; bila ≥3/5 ber-watermark persisten, kandidat dibuang **sebelum** membayar sampling penuh. Matikan: `GK_WATERMARK_PROBE=0`.
+4. **Unduh 1080p HANYA untuk source terpilih:** setelah AI menyetujui storyboard, barulah video sumber diunduh untuk render. Ini pos kuota terbesar (rata-rata ±81 MB/file terukur).
+
+### Flag hemat kuota tahap render (`server/.env`) — semua default aman untuk PC
+| Flag | Default | Fungsi |
+|---|---|---|
+| `RENDER_VIDEO_ONLY` | ON | Jangan unduh audio sumber (selalu dibuang `-an`, VO dibuat sendiri). Murni hemat, nol efek kualitas. Set `0` untuk tetap unduh audio. |
+| `RENDER_MAX_HEIGHT` | `1080` | Cap tinggi video render. **Termux: isi `720`** (hemat ±40–60%). Output tetap di-upscale ke 1080×1920. |
+| `RENDER_DOWNLOAD_SECTIONS` | OFF | `1` = unduh HANYA segmen klip yang dipakai (`yt-dlp --download-sections`), potensi hemat 80–95%. Bila satu segmen gagal, otomatis fallback ke unduhan penuh. |
+| `RENDER_SECTION_PAD` / `_TAIL_PAD` / `_GAP` | `2` / `5` / `15` | Tuning pengelompokan segmen (detik). Hanya aktif saat `RENDER_DOWNLOAD_SECTIONS=1`. |
+| `DOWNLOAD_ARCHIVE_PATH` | OFF | Anti unduh ulang videoId yang sama lintas job. Aktifkan HANYA bila folder output render persisten. |
+
+> **Rekomendasi Termux (hemat kuota):** set `RENDER_MAX_HEIGHT=720` (video-only sudah ON default). Ukur dari log `[Downloader] 📦 Render download: … MB`. `RENDER_DOWNLOAD_SECTIONS=1` boleh dicoba setelah 720p stabil.
+
+> Estimasi nyata: **±150–270 MB per job selesai** di PC (didominasi unduhan render 1080p). Dengan **720p + download-sections** bisa turun ke kisaran **±35–90 MB/job**.
+
+### Sampling frame bisa diperlonggar bila kuota sangat mepet
+Jumlah frame analisa dihitung `durasi / 1.5s` (cap 500). Menurunkan rasio/cap memangkas kuota sampling **dan** CPU Gatekeeper, tapi mengurangi resolusi temporal (risiko blind-spot adegan singkat).
