@@ -19,6 +19,19 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+# PAKSA LINE BUFFERING untuk SEMUA platform. Saat proses dijalankan lewat PM2
+# (pm2 start service.py --interpreter python3), stdout BUKAN sebuah TTY sehingga
+# Python memakainya dalam MODE BLOCK BUFFER (4-8 KB). Akibatnya semua print()
+# (termasuk log /filter-frames dan peringatan "Klien terputus") tertahan di buffer
+# dan `pm2 logs gatekeeper` tampak DIAM / log tidak tampil sama sekali bermenit-menit.
+# line_buffering=True = flush tiap baris, sama seperti PYTHONUNBUFFERED=-u tapi tidak
+# bergantung pada cara proses distart.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
 import json
 import time
 import math
