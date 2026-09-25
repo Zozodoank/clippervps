@@ -782,10 +782,31 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
 
     const dlBaseArgs = getDownloadArgs(clientType);
 
-    // Resilient format selector: 360p preview for AI analysis vs High Quality HD (strictly capped at 1080p to avoid bloated 4K/1440p downloads)
+    // Hemat kuota render: audio sumber SELALU dibuang saat render (-an), dan tinggi video dibatasi via env.
+    // RENDER_MAX_HEIGHT (default 1080; mis. 720 di Termux) + RENDER_VIDEO_ONLY (default ON; set '0' untuk tetap unduh audio).
+    const renderMaxH = (() => { const v = parseInt(process.env.RENDER_MAX_HEIGHT, 10); return Number.isFinite(v) && v > 0 ? v : 1080; })();
+    const renderVideoOnly = process.env.RENDER_VIDEO_ONLY !== '0';
+    const renderFormats = renderVideoOnly
+      ? [
+          `bv[height<=${renderMaxH}][vcodec^=avc1]`, // h264 dulu: decode ringan (Unisoc) + aman untuk kontainer mp4
+          `bv[height<=${renderMaxH}]`,
+          'bv',
+          `b*[height<=${renderMaxH}]`,
+          'b',
+        ]
+      : [
+          `bv[height<=${renderMaxH}][height>=720]+ba`,
+          'bv[width<=1920][width>=1280]+ba',
+          `bv[height<=${renderMaxH}]+ba`,
+          `b[height<=${renderMaxH}][height>=720]`,
+          'bv[height<=720]+ba',
+          `b[height<=${renderMaxH}]`,
+          'b',
+        ];
+    // Resilient format selector: 360p preview untuk analisa AI vs HD render (di-cap & opsional video-only).
     const formatSelector = isPreview
       ? '18/bestvideo[height<=360]+bestaudio/best[height<=360]/bestvideo[height<=480]+bestaudio/best[height<=480]/worstvideo+worstaudio/worst/best'
-      : 'bestvideo[height<=1080][height>=720]+bestaudio/bestvideo[width<=1920][width>=1280]+bestaudio/bestvideo[height<=1080]+bestaudio/best[height<=1080][height>=720]/bestvideo[height<=720]+bestaudio/best[height<=1080]/best';
+      : renderFormats.join('/');
 
     const dlArgs = [
       '--ffmpeg-location',
@@ -800,6 +821,13 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
       '--no-mtime',
       '--retries', '2',
       '--fragment-retries', '2',
+      // #5 Anti unduh ulang LINTAS job. DEFAULT OFF: aktif hanya bila DOWNLOAD_ARCHIVE_PATH diset.
+      // PENTING: arsip membuat yt-dlp MELEWATI unduhan yang sudah tercatat, jadi file hasil harus
+      // disimpan di direktori output PERSISTEN (bukan temp per-job yang dibersihkan); jika tidak,
+      // render tidak menemukan file. Pakai hanya bersama cache file yang tidak dihapus.
+      ...(process.env.DOWNLOAD_ARCHIVE_PATH
+        ? ['--download-archive', process.env.DOWNLOAD_ARCHIVE_PATH]
+        : []),
       '-o',
       outputTemplate,
       url,
@@ -875,6 +903,9 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
         }
         const videoSize = fs.statSync(downloadedFile).size;
         trackBandwidth('videoDownload', videoSize, `Download video HD (${path.basename(downloadedFile)} - ${(videoSize / (1024 * 1024)).toFixed(2)} MB)`);
+        if (!isPreview) {
+          console.log(`[Downloader] 📦 Render download: ${(videoSize / (1024 * 1024)).toFixed(2)} MB | maxH=${renderMaxH} | videoOnly=${renderVideoOnly} | ${path.basename(downloadedFile)}`);
+        }
 
         onProgress({ step: 'download', message: `Video download (${qualityLabel}) completed successfully.`, progress: 35 });
         return { filePath: downloadedFile, metadata };
