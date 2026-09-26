@@ -29,6 +29,16 @@ export function generateAssSubtitles(scriptText, totalDurationSec, assOutputPath
 
   const safeTotalDuration = Math.max(3, Number(totalDurationSec) || 25);
 
+  // WORD BOUNDARIES TIDAK TERSEDIA di titik ini (Gemini TTS single-stream / fallback Edge-TTS).
+  // Timestamp [00:XX] pada naskah adalah ESTIMASI AI saat menulis skrip — TIDAK mencerminkan
+  // timing nyata audio TTS (Gemini TTS berbicara pada kecepatannya sendiri, mengabaikan angka
+  // timestamp ini). Meng-anchor subtitle ke angka tersebut membuat caption melenceng dari suara.
+  // Solusi: abaikan anchor, distribusikan subtitle murni proporsional berdasarkan bobot jumlah
+  // karakter tiap frasa terhadap DURASI AUDIO AKTUAL (totalDurationSec).
+  // Caller dapat memaksa anchor dipakai dengan mengirim options.ignoreScriptAnchors = false
+  // (mis. voiceover rekaman manusia dengan naskah yang sudah di-time presisi).
+  const ignoreScriptAnchors = options.ignoreScriptAnchors !== false;
+
   // 1. Extract pure spoken dialogue and strip headers, prompt instructions, etc.
   let cleaned = String(scriptText || '').trim();
 
@@ -52,7 +62,10 @@ export function generateAssSubtitles(scriptText, totalDurationSec, assOutputPath
     let timestampSec = null;
     const timeMatch = line.match(/^\[?(\d{1,2}):(\d{2})\]?/);
     if (timeMatch) {
-      timestampSec = parseInt(timeMatch[1], 10) * 60 + parseInt(timeMatch[2], 10);
+      // Hanya pakai sebagai anchor bila diizinkan; selalu strip dari teks tampilan.
+      if (!ignoreScriptAnchors) {
+        timestampSec = parseInt(timeMatch[1], 10) * 60 + parseInt(timeMatch[2], 10);
+      }
       line = line.replace(/^\[?\d{1,2}:\d{2}\]?\s*/, '');
     }
 
