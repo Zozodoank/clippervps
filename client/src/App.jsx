@@ -440,6 +440,12 @@ export default function App() {
     });
   };
 
+  const isGenerating = isLoading || progressState.status !== 'idle';
+  const hasResult = !!result;
+  const isCompleted = hasResult && progressState.status === 'completed';
+  
+  const activeStep = isCompleted ? 3 : (isGenerating || hasResult) ? 2 : 1;
+
   return (
     <div className="min-h-screen flex flex-col bg-[#080d1a] text-slate-100 pb-safe">
       <Toaster position="top-center" toastOptions={{
@@ -447,14 +453,104 @@ export default function App() {
       }} />
       <Navbar onOpenSettings={() => setIsSettingsOpen(true)} engineStatus={engineStatus} />
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
         <DependenciesStatus status={engineStatus} onRefresh={fetchEngineHealth} loading={checkingEngine} />
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Stepper Navigation */}
+        <div className="flex items-center justify-between max-w-2xl mx-auto mb-8 px-4">
+          <div className={`flex flex-col items-center gap-2 ${activeStep >= 1 ? 'text-shopee-500' : 'text-slate-500'}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 1 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>1</div>
+            <span className="text-xs font-semibold">Sumber Video</span>
+          </div>
+          <div className={`h-1 flex-1 mx-4 rounded-full transition-all ${activeStep >= 2 ? 'bg-shopee-500/50' : 'bg-slate-800'}`}></div>
+          <div className={`flex flex-col items-center gap-2 ${activeStep >= 2 ? 'text-shopee-500' : 'text-slate-500'}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 2 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>2</div>
+            <span className="text-xs font-semibold">Proses AI</span>
+          </div>
+          <div className={`h-1 flex-1 mx-4 rounded-full transition-all ${activeStep >= 3 ? 'bg-shopee-500/50' : 'bg-slate-800'}`}></div>
+          <div className={`flex flex-col items-center gap-2 ${activeStep >= 3 ? 'text-shopee-500' : 'text-slate-500'}`}>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 3 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>3</div>
+            <span className="text-xs font-semibold">Hasil Akhir</span>
+          </div>
+        </div>
 
-          {/* Left Column */}
-          <div className="lg:col-span-6 space-y-6">
-            {/* Job History Panel — above the form */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+          
+          {/* Main Working Area (Left Column on Desktop) */}
+          <div className="lg:col-span-7 space-y-6">
+            
+            {activeStep === 1 && (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <InputCard
+                  formData={formData}
+                  setFormData={setFormData}
+                  onGenerate={handleGenerate}
+                  isLoading={isLoading}
+                  settings={settings}
+                  engineStatus={engineStatus}
+                  onOpenSettings={() => setIsSettingsOpen(true)}
+                />
+              </div>
+            )}
+
+            {activeStep >= 2 && (
+              <div className="animate-in fade-in zoom-in-95 duration-500 space-y-6">
+                <ProgressCard
+                  progressState={progressState}
+                  onRetry={handleRetry}
+                  onStopAutoRetry={handleStopCurrentAutoRetry}
+                  isLoading={isLoading}
+                />
+
+                {result && result.jobId && !isCompleted && (
+                  <ErrorBoundary>
+                    <VoiceoverUploader
+                      jobId={result.jobId}
+                      result={result}
+                      settings={settings}
+                      voiceoverScript={result.voiceoverScript}
+                      aiStudioPrompt={result.aiStudioPrompt}
+                      onUploadSuccess={handleVoiceoverUploadSuccess}
+                      isUploading={isUploading}
+                      setIsUploading={setIsUploading}
+                    />
+                  </ErrorBoundary>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Right Column (Preview & Result) */}
+          <div className="lg:col-span-5 space-y-6">
+            <ErrorBoundary>
+              {result && activeStep >= 2 ? (
+                <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-700">
+                  <VideoPlayer result={result} />
+                  {isCompleted && <CaptionCard result={result} />}
+                </div>
+              ) : (
+                <div className="glass-panel rounded-2xl p-8 text-center flex flex-col items-center justify-center min-h-[480px] border-dashed border-slate-800 opacity-60">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-shopee-500/20 via-orange-500/20 to-amber-500/20 border border-shopee-500/30 flex items-center justify-center text-shopee-500 mb-4 shadow-xl">
+                    <Clapperboard className="w-8 h-8 stroke-[1.75]" />
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-2">Area Pratinjau Video</h3>
+                  <p className="text-xs text-slate-400 max-w-sm leading-relaxed mb-6">
+                    Mulai proses di sebelah kiri. Video hasil potongan AI dan subtitle akan muncul di sini setelah selesai.
+                  </p>
+                </div>
+              )}
+            </ErrorBoundary>
+          </div>
+
+        </div>
+
+        {/* Separator before History */}
+        <div className="pt-8 mt-12 border-t border-slate-800/60">
+          <div className="max-w-4xl mx-auto space-y-6">
+            <h3 className="text-lg font-bold text-slate-300 flex items-center gap-2">
+              Riwayat & Mode Otomatis
+            </h3>
+            
             <AutoModePanel
               settings={settings}
               onHistoryRefresh={() => setHistoryRefreshSignal((value) => value + 1)}
@@ -467,83 +563,7 @@ export default function App() {
               refreshSignal={historyRefreshSignal}
               settings={settings}
             />
-
-            <InputCard
-              formData={formData}
-              setFormData={setFormData}
-              onGenerate={handleGenerate}
-              isLoading={isLoading}
-              settings={settings}
-              engineStatus={engineStatus}
-              onOpenSettings={() => setIsSettingsOpen(true)}
-            />
-
-            {(isLoading || progressState.status !== 'idle') && (
-              <ProgressCard
-                progressState={progressState}
-                onRetry={handleRetry}
-                onStopAutoRetry={handleStopCurrentAutoRetry}
-                isLoading={isLoading}
-              />
-            )}
-
-            {result && result.jobId && (
-              <ErrorBoundary>
-                <VoiceoverUploader
-                  jobId={result.jobId}
-                  result={result}
-                  settings={settings}
-                  voiceoverScript={result.voiceoverScript}
-                  aiStudioPrompt={result.aiStudioPrompt}
-                  onUploadSuccess={handleVoiceoverUploadSuccess}
-                  isUploading={isUploading}
-                  setIsUploading={setIsUploading}
-                />
-              </ErrorBoundary>
-            )}
           </div>
-
-          {/* Right Column */}
-          <div className="lg:col-span-6 space-y-6">
-            <ErrorBoundary>
-              {result ? (
-                <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                  <VideoPlayer result={result} />
-                  <CaptionCard result={result} />
-                </div>
-              ) : (
-              <div className="glass-panel rounded-2xl p-8 text-center flex flex-col items-center justify-center min-h-[480px] border-dashed border-slate-800">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-shopee-500/20 via-orange-500/20 to-amber-500/20 border border-shopee-500/30 flex items-center justify-center text-shopee-500 mb-4 shadow-xl">
-                  <Clapperboard className="w-8 h-8 stroke-[1.75]" />
-                </div>
-                <h3 className="text-lg font-bold text-white mb-2">Alur 2-Tahap: AI Auto-Clip + FFmpeg</h3>
-                <p className="text-xs text-slate-400 max-w-md leading-relaxed mb-6">
-                  1. Masukkan Judul Produk, Deskripsi, URL YouTube, & Link Shopee.<br />
-                  2. <strong className="text-emerald-400">OpenRouter Free</strong> menganalisis frame video panjang dan memilih potongan faceless 5 detik yang fokus produk.<br />
-                  3. <strong className="text-indigo-400">FFmpeg</strong> memotong sesuai instruksi AI, menjaga produk full body dalam frame 9:16, lalu AI membuat Kotak Scene &amp; Naskah Ad Advisor.<br />
-                  4. Sistem otomatis membuat <strong className="text-emerald-400">Voiceover Suara Gadis Indonesia &amp; Subtitle</strong> untuk menghasilkan <strong className="text-emerald-400">Video Final</strong>.
-                </p>
-                <div className="grid grid-cols-2 gap-3 w-full max-w-sm text-left">
-                  <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
-                    <div className="font-bold text-slate-200 flex items-center gap-1.5 mb-1">
-                      <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>openrouter/free</span>
-                    </div>
-                    <p className="text-xs text-slate-400">Vision OCR &amp; Naskah (100% Gratis)</p>
-                  </div>
-                  <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
-                    <div className="font-bold text-slate-200 flex items-center gap-1.5 mb-1">
-                      <Clapperboard className="w-3.5 h-3.5 text-indigo-400" />
-                      <span>Full Product</span>
-                    </div>
-                    <p className="text-xs text-slate-400">9:16 tanpa memotong produk</p>
-                  </div>
-                </div>
-              </div>
-            )}
-            </ErrorBoundary>
-          </div>
-
         </div>
       </main>
 
