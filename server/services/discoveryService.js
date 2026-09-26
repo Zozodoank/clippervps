@@ -1464,11 +1464,12 @@ export const KNOWN_BRANDS = [
   'LocknLock', 'Signora', 'Bima', 'Kedaung', 'Hakazima', 'Starfrit', 'Finest Cook',
   'Neochef', 'Sico', 'Perkasa', 'Vitaro', 'Tupperware', 'Thermos', 'Zojirushi',
   'Electrolux', 'Sharp', 'Panasonic', 'Toshiba',
-  // Brand Smartphone & Gadget (Entry-Level, Mid-Range, Viral & Budget King):
+  // Brand Smartphone & Gadget (Entry-Level, Mid-Range 2 Jutaan, Flagship, Gaming & Viral):
   'itel', 'Infinix', 'TECNO', 'Poco', 'Redmi', 'Realme',
   'Vivo', 'Oppo', 'Xiaomi', 'Samsung', 'iQOO', 'ZTE', 'Nubia',
   'Motorola', 'Honor', 'Meizu', 'Black Shark', 'TCL', 'Sharp', 'Sony',
   'Evercoss', 'Polytron', 'Luna', 'Wiko', 'Coolpad',
+  'OnePlus', 'Nothing Phone', 'Google Pixel', 'Asus', 'ROG', 'RedMagic',
   'Cubot', 'Doogee', 'Umidigi', 'Blackview', 'Oukitel', 'Ulefone', 'HOTWAV', 'FOSSiBOT'
 ];
 

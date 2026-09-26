@@ -395,17 +395,21 @@ export function getAllNiches() {
 }
 
 /**
- * Generates combinatorial smartphone keywords on the fly
- * Focused specifically on budget, mid-range & viral smartphones (NO laptops or non-phone gadgets).
+ * Generates combinatorial smartphone keywords on the fly.
+ * FOKUS: smartphone MID-RANGE s/d FLAGSHIP kisaran Rp2 juta ke atas (entry-level viral
+ * tetap ikut sebagai pelengkap). NO laptops or non-phone gadgets.
  */
 export function generateCombinatorialGadgetKeywords(count = 100, excludedSet = new Set()) {
   const brands = [
-    'itel', 'Infinix Note', 'Infinix Hot', 'Infinix Smart', 'Infinix GT',
-    'Tecno Spark', 'Tecno Pova', 'Tecno Camon', 'Tecno Pop',
-    'Poco', 'Redmi Note', 'Redmi', 'Realme C', 'Realme Note', 'Realme',
-    'Samsung Galaxy A', 'Samsung Galaxy M',
-    'Vivo Y', 'Vivo V', 'iQOO Z',
-    'Oppo A', 'ZTE Blade', 'Nubia Neo'
+    'itel', 'Infinix Note', 'Infinix Hot', 'Infinix Smart', 'Infinix GT', 'Infinix Zero',
+    'Tecno Spark', 'Tecno Pova', 'Tecno Camon', 'Tecno Pop', 'Tecno Phantom',
+    'Poco', 'Poco X', 'Poco F', 'Redmi Note', 'Redmi', 'Redmi Turbo',
+    'Realme C', 'Realme Note', 'Realme', 'Realme GT',
+    'Samsung Galaxy A', 'Samsung Galaxy M', 'Samsung Galaxy S', 'Samsung Galaxy Z Flip', 'Samsung Galaxy Z Fold',
+    'Vivo Y', 'Vivo V', 'Vivo T', 'Vivo X', 'iQOO Z', 'iQOO Neo', 'iQOO',
+    'Oppo A', 'Oppo Reno', 'Oppo Find', 'ZTE Blade', 'ZTE Axon', 'Nubia Neo', 'Nubia RedMagic',
+    'Xiaomi', 'OnePlus', 'OnePlus Nord', 'Nothing Phone', 'Google Pixel', 'Sony Xperia',
+    'Honor', 'Motorola Edge', 'Motorola G', 'Asus ROG', 'Asus Zenfone', 'Sharp Aquos'
   ];
 
   const series = [
@@ -415,46 +419,109 @@ export function generateCombinatorialGadgetKeywords(count = 100, excludedSet = n
     'C65', 'M6 Pro', 'X6 5G', 'F6',
     '13C', '14C', 'A3', 'Note 13 5G', 'Note 14 Pro',
     'C53', 'C67', 'Note 50', 'Note 60', '12 5G',
-    'A05s', 'A15 5G', 'A25 5G', 'A35 5G', 'M15 5G',
-    'Y03', 'Y17s', 'Y28', 'Y100 5G', 'V30e',
-    'Z9x 5G', 'Z9 5G',
-    'A18', 'A38', 'A58', 'A79 5G',
-    'A54', 'V50 Design', '2 5G'
+    'A05s', 'A15 5G', 'A25 5G', 'A35 5G', 'A55 5G', 'A56 5G', 'M15 5G', 'M55 5G', 'S23 FE',
+    'Y03', 'Y17s', 'Y28', 'Y100 5G', 'Y200 5G', 'V30e', 'V40 5G', 'V50 5G', 'T3 5G',
+    'Z9x 5G', 'Z9 5G', 'Z9 Turbo', 'Neo 9', 'Neo 10',
+    'A18', 'A38', 'A58', 'A79 5G', 'Reno 11F', 'Reno 12', 'Reno 13',
+    'A54', 'V50 Design', '2 5G',
+    'X6 Pro 5G', 'X7 5G', 'X7 Pro', 'F6 Pro', 'F7 Pro', 'GT 6', 'GT 7',
+    '13 Pro Plus 5G', '12 Plus 5G', 'Nord CE4', 'Nord 4', '12R', 'Phone 2a', 'Phone 3a',
+    'Zero 40 5G', 'Edge 50 Fusion', '8a', '9a', '200', 'Magic 6 Lite', '14T', '15'
+  ];
+
+  // Model LENGKAP yang nyata dijual di Indonesia kisaran Rp2 juta ke atas.
+  // Dipakai utuh (tanpa silangan brands × series) agar keyword variatif TAPI tetap masuk akal.
+  const premiumModels = [
+    // ── 2-3 Jutaan (Mid-Range) ──
+    'Samsung Galaxy A25 5G', 'Samsung Galaxy A35 5G', 'Samsung Galaxy A36 5G',
+    'Samsung Galaxy A55 5G', 'Samsung Galaxy A56 5G', 'Samsung Galaxy M55 5G',
+    'Redmi Note 13 Pro 5G', 'Redmi Note 13 Pro Plus 5G', 'Redmi Note 14 Pro 5G', 'Redmi Note 14 Pro Plus 5G',
+    'Poco X6 5G', 'Poco X6 Pro 5G', 'Poco X7 5G', 'Poco X7 Pro',
+    'Realme 12 Plus 5G', 'Realme 12x 5G', 'Realme 13 Pro Plus 5G',
+    'iQOO Z9x 5G', 'iQOO Z9 5G', 'iQOO Z9 Turbo',
+    'Infinix Note 40 Pro Plus 5G', 'Infinix Note 50 Pro', 'Infinix GT 20 Pro',
+    'Tecno Camon 30 Pro 5G', 'Tecno Camon 40 Pro', 'Tecno Pova 7 Pro',
+    'Vivo Y200 5G', 'Vivo V40 Lite 5G', 'Vivo T3 5G',
+    'Oppo A79 5G', 'Oppo Reno 11F 5G', 'Oppo Reno 12F 5G',
+    'Honor X9b 5G', 'Honor 200 Lite', 'Motorola G84 5G',
+    // ── 4-6 Jutaan (Upper Mid-Range) ──
+    'Samsung Galaxy S23 FE', 'Samsung Galaxy S24 FE', 'Samsung Galaxy S24',
+    'Xiaomi 13T Pro', 'Xiaomi 14T', 'Xiaomi 14', 'Xiaomi 15',
+    'Poco F6', 'Poco F6 Pro', 'Poco F7 Pro',
+    'iQOO Neo 9', 'iQOO Neo 10', 'iQOO 12',
+    'Realme GT 6', 'Realme GT 7',
+    'OnePlus Nord CE4', 'OnePlus Nord 4', 'OnePlus 12R',
+    'Nothing Phone 2a', 'Nothing Phone 3a', 'Nothing Phone 3a Pro',
+    'Vivo V40 5G', 'Vivo V50 5G',
+    'Oppo Reno 12 5G', 'Oppo Reno 13 5G',
+    'Google Pixel 8a', 'Google Pixel 9a',
+    'Infinix Zero 40 5G', 'Tecno Phantom V24 Pro', 'Tecno Spark 30 Pro 5G',
+    'Honor 200', 'Honor Magic 6 Lite',
+    // ── 7 Juta ke Atas (Flagship & Foldable) ──
+    'Samsung Galaxy S24 Ultra', 'Samsung Galaxy S25 Ultra', 'Samsung Galaxy Z Flip 6', 'Samsung Galaxy Z Fold 6',
+    'Xiaomi 15 Pro', 'Xiaomi Mix Fold 4',
+    'Vivo X100', 'Vivo X200 Pro',
+    'Oppo Find X8 Pro', 'Oppo Find N3 Flip',
+    'OnePlus 13', 'Google Pixel 9 Pro', 'Asus ROG Phone 8 Pro', 'Asus Zenfone 11 Ultra',
+    'Sony Xperia 1 VI', 'iQOO 13', 'Nubia RedMagic 9 Pro', 'ZTE Axon 60 Ultra', 'Honor Magic 6 Pro'
   ];
 
   const aspects = [
     'review indonesia', 'tes kamera jernih ois', 'tes gaming pubg mlbb',
     'layar amoled 120hz', 'baterai awet fast charge', 'unboxing spesifikasi',
-    'kelebihan dan kekurangan', 'hasil foto malam hari', 'performa chipset gaming'
+    'kelebihan dan kekurangan', 'hasil foto malam hari', 'performa chipset gaming',
+    'kamera periskop zoom optik', 'layar ltpo 120hz paling terang', 'chipset snapdragon 8 gen terbaru',
+    'gaming fps stabil 120', 'harga dan spesifikasi terbaru', 'desain premium tahan air ip68',
+    'review 1 bulan pemakaian jujur'
   ];
 
   const priceSegments = [
     'hp 1 jutaan terbaik', 'hp 2 jutaan terbaik', 'hp 3 jutaan terbaik',
+    'hp 4 jutaan terbaik', 'hp 5 jutaan kamera flagship', 'hp 6 jutaan gaming kencang',
+    'hp 7 jutaan terbaik', 'hp 10 jutaan flagship premium',
     'rekomendasi hp 2 jutaan gaming', 'hp 2 jutaan kamera stabil',
     'hp 2 jutaan layar lengkung', 'smartphone 2 jutaan ram 8gb 256gb',
+    'rekomendasi hp 3 jutaan ram 12gb', 'hp 4 jutaan kamera ois tele',
+    'hp 5 jutaan layar ltpo 120hz', 'hp lipat fold terbaru indonesia',
+    'hp flagship harga turun layak beli', 'rekomendasi hp 2 jutaan terbaik 2026',
     'rekomendasi hp murah 1 jutaan', 'hp murah spek dewa'
   ];
 
   const results = new Set();
+  const push = (q) => {
+    if (!q) return false;
+    const norm = q.toLowerCase();
+    if (excludedSet.has(norm) || results.has(norm)) return false;
+    results.add(q);
+    return results.size >= count;
+  };
 
+  // 1. PRIORITAS UTAMA: model lengkap 2 juta ke atas × aspek review premium.
+  const premiumAspects = [
+    'review indonesia', 'spill harga dan spesifikasi indonesia', 'tes kamera ois hasil jernih',
+    'tes gaming pubg mlbb lancar', 'unboxing pertama nyala', 'kelebihan kekurangan setelah pemakaian',
+    'perbandingan harga terbaru'
+  ];
+  for (const m of premiumModels) {
+    for (const p of premiumAspects) {
+      if (push(`review ${m} ${p}`)) return Array.from(results);
+    }
+    if (push(`${m} harga indonesia 2026`)) return Array.from(results);
+    if (push(`${m} vs rival sekelasnya mending mana`)) return Array.from(results);
+  }
+
+  // 2. Segmen harga 1-10 juta + foldable/flagship × qualifier.
   for (const p of priceSegments) {
-    for (const a of ['indonesia', '2026', 'kamera ois', 'layar 120hz', 'baterai awet']) {
-      const q = `${p} ${a}`.trim();
-      if (!excludedSet.has(q.toLowerCase())) {
-        results.add(q);
-        if (results.size >= count) return Array.from(results);
-      }
+    for (const a of ['indonesia', '2026', 'kamera ois', 'layar 120hz', 'baterai awet', 'ram 12gb', 'chipset kencang', 'kamera flagship']) {
+      if (push(`${p} ${a}`)) return Array.from(results);
     }
   }
 
+  // 3. Silangan brands × series × aspek sebagai penambah jumlah (fallback bervariasi).
   for (const b of brands) {
     for (const s of series) {
       for (const a of aspects) {
-        const q = `review ${b} ${s} ${a}`.trim();
-        if (!excludedSet.has(q.toLowerCase())) {
-          results.add(q);
-          if (results.size >= count) return Array.from(results);
-        }
+        if (push(`review ${b} ${s} ${a}`)) return Array.from(results);
       }
     }
   }
