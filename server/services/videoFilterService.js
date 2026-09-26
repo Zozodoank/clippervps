@@ -632,6 +632,49 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
   const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
+  // ── BATCH DOWNLOAD: single sequential read, seek lokal (167× hemat vs 150 remote seeks) ──
+  // Empiris rxbench_pc 2026-09: 150 remote spawns × ~5.9 MB/spawn = 890 MB utk 5.3 MB JPEG.
+  // Download 1× ~130 MB (480p/648s) → seek lokal instant (zero network per frame).
+  // Matikan: SAMPLE_BATCH_MODE=0 (fall back per-spawn remote seek).
+  const batchEnabled = process.env.SAMPLE_BATCH_MODE !== '0';
+  const tempStreamFile = path.join(outputDir, '_stream_cache.mp4');
+  let seekInput = streamUrl;
+  let networkArgs = [
+    '-user_agent', browserUserAgent, '-headers', browserHeaders,
+    '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', isMobile ? '4' : '2',
+  ];
+  let downloadedBytes = 0;
+
+  if (batchEnabled) {
+    console.log(`[VideoFilterService] 📥 Download stream 1× (hemat vs ${samplePoints.length} remote seeks)...`);
+    onProgress({ step: 'stream_sampling', message: 'Mengunduh 1× stream video langsung ke file lokal...', progress: 22 });
+    const dlOk = await new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, [
+        '-y',
+        '-user_agent', browserUserAgent, '-headers', browserHeaders,
+        '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
+        '-i', streamUrl,
+        '-c', 'copy', '-an',
+        tempStreamFile,
+      ]);
+      const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve(false); }, 180000);
+      proc.on('close', (code) => {
+        clearTimeout(timer);
+        resolve(code === 0 && fs.existsSync(tempStreamFile) && fs.statSync(tempStreamFile).size > 50000);
+      });
+      proc.on('error', () => { clearTimeout(timer); resolve(false); });
+    });
+    if (dlOk) {
+      downloadedBytes = fs.statSync(tempStreamFile).size;
+      seekInput = tempStreamFile;
+      networkArgs = [];
+      console.log(`[VideoFilterService] ✅ Stream lokal: ${(downloadedBytes / 1e6).toFixed(1)} MB. ${samplePoints.length} seek lokal (instant).`);
+    } else {
+      console.warn('[VideoFilterService] ⚠️ Download stream gagal, fallback ke remote per-spawn seek.');
+      try { fs.unlinkSync(tempStreamFile); } catch {}
+    }
+  }
+
   // ── (#2) WATERMARK PROBE STATELESS — hemat bandwidth/decode SEBELUM dense sampling dibayar ──
   // 5 frame tersebar dari daftar samplePoints -> /filter-watermark-probe (crop_9_16 + DBNet
   // produksi, TANPA state temporal). Bila >=3/5 ber-watermark -> logo channel persisten ->
@@ -643,12 +686,12 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     try {
       const pick = (frac) => samplePoints[Math.min(samplePoints.length - 1, Math.max(0, Math.round(frac * (samplePoints.length - 1))))];
       const extractOne = (point, outPath) => new Promise((resolve) => {
-        const preSeek = Math.max(0, point.timestamp - 1.2);
-        const postSeek = Math.min(point.timestamp, 1.2);
+        const probeSeekArgs = networkArgs.length === 0
+          ? ['-ss', point.timestamp.toFixed(2), '-i', seekInput]
+          : ['-ss', Math.max(0, point.timestamp - 1.2).toFixed(2), '-i', seekInput, '-ss', Math.min(point.timestamp, 1.2).toFixed(2)];
         const proc = spawn(ffmpegPath, [
-          '-y', '-user_agent', browserUserAgent, '-headers', browserHeaders,
-          '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '2',
-          '-ss', preSeek.toFixed(2), '-i', streamUrl, '-ss', postSeek.toFixed(2),
+          '-y', ...networkArgs,
+          ...probeSeekArgs,
           '-an', '-sn', '-dn', '-frames:v', '1', '-vf', 'scale=-2:480', '-q:v', '3', outPath,
         ]);
         let done = false;
@@ -684,34 +727,24 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     }
   }
 
-  // Two-stage seek: fast coarse seek before -i (jumps in ~0.05s via HTTP range)
-  // + accurate sub-second fine seek after -i (decodes only ~1s to reach exact frame).
-  // This prevents landing on duplicate keyframes without ever downloading from byte 0.
-  const concurrency = isMobile ? 2 : 4;
+  // Seek: remote = two-stage (coarse HTTP range + fine decode); local = single input-seek (instant moov).
+  const concurrency = networkArgs.length === 0 ? 8 : (isMobile ? 2 : 4);
   const executing = [];
   for (const point of samplePoints) {
-    // Micro pacing delay (human-like pacing)
-    await new Promise(r => setTimeout(r, isMobile ? 25 : 15));
+    // Micro pacing delay (only needed for remote to avoid rate-limit; local skips)
+    if (networkArgs.length > 0) await new Promise(r => setTimeout(r, isMobile ? 25 : 15));
 
     const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
     const outputPath = path.join(outputDir, frameFile);
 
     const p = new Promise((resolve) => {
-      const preSeek = Math.max(0, point.timestamp - 1.2);
-      const postSeek = Math.min(point.timestamp, 1.2);
-      const seekArgs = [
-        '-ss', String(preSeek.toFixed(2)),
-        '-i', streamUrl,
-        '-ss', String(postSeek.toFixed(2))
-      ];
+      const seekArgs = networkArgs.length === 0
+        ? ['-ss', String(point.timestamp.toFixed(2)), '-i', seekInput]
+        : ['-ss', String(Math.max(0, point.timestamp - 1.2).toFixed(2)), '-i', seekInput, '-ss', String(Math.min(point.timestamp, 1.2).toFixed(2))];
 
       const proc = spawn(ffmpegPath, [
         '-y',
-        '-user_agent', browserUserAgent,
-        '-headers', browserHeaders,
-        '-reconnect', '1',
-        '-reconnect_streamed', '1',
-        '-reconnect_delay_max', isMobile ? '4' : '2',
+        ...networkArgs,
         ...seekArgs,
         '-an',
         '-sn',
@@ -723,26 +756,10 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
       ]);
       let finished = false;
       const timer = setTimeout(() => {
-        if (!finished) {
-          finished = true;
-          try { proc.kill('SIGKILL'); } catch {}
-          resolve();
-        }
-      }, 8000);
-      proc.on('close', () => {
-        if (!finished) {
-          finished = true;
-          clearTimeout(timer);
-          resolve();
-        }
-      });
-      proc.on('error', () => {
-        if (!finished) {
-          finished = true;
-          clearTimeout(timer);
-          resolve();
-        }
-      });
+        if (!finished) { finished = true; try { proc.kill('SIGKILL'); } catch {} resolve(); }
+      }, networkArgs.length === 0 ? 5000 : 8000);
+      proc.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); resolve(); } });
+      proc.on('error', () => { if (!finished) { finished = true; clearTimeout(timer); resolve(); } });
     });
 
     const e = p.then(() => executing.splice(executing.indexOf(e), 1));
@@ -757,51 +774,55 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
     .sort();
 
-  // Hard de-duplicate the actual extracted image content.  This is intentionally
-  // done AFTER FFmpeg writes the files: timestamps alone cannot prove that two
-  // frames are visually different when a remote stream keeps returning the same keyframe.
-  const uniqueFrameFiles = [];
-  const seenFrameHashes = new Set();
-  for (const filename of frameFiles) {
-    const filePath = path.join(outputDir, filename);
-    try {
-      const buf = fs.readFileSync(filePath);
-      const hash = crypto.createHash('sha256').update(buf).digest('hex');
-      if (seenFrameHashes.has(hash)) {
+  // Helper: hash-dedupe daftar file (buang frame byte-identik) dari outputDir.
+  const dedupeFrameFiles = (files) => {
+    const uniq = [];
+    const seen = new Set();
+    for (const filename of files) {
+      const filePath = path.join(outputDir, filename);
+      try {
+        const buf = fs.readFileSync(filePath);
+        const hash = crypto.createHash('sha256').update(buf).digest('hex');
+        if (seen.has(hash)) {
+          try { fs.unlinkSync(filePath); } catch {}
+          console.warn(`[VideoFilterService] ♻️ Drop duplicate visual frame: ${filename}`);
+          continue;
+        }
+        seen.add(hash);
+        uniq.push(filename);
+      } catch {
+        // Keep unreadable/partial files out of the downstream AI pool.
         try { fs.unlinkSync(filePath); } catch {}
-        console.warn(`[VideoFilterService] ♻️ Drop duplicate visual frame: ${filename}`);
-        continue;
       }
-      seenFrameHashes.add(hash);
-      uniqueFrameFiles.push(filename);
-    } catch {
-      // Keep unreadable/partial files out of the downstream AI pool.
-      try { fs.unlinkSync(filePath); } catch {}
     }
-  }
-  frameFiles = uniqueFrameFiles;
+    return uniq;
+  };
+  const listFrameFiles = () => fs.readdirSync(outputDir)
+    .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
+    .sort();
 
+  // Tahap 1: hash-dedupe hasil fast input-seek.
+  frameFiles = dedupeFrameFiles(frameFiles);
+
+  // BUGFIX: fallback output-seek dulu DEAD CODE — selalu terhalang 'throw <5' di atasnya.
+  // Saat '-ss' pra-input (HTTP range) ditolak googlevideo (403 / keyframe sama), kode menyerah
+  // tanpa mencoba mode output-seek ('-ss' SETELAH '-i', baca sekuensial dari byte 0) yang justru
+  // sering lolos. Fallback kini dijalankan bila hasil < 5 unik, menyasar ~15 titik TERSEBAR di
+  // SELURUH durasi (bukan hanya awal video), lalu hasil gabungan di-dedupe ulang.
   if (frameFiles.length < 5) {
-    throw new Error(`Frame visual unik tidak mencukupi setelah deduplikasi (${frameFiles.length}/5). Candidate ditolak agar sistem tidak mengulang frame yang sama.`);
-  }
-
-  // Percobaan kedua internal: Jika fast input seek menghasilkan 0 frame, coba mode output seek
-  if (frameFiles.length === 0) {
-    console.warn('[VideoFilterService] Fast input seek menghasilkan 0 frame, mencoba mode output seek...');
-    const fallbackPoints = samplePoints.slice(0, 10);
+    console.warn(`[VideoFilterService] Fast input-seek hanya ${frameFiles.length} frame unik (<5). Mencoba fallback output-seek sekuensial di ~15 titik tersebar...`);
+    const wantPoints = 15;
+    const step = Math.max(1, Math.floor(samplePoints.length / wantPoints));
+    const fallbackPoints = samplePoints.filter((_, idx) => idx % step === 0).slice(0, wantPoints);
     for (const point of fallbackPoints) {
-      const frameFile = `frame_${String(point.index).padStart(4, '0')}.jpg`;
-      const outputPath = path.join(outputDir, frameFile);
+      const outputPath = path.join(outputDir, `frame_${String(point.index).padStart(4, '0')}.jpg`);
       await new Promise((resolve) => {
+        const fbArgs = networkArgs.length === 0
+          ? ['-ss', String(point.timestamp), '-i', seekInput]
+          : ['-i', seekInput, '-ss', String(point.timestamp)];
         const proc = spawn(ffmpegPath, [
-          '-y',
-          '-user_agent', browserUserAgent,
-          '-headers', browserHeaders,
-          '-reconnect', '1',
-          '-reconnect_streamed', '1',
-          '-reconnect_delay_max', '4',
-          '-i', streamUrl,
-          '-ss', String(point.timestamp),
+          '-y', ...networkArgs,
+          ...fbArgs,
           '-frames:v', '1',
           '-vf', 'scale=-2:480',
           '-q:v', '3',
@@ -809,35 +830,18 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
         ]);
         let finished = false;
         const timer = setTimeout(() => {
-          if (!finished) {
-            finished = true;
-            try { proc.kill('SIGKILL'); } catch {}
-            resolve();
-          }
+          if (!finished) { finished = true; try { proc.kill('SIGKILL'); } catch {} resolve(); }
         }, 15000);
-        proc.on('close', () => {
-          if (!finished) {
-            finished = true;
-            clearTimeout(timer);
-            resolve();
-          }
-        });
-        proc.on('error', () => {
-          if (!finished) {
-            finished = true;
-            clearTimeout(timer);
-            resolve();
-          }
-        });
+        proc.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); resolve(); } });
+        proc.on('error', () => { if (!finished) { finished = true; clearTimeout(timer); resolve(); } });
       });
     }
-    frameFiles = fs.readdirSync(outputDir)
-      .filter(f => f.endsWith('.png') || f.endsWith('.jpg'))
-      .sort();
+    frameFiles = dedupeFrameFiles(listFrameFiles());
   }
 
-  if (frameFiles.length === 0) {
-    throw new Error('Tidak ada frame yang berhasil diekstrak dari stream URL.');
+  if (frameFiles.length < 5) {
+    if (downloadedBytes > 0) { try { fs.unlinkSync(tempStreamFile); } catch {} }
+    throw new Error(`Frame visual unik tidak mencukupi setelah input-seek + fallback output-seek (${frameFiles.length}/5). Candidate ditolak agar sistem tidak mengulang frame yang sama.`);
   }
 
   const pointMap = new Map(samplePoints.map(p => [`frame_${String(p.index).padStart(4, '0')}.jpg`, p.timestamp]));
@@ -871,20 +875,23 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     });
   }
 
-  // Track internet data used by stream sampling (~0.8-1.5 MB)
-  let sampledBytes = 0;
-  for (const f of frameFiles) {
-    try {
-      sampledBytes += fs.statSync(path.join(outputDir, f)).size;
-    } catch {}
+  // Cleanup temp stream file after all seeks complete.
+  if (downloadedBytes > 0) { try { fs.unlinkSync(tempStreamFile); } catch {} }
+
+  // Track bandwidth: batch mode = actual download size; remote = JPEG estimate.
+  let sampledBytes;
+  if (downloadedBytes > 0) {
+    sampledBytes = downloadedBytes;
+  } else {
+    sampledBytes = 0;
+    for (const f of frameFiles) { try { sampledBytes += fs.statSync(path.join(outputDir, f)).size; } catch {} }
+    sampledBytes = Math.max(sampledBytes, 0.8 * 1024 * 1024);
   }
-  // Include network packet overhead (~200KB)
-  sampledBytes = Math.max(sampledBytes, 0.8 * 1024 * 1024);
-  trackBandwidth('streamSampling', sampledBytes, `Sampling ${frames.length} frame stream URL (~${(sampledBytes / (1024 * 1024)).toFixed(2)} MB)`);
+  trackBandwidth('streamSampling', sampledBytes, `Sampling ${frames.length} frame (${downloadedBytes > 0 ? 'lokal 1\u00d7 download' : 'remote seek'}) ~${(sampledBytes / 1e6).toFixed(1)} MB`);
 
   onProgress({
     step: 'stream_sampling_done',
-    message: `Berhasil mengambil ${frames.length} frame visual dari stream URL (~${(sampledBytes / (1024 * 1024)).toFixed(1)} MB kuota).`,
+    message: `Berhasil mengambil ${frames.length} frame visual (~${(sampledBytes / 1e6).toFixed(1)} MB kuota).`,
     progress: 35,
   });
 

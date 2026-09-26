@@ -192,6 +192,16 @@ router.post('/generate', async (req, res) => {
     return res.status(400).json({ error: 'Produk ditolak karena tergolong perabot besar / rak besar yang memenuhi frame. Niche disetel hanya untuk alat dapur praktis.' });
   }
 
+  // MODE MANUAL default = HEMAT & PREDICTABLE. Karena user sudah memberi URL YouTube/OEM
+  // eksplisit (divalidasi di atas), JANGAN lakukan pencarian web / harvesting kandidat otomatis
+  // yang memunculkan pesan "mencari di mesin telusur" meski link sudah jelas. Hanya sumber yang
+  // user-pass yang diproses. Override: kirim options.sourcePolicy === 'auto_harvest' untuk
+  // mengizinkan pencarian tambahan ala mode auto.
+  if (!options.sourcePolicy) {
+    options.sourcePolicy = 'explicit_only';
+    console.log(`[Job ${clientJobId || 'generate'}] 🔒 Manual mode: sourcePolicy default = explicit_only (tanpa pencarian web).`);
+  }
+
   const dailyStats = getDailyOutputVideoStats();
   if (dailyStats.isLimitReached && !req.body.forceOverrideDailyLimit) {
     return res.status(429).json({
