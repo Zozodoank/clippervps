@@ -177,6 +177,7 @@ import voiceoverRoutes from './api/routes/voiceoverRoutes.js';
 import mediaRoutes from './api/routes/mediaRoutes.js';
 import generateRoutes from './api/routes/generateRoutes.js';
 import systemRoutes from './api/routes/systemRoutes.js';
+import draftsRoutes from './api/routes/draftsRoutes.js';
 
 app.use('/api', jobsRoutes);
 app.use('/api', autoRoutes);
@@ -184,6 +185,7 @@ app.use('/api', voiceoverRoutes);
 app.use('/api', mediaRoutes);
 app.use('/api', generateRoutes);
 app.use('/api', systemRoutes);
+app.use('/api/drafts', draftsRoutes);
 
 function tokenAuthMiddleware(req, res, next) {
   const token = (process.env.API_ACCESS_TOKEN || '').trim();

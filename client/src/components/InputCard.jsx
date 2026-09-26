@@ -65,7 +65,13 @@ export default function InputCard({
   isLoading,
   settings,
   engineStatus,
-  onOpenSettings
+  onOpenSettings,
+  drafts = [],
+  onSaveDraft,
+  onDeleteDraft,
+  onRunAllDrafts,
+  onRunSingleDraft,
+  isAutoRunningDrafts
 }) {
   const selectedProvider = settings?.aiProvider || engineStatus?.activeAiEngine || 'gemini';
   const isGemini = selectedProvider === 'gemini';
@@ -345,12 +351,26 @@ export default function InputCard({
           </div>
         </div>
 
-        {/* Generate Button */}
-        <div className="pt-2">
+        {/* Generate & Save Buttons */}
+        <div className="pt-2 flex gap-3">
+          <button
+            type="button"
+            onClick={onSaveDraft}
+            disabled={isLoading}
+            className={`flex-1 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all shadow-lg ${
+              isLoading
+                ? 'bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700'
+                : 'bg-emerald-600/90 text-white hover:bg-emerald-500 shadow-emerald-500/20 hover:shadow-emerald-500/40 border border-emerald-500/50 hover:scale-[1.02] active:scale-[0.98]'
+            }`}
+          >
+            <div className="w-5 h-5 bg-white/20 rounded-md flex items-center justify-center">💾</div>
+            <span>Simpan Draft</span>
+          </button>
+
           <button
             type="submit"
             disabled={isLoading}
-            className={`w-full py-3.5 rounded-xl font-bold text-base flex items-center justify-center gap-2.5 transition-all shadow-lg ${
+            className={`flex-1 py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 transition-all shadow-lg ${
               isLoading
                 ? 'bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700'
                 : 'bg-shopee-500 text-white hover:bg-shopee-600 shadow-shopee-500/25 hover:shadow-shopee-500/40 hover:scale-[1.02] active:scale-[0.98]'
@@ -358,19 +378,97 @@ export default function InputCard({
           >
             {isLoading ? (
               <>
-                <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-                <span>Sedang Memproses Video...</span>
+                <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                <span>Memproses...</span>
               </>
             ) : (
               <>
-                <Sparkles className="w-5 h-5 fill-current" />
-                <span>Mulai Proses Video</span>
+                <Sparkles className="w-4 h-4 fill-current" />
+                <span>Proses Sekarang</span>
               </>
             )}
           </button>
         </div>
 
       </form>
+
+      {/* Drafts Section */}
+      {(drafts.length > 0 || isAutoRunningDrafts) && (
+        <div className="mt-8 pt-6 border-t border-slate-700/60 relative z-10 animate-in fade-in slide-in-from-bottom-4">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <div className="w-6 h-6 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                💾
+              </div>
+              Daftar Antrean Draft ({drafts.length})
+            </h3>
+            <button
+              type="button"
+              onClick={onRunAllDrafts}
+              disabled={isAutoRunningDrafts || drafts.length === 0}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow flex items-center gap-1.5 ${
+                isAutoRunningDrafts || drafts.length === 0
+                  ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'
+                  : 'bg-gradient-to-r from-emerald-500 to-teal-400 text-white shadow-emerald-500/25 hover:scale-105 active:scale-95 border border-emerald-400/50'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 fill-current" />
+              {isAutoRunningDrafts ? 'Sedang Jalan Berurutan...' : 'Jalankan Semua'}
+            </button>
+          </div>
+
+          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+            {drafts.map((draft, idx) => (
+              <div key={draft.id} className="p-3 rounded-xl bg-slate-900/60 border border-slate-700/50 flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between group hover:border-slate-600 transition-colors">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 mb-0.5">
+                    <span className="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-400 font-mono">#{idx + 1}</span>
+                    <h4 className="text-xs font-bold text-slate-200 truncate" title={draft.productTitle}>
+                      {draft.productTitle || '(Tanpa Judul)'}
+                    </h4>
+                  </div>
+                  <div className="flex items-center gap-3 text-[10px] text-slate-500 font-mono">
+                    <span className="truncate max-w-[120px] sm:max-w-[150px]" title={draft.youtubeUrl}>
+                      YT: {draft.youtubeUrl || '-'}
+                    </span>
+                    <span className="truncate max-w-[120px] sm:max-w-[150px]" title={draft.shopeeLink}>
+                      Aff: {draft.shopeeLink || '-'}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 flex-shrink-0 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => onDeleteDraft(draft.id)}
+                    disabled={isAutoRunningDrafts}
+                    className="flex-1 sm:flex-none px-2.5 py-1.5 rounded-lg border border-red-500/30 bg-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/20 transition-colors disabled:opacity-50"
+                  >
+                    Hapus
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onRunSingleDraft(draft)}
+                    disabled={isAutoRunningDrafts}
+                    className="flex-1 sm:flex-none px-3 py-1.5 rounded-lg bg-shopee-500 text-white text-xs font-bold shadow-md shadow-shopee-500/20 hover:bg-shopee-600 transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    Proses
+                  </button>
+                </div>
+              </div>
+            ))}
+            
+            {drafts.length === 0 && isAutoRunningDrafts && (
+              <div className="p-6 text-center text-slate-400 text-xs flex flex-col items-center justify-center border border-dashed border-slate-700/50 rounded-xl bg-slate-900/30">
+                <div className="w-8 h-8 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin mb-3"></div>
+                <p>Sedang memproses antrean...</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

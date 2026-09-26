@@ -55,6 +55,10 @@ export default function App() {
   // Navigation State
   const [activeView, setActiveView] = useState('studio'); // 'studio' | 'auto' | 'history'
 
+  // Draft / Offline Queue State
+  const [drafts, setDrafts] = useState([]);
+  const [isAutoRunningDrafts, setIsAutoRunningDrafts] = useState(false);
+
   const lastJobIdRef = useRef(null);
   const lastFormDataRef = useRef(null);
   const eventSourceRef = useRef(null);
@@ -84,7 +88,94 @@ export default function App() {
     }
   };
 
-  useEffect(() => { fetchEngineHealth(); }, []);
+  const fetchDrafts = async () => {
+    try {
+      const res = await fetch('/api/drafts');
+      if (res.ok) {
+        const data = await res.json();
+        setDrafts(data.drafts || []);
+      }
+    } catch (err) {}
+  };
+
+  useEffect(() => { 
+    fetchEngineHealth(); 
+    fetchDrafts();
+  }, []);
+
+  // Memulai pemrosesan seluruh draft secara berurutan
+  const handleRunAllDrafts = async () => {
+    if (drafts.length === 0) return;
+    setIsAutoRunningDrafts(true);
+    // Draft pertama di-set, form disiapkan, lalu trigger jalankan
+    const nextDraft = drafts[0];
+    setFormData(nextDraft);
+    lastFormDataRef.current = nextDraft;
+    
+    // Hapus draft ini dari server (dan state) karena akan diproses
+    await handleDeleteDraft(nextDraft.id);
+    
+    // Jalankan pipeline (jangan ditunggu agar state tidak mem-block)
+    setTimeout(() => {
+      runGeneratePipeline(null, nextDraft);
+    }, 500);
+  };
+
+  const handleSaveDraft = async (draftData) => {
+    if (!draftData.productTitle) return toast.error('Judul produk tidak boleh kosong.');
+    if (!draftData.youtubeUrl) return toast.error('YouTube URL tidak boleh kosong.');
+    if (!draftData.shopeeLink) return toast.error('Link Affiliate tidak boleh kosong.');
+
+    try {
+      const res = await fetch('/api/drafts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(draftData)
+      });
+      if (res.ok) {
+        toast.success('Draft berhasil disimpan (Bisa diproses saat online/ada waktu).');
+        fetchDrafts();
+        // Reset form setelah simpan
+        setFormData({
+          youtubeUrl: '', shopeeLink: '', productTitle: '', productDescription: '', oemUrls: [''],
+          niche: formData.niche || 'kitchen_tools',
+        });
+      }
+    } catch (err) {
+      toast.error('Gagal menyimpan draft.');
+    }
+  };
+
+  const handleDeleteDraft = async (id) => {
+    try {
+      await fetch(`/api/drafts/${id}`, { method: 'DELETE' });
+      setDrafts(prev => prev.filter(d => d.id !== id));
+    } catch (err) {
+      console.warn('Gagal menghapus draft', err);
+    }
+  };
+
+  const processNextDraftQueue = async () => {
+    // Jika tidak sedang mode run-all atau draft sudah habis
+    if (drafts.length === 0) {
+      if (isAutoRunningDrafts) {
+        setIsAutoRunningDrafts(false);
+        toast.success('Semua antrean draft telah selesai diproses!');
+      }
+      return;
+    }
+    
+    if (isAutoRunningDrafts) {
+      const nextDraft = drafts[0];
+      setFormData(nextDraft);
+      lastFormDataRef.current = nextDraft;
+      await handleDeleteDraft(nextDraft.id);
+      
+      setTimeout(() => {
+        runGeneratePipeline(null, nextDraft);
+      }, 1500); // Jeda antar proses agar server bernafas
+    }
+  };
 
   // Core pipeline runner (used by fresh runs, retries, and history resumes)
   const runGeneratePipeline = async (overrideJobId = null, overrideFormData = null) => {
@@ -131,9 +222,13 @@ export default function App() {
           setResult(data.result);
           setIsLoading(false);
           sse.close();
+          // Lanjut ke draft berikutnya jika dalam mode isAutoRunningDrafts
+          setTimeout(() => processNextDraftQueue(), 1000);
         } else if (data.status === 'error') {
           setIsLoading(false);
           sse.close();
+          // Jika error, lewati dan lanjut ke draft berikutnya
+          setTimeout(() => processNextDraftQueue(), 1000);
         }
       } catch (e) {
         console.error('Error parsing SSE event:', e);
@@ -190,6 +285,8 @@ export default function App() {
         ...prev, step: 'error', message: err.message || 'Proses gagal.',
         progress: prev.progress, status: 'error', error: err.message, isQuotaError, canRetry: true,
       }));
+      // Jika error pada tahap request awal, lanjut ke antrean draft jika aktif
+      setTimeout(() => processNextDraftQueue(), 1000);
     } finally {
       setIsLoading(false);
       if (eventSourceRef.current) eventSourceRef.current.close();
@@ -516,10 +613,21 @@ export default function App() {
                       formData={formData}
                       setFormData={setFormData}
                       onGenerate={handleGenerate}
-                      isLoading={isLoading}
+                      isLoading={isLoading || isAutoRunningDrafts}
                       settings={settings}
                       engineStatus={engineStatus}
                       onOpenSettings={() => setIsSettingsOpen(true)}
+                      drafts={drafts}
+                      onSaveDraft={() => handleSaveDraft(formData)}
+                      onDeleteDraft={handleDeleteDraft}
+                      onRunAllDrafts={handleRunAllDrafts}
+                      onRunSingleDraft={async (draft) => {
+                        setFormData(draft);
+                        lastFormDataRef.current = draft;
+                        await handleDeleteDraft(draft.id);
+                        runGeneratePipeline(null, draft);
+                      }}
+                      isAutoRunningDrafts={isAutoRunningDrafts}
                     />
                   </div>
                 )}
