@@ -629,7 +629,25 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   const browserUserAgent = isMobile
     ? 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'
     : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
-  const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
+
+  // Build cookie string from cookies.txt so googlevideo accepts FFmpeg's request.
+  let cookieHdr = '';
+  const cookiePath = findCookiesFile();
+  if (cookiePath) {
+    try {
+      const cLines = fs.readFileSync(cookiePath, 'utf-8').split(/\r?\n/);
+      const pairs = [];
+      for (const line of cLines) {
+        if (line.startsWith('#') || !line.trim()) continue;
+        const parts = line.split('\t');
+        if (parts.length < 7) continue;
+        const [domain, , , , , name, value] = parts;
+        if (/youtube|google/i.test(domain)) pairs.push(`${name}=${value}`);
+      }
+      if (pairs.length) cookieHdr = `Cookie: ${pairs.join('; ')}\r\n`;
+    } catch {}
+  }
+  const browserHeaders = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n' + cookieHdr;
 
   // ── BATCH DOWNLOAD: single sequential read, seek lokal (167× hemat vs 150 remote seeks) ──
   // Empiris rxbench_pc 2026-09: 150 remote spawns × ~5.9 MB/spawn = 890 MB utk 5.3 MB JPEG.
