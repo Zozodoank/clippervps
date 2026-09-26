@@ -492,46 +492,8 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
     return true;
   });
 
-  if (!isOpen) {
-    return (
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() => { setIsOpen(true); fetchJobs(); }}
-          className={`relative flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-semibold transition-all ${
-            awaitingVoiceoverJobs.length > 0
-              ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/25'
-              : hasNewItems
-              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 hover:bg-amber-500/25'
-              : 'bg-slate-800/80 border-slate-700/60 text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          <History className="w-4 h-4" />
-          <span>Riwayat Job & Output</span>
-          {awaitingVoiceoverJobs.length > 0 ? (
-            <span className="absolute -top-1.5 -right-1.5 px-1.5 py-0.5 bg-emerald-500 text-black text-[10px] font-black rounded-full flex items-center justify-center">
-              {awaitingVoiceoverJobs.length}
-            </span>
-          ) : retryableJobs.length > 0 ? (
-            <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-amber-500 text-black text-[10px] font-black rounded-full flex items-center justify-center">
-              {retryableJobs.length}
-            </span>
-          ) : null}
-        </button>
-
-        <button
-          onClick={(e) => handleOpenFolder(e)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-700/60 bg-slate-800/80 text-amber-400 hover:text-amber-300 hover:bg-slate-800 text-xs font-semibold transition-all"
-          title="Buka folder output video di Windows Explorer"
-        >
-          <FolderOpen className="w-4 h-4" />
-          <span className="hidden sm:inline">Buka Folder Output</span>
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="glass-panel rounded-2xl shadow-2xl overflow-hidden border border-slate-700/60">
+    <div className="glass-panel rounded-2xl shadow-2xl overflow-hidden border border-slate-700/60 animate-in fade-in duration-300">
       {/* Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-slate-700/60 bg-slate-900/60 flex-wrap gap-2">
         <div className="flex items-center gap-2">
@@ -541,26 +503,12 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
         </div>
         <div className="flex items-center gap-2">
           <button
-            onClick={(e) => handleOpenFolder(e)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 text-amber-300 text-xs font-semibold transition-colors"
-            title="Buka folder output di Windows Explorer"
-          >
-            <FolderOpen className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Buka Folder</span>
-          </button>
-          <button
             onClick={() => fetchJobs(false)}
             disabled={isRefreshing}
             className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
             title="Refresh riwayat"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            onClick={() => setIsOpen(false)}
-            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-3.5 h-3.5" />
+            <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
