@@ -647,30 +647,40 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   if (batchEnabled) {
     console.log(`[VideoFilterService] 📥 Download stream 1× (hemat vs ${samplePoints.length} remote seeks)...`);
+    console.log(`[VideoFilterService] 🔗 streamUrl: ${streamUrl.slice(0, 80)}...`);
     onProgress({ step: 'stream_sampling', message: 'Mengunduh 1× stream video langsung ke file lokal...', progress: 22 });
-    const dlOk = await new Promise((resolve) => {
+    const dlResult = await new Promise((resolve) => {
       const proc = spawn(ffmpegPath, [
         '-y',
         '-user_agent', browserUserAgent, '-headers', browserHeaders,
         '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
         '-i', streamUrl,
-        '-c', 'copy', '-an',
+        '-map', '0:v', '-c:v', 'copy', '-an', '-f', 'mp4',
         tempStreamFile,
       ]);
-      const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve(false); }, 180000);
+      let dlStderr = '';
+      proc.stderr.on('data', d => { dlStderr += d.toString(); if (dlStderr.length > 4000) dlStderr = dlStderr.slice(-2000); });
+      const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} resolve({ ok: false, reason: 'timeout_180s' }); }, 180000);
       proc.on('close', (code) => {
         clearTimeout(timer);
-        resolve(code === 0 && fs.existsSync(tempStreamFile) && fs.statSync(tempStreamFile).size > 50000);
+        const exists = fs.existsSync(tempStreamFile);
+        const sz = exists ? fs.statSync(tempStreamFile).size : 0;
+        if (code === 0 && sz > 50000) {
+          resolve({ ok: true });
+        } else {
+          resolve({ ok: false, reason: `exit=${code} size=${sz}`, stderr: dlStderr.slice(-500) });
+        }
       });
-      proc.on('error', () => { clearTimeout(timer); resolve(false); });
+      proc.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, reason: e.message }); });
     });
-    if (dlOk) {
+    if (dlResult.ok) {
       downloadedBytes = fs.statSync(tempStreamFile).size;
       seekInput = tempStreamFile;
       networkArgs = [];
       console.log(`[VideoFilterService] ✅ Stream lokal: ${(downloadedBytes / 1e6).toFixed(1)} MB. ${samplePoints.length} seek lokal (instant).`);
     } else {
-      console.warn('[VideoFilterService] ⚠️ Download stream gagal, fallback ke remote per-spawn seek.');
+      console.warn(`[VideoFilterService] ⚠️ Download stream gagal (${dlResult.reason}), fallback ke remote per-spawn seek.`);
+      if (dlResult.stderr) console.warn(`[VideoFilterService]   ffmpeg stderr tail: ${dlResult.stderr.replace(/\n/g, ' | ')}`);
       try { fs.unlinkSync(tempStreamFile); } catch {}
     }
   }
