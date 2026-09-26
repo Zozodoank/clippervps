@@ -105,7 +105,7 @@ import { loadedEnvFiles, cleanEnvValue, isPlaceholderEnvValue, reloadEnvironment
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../../services/quotaService.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../../services/antiDupService.js';
 import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from '../../utils/jobHelpers.js';
-import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover } from '../../worker/pipelineWorker.js';
+import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover, retryJobSubtitles } from '../../worker/pipelineWorker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -292,6 +292,25 @@ router.post('/regenerate-voiceover', async (req, res) => {
     const isQuota = error.isQuotaError || isQuotaErrorMessage(error.message);
     const status = error.statusCode || (isQuota ? 402 : 500);
     res.status(status).json({ success: false, error: error.message, isQuotaError: isQuota, jobId });
+  }
+});
+
+// 6b1b. Retry SUBTITLES ONLY from the EXISTING TTS audio (NO new Gemini TTS call).
+// Berguna untuk melihat efek perbaikan sinkron durasi subtitle pada job yang sudah selesai
+// tanpa menghabiskan kuota TTS lagi (audio lama dipakai apa adanya).
+router.post('/retry-subtitles', async (req, res) => {
+  reloadEnvironment();
+  const { jobId, customScript } = req.body || {};
+
+  if (!jobId) return res.status(400).json({ error: 'Job ID is required.' });
+
+  try {
+    const updatedJob = await retryJobSubtitles(jobId, { customScript });
+    res.json({ success: true, ...updatedJob });
+  } catch (error) {
+    console.error(`[Job ${jobId}] Retry Subtitle Error:`, error);
+    const status = error.statusCode || 500;
+    res.status(status).json({ success: false, error: error.message, jobId });
   }
 });
 

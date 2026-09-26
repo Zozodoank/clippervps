@@ -20,6 +20,7 @@ export default function App() {
     productTitle: '',
     productDescription: '',
     oemUrls: [''],
+    niche: (() => { try { return localStorage.getItem('clipper_niche') || 'kitchen_tools'; } catch { return 'kitchen_tools'; } })(),
   }));
 
   const [settings, setSettings] = useState({
@@ -148,9 +149,11 @@ export default function App() {
           productDescription: currentForm.productDescription,
           oemUrls: (Array.isArray(currentForm.oemUrls) ? currentForm.oemUrls : []).map((url) => String(url || '').trim()).filter(Boolean),
           aiProvider: settings.aiProvider || engineStatus?.activeAiEngine || 'gemini',
+          niche: currentForm.niche || 'kitchen_tools',
           options: {
             ...settings,
             aiProvider: settings.aiProvider || engineStatus?.activeAiEngine || 'gemini',
+            niche: currentForm.niche || 'kitchen_tools',
           },
         }),
       });
@@ -215,6 +218,7 @@ export default function App() {
       productTitle: job.productTitle || formData.productTitle,
       productDescription: job.productDescription || formData.productDescription,
       oemUrls: Array.isArray(job.oemUrls) ? job.oemUrls : (formData.oemUrls || ['']),
+      niche: job.niche || formData.niche || 'kitchen_tools',
     };
     setFormData(restoredForm);
     lastFormDataRef.current = restoredForm;

@@ -584,3 +584,148 @@ export function processJobVoiceover(jobId, customScript, options) {
   return heavyTaskQueue(() => _processJobVoiceover(jobId, customScript, options));
 }
 
+// ── RESOLVE SUBTITLE-ONLY RETRY (REUSE EXISTING TTS AUDIO) ──────────────────
+// Temukan file audio voiceover yang SUDAH ADA untuk sebuah job tanpa memanggil TTS.
+// Prioritas: nama file dari job.voiceoverAudioUrl, fallback ke voiceover_<jobId>_* terbaru di uploadsDir.
+function resolveExistingVoiceoverPath(job, jobId) {
+  const fromUrl = (() => {
+    const m = String(job?.voiceoverAudioUrl || '').match(/\/api\/audio\/([^?#/]+)/);
+    return m ? m[1] : null;
+  })();
+  if (fromUrl) {
+    const p = path.join(uploadsDir, path.basename(fromUrl));
+    if (fs.existsSync(p)) return p;
+  }
+  try {
+    const audioExt = /\.(mp3|wav|m4a|aac|ogg|opus)$/i;
+    const matches = fs.readdirSync(uploadsDir)
+      .filter((f) => f.startsWith(`voiceover_${jobId}_`) && audioExt.test(f))
+      .map((f) => ({ f, t: fs.statSync(path.join(uploadsDir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t);
+    if (matches.length) return path.join(uploadsDir, matches[0].f);
+  } catch {}
+  return null;
+}
+
+// Regenerasi subtitle & render ulang video final MURNI dari audio TTS yang sudah ada.
+// TIDAK ada panggilan Gemini TTS/Vision sama sekali (diagnostik sinkron durasi subtitle).
+async function _retryJobSubtitles(jobId, options = {}) {
+  let job = activeJobs.get(jobId);
+  if (!job) {
+    loadJobsFromDisk();
+    job = activeJobs.get(jobId);
+    if (job) activeJobs.set(jobId, job);
+  }
+
+  const silentPath = job?.silentLocalPath || path.join(outputDir, `silent_clip_${jobId}.mp4`);
+  if (!job || !fs.existsSync(silentPath)) {
+    const err = new Error(`File video 9:16 (silent) untuk job ${jobId} tidak ditemukan di folder output.`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  const existingAudioPath = resolveExistingVoiceoverPath(job, jobId);
+  if (!existingAudioPath) {
+    const err = new Error(`Audio voiceover untuk job ${jobId} tidak ditemukan. Gunakan "Retry TTS" untuk menghasilkan suara baru.`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  let scriptToUse = (options.customScript && options.customScript.trim())
+    ? options.customScript.trim()
+    : (job.voiceoverScript || job.aiStudioPrompt || '');
+  if (!scriptToUse && Array.isArray(job.scenes) && job.scenes.length > 0) {
+    scriptToUse = job.scenes.map((s, idx) => `[00:${String(idx * 5).padStart(2, '0')}] ${s.voiceover || ''}`).join('\n');
+  }
+  if (!scriptToUse) {
+    const err = new Error('Naskah voiceover tidak ditemukan untuk job ini.');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const finalFileName = `final_clip_${jobId}.mp4`;
+  const finalOutputPath = path.join(outputDir, finalFileName);
+  const srtPath = path.join(uploadsDir, `subtitles_${jobId}.ass`);
+
+  const updateProgress = (data) => {
+    const payload = typeof data === 'string'
+      ? { step: 'processing', message: data, progress: 50, jobId }
+      : { ...data, jobId };
+    jobProgress.set(jobId, payload);
+    console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message}`);
+  };
+
+  try {
+    const effectiveLexicon = job.lexicon || {};
+    updateProgress({ step: 'subtitle_retry', message: '♻️ Regenerasi subtitle dari audio yang SUDAH ADA (tanpa memanggil TTS)...', progress: 25, status: 'running' });
+
+    const silentDurationSec = (await getMediaDurationSec(silentPath)) || job.highlight?.duration || 20;
+    const audioDurationSec = (await getMediaDurationSec(existingAudioPath)) || silentDurationSec;
+    const subtitleTargetDuration = audioDurationSec || silentDurationSec;
+
+    updateProgress({
+      step: 'subtitles',
+      message: `Menyinkronkan ulang subtitle ke durasi audio ${audioDurationSec.toFixed(1)}s (video ${silentDurationSec.toFixed(1)}s)...`,
+      progress: 55,
+      status: 'running',
+    });
+    generateSrtSubtitles(scriptToUse, subtitleTargetDuration, srtPath, {
+      wordBoundaries: job.wordBoundaries || [],
+      videoDurationSec: silentDurationSec,
+      lexicon: effectiveLexicon,
+    });
+
+    updateProgress({ step: 'render_final', message: 'Rendering video final 9:16 (audio lama + subtitle baru)...', progress: 78, status: 'running' });
+    await mergeVoiceoverAndBurnSubtitles({
+      silentVideoPath: silentPath,
+      voiceoverAudioPath: existingAudioPath,
+      srtPath,
+      outputVideoPath: finalOutputPath,
+      targetDurationSec: silentDurationSec,
+      backgroundMusicPath: process.env.BACKGROUND_MUSIC_PATH || '',
+      musicVolume: Number(process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
+      onProgress: updateProgress,
+    });
+
+    cleanupTempFiles([srtPath]); // PENTING: JANGAN hapus existingAudioPath (audio milik job).
+    syncVideoToAndroidStorage(finalOutputPath, finalFileName, 'clipper');
+
+    const cacheBuster = Date.now();
+    const updatedJob = {
+      ...job,
+      stage: 'completed',
+      finalFileName,
+      videoUrl: `/api/video/${finalFileName}?t=${cacheBuster}`,
+      downloadUrl: `/api/download/${finalFileName}?t=${cacheBuster}`,
+      finalLocalPath: finalOutputPath,
+      hasFinalVideo: true,
+      hasSilentVideo: true,
+      subtitleRetriedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    activeJobs.set(jobId, updatedJob);
+    persistJob(jobId, updatedJob);
+    updateProgress({ step: 'completed', message: 'Subtitle berhasil disinkronkan ulang dari audio yang ada!', progress: 100, status: 'completed', result: updatedJob });
+
+    return {
+      ...updatedJob,
+      _subtitle: {
+        audioDurationSec,
+        silentDurationSec,
+        targetSubtitleDuration: subtitleTargetDuration,
+        reusedAudioFile: path.basename(existingAudioPath),
+      },
+    };
+  } catch (error) {
+    console.error(`[Job ${jobId}] Subtitle Retry Error:`, error.message);
+    cleanupTempFiles([srtPath]); // never touch the reused audio on error either
+    updateProgress({ step: 'error', message: error.message, progress: 0, status: 'error', error: error.message, canRetry: true });
+    throw error;
+  }
+}
+
+export function retryJobSubtitles(jobId, options) {
+  return heavyTaskQueue(() => _retryJobSubtitles(jobId, options));
+}
+

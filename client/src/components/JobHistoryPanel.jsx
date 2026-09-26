@@ -281,6 +281,46 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
     }
   };
 
+  // Regenerate subtitle SAJA dari audio yang sudah ada (tanpa memanggil TTS) utk cek sinkron durasi.
+  const handleRetrySubtitleForJob = async (e, job) => {
+    e.stopPropagation();
+    if (processingTtsId || batchStatus.isRunning) return;
+
+    setProcessingTtsId(job.jobId);
+    try {
+      const res = await fetch('/api/retry-subtitles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: job.jobId }),
+      });
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        alert(`Gagal regenerate subtitle: ${data.error || 'Terjadi kesalahan pada server.'}`);
+        return;
+      }
+
+      setJobs(prev => prev.map(j => j.jobId === job.jobId ? { ...j, ...data, stage: 'completed', hasFinalVideo: true } : j));
+
+      const d = data._subtitle || {};
+      alert(
+        `✨ Subtitle disinkronkan ulang dari audio yang ADA (tanpa TTS baru).\n\n` +
+        `Audio: ${d.audioDurationSec ? d.audioDurationSec.toFixed(1) : '?'}s\n` +
+        `Video: ${d.silentDurationSec ? d.silentDurationSec.toFixed(1) : '?'}s\n` +
+        `File audio: ${d.reusedAudioFile || '-'}`
+      );
+
+      if (onSelectJob) {
+        onSelectJob({ ...job, ...data, stage: 'completed', hasFinalVideo: true });
+      }
+    } catch (err) {
+      console.error('Error in Retry Subtitle:', err);
+      alert(`Gagal regenerate subtitle: ${err.message}`);
+    } finally {
+      setProcessingTtsId(null);
+    }
+  };
+
   // 2. Server-Side Batch Generate TTS for ALL awaiting jobs
   const handleCancelBatch = async (e) => {
     e.stopPropagation();
@@ -829,6 +869,31 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
                                   <>
                                     <Volume2 className="w-3 h-3 text-teal-400" />
                                     <span>Retry TTS</span>
+                                  </>
+                                )}
+                              </button>
+
+                              {/* Retry SUBTITLE button (reuse existing audio, NO TTS) for completed jobs */}
+                              <button
+                                type="button"
+                                disabled={isProcessingThis || batchStatus.isRunning}
+                                onClick={(e) => handleRetrySubtitleForJob(e, job)}
+                                className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-bold transition-all shadow-sm ${
+                                  isProcessingThis
+                                    ? 'bg-slate-800 text-slate-400 border border-slate-700 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-sky-500/20 via-cyan-500/20 to-sky-500/20 hover:from-sky-500/30 hover:to-cyan-500/30 text-sky-300 border border-sky-500/40 hover:scale-[1.02] active:scale-[0.98]'
+                                }`}
+                                title="Sinkronkan ulang subtitle dari audio yang sudah ada (TANPA memanggil TTS) untuk melihat perubahan sinkronisasi durasi"
+                              >
+                                {isProcessingThis ? (
+                                  <>
+                                    <RefreshCw className="w-3 h-3 animate-spin text-sky-400" />
+                                    <span>Memproses...</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Film className="w-3 h-3 text-sky-400" />
+                                    <span>Retry Subtitle</span>
                                   </>
                                 )}
                               </button>

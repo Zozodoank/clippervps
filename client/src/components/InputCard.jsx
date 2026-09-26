@@ -1,5 +1,10 @@
-import React from 'react';
-import { Youtube, ShoppingBag, Key, Sparkles, Shield, Sliders, Zap, Tag, AlignLeft, Plus, Minus, Link2 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Youtube, ShoppingBag, Key, Sparkles, Shield, Sliders, Zap, Tag, AlignLeft, Plus, Minus, Link2, CheckCircle2 } from 'lucide-react';
+
+const DEFAULT_MANUAL_NICHES = [
+  { id: 'kitchen_tools', name: 'Alat Dapur & Kebutuhan Rumah', shortName: 'Alat Dapur', icon: '🍳', badgeColor: '#10b981' },
+  { id: 'gadget_smartphone', name: 'Smartphone & Gadget Viral', shortName: 'Smartphone', icon: '📱', badgeColor: '#3b82f6' },
+];
 
 const CLIENT_PRODUCT_ANCHORS = [
   { pattern: /\b(?:chopper|blender\s+mini|food\s+chopper)\b/i, noun: 'Chopper Mini Elektrik' },
@@ -70,6 +75,22 @@ export default function InputCard({
     ? `Gemini Direct (Flash): ${selectedProviderReady ? '.env Active' : 'Missing in .env'}`
     : `OpenRouter: ${selectedProviderReady ? '.env Active' : 'Missing in .env'}`;
 
+  // Pemilih Niche untuk MODE MANUAL (sama seperti mode auto: Alat Dapur & Smartphone/Gadget).
+  const [nicheOptions, setNicheOptions] = useState(DEFAULT_MANUAL_NICHES);
+  useEffect(() => {
+    fetch('/api/niches')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.niches) && data.niches.length > 0) setNicheOptions(data.niches);
+      })
+      .catch(() => {});
+  }, []);
+  const activeNiche = formData.niche || 'kitchen_tools';
+  const setNiche = (id) => {
+    try { localStorage.setItem('clipper_niche', id); } catch {}
+    setFormData({ ...formData, niche: id });
+  };
+
   const detectedNoun = getDetectedProductNoun(formData.productTitle);
   const oemUrls = Array.isArray(formData.oemUrls) ? formData.oemUrls : [''];
 
@@ -122,6 +143,37 @@ export default function InputCard({
             <Sliders className="w-3.5 h-3.5 text-shopee-500" />
             <span>Settings</span>
           </button>
+        </div>
+
+        {/* 0. Niche / Kategori Produk (manual mode) */}
+        <div>
+          <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+            Niche / Kategori Produk
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {nicheOptions.map((n) => {
+              const active = activeNiche === n.id;
+              return (
+                <button
+                  type="button"
+                  key={n.id}
+                  onClick={() => setNiche(n.id)}
+                  className={`flex-1 min-w-[150px] flex items-center gap-2 px-3 py-2 rounded-xl border text-left transition-all ${
+                    active
+                      ? 'bg-slate-800 border-cyan-500/60 ring-1 ring-cyan-500/40'
+                      : 'bg-slate-900/60 border-slate-700 hover:border-slate-600'
+                  }`}
+                >
+                  <span className="text-lg leading-none flex-shrink-0">{n.icon || '🏷️'}</span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-bold text-slate-100 truncate">{n.shortName || n.name}</span>
+                    <span className="block text-[10px] text-slate-400 truncate">{n.name || ''}</span>
+                  </span>
+                  {active && <CheckCircle2 className="w-4 h-4 text-cyan-400 ml-auto flex-shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {/* 1. Judul / Nama Produk */}

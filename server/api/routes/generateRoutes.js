@@ -151,6 +151,7 @@ router.post('/generate', async (req, res) => {
     apiKey,
     options = {},
     aiProvider,
+    niche,
     jobId: clientJobId,
     oemUrl1,
     oemUrl2,
@@ -160,6 +161,17 @@ router.post('/generate', async (req, res) => {
   if (aiProvider) {
     options.aiProvider = aiProvider;
   }
+
+  // MODE MANUAL: pengguna kini dapat memilih niche (Alat Dapur ATAU Smartphone/Gadget),
+  // sama seperti mode auto. Validasi terhadap preset yang tersedia + dukung alias
+  // (mis. 'smartphone'/'hp' -> gadget_smartphone). Default: kitchen_tools.
+  const availableNicheIds = getAllNiches().map((n) => n.id);
+  const requestedNiche = String(niche || options.niche || '').trim().toLowerCase();
+  const resolvedNiche = availableNicheIds.includes(requestedNiche)
+    ? requestedNiche
+    : getNichePreset(requestedNiche).id;
+  options.niche = resolvedNiche;
+  console.log(`[Job ${clientJobId || 'generate'}] 🏷️ Manual niche = ${options.niche}`);
 
   // OEM manual URLs are optional. They can be used when automatic discovery
   // does not provide enough visual variety. At least one source is required.
@@ -188,8 +200,12 @@ router.post('/generate', async (req, res) => {
   if (shopeeLink && !isValidHttpUrl(shopeeLink)) {
     return res.status(400).json({ error: 'Link produk harus berupa URL http/https yang valid.' });
   }
-  if (productTitle && isBulkyOrUnsuitableProduct(productTitle)) {
-    return res.status(400).json({ error: 'Produk ditolak karena tergolong perabot besar / rak besar yang memenuhi frame. Niche disetel hanya untuk alat dapur praktis.' });
+  if (productTitle && isBulkyOrUnsuitableProduct(productTitle, { niche: resolvedNiche })) {
+    return res.status(400).json({
+      error: resolvedNiche === 'gadget_smartphone'
+        ? `Niche Smartphone/Gadget: produk "${productTitle}" tidak sesuai kriteria kategori ini.`
+        : 'Produk ditolak karena tergolong perabot besar / rak besar yang memenuhi frame. Niche disetel hanya untuk alat dapur praktis.',
+    });
   }
 
   // MODE MANUAL default = HEMAT & PREDICTABLE. Karena user sudah memberi URL YouTube/OEM
