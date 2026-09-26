@@ -51,6 +51,9 @@ export default function App() {
   const [engineStatus, setEngineStatus] = useState(null);
   const [checkingEngine, setCheckingEngine] = useState(false);
   const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
+  
+  // Navigation State
+  const [activeView, setActiveView] = useState('studio'); // 'studio' | 'auto' | 'history'
 
   const lastJobIdRef = useRef(null);
   const lastFormDataRef = useRef(null);
@@ -223,6 +226,7 @@ export default function App() {
     };
     setFormData(restoredForm);
     lastFormDataRef.current = restoredForm;
+    setActiveView('studio');
 
     // If job is currently running or auto-retrying, connect to live progress SSE
     if (job.isAutoRetrying || job.stage === 'running') {
@@ -358,6 +362,7 @@ export default function App() {
     };
     setFormData(restoredForm);
     lastFormDataRef.current = restoredForm;
+    setActiveView('studio'); // Pindah ke tab studio otomatis saat di-retry
 
     setIsLoading(true);
     setResult(null);
@@ -456,106 +461,133 @@ export default function App() {
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
         <DependenciesStatus status={engineStatus} onRefresh={fetchEngineHealth} loading={checkingEngine} />
 
-        {/* Stepper Navigation */}
-        <div className="flex items-center justify-between max-w-2xl mx-auto mb-8 px-4">
-          <div className={`flex flex-col items-center gap-2 ${activeStep >= 1 ? 'text-shopee-500' : 'text-slate-500'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 1 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>1</div>
-            <span className="text-xs font-semibold">Sumber Video</span>
-          </div>
-          <div className={`h-1 flex-1 mx-4 rounded-full transition-all ${activeStep >= 2 ? 'bg-shopee-500/50' : 'bg-slate-800'}`}></div>
-          <div className={`flex flex-col items-center gap-2 ${activeStep >= 2 ? 'text-shopee-500' : 'text-slate-500'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 2 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>2</div>
-            <span className="text-xs font-semibold">Proses AI</span>
-          </div>
-          <div className={`h-1 flex-1 mx-4 rounded-full transition-all ${activeStep >= 3 ? 'bg-shopee-500/50' : 'bg-slate-800'}`}></div>
-          <div className={`flex flex-col items-center gap-2 ${activeStep >= 3 ? 'text-shopee-500' : 'text-slate-500'}`}>
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 3 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>3</div>
-            <span className="text-xs font-semibold">Hasil Akhir</span>
+        {/* Tab Navigation Menu */}
+        <div className="flex justify-center mb-8">
+          <div className="flex bg-slate-900/60 p-1.5 rounded-2xl border border-slate-800 shadow-lg shadow-black/20">
+            <button
+              onClick={() => setActiveView('studio')}
+              className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeView === 'studio' ? 'bg-shopee-500 text-white shadow-md shadow-shopee-500/25' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+            >
+              Studio Video
+            </button>
+            <button
+              onClick={() => setActiveView('auto')}
+              className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeView === 'auto' ? 'bg-shopee-500 text-white shadow-md shadow-shopee-500/25' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+            >
+              Mode Otomatis
+            </button>
+            <button
+              onClick={() => setActiveView('history')}
+              className={`px-6 py-2.5 rounded-xl text-sm font-semibold transition-all ${activeView === 'history' ? 'bg-shopee-500 text-white shadow-md shadow-shopee-500/25' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'}`}
+            >
+              Riwayat Video
+            </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          
-          {/* Main Working Area (Left Column on Desktop) */}
-          <div className="lg:col-span-7 space-y-6">
-            
-            {activeStep === 1 && (
-              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                <InputCard
-                  formData={formData}
-                  setFormData={setFormData}
-                  onGenerate={handleGenerate}
-                  isLoading={isLoading}
-                  settings={settings}
-                  engineStatus={engineStatus}
-                  onOpenSettings={() => setIsSettingsOpen(true)}
-                />
+        {activeView === 'studio' && (
+          <div className="space-y-8 animate-in fade-in duration-300">
+            {/* Stepper Navigation */}
+            <div className="flex items-center justify-between max-w-2xl mx-auto mb-8 px-4">
+              <div className={`flex flex-col items-center gap-2 ${activeStep >= 1 ? 'text-shopee-500' : 'text-slate-500'}`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 1 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>1</div>
+                <span className="text-xs font-semibold">Sumber Video</span>
               </div>
-            )}
+              <div className={`h-1 flex-1 mx-4 rounded-full transition-all ${activeStep >= 2 ? 'bg-shopee-500/50' : 'bg-slate-800'}`}></div>
+              <div className={`flex flex-col items-center gap-2 ${activeStep >= 2 ? 'text-shopee-500' : 'text-slate-500'}`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 2 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>2</div>
+                <span className="text-xs font-semibold">Proses AI</span>
+              </div>
+              <div className={`h-1 flex-1 mx-4 rounded-full transition-all ${activeStep >= 3 ? 'bg-shopee-500/50' : 'bg-slate-800'}`}></div>
+              <div className={`flex flex-col items-center gap-2 ${activeStep >= 3 ? 'text-shopee-500' : 'text-slate-500'}`}>
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold transition-all ${activeStep >= 3 ? 'bg-shopee-500 text-white shadow-lg shadow-shopee-500/30' : 'bg-slate-800 text-slate-500'}`}>3</div>
+                <span className="text-xs font-semibold">Hasil Akhir</span>
+              </div>
+            </div>
 
-            {activeStep >= 2 && (
-              <div className="animate-in fade-in zoom-in-95 duration-500 space-y-6">
-                <ProgressCard
-                  progressState={progressState}
-                  onRetry={handleRetry}
-                  onStopAutoRetry={handleStopCurrentAutoRetry}
-                  isLoading={isLoading}
-                />
-
-                {result && result.jobId && !isCompleted && (
-                  <ErrorBoundary>
-                    <VoiceoverUploader
-                      jobId={result.jobId}
-                      result={result}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+              
+              {/* Main Working Area (Left Column on Desktop) */}
+              <div className="lg:col-span-7 space-y-6">
+                
+                {activeStep === 1 && (
+                  <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                    <InputCard
+                      formData={formData}
+                      setFormData={setFormData}
+                      onGenerate={handleGenerate}
+                      isLoading={isLoading}
                       settings={settings}
-                      voiceoverScript={result.voiceoverScript}
-                      aiStudioPrompt={result.aiStudioPrompt}
-                      onUploadSuccess={handleVoiceoverUploadSuccess}
-                      isUploading={isUploading}
-                      setIsUploading={setIsUploading}
+                      engineStatus={engineStatus}
+                      onOpenSettings={() => setIsSettingsOpen(true)}
                     />
-                  </ErrorBoundary>
+                  </div>
+                )}
+
+                {activeStep >= 2 && (
+                  <div className="animate-in fade-in zoom-in-95 duration-500 space-y-6">
+                    <ProgressCard
+                      progressState={progressState}
+                      onRetry={handleRetry}
+                      onStopAutoRetry={handleStopCurrentAutoRetry}
+                      isLoading={isLoading}
+                    />
+
+                    {result && result.jobId && !isCompleted && (
+                      <ErrorBoundary>
+                        <VoiceoverUploader
+                          jobId={result.jobId}
+                          result={result}
+                          settings={settings}
+                          voiceoverScript={result.voiceoverScript}
+                          aiStudioPrompt={result.aiStudioPrompt}
+                          onUploadSuccess={handleVoiceoverUploadSuccess}
+                          isUploading={isUploading}
+                          setIsUploading={setIsUploading}
+                        />
+                      </ErrorBoundary>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
+
+              {/* Right Column (Preview & Result) */}
+              <div className="lg:col-span-5 space-y-6">
+                <ErrorBoundary>
+                  {result && activeStep >= 2 ? (
+                    <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-700">
+                      <VideoPlayer result={result} />
+                      {isCompleted && <CaptionCard result={result} />}
+                    </div>
+                  ) : (
+                    <div className="glass-panel rounded-2xl p-8 text-center flex flex-col items-center justify-center min-h-[480px] border-dashed border-slate-800 opacity-60">
+                      <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-shopee-500/20 via-orange-500/20 to-amber-500/20 border border-shopee-500/30 flex items-center justify-center text-shopee-500 mb-4 shadow-xl">
+                        <Clapperboard className="w-8 h-8 stroke-[1.75]" />
+                      </div>
+                      <h3 className="text-lg font-bold text-white mb-2">Area Pratinjau Video</h3>
+                      <p className="text-xs text-slate-400 max-w-sm leading-relaxed mb-6">
+                        Mulai proses di sebelah kiri. Video hasil potongan AI dan subtitle akan muncul di sini setelah selesai.
+                      </p>
+                    </div>
+                  )}
+                </ErrorBoundary>
+              </div>
+
+            </div>
           </div>
+        )}
 
-          {/* Right Column (Preview & Result) */}
-          <div className="lg:col-span-5 space-y-6">
-            <ErrorBoundary>
-              {result && activeStep >= 2 ? (
-                <div className="space-y-6 animate-in fade-in slide-in-from-right-8 duration-700">
-                  <VideoPlayer result={result} />
-                  {isCompleted && <CaptionCard result={result} />}
-                </div>
-              ) : (
-                <div className="glass-panel rounded-2xl p-8 text-center flex flex-col items-center justify-center min-h-[480px] border-dashed border-slate-800 opacity-60">
-                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-shopee-500/20 via-orange-500/20 to-amber-500/20 border border-shopee-500/30 flex items-center justify-center text-shopee-500 mb-4 shadow-xl">
-                    <Clapperboard className="w-8 h-8 stroke-[1.75]" />
-                  </div>
-                  <h3 className="text-lg font-bold text-white mb-2">Area Pratinjau Video</h3>
-                  <p className="text-xs text-slate-400 max-w-sm leading-relaxed mb-6">
-                    Mulai proses di sebelah kiri. Video hasil potongan AI dan subtitle akan muncul di sini setelah selesai.
-                  </p>
-                </div>
-              )}
-            </ErrorBoundary>
-          </div>
-
-        </div>
-
-        {/* Separator before History */}
-        <div className="pt-8 mt-12 border-t border-slate-800/60">
-          <div className="max-w-4xl mx-auto space-y-6">
-            <h3 className="text-lg font-bold text-slate-300 flex items-center gap-2">
-              Riwayat & Mode Otomatis
-            </h3>
-            
+        {activeView === 'auto' && (
+          <div className="max-w-5xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
             <AutoModePanel
               settings={settings}
               onHistoryRefresh={() => setHistoryRefreshSignal((value) => value + 1)}
             />
+          </div>
+        )}
 
+        {activeView === 'history' && (
+          <div className="max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-4 duration-300">
             <JobHistoryPanel
               onSelectJob={handleSelectJob}
               onRetryJob={handleRetryJob}
@@ -564,7 +596,7 @@ export default function App() {
               settings={settings}
             />
           </div>
-        </div>
+        )}
       </main>
 
       <SettingsModal
