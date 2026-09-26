@@ -11,6 +11,7 @@ import JobHistoryPanel from './components/JobHistoryPanel';
 import AutoModePanel from './components/AutoModePanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import { Sparkles, Clapperboard } from 'lucide-react';
+import toast, { Toaster } from 'react-hot-toast';
 import { withAuthQuery } from './utils/auth.js';
 
 export default function App() {
@@ -194,9 +195,9 @@ export default function App() {
 
   // Fresh generate
   const handleGenerate = async () => {
-    if (!formData.productTitle) return alert('Silakan masukkan Judul / Nama Produk.');
-    if (!formData.youtubeUrl) return alert('Silakan masukkan YouTube Video URL.');
-    if (!formData.shopeeLink) return alert('Silakan masukkan link Shopee Affiliate Anda.');
+    if (!formData.productTitle) return toast.error('Silakan masukkan Judul / Nama Produk.');
+    if (!formData.youtubeUrl) return toast.error('Silakan masukkan YouTube Video URL.');
+    if (!formData.shopeeLink) return toast.error('Silakan masukkan link Shopee Affiliate Anda.');
     lastFormDataRef.current = { ...formData };
     await runGeneratePipeline(null);
   };
@@ -440,7 +441,10 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#080d1a] text-slate-100">
+    <div className="min-h-screen flex flex-col bg-[#080d1a] text-slate-100 pb-safe">
+      <Toaster position="top-center" toastOptions={{
+        style: { background: '#1e293b', color: '#f1f5f9', border: '1px solid #334155' }
+      }} />
       <Navbar onOpenSettings={() => setIsSettingsOpen(true)} engineStatus={engineStatus} />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
@@ -525,14 +529,14 @@ export default function App() {
                       <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
                       <span>openrouter/free</span>
                     </div>
-                    <p className="text-[11px] text-slate-400">Vision OCR &amp; Naskah (100% Gratis)</p>
+                    <p className="text-xs text-slate-400">Vision OCR &amp; Naskah (100% Gratis)</p>
                   </div>
                   <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-xs">
                     <div className="font-bold text-slate-200 flex items-center gap-1.5 mb-1">
                       <Clapperboard className="w-3.5 h-3.5 text-indigo-400" />
                       <span>Full Product</span>
                     </div>
-                    <p className="text-[11px] text-slate-400">9:16 tanpa memotong produk</p>
+                    <p className="text-xs text-slate-400">9:16 tanpa memotong produk</p>
                   </div>
                 </div>
               </div>

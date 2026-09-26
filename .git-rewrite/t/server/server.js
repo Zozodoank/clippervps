@@ -1,0 +1,4449 @@
+import express from 'express';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import crypto from 'crypto';
+import multer from 'multer';
+import { exec, spawn, execSync } from 'child_process';
+
+import { checkSystemDependencies, getFFmpegPath } from './services/binaryChecker.js';
+import { downloadYouTubeVideo, extractVideoId, isLocalPortListening } from './services/downloader.js';
+import { extractFrames } from './services/frameExtractor.js';
+import {
+  selectHighlightWithAI,
+  analyzeYouTubeVideoWithGemini,
+  getDirectGeminiApiKey,
+  generateAdAdvisorScriptWithAI,
+  detectPhoneticLexiconWithAI,
+  formatEnrichedCaption,
+  formatSeconds,
+  getDynamicProductHookFallback,
+  build7SlotStoryboardClips
+} from './services/aiService.js';
+import { generateSrtSubtitles } from './services/subtitleService.js';
+import { loadEnglishDictionary, saveToEnglishDictionary } from './services/dictionaryService.js';
+import {
+  renderSilentAntiDetectionVideo,
+  mergeVoiceoverAndBurnSubtitles,
+  getMediaDurationSec,
+  getVideoDimensions
+} from './services/videoRenderer.js';
+import {
+  generateVoiceoverTTS,
+  cleanScriptForTTS,
+  GEMINI_TTS_VOICES,
+  DEFAULT_GEMINI_TTS_MODEL,
+  DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
+  DEFAULT_GEMINI_TTS_VOICE
+} from './services/ttsService.js';
+import {
+  fetchVideoMetadataAndStream,
+  checkVideoMetadataCompliance,
+  sampleFramesFromStream,
+  inspectFramesLocally,
+  filterCandidateFramesPerFrame,
+  poolMultiCandidateFrames,
+  callAIGatekeeperMicroservice,
+  sampleDenseClustersAroundCleanFrames
+} from './services/videoFilterService.js';
+import {
+  getPublicIpAddress,
+  classifyPipelineError,
+  checkYouTubeHealth
+} from './services/networkDiagnosticService.js';
+import {
+  getBandwidthStats,
+  resetBandwidthStats,
+  trackSavedBandwidth
+} from './services/bandwidthTracker.js';
+import {
+  cleanupTempFiles,
+  deleteJobTempDirectory,
+  deleteJobFiles
+} from './services/cleaner.js';
+import {
+  discoverShopeeProducts,
+  discoverSingleShopeeProduct,
+  discoverYouTubeCandidatesForProduct,
+  searchMultiEngineVideos,
+  searchBingVideos,
+  searchVideosByProductImage,
+  fetchShopeePageMeta,
+  isShopeeProductUrl,
+  findMatchingShopeeProductUrl,
+  buildShopeeSearchUrl,
+  extractShopeeLinkFromText,
+  DEFAULT_AUTO_KEYWORDS,
+  getAutoKeywords,
+  extractCoreProductInfo,
+  isBulkyOrUnsuitableProduct,
+  markKeywordAsUsed,
+  loadUsedKeywords,
+  isKeywordUsed,
+  isProductTitleUsed,
+  getUsedKeywordsStats,
+  clearUsedKeywords
+} from './services/discoveryService.js';
+import { getAllNiches, getNichePreset } from './config/nichePresets.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Load .env from multiple candidate paths. Keep server/.env as the primary
+// Termux/local source, but still accept root-level .env files for portability.
+const envCandidates = [
+  path.join(__dirname, '.env'),
+  path.join(__dirname, '.env.txt'),
+  path.join(__dirname, '..', '.env'),
+  path.join(__dirname, '..', '.env.txt'),
+  path.join(process.cwd(), '.env'),
+  path.join(process.cwd(), '.env.txt')
+];
+
+const PLACEHOLDER_ENV_VALUES = new Set([
+  '',
+  'your_gemini_api_key_here',
+  'your_aivene_api_key_here',
+  'your_rapidapi_key_here',
+  'your_cobalt_api_key_here',
+]);
+
+let loadedEnvFiles = [];
+
+function cleanEnvValue(value) {
+  let cleaned = String(value || '').trim();
+  if ((cleaned.startsWith('"') && cleaned.endsWith('"')) || (cleaned.startsWith("'") && cleaned.endsWith("'"))) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  return cleaned;
+}
+
+function isPlaceholderEnvValue(value) {
+  return PLACEHOLDER_ENV_VALUES.has(cleanEnvValue(value).toLowerCase());
+}
+
+export function reloadEnvironment() {
+  const loaded = [];
+  for (const envPath of envCandidates) {
+    if (fs.existsSync(envPath)) {
+      try {
+        const raw = fs.readFileSync(envPath, 'utf8').replace(/^\uFEFF/, '');
+        const parsed = dotenv.parse(raw);
+        for (const [key, value] of Object.entries(parsed)) {
+          const cleaned = cleanEnvValue(value);
+          if (isPlaceholderEnvValue(cleaned)) continue;
+          process.env[key] = cleaned;
+          process.env[key.toUpperCase()] = cleaned;
+        }
+        const lines = raw.split(/\r?\n/);
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('#')) continue;
+          const eqIdx = trimmed.indexOf('=');
+          if (eqIdx > 0) {
+            const k = trimmed.slice(0, eqIdx).replace(/^\uFEFF/, '').trim();
+            const v = cleanEnvValue(trimmed.slice(eqIdx + 1));
+            if (v && !isPlaceholderEnvValue(v)) {
+              process.env[k] = v;
+              process.env[k.toUpperCase()] = v;
+            }
+          }
+        }
+        loaded.push(envPath);
+      } catch (err) {
+        console.warn(`[Env] Could not load ${envPath}:`, err.message);
+      }
+    }
+  }
+  loadedEnvFiles = [...new Set(loaded)];
+  return loadedEnvFiles;
+}
+
+reloadEnvironment();
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// Directories
+const tempDir = path.join(__dirname, 'temp');
+const outputDir = path.join(__dirname, 'output');
+const uploadsDir = path.join(tempDir, 'uploads');
+const jobsFilePath = path.join(__dirname, 'jobs.json');
+const rejectedYunetDir = path.join(__dirname, 'rejected_frames', 'yunet');
+
+if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+if (!fs.existsSync(rejectedYunetDir)) fs.mkdirSync(rejectedYunetDir, { recursive: true });
+
+// Multer storage for uploaded voiceover audio
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || '.mp3';
+    cb(null, `voiceover_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`);
+  },
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const allowedExts = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus']);
+    const mime = String(file.mimetype || '').toLowerCase();
+    if (allowedExts.has(ext) || mime.startsWith('audio/')) return cb(null, true);
+    cb(new Error('File voiceover harus berupa audio (.mp3, .wav, .m4a, .aac, .ogg, .opus).'));
+  },
+});
+
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Optional Token Authentication for Cloudflare Tunnel / Public Exposure
+const configuredApiToken = (process.env.API_ACCESS_TOKEN || '').trim();
+if (!configuredApiToken) {
+  console.log('[Auth] ℹ️ API_ACCESS_TOKEN is not set. All endpoints are open (backward-compatible).');
+} else {
+  console.log('[Auth] 🔒 API_ACCESS_TOKEN is configured. Sensitive endpoints are protected.');
+}
+
+function tokenAuthMiddleware(req, res, next) {
+  const token = (process.env.API_ACCESS_TOKEN || '').trim();
+  if (!token) return next();
+
+  const reqPath = req.path || '';
+
+  // Allow open endpoints: health, daily-limit, niches, and media files
+  if (
+    reqPath === '/api/health' ||
+    reqPath === '/api/daily-limit' ||
+    reqPath === '/api/niches' ||
+    reqPath.startsWith('/api/video/') ||
+    reqPath.startsWith('/api/audio/') ||
+    reqPath.startsWith('/api/download/') ||
+    reqPath.startsWith('/api/video-player-file') ||
+    reqPath.startsWith('/api/rejected-frames')
+  ) {
+    return next();
+  }
+
+  // Only check /api/ routes; allow static frontend files
+  if (!reqPath.startsWith('/api/')) {
+    return next();
+  }
+
+  // Extract token from header or query param
+  let reqToken = req.headers['x-api-token'];
+  if (!reqToken && req.headers['authorization']) {
+    const authHeader = req.headers['authorization'];
+    if (authHeader.startsWith('Bearer ')) {
+      reqToken = authHeader.slice(7).trim();
+    }
+  }
+  if (!reqToken && req.query && req.query.api_token) {
+    reqToken = String(req.query.api_token).trim();
+  }
+
+  if (!reqToken) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized: Missing API access token. Provide x-api-token header or ?api_token query param.',
+    });
+  }
+
+  // Constant-time token comparison
+  const expectedBuf = Buffer.from(token);
+  const actualBuf = Buffer.from(String(reqToken));
+  if (expectedBuf.length !== actualBuf.length || !crypto.timingSafeEqual(expectedBuf, actualBuf)) {
+    return res.status(401).json({
+      success: false,
+      error: 'Unauthorized: Invalid API access token.',
+    });
+  }
+
+  next();
+}
+
+app.use(tokenAuthMiddleware);
+
+function isValidHttpUrl(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function resolveOutputVideoPath(filename) {
+  const safeName = String(filename || '').trim();
+  if (!/^(silent|final)_clip_[a-zA-Z0-9_-]+\.mp4$/.test(safeName)) {
+    return null;
+  }
+  const resolved = path.resolve(outputDir, safeName);
+  const outputRoot = path.resolve(outputDir) + path.sep;
+  return resolved.startsWith(outputRoot) ? resolved : null;
+}
+
+function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const ffmpegPath = getFFmpegPath();
+    const proc = spawn(ffmpegPath, [
+      '-y',
+      '-ss', String(timestampSec),
+      '-i', videoPath,
+      '-vframes', '1',
+      '-q:v', '2',
+      outputPath,
+    ], { stdio: 'ignore' });
+
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      resolve(false);
+    }, timeoutMs);
+
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      resolve(code === 0 && fs.existsSync(outputPath));
+    });
+    proc.on('error', () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+// ─── Persistent Job Store ────────────────────────────────────────────────────
+
+/** In-memory stores */
+const activeJobs = new Map();
+const jobProgress = new Map();
+const autoRuns = new Map();
+const autoRetryRuns = new Map();
+
+/** Sanitizes a job object so sensitive user API keys are never written to disk */
+function sanitizeJobForDisk(job) {
+  if (!job || typeof job !== 'object') return job;
+  const clone = { ...job };
+  delete clone.geminiApiKey;
+  delete clone.apiKey;
+  delete clone.openRouterApiKey;
+  return clone;
+}
+
+/** Atomically writes JSON to disk to avoid 0-byte corruptions on crash/restart */
+function atomicWriteJsonSync(filePath, data) {
+  const tmpPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2, 6)}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, filePath);
+}
+
+/** Load jobs from disk into memory without losing history */
+function loadJobsFromDisk() {
+  try {
+    if (fs.existsSync(jobsFilePath)) {
+      const raw = fs.readFileSync(jobsFilePath, 'utf-8');
+      const obj = JSON.parse(raw);
+      let modified = false;
+      for (const [jobId, jobData] of Object.entries(obj)) {
+        if (jobData.geminiApiKey || jobData.apiKey || jobData.openRouterApiKey) {
+          delete jobData.geminiApiKey;
+          delete jobData.apiKey;
+          delete jobData.openRouterApiKey;
+          modified = true;
+        }
+        // Jangan hapus job apapun agar riwayat history pengguna tidak hilang!
+        // Jika status masih 'running' saat server start, ubah menjadi 'stopped'
+        if (jobData.stage === 'running') {
+          jobData.stage = 'stopped';
+          jobData.message = 'Proses dihentikan karena server di-restart.';
+          modified = true;
+        }
+        activeJobs.set(jobId, jobData);
+      }
+      if (modified) {
+        atomicWriteJsonSync(jobsFilePath, obj);
+      }
+      console.log(`[Jobs] Loaded ${activeJobs.size} persisted job(s) from disk.`);
+    }
+  } catch (err) {
+    console.warn('[Jobs] Could not load jobs.json:', err.message);
+  }
+}
+
+/** Save a single job entry to disk */
+function persistJob(jobId, jobData) {
+  try {
+    let existing = {};
+    if (fs.existsSync(jobsFilePath)) {
+      existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
+    }
+    const cleanJob = sanitizeJobForDisk(jobData);
+    existing[jobId] = {
+      ...cleanJob,
+      updatedAt: new Date().toISOString(),
+    };
+    atomicWriteJsonSync(jobsFilePath, existing);
+  } catch (err) {
+    console.warn(`[Jobs] Could not persist job ${jobId}:`, err.message);
+  }
+}
+
+/** Delete a job from disk */
+function deletePersistedJob(jobId) {
+  try {
+    if (fs.existsSync(jobsFilePath)) {
+      const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
+      delete existing[jobId];
+      atomicWriteJsonSync(jobsFilePath, existing);
+    }
+  } catch (err) {
+    console.warn(`[Jobs] Could not delete job ${jobId} from disk:`, err.message);
+  }
+}
+
+loadJobsFromDisk();
+
+// Periodic in-memory cleanup to prevent PM2 memory leaks (Poin 10)
+setInterval(() => {
+  const now = Date.now();
+  // 1. Bersihkan jobProgress untuk job yang sudah selesai >30 menit
+  for (const [jobId, p] of jobProgress.entries()) {
+    if (p.status === 'completed' || p.status === 'error' || p.status === 'awaiting_voiceover') {
+      const ts = p.updatedAt ? new Date(p.updatedAt).getTime() : 0;
+      if (now - ts > 30 * 60 * 1000) {
+        jobProgress.delete(jobId);
+      }
+    }
+  }
+  // 2. Batasi riwayat autoRuns & autoRetryRuns maksimal 20 data terakhir
+  const pruneMap = (m) => {
+    const terminalKeys = [];
+    for (const [k, run] of m.entries()) {
+      if (run.status === 'stopped' || run.status === 'completed' || run.status === 'error') {
+        terminalKeys.push(k);
+      }
+    }
+    if (terminalKeys.length > 20) {
+      terminalKeys.slice(0, terminalKeys.length - 20).forEach((k) => m.delete(k));
+    }
+  };
+  pruneMap(autoRuns);
+  pruneMap(autoRetryRuns);
+}, 10 * 60 * 1000);
+
+const DEFAULT_DAILY_VIDEO_LIMIT = 20;
+
+export function getDailyOutputVideoLimit() {
+  const envVal = parseInt(process.env.DAILY_VIDEO_LIMIT, 10);
+  return (!isNaN(envVal) && envVal > 0) ? envVal : DEFAULT_DAILY_VIDEO_LIMIT;
+}
+
+/**
+ * Hitung jumlah video output unik yang berhasil diproduksi hari ini (kalender lokal).
+ * Mencegah pemblokiran IP YouTube/API dengan membatasi maksimal 20 video sehari.
+ */
+export function getDailyOutputVideoStats() {
+  const limit = getDailyOutputVideoLimit();
+  const now = new Date();
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  const startOfDayMs = startOfDay.getTime();
+
+  const uniqueJobIdsToday = new Set();
+  const completedVideosToday = [];
+
+  // 1. Cek dari memory activeJobs (termasuk hasil load jobs.json)
+  for (const [jobId, job] of activeJobs.entries()) {
+    const isCompleted = job.stage === 'completed' || job.hasFinalVideo || (job.stage === 'stage1_completed' && job.hasSilentVideo);
+    if (!isCompleted) continue;
+
+    const timestampStr = job.completedAt || job.updatedAt || job.createdAt;
+    const jobTime = timestampStr ? new Date(timestampStr).getTime() : 0;
+
+    const filePath = job.finalLocalPath || job.silentLocalPath;
+    const fileExists = filePath && fs.existsSync(filePath);
+
+    if (fileExists && jobTime >= startOfDayMs) {
+      uniqueJobIdsToday.add(jobId);
+      completedVideosToday.push({
+        jobId,
+        productTitle: job.productTitle || jobId,
+        time: new Date(jobTime).toISOString(),
+        type: job.hasFinalVideo ? 'final' : 'silent',
+      });
+    }
+  }
+
+  // 2. Cross-check langsung ke file fisik di direktori output
+  try {
+    if (fs.existsSync(outputDir)) {
+      const files = fs.readdirSync(outputDir);
+      for (const file of files) {
+        if (!file.endsWith('.mp4')) continue;
+        const match = file.match(/^(?:final|silent)_clip_(.+)\.mp4$/);
+        if (match && match[1]) {
+          const jobId = match[1];
+          if (!uniqueJobIdsToday.has(jobId)) {
+            try {
+              const stat = fs.statSync(path.join(outputDir, file));
+              if (stat.mtimeMs >= startOfDayMs) {
+                uniqueJobIdsToday.add(jobId);
+                completedVideosToday.push({
+                  jobId,
+                  productTitle: jobId,
+                  time: stat.mtime.toISOString(),
+                  type: file.startsWith('final') ? 'final' : 'silent',
+                });
+              }
+            } catch {}
+          }
+        }
+      }
+    }
+  } catch {}
+
+  const count = uniqueJobIdsToday.size;
+  const remaining = Math.max(0, limit - count);
+  const isLimitReached = count >= limit;
+
+  return {
+    limit,
+    count,
+    remaining,
+    isLimitReached,
+    date: startOfDay.toLocaleDateString('sv'), // YYYY-MM-DD
+    resetAt: new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    videos: completedVideosToday,
+  };
+}
+
+/** Helper: get all YouTube video IDs from existing active & successfully completed jobs across all multi-video harvesting clips */
+function getAllUsedYouTubeVideoIds() {
+  const used = new Set();
+  for (const job of activeJobs.values()) {
+    // Only exclude video if the job actually SUCCEEDED or is currently processing
+    if (job.stage === 'completed' || job.stage === 'awaiting_voiceover' || job.stage === 'running') {
+      if (job.youtubeUrl) {
+        const vid = extractVideoId(job.youtubeUrl);
+        if (vid) used.add(vid);
+      }
+      // Multi-video harvesting: capture all candidate video IDs used in the storyboard clips!
+      if (Array.isArray(job.highlight?.clips)) {
+        for (const clip of job.highlight.clips) {
+          const cvid = clip.videoId || extractVideoId(clip.candidateUrl) || clip.candidate?.id;
+          if (cvid) used.add(cvid);
+        }
+      }
+      // Also capture all accepted candidates from candidateResults
+      if (Array.isArray(job.candidateResults)) {
+        for (const c of job.candidateResults) {
+          const cvid = c.id || extractVideoId(c.url);
+          if (cvid) used.add(cvid);
+        }
+      }
+    }
+  }
+  return used;
+}
+
+/** Helper: get all core product nouns generated today to ensure 100% product diversity in Auto Mode */
+function getAllUsedProductNounsToday() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const usedProducts = new Set();
+  for (const job of activeJobs.values()) {
+    if (job.stage === 'completed' || job.stage === 'awaiting_voiceover' || job.stage === 'running') {
+      const jobDate = (job.createdAt || job.updatedAt || '').slice(0, 10);
+      if (jobDate === todayStr || !job.createdAt) {
+        const noun = (job.coreProductNoun || '').toLowerCase().trim();
+        if (noun) usedProducts.add(noun);
+        const prodTitle = (job.productTitle || job.cleanProductTitle || '').toLowerCase().trim();
+        if (prodTitle) {
+          const info = extractCoreProductInfo(prodTitle);
+          if (info.coreProductNoun) usedProducts.add(info.coreProductNoun.toLowerCase().trim());
+        }
+      }
+    }
+  }
+  return usedProducts;
+}
+
+function isVideoFilePath(p) {
+  if (!p) return false;
+  const lower = p.toLowerCase();
+  return !['.m4a', '.mp3', '.aac', '.wav', '.opus'].some(ext => lower.endsWith(ext)) &&
+    ['.mp4', '.webm', '.mkv', '.mov'].some(ext => lower.endsWith(ext));
+}
+
+function isQuotaErrorMessage(msg = '') {
+  const lower = String(msg).toLowerCase();
+  return lower.includes('saldo') || lower.includes('insufficient') ||
+    lower.includes('balance') || lower.includes('quota') || lower.includes('kuota') ||
+    lower.includes('credit') || lower.includes('resource_exhausted') || lower.includes('429');
+}
+
+// ─── API Routes ──────────────────────────────────────────────────────────────
+
+// 1. Health check & dependency verification
+app.get('/api/health', async (req, res) => {
+  const envFiles = reloadEnvironment();
+  const rawOpenRouterKey = (
+    process.env.OPENROUTER_API_KEY || ''
+  ).trim().replace(/^["']|["']$/g, '');
+  const openRouterKeySet = Boolean(rawOpenRouterKey && !rawOpenRouterKey.startsWith('your_') && !rawOpenRouterKey.endsWith('_here'));
+
+  const rawGeminiKey = (
+    process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || ''
+  ).trim().replace(/^["']|["']$/g, '');
+  const geminiKeySet = Boolean(rawGeminiKey && !rawGeminiKey.startsWith('your_') && !rawGeminiKey.endsWith('_here'));
+
+  const envActive = (process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
+  let activeAiEngine = 'gemini';
+  if (envActive === 'openrouter' && openRouterKeySet) {
+    activeAiEngine = 'openrouter';
+  } else if (geminiKeySet) {
+    activeAiEngine = 'gemini';
+  } else if (openRouterKeySet) {
+    activeAiEngine = 'openrouter';
+  } else {
+    activeAiEngine = 'gemini';
+  }
+
+  const binaryCheck = await checkSystemDependencies();
+
+  res.json({
+    status: 'ok',
+    serverTime: new Date().toISOString(),
+    ffmpeg: binaryCheck.ffmpeg,
+    ytdlp: binaryCheck.ytdlp,
+    dependencies: {
+      ffmpeg: binaryCheck.ffmpeg,
+      ytdlp: binaryCheck.ytdlp,
+    },
+    openRouterKeyConfigured: openRouterKeySet,
+    geminiKeyConfigured: geminiKeySet,
+    geminiFallbackConfigured: geminiKeySet,
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+    geminiFileApiConfigured: geminiKeySet,
+    activeAiEngine,
+    defaultAiProvider: activeAiEngine !== 'none' ? activeAiEngine : 'gemini',
+    tts: {
+      available: true,
+      provider: process.env.TTS_PROVIDER || 'gemini_tts',
+      model: process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL,
+      fallbackModel: process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
+      voice: process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
+      voices: GEMINI_TTS_VOICES,
+      defaultVoice: (process.env.TTS_PROVIDER || 'gemini_tts') === 'gemini_tts' ? 'Despina (Gemini Flash)' : 'Gadis (Edge-TTS Neural)',
+      voiceName: process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
+      geminiConfigured: geminiKeySet,
+      edgeTtsConfigured: true,
+    },
+    envFilesLoaded: envFiles.map((envPath) => path.relative(path.resolve(__dirname, '..'), envPath).replace(/\\/g, '/')),
+    bandwidthStats: getBandwidthStats(),
+    publicIp: await getPublicIpAddress(),
+    ready: binaryCheck.ffmpeg.available && binaryCheck.ytdlp.available,
+  });
+});
+
+// Network diagnostic endpoint: Check public IP and verify YouTube connectivity
+app.get('/api/network-diagnostic', async (req, res) => {
+  try {
+    const health = await checkYouTubeHealth();
+    res.json(health);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+function sanitizeCaptionText(caption = '', job = null) {
+  return formatEnrichedCaption({
+    caption,
+    productTitle: job?.productTitle || job?.videoTitle || '',
+    productDescription: job?.productDescription || '',
+    sampleContext: job?.sampleContext || null,
+    scenes: job?.scenes || [],
+    platform: 'clipper',
+  });
+}
+const stripShopeeLinkFromCaption = sanitizeCaptionText;
+
+// 2. Get all jobs history
+// Product Core Noun Extractor (Policy 1 & Policy 4)
+app.all('/api/extract-product', (req, res) => {
+  const title = req.query.title || req.body?.title || '';
+  const description = req.query.description || req.body?.description || '';
+  const info = extractCoreProductInfo(title, description);
+  res.json({ success: true, ...info });
+});
+
+app.get('/api/jobs', (req, res) => {
+  const jobs = [];
+  for (const [jobId, job] of activeJobs.entries()) {
+    const silentPath = job.silentLocalPath || path.join(outputDir, `silent_clip_${jobId}.mp4`);
+    const finalPath = job.finalLocalPath || path.join(outputDir, `final_clip_${jobId}.mp4`);
+
+    jobs.push({
+      jobId,
+      stage: job.stage || 'unknown',
+      productTitle: job.productTitle || '',
+      cleanProductTitle: job.cleanProductTitle || job.productTitle || '',
+      coreProductNoun: job.coreProductNoun || (job.productTitle ? extractCoreProductInfo(job.productTitle, job.productDescription).coreProductNoun : ''),
+      productDescription: job.productDescription || '',
+      youtubeUrl: job.youtubeUrl || '',
+      shopeeLink: job.shopeeLink || '',
+      createdAt: job.createdAt || '',
+      updatedAt: job.updatedAt || '',
+      errorAt: job.errorAt || '',
+      lastError: job.lastError || '',
+      hasSilentVideo: fs.existsSync(silentPath),
+      hasFinalVideo: fs.existsSync(finalPath),
+      silentVideoUrl: job.silentVideoUrl || (fs.existsSync(silentPath) ? `/api/video/silent_clip_${jobId}.mp4` : null),
+      finalVideoUrl: job.videoUrl || (fs.existsSync(finalPath) ? `/api/video/final_clip_${jobId}.mp4` : null),
+      scenes: job.scenes || [],
+      voiceoverScript: job.voiceoverScript || '',
+      aiStudioPrompt: job.aiStudioPrompt || '',
+      cleanScript: job.cleanScript || '',
+      ttsVoice: job.ttsVoice || (job.ttsProvider === 'edge_tts' ? 'Gadis Indonesia (Neural)' : 'Despina'),
+      ttsProvider: job.ttsProvider || 'gemini_tts',
+      ttsModel: job.ttsModel || 'gemini-3.1-flash-tts-preview',
+      ttsFallbackModel: job.ttsFallbackModel || 'gemini-2.5-flash-preview-tts',
+      voiceoverAudioUrl: job.voiceoverAudioUrl || null,
+      sampleContext: job.sampleContext || null,
+      caption: stripShopeeLinkFromCaption(job.caption || '', job),
+      highlight: job.highlight || null,
+      productHook: job.productHook || '',
+      videoTitle: job.videoTitle || job.productTitle || '',
+      isAutoRetrying: autoRetryRuns.get(jobId)?.status === 'running',
+    });
+  }
+
+  jobs.sort((a, b) => {
+    if (!a.createdAt) return 1;
+    if (!b.createdAt) return -1;
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
+
+  res.json({ jobs });
+});
+
+// 3. Delete a specific job
+app.delete('/api/jobs/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  deleteJobFiles(jobId, outputDir, tempDir);
+  activeJobs.delete(jobId);
+  deletePersistedJob(jobId);
+  res.json({ success: true, jobId });
+});
+
+function updateJobProgress(jobId, data) {
+  const payload = typeof data === 'string'
+    ? { step: 'processing', message: data, progress: 50, jobId, status: 'running' }
+    : { status: 'running', ...data, jobId };
+  jobProgress.set(jobId, payload);
+  console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message || ''}`);
+}
+
+// 3b. Retry / Regenerate an existing completed or failed job with fresh 1080p video & voiceover
+app.post('/api/jobs/:jobId/retry', async (req, res) => {
+  reloadEnvironment();
+  const { jobId } = req.params;
+  const { forceNewCandidate = true } = req.body || {};
+
+  const job = activeJobs.get(jobId);
+  if (!job) {
+    return res.status(404).json({ error: `Job ${jobId} tidak ditemukan.` });
+  }
+
+  console.log(`[Retry] Starting full regeneration for job ${jobId} ("${job.productTitle}")...`);
+
+  // Delete old outputs and temp files to ensure bad old video/audio is completely replaced
+  deleteJobFiles(jobId, outputDir, tempDir);
+  job.downloadedVideoPath = null;
+  job.hasDownloadedVideo = false;
+  job.hasFinalVideo = false;
+  job.hasSilentVideo = false;
+  job.stage = 'running';
+  job.updatedAt = new Date().toISOString();
+  activeJobs.set(jobId, job);
+  persistJob(jobId, job);
+
+  // Initialize progress state so SSE client immediately sees running status
+  updateJobProgress(jobId, {
+    step: 'retry_start',
+    message: `Menyiapkan generate ulang untuk "${job.productTitle}"...`,
+    progress: 5,
+    status: 'running',
+  });
+
+  // Trigger regeneration asynchronously so SSE progress streams live to the frontend
+  (async () => {
+    try {
+      let targetCandidates = [];
+      const usedVids = getAllUsedYouTubeVideoIds();
+      const oldVid = extractVideoId(job.youtubeUrl);
+      if (oldVid) usedVids.add(oldVid);
+
+      if (forceNewCandidate && job.productTitle) {
+        const targetNoun = job.coreProductNoun || extractCoreProductInfo(job.productTitle, job.productDescription).coreProductNoun;
+        updateJobProgress(jobId, { step: 'auto_youtube_search', message: `Mencari video 1080p baru untuk target "${targetNoun}"...`, progress: 8, status: 'running', coreProductNoun: targetNoun });
+        const fresh = await discoverYouTubeCandidatesForProduct({
+          productTitle: job.productTitle,
+          productDescription: job.productDescription,
+          limit: 8,
+          excludeVideoIds: usedVids,
+          onProgress: (p) => updateJobProgress(jobId, { ...p, status: 'running' }),
+        });
+        if (fresh && fresh.length > 0) {
+          targetCandidates = fresh;
+        }
+      }
+
+      // If no search candidates found or manual retry, fallback to the current job URL
+      if (!targetCandidates.length) {
+        targetCandidates = [{ url: job.youtubeUrl, title: job.productTitle || 'YouTube Video' }];
+      }
+
+      let retrySuccess = false;
+      let lastRetryErr = null;
+
+      for (let i = 0; i < targetCandidates.length; i++) {
+        const candidate = targetCandidates[i];
+        const candVid = extractVideoId(candidate.url) || candidate.id;
+        if (candVid) usedVids.add(candVid);
+
+        updateJobProgress(jobId, {
+          step: 'download',
+          message: targetCandidates.length > 1
+            ? `[Kandidat ${i + 1}/${targetCandidates.length}] Memproses video 1080p: "${(candidate.title || job.productTitle).slice(0, 30)}..."`
+            : `Memproses video 1080p baru: "${(candidate.title || job.productTitle).slice(0, 30)}..."`,
+          progress: 10 + Math.round((i / targetCandidates.length) * 15),
+          status: 'running',
+        });
+
+        try {
+          job.youtubeUrl = candidate.url;
+          activeJobs.set(jobId, job);
+          persistJob(jobId, job);
+
+          const effectiveAiProvider = job.aiProvider || req.body?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter');
+          await runStage1Pipeline({
+            jobId,
+            youtubeUrl: candidate.url,
+            shopeeLink: job.shopeeLink,
+            productTitle: job.productTitle,
+            productDescription: job.productDescription,
+            apiKey: undefined,
+            options: { aiProvider: effectiveAiProvider, autoSearchFallback: false },
+            requireCleanGeminiPlan: true,
+          });
+
+          retrySuccess = true;
+          console.log(`[Retry ${jobId}] Kandidat ${i + 1} (${candidate.url}) sukses di-generate 1080p!`);
+          break;
+        } catch (candErr) {
+          console.warn(`[Retry ${jobId}] Kandidat ${i + 1} (${candidate.url}) gagal: ${candErr.message}. Mencoba kandidat berikutnya...`);
+          lastRetryErr = candErr;
+          deleteJobFiles(jobId, outputDir, tempDir);
+        }
+      }
+
+      if (!retrySuccess) {
+        throw lastRetryErr || new Error('Tidak ada kandidat video YouTube yang dapat diunduh dalam kualitas 1080p Full HD.');
+      }
+
+      console.log(`[Retry ${jobId}] Full regeneration completed successfully.`);
+    } catch (retryErr) {
+      console.error(`[Retry ${jobId}] Regeneration failed:`, retryErr.message);
+      job.stage = 'error';
+      job.lastError = retryErr.message;
+      job.errorAt = new Date().toISOString();
+      activeJobs.set(jobId, job);
+      persistJob(jobId, job);
+      updateJobProgress(jobId, { step: 'error', status: 'error', error: retryErr.message, message: `Gagal generate ulang: ${retryErr.message}` });
+    }
+  })();
+
+  res.json({ success: true, jobId, message: 'Job sedang di-generate ulang dengan source video 1080p baru & voiceover baru.' });
+});
+
+// ─── 3c. Auto Retry Engine for Exact Product Match ───────────────────────────
+
+function publicAutoRetryState(run) {
+  if (!run) return { status: 'idle' };
+  return {
+    jobId: run.jobId,
+    status: run.status,
+    attemptCount: run.attemptCount || 0,
+    currentVideoTitle: run.currentVideoTitle || '',
+    message: run.message || '',
+    startedAt: run.startedAt,
+    updatedAt: run.updatedAt,
+  };
+}
+
+async function runAutoRetryWorker(jobId, run) {
+  try {
+    const job = activeJobs.get(jobId);
+    if (!job || !job.productTitle) {
+      run.status = 'error';
+      run.message = 'Job tidak memiliki judul produk yang valid.';
+      run.updatedAt = new Date().toISOString();
+      updateJobProgress(jobId, { step: 'error', status: 'error', error: run.message, isAutoRetrying: false });
+      return;
+    }
+
+    const targetTitle = job.productTitle;
+    const publicIp = await getPublicIpAddress();
+    console.log(`[AutoRetry ${jobId}] Memulai Auto Retry pencarian video persis untuk "${targetTitle}" (IP Publik Server/Termux: ${publicIp || 'tidak diketahui'})...`);
+    updateJobProgress(jobId, {
+      step: 'auto_retry_start',
+      message: `[Auto Retry] Memulai pencarian video yang cocok persis & faceless untuk "${targetTitle.slice(0, 30)}..." [IP: ${publicIp || 'aktif'}]`,
+      progress: 5,
+      status: 'running',
+      isAutoRetrying: true,
+      publicIp,
+      attemptCount: 0,
+    });
+
+    const usedVids = getAllUsedYouTubeVideoIds();
+    const oldVid = extractVideoId(job.youtubeUrl);
+    if (oldVid) usedVids.add(oldVid);
+
+    let foundSuccess = false;
+    let consecutiveIpBlocks = 0;
+
+    while (run.status === 'running') {
+      if (run.attemptCount >= 60) {
+        run.status = 'error';
+        run.message = 'Mencapai batas maksimal 60 percobaan pencarian video.';
+        run.updatedAt = new Date().toISOString();
+        break;
+      }
+
+      run.message = `[Percobaan ke-${run.attemptCount + 1}] Mencari video YouTube cocok persis untuk "${targetTitle.slice(0, 30)}..."`;
+      run.updatedAt = new Date().toISOString();
+      updateJobProgress(jobId, {
+        step: 'auto_youtube_search',
+        message: run.message,
+        progress: 8,
+        status: 'running',
+        isAutoRetrying: true,
+        attemptCount: run.attemptCount + 1,
+      });
+
+      const candidates = await discoverYouTubeCandidatesForProduct({
+        productTitle: targetTitle,
+        productDescription: job.productDescription,
+        limit: 8,
+        excludeVideoIds: usedVids,
+        searchIteration: run.searchIteration,
+        onProgress: (p) => updateJobProgress(jobId, { ...p, status: 'running', isAutoRetrying: true }),
+      });
+      run.searchIteration++;
+
+      if (!candidates || candidates.length === 0) {
+        run.message = `Tidak ada kandidat baru pada pencarian ini. Mencoba variasi kata kunci lain...`;
+        updateJobProgress(jobId, { step: 'auto_retry_wait', message: run.message, progress: 10, status: 'running', isAutoRetrying: true });
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        continue;
+      }
+
+      for (const candidate of candidates) {
+        if (run.status === 'stopping' || run.status === 'stopped') break;
+
+        const candVid = extractVideoId(candidate.url) || candidate.id;
+        if (candVid) usedVids.add(candVid);
+
+        run.attemptCount++;
+        run.currentVideoTitle = candidate.title || '';
+        run.message = `[Percobaan ke-${run.attemptCount}] Menguji video: "${(candidate.title || targetTitle).slice(0, 35)}..."`;
+        run.updatedAt = new Date().toISOString();
+
+        updateJobProgress(jobId, {
+          step: 'download',
+          message: run.message,
+          progress: 12,
+          status: 'running',
+          isAutoRetrying: true,
+          attemptCount: run.attemptCount,
+        });
+
+        // Clean any old outputs / temp files before testing this candidate
+        deleteJobFiles(jobId, outputDir, tempDir);
+
+        try {
+          job.youtubeUrl = candidate.url;
+          activeJobs.set(jobId, job);
+          persistJob(jobId, job);
+
+          const effectiveAiProvider = job.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter');
+          await runStage1Pipeline({
+            jobId,
+            youtubeUrl: candidate.url,
+            shopeeLink: job.shopeeLink,
+            productTitle: targetTitle,
+            productDescription: job.productDescription,
+            apiKey: undefined,
+            options: {
+              aiProvider: effectiveAiProvider,
+              autoSearchFallback: false,
+              singleVideoOnly: true,
+              ttsProvider: run.ttsProvider || job.ttsProvider || process.env.TTS_PROVIDER || 'gemini_tts',
+              ttsModel: run.ttsModel || job.ttsModel || process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL,
+              ttsFallbackModel: run.ttsFallbackModel || job.ttsFallbackModel || process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
+              ttsVoice: run.ttsVoice || job.ttsVoice || process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
+              geminiApiKey: run.geminiApiKey || job.geminiApiKey || process.env.GEMINI_API_KEY,
+            },
+            requireCleanGeminiPlan: true,
+            onProgress: (p) => updateJobProgress(jobId, {
+              ...p,
+              status: 'running',
+              isAutoRetrying: true,
+              attemptCount: run.attemptCount,
+              message: `[Percobaan ke-${run.attemptCount}] ${p.message || ''}`
+            }),
+          });
+
+          foundSuccess = true;
+          run.status = 'completed';
+          run.message = `✅ Auto Retry berhasil pada percobaan ke-${run.attemptCount}! Video cocok persis & 100% faceless selesai.`;
+          run.updatedAt = new Date().toISOString();
+          console.log(`[AutoRetry ${jobId}] BERHASIL pada percobaan ke-${run.attemptCount} dengan video: ${candidate.url}`);
+          break;
+        } catch (candErr) {
+          const diag = classifyPipelineError(candErr);
+          deleteJobFiles(jobId, outputDir, tempDir);
+
+          console.warn(`[AutoRetry ${jobId}] [${diag.sourceStatus}] [${diag.failureCode}] Kandidat ke-${run.attemptCount} (${candidate.url}): ${diag.userFriendlyReason}`);
+
+          if (diag.sourceStatus === 'UNAVAILABLE') {
+            const isHardBlock =
+              diag.failureCode === 'YOUTUBE_RATE_LIMITED' ||
+              diag.failureCode === 'YOUTUBE_BOT_CHECK' ||
+              diag.failureCode === 'YOUTUBE_IP_BLOCKED';
+
+            if (isHardBlock) {
+              // A candidate failure is NOT proof of an IP block. Require an independent
+              // YouTube health probe to return the SAME hard-block classification.
+              let health = { ok: false, status: 'UNKNOWN' };
+              try {
+                health = await checkYouTubeHealth();
+              } catch (healthErr) {
+                console.warn(`[AutoRetry ${jobId}] Health check YouTube error: ${healthErr.message}`);
+              }
+
+              const healthConfirmsBlock =
+                health.ok === false &&
+                health.status === diag.failureCode;
+
+              if (health.ok) {
+                consecutiveIpBlocks = 0;
+                console.log(`[AutoRetry ${jobId}] ✅ Health check YouTube sehat (IP ${health.publicIp || 'unknown'}). Kegagalan kandidat dianggap spesifik-video.`);
+              } else if (!healthConfirmsBlock) {
+                consecutiveIpBlocks = 0;
+                console.warn(`[AutoRetry ${jobId}] ℹ️ Kandidat gagal ${diag.failureCode}, tetapi health probe=${health.status || 'UNKNOWN'} tidak mengonfirmasi blokir IP. Lanjut kandidat.`);
+              } else {
+                consecutiveIpBlocks++;
+                console.warn(`[AutoRetry ${jobId}] ⚠️ Blokir YouTube terkonfirmasi (${health.status}), beruntun: ${consecutiveIpBlocks}/3.`);
+
+                if (consecutiveIpBlocks >= 3) {
+                  const currentIp = health.publicIp || await getPublicIpAddress({ forceRefresh: true });
+                  run.status = 'error';
+                  run.sourceStatus = 'UNAVAILABLE';
+                  run.failureCode = health.status;
+                  run.publicIp = currentIp;
+                  run.message = `🛑 Akses YouTube Dibatasi (${health.status}): IP publik ${currentIp || 'tidak diketahui'} terkonfirmasi dibatasi setelah 3 probe YouTube yang konsisten.\n` +
+                    `⚠️ Timeout, CDN error, format video, atau kegagalan pada satu video tidak lagi dihitung sebagai blokir IP.\n` +
+                    `💡 Ganti IP/jaringan hanya jika pesan ini benar-benar muncul.`;
+                  run.updatedAt = new Date().toISOString();
+
+                  console.error(`[AutoRetry ${jobId}] 🛑 Circuit Breaker: blokir YouTube terkonfirmasi pada IP ${currentIp} (${health.status}).`);
+                  updateJobProgress(jobId, {
+                    step: 'youtube_ip_rate_limited',
+                    sourceStatus: 'UNAVAILABLE',
+                    failureCode: health.status,
+                    publicIp: currentIp,
+                    message: run.message,
+                    progress: 100,
+                    status: 'error',
+                    error: run.message,
+                    isAutoRetrying: false,
+                    attemptCount: run.attemptCount,
+                    actionableAdvice: health.advice || diag.actionableAdvice,
+                  });
+                  break;
+                }
+              }
+            } else {
+              consecutiveIpBlocks = 0;
+            }
+
+            // Human-like pacing delay sebelum mencoba kandidat berikutnya (anti-bot behavior)
+            const humanJitterMs = 3500 + Math.floor(Math.random() * 3000);
+            updateJobProgress(jobId, {
+              step: 'auto_retry_next',
+              sourceStatus: 'UNAVAILABLE',
+              failureCode: diag.failureCode,
+              message: `[Kandidat ${diag.failureCode}] ${diag.userFriendlyReason}. Jeda manusia (${(humanJitterMs / 1000).toFixed(1)}s) lalu mencoba kandidat berikutnya...`,
+              progress: 10,
+              status: 'running',
+              isAutoRetrying: true,
+              attemptCount: run.attemptCount,
+            });
+            await new Promise((r) => setTimeout(r, humanJitterMs));
+          } else {
+            consecutiveIpBlocks = 0;
+            // sourceStatus === 'REJECT' (Video berhasil dianalisis frame-nya, tapi ditolak filter AI/lokal)
+            updateJobProgress(jobId, {
+              step: 'auto_retry_next',
+              sourceStatus: 'REJECT',
+              failureCode: diag.failureCode,
+              message: `[Percobaan ke-${run.attemptCount} Ditolak Filter: ${diag.failureCode}] ${diag.userFriendlyReason.slice(0, 65)}... Mencoba kandidat berikutnya...`,
+              progress: 10,
+              status: 'running',
+              isAutoRetrying: true,
+              attemptCount: run.attemptCount,
+            });
+            await new Promise((r) => setTimeout(r, 2000));
+          }
+        }
+      }
+
+      if (foundSuccess) break;
+      if (run.status === 'stopping' || run.status === 'stopped') break;
+
+      // Jitter delay between search query batches to prevent YouTube scraping blocks
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+
+    if (run.status === 'stopping' || run.status === 'stopped') {
+      run.status = 'stopped';
+      run.message = `Auto Retry dihentikan oleh pengguna setelah ${run.attemptCount} percobaan.`;
+      run.updatedAt = new Date().toISOString();
+      console.log(`[AutoRetry ${jobId}] Dihentikan oleh user.`);
+      updateJobProgress(jobId, {
+        step: 'auto_retry_stopped',
+        message: run.message,
+        progress: 100,
+        status: 'completed',
+        isAutoRetrying: false,
+      });
+    } else if (foundSuccess) {
+      updateJobProgress(jobId, {
+        step: 'completed',
+        message: `🎉 Video Final 9:16 + Voiceover Gadis Indonesia & Subtitle Selesai (Auto Retry Berhasil)!`,
+        progress: 100,
+        status: 'completed',
+        isAutoRetrying: false,
+        result: activeJobs.get(jobId),
+      });
+    } else if (run.status === 'error') {
+      updateJobProgress(jobId, {
+        step: 'error',
+        message: run.message,
+        progress: 100,
+        status: 'error',
+        error: run.message,
+        isAutoRetrying: false,
+      });
+    }
+  } catch (workerErr) {
+    console.error(`[AutoRetry ${jobId}] Fatal worker error:`, workerErr);
+    run.status = 'error';
+    run.message = workerErr.message;
+    run.updatedAt = new Date().toISOString();
+    updateJobProgress(jobId, {
+      step: 'error',
+      message: `Auto Retry gagal: ${workerErr.message}`,
+      status: 'error',
+      error: workerErr.message,
+      isAutoRetrying: false,
+    });
+  }
+}
+
+app.post('/api/jobs/:jobId/auto-retry/start', async (req, res) => {
+  reloadEnvironment();
+  const { jobId } = req.params;
+  const job = activeJobs.get(jobId);
+  if (!job) {
+    return res.status(404).json({ error: `Job ${jobId} tidak ditemukan.` });
+  }
+
+  const existingRun = autoRetryRuns.get(jobId);
+  if (existingRun && existingRun.status === 'running') {
+    return res.json({ success: true, autoRetry: publicAutoRetryState(existingRun) });
+  }
+
+  const { ttsProvider, ttsModel, ttsFallbackModel, ttsVoice, geminiApiKey, apiKey } = req.body || {};
+
+  if (ttsProvider) job.ttsProvider = ttsProvider;
+  if (ttsModel) job.ttsModel = ttsModel;
+  if (ttsFallbackModel) job.ttsFallbackModel = ttsFallbackModel;
+  if (ttsVoice) job.ttsVoice = ttsVoice;
+  if (geminiApiKey || apiKey) job.geminiApiKey = geminiApiKey || apiKey;
+
+  const run = {
+    jobId,
+    status: 'running',
+    attemptCount: 0,
+    searchIteration: 0,
+    currentVideoTitle: '',
+    message: `Memulai Auto Retry untuk "${job.productTitle}"...`,
+    ttsProvider: ttsProvider || job.ttsProvider,
+    ttsModel: ttsModel || job.ttsModel,
+    ttsFallbackModel: ttsFallbackModel || job.ttsFallbackModel,
+    ttsVoice: ttsVoice || job.ttsVoice,
+    geminiApiKey: geminiApiKey || apiKey || job.geminiApiKey,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  autoRetryRuns.set(jobId, run);
+
+  // Trigger continuous auto-retry worker in background
+  runAutoRetryWorker(jobId, run);
+
+  res.json({ success: true, jobId, autoRetry: publicAutoRetryState(run) });
+});
+
+app.post('/api/jobs/:jobId/auto-retry/stop', (req, res) => {
+  const { jobId } = req.params;
+  const run = autoRetryRuns.get(jobId);
+  if (run && run.status === 'running') {
+    run.status = 'stopping';
+    run.message = 'Menghentikan Auto Retry...';
+    run.updatedAt = new Date().toISOString();
+    autoRetryRuns.set(jobId, run);
+    return res.json({ success: true, autoRetry: publicAutoRetryState(run) });
+  }
+  res.json({ success: true, autoRetry: publicAutoRetryState(run) });
+});
+
+app.get('/api/jobs/:jobId/auto-retry/status', (req, res) => {
+  const { jobId } = req.params;
+  const run = autoRetryRuns.get(jobId);
+  res.json({ autoRetry: publicAutoRetryState(run) });
+});
+
+// 4. SSE endpoint for live job progress streaming
+app.get('/api/progress/:jobId', (req, res) => {
+  const { jobId } = req.params;
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sendProgress = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const current = jobProgress.get(jobId) || { step: 'init', message: 'Initializing...', progress: 0 };
+  sendProgress(current);
+
+  // SSE Heartbeat ping every 15s to keep Cloudflare Tunnel connections alive (Poin 11)
+  const pingInterval = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {}
+  }, 15000);
+
+  const cleanupSSE = () => {
+    clearInterval(interval);
+    clearInterval(pingInterval);
+  };
+
+  const interval = setInterval(() => {
+    const latest = jobProgress.get(jobId);
+    if (latest) {
+      sendProgress(latest);
+      if (latest.status === 'completed' || latest.status === 'error' || latest.status === 'awaiting_voiceover') {
+        cleanupSSE();
+        res.end();
+      }
+    }
+  }, 500);
+
+  req.on('close', cleanupSSE);
+});
+
+// ─── Stage 1 Pipeline Engine ─────────────────────────────────────────────────
+
+export async function runStage1Pipeline({
+  jobId,
+  youtubeUrl,
+  targetCandidates = null,
+  shopeeLink,
+  productTitle,
+  productDescription,
+  apiKey,
+  options = {},
+  extraJobMeta = {},
+  requireCleanGeminiPlan = true,
+  onProgress = null,
+}) {
+  const sessionTempDir = path.join(tempDir, `job_${jobId}`);
+  const rawFramesDir = path.join(sessionTempDir, 'raw_frames');
+  const trimmedFramesDir = path.join(sessionTempDir, 'trimmed_frames');
+  const silentFileName = `silent_clip_${jobId}.mp4`;
+  const silentOutputPath = path.join(outputDir, silentFileName);
+
+  if (!fs.existsSync(sessionTempDir)) fs.mkdirSync(sessionTempDir, { recursive: true });
+
+  const updateProgress = onProgress || ((data) => {
+    const payload = typeof data === 'string'
+      ? { step: 'processing', message: data, progress: 50, jobId }
+      : { ...data, jobId };
+    jobProgress.set(jobId, payload);
+    console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message}`);
+  });
+
+  const productInfo = extractCoreProductInfo(productTitle, productDescription);
+  const coreProductNoun = productInfo.coreProductNoun || productTitle || 'Produk Praktis';
+  const cleanProductTitle = productInfo.cleanTitle || productTitle || '';
+
+  if (isBulkyOrUnsuitableProduct(productTitle, { niche: options.niche }) || isBulkyOrUnsuitableProduct(coreProductNoun, { niche: options.niche }) || isBulkyOrUnsuitableProduct(cleanProductTitle, { niche: options.niche })) {
+    const rejectReason = options.niche === 'gadget_smartphone'
+      ? `Niche dibatasi untuk smartphone & gadget. Produk "${coreProductNoun || productTitle}" tidak sesuai kriteria.`
+      : `Niche dibatasi hanya untuk alat dapur praktis. Produk "${coreProductNoun || productTitle}" tergolong perabot besar / rak besar yang dilarang.`;
+    console.warn(`[Pipeline] ⛔ ${rejectReason}`);
+    updateProgress({
+      step: 'rejected_bulky',
+      message: rejectReason,
+      progress: 0,
+      status: 'error',
+      error: rejectReason,
+    });
+    throw new Error(rejectReason);
+  }
+
+  let effectiveProductImage = options.productImage || extraJobMeta?.productImage || '';
+  if (!effectiveProductImage && shopeeLink && isShopeeProductUrl(shopeeLink)) {
+    try {
+      const shopeeMeta = await fetchShopeePageMeta(shopeeLink);
+      if (shopeeMeta && shopeeMeta.imageUrl) {
+        effectiveProductImage = shopeeMeta.imageUrl;
+      }
+    } catch {}
+  }
+
+  const jobMeta = {
+    jobId,
+    stage: 'running',
+    productTitle: productTitle || '',
+    cleanProductTitle,
+    coreProductNoun,
+    productCategory: productInfo.category || 'general_gadget',
+    productDescription: productDescription || '',
+    productImage: effectiveProductImage || '',
+    youtubeUrl: youtubeUrl || '',
+    shopeeLink: shopeeLink || '',
+    createdAt: new Date().toISOString(),
+    isOrphan: false,
+    ...extraJobMeta,
+  };
+  activeJobs.set(jobId, jobMeta);
+  persistJob(jobId, jobMeta);
+  if (productTitle) {
+    markKeywordAsUsed(productTitle, { productTitle, jobId, source: 'stage1_pipeline' });
+  }
+  if (coreProductNoun && coreProductNoun !== productTitle) {
+    markKeywordAsUsed(coreProductNoun, { productTitle, jobId, source: 'stage1_pipeline' });
+  }
+
+  updateProgress({
+    step: 'start',
+    message: `Menyiapkan pembuatan video affiliate untuk "${coreProductNoun}"...`,
+    progress: 5,
+    status: 'running',
+    coreProductNoun,
+  });
+
+  let rawVideoPath = null;
+  let videoMeta = { title: productTitle || 'Product Video', duration: 60 };
+  let currentYoutubeUrl = youtubeUrl || '';
+  let highlight = null;
+  let effectiveShopeeLink = shopeeLink || '';
+
+  try {
+
+    const existingVideoInTemp = (() => {
+      try {
+        if (fs.existsSync(sessionTempDir)) {
+          const files = fs.readdirSync(sessionTempDir).filter(f =>
+            (f.endsWith('.mp4') || f.endsWith('.webm') || f.endsWith('.mkv')) &&
+            !f.startsWith('voiceover')
+          );
+          if (files.length > 0) {
+            const fullPath = path.join(sessionTempDir, files[0]);
+            if (fs.statSync(fullPath).size > 5 * 1024 * 1024) return fullPath;
+          }
+        }
+      } catch {}
+      return null;
+    })();
+
+    const existingJob = activeJobs.get(jobId);
+    const cachedVideoPath = existingVideoInTemp ||
+      (existingJob?.downloadedVideoPath && fs.existsSync(existingJob.downloadedVideoPath) && isVideoFilePath(existingJob.downloadedVideoPath)
+        ? existingJob.downloadedVideoPath
+        : null);
+
+    let previewVideoPath = null;
+
+    if (cachedVideoPath) {
+      const cachedDims = await getVideoDimensions(cachedVideoPath);
+      if (cachedDims && cachedDims.is1080pOrHigher) {
+        rawVideoPath = cachedVideoPath;
+        updateProgress({
+          step: 'download',
+          message: `Video 1080p sudah ada (${(fs.statSync(rawVideoPath).size / 1024 / 1024).toFixed(1)} MB). Skip download, langsung proses.`,
+          progress: 30,
+          status: 'running'
+        });
+      } else {
+        // Hapus cache video lama jika di bawah 1080p agar tidak tercampur
+        try { fs.unlinkSync(cachedVideoPath); } catch {}
+        cachedVideoPath = null;
+      }
+    }
+
+    const envEngine = (process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
+    const rawOpenRouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+    const openRouterKeySet = Boolean(rawOpenRouterKey && !rawOpenRouterKey.startsWith('your_') && !rawOpenRouterKey.endsWith('_here'));
+    const rawGeminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
+    const geminiKeySet = Boolean(rawGeminiKey && !rawGeminiKey.startsWith('your_') && !rawGeminiKey.endsWith('_here'));
+    const defaultProvider = envEngine === 'openrouter'
+      ? 'openrouter'
+      : (geminiKeySet ? 'gemini' : (openRouterKeySet ? 'openrouter' : 'gemini'));
+    const aiProvider = options.aiProvider || jobMeta.aiProvider || defaultProvider;
+    // Hard production rule: change the visual scene at least every 3.5s.
+    // User-provided values above 3.5s are capped so the renderer cannot hold one scene too long.
+    const requestedSceneDuration = Number(options.sceneDuration);
+    const sceneDuration = Math.max(
+      3.0,
+      Math.min(3.5, Number.isFinite(requestedSceneDuration) && requestedSceneDuration > 0 ? requestedSceneDuration : 3.5)
+    );
+
+    currentYoutubeUrl = youtubeUrl || '';
+    highlight = null;
+    let approved = false;
+    let lastRejectionError = null;
+    let pooledFrames = [];
+
+    const usedVids = getAllUsedYouTubeVideoIds();
+    const initialVid = extractVideoId(currentYoutubeUrl);
+    if (initialVid) usedVids.add(initialVid);
+
+    // Helper untuk mengevaluasi kandidat video menggunakan Funneling 3 Tahap (Hemat kuota & token AI):
+    // Tahap 1: Metadata Pre-Filter (0 kuota video, 0 token AI)
+    // Tahap 2: Sampling 30 frame langsung dari stream URL via FFmpeg & Analisa Lokal 9:16 (~2MB kuota, 0 token AI)
+    // Tahap 3: Verifikasi AI Vision (Quality Assurance Final, detail: 'low')
+    const evaluateCandidate = async (targetUrl, candidateLabel = '', candidateExtra = {}) => {
+      // 1. Bersihkan frame lama agar tidak tertumpuk
+      if (fs.existsSync(rawFramesDir)) {
+        try {
+          const oldFiles = fs.readdirSync(rawFramesDir);
+          for (const f of oldFiles) {
+            try { fs.unlinkSync(path.join(rawFramesDir, f)); } catch {}
+          }
+        } catch {}
+      }
+
+      // ── TAHAP 1: FILTER KASAR METADATA (0 KUOTA, 0 TOKEN AI) ──
+      const metaMsg = candidateLabel
+        ? `[${candidateLabel}] [Filter 1/3] Membaca durasi, CC & metadata video (0 download)...`
+        : '[Filter 1/3] Membaca durasi, CC & metadata video tanpa download...';
+      updateProgress({ step: 'metadata_qc', message: metaMsg, progress: 12, status: 'running' });
+
+      const { metadata: meta, streamUrl } = await fetchVideoMetadataAndStream(targetUrl, {
+        onProgress: updateProgress,
+      });
+
+      const isVisualMode = Boolean(
+        options.isVisualSearch ||
+        options.imageUrl ||
+        options.productImage ||
+        effectiveProductImage ||
+        extraJobMeta?.isVisualSearch ||
+        options.isVideoFirst ||
+        candidateExtra?.isVisualSearch ||
+        candidateExtra?.source === 'bing_visual_search' ||
+        candidateExtra?.source === 'visual_ai_query'
+      );
+
+      const compliance = checkVideoMetadataCompliance(meta, productTitle, {
+        ...options,
+        isVisualSearch: isVisualMode,
+        productImage: effectiveProductImage,
+        imageUrl: effectiveProductImage,
+      });
+      if (!compliance.eligible) {
+        trackSavedBandwidth(35 * 1024 * 1024, `Hemat kuota (Filter 1 Metadata): ${compliance.reason}`);
+        console.warn(`[Job ${jobId}] ⛔ [Filter 1/3 Ditolak] ${candidateLabel || targetUrl}: ${compliance.reason}`);
+        const metaErr = new Error(`Metadata video ditolak: ${compliance.reason}`);
+        metaErr.isAiRejection = true;
+        metaErr.rejectionReason = compliance.reason;
+        throw metaErr;
+      }
+
+      console.log(`[Job ${jobId}] ✅ [Filter 1/3 Lolos] Metadata valid (${meta.title}, ${meta.duration}s).`);
+
+      // ── TAHAP 2: SAMPLING CEPAT & INSPEKSI VISUAL LOKAL (0 TOKEN AI, HEMAT KUOTA GEMINI) ──
+      // Verifikasi bumper statis, logo channel statis, grafis animasi overlay, teks mengambang, subtitle & wajah lokal
+      let preSampledFrames = null;
+      let candidateIntroCutoff = 0;
+      let activeStreamUrl = streamUrl;
+      let sampled = null;
+      let sampleAttempts = 0;
+      const maxSampleAttempts = 2; // Coba lagi jika ekstraksi frame pertama gagal
+
+      while (sampleAttempts < maxSampleAttempts && (!sampled || sampled.length < 5)) {
+        sampleAttempts++;
+        try {
+          const sampleMsg = sampleAttempts > 1
+            ? `[${candidateLabel || 'Filter 2/3'}] Percobaan ulang (${sampleAttempts}/${maxSampleAttempts}) ekstraksi frame visual dari stream URL...`
+            : (candidateLabel
+                ? `[${candidateLabel}] [Filter 2/3] Verifikasi visual lokal (bumper, logo, grafis, teks & wajah)...`
+                : '[Filter 2/3] Verifikasi visual lokal (bumper, logo, grafis, teks & wajah)...');
+          updateProgress({ step: 'stream_sampling', message: sampleMsg, progress: 28, status: 'running' });
+
+          // Pada percobaan ulang (attempt > 1), coba refresh streamUrl
+          if (sampleAttempts > 1) {
+            console.log(`[Job ${jobId}] Ekstraksi frame pertama gagal/kurang frame. Mencoba lagi (percobaan ${sampleAttempts}/${maxSampleAttempts})...`);
+            await new Promise((r) => setTimeout(r, 1000));
+            try {
+              const refreshed = await fetchVideoMetadataAndStream(targetUrl, { onProgress: () => {} });
+              if (refreshed?.streamUrl) activeStreamUrl = refreshed.streamUrl;
+            } catch (refErr) {
+              console.warn(`[Job ${jobId}] Refresh stream URL gagal: ${refErr.message}`);
+            }
+          }
+
+          if (activeStreamUrl) {
+            const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
+              duration: meta.duration,
+              maxSampleFrames: 42,
+              onProgress: updateProgress,
+            });
+            if (res?.frames && res.frames.length >= 5) {
+              sampled = res.frames;
+            }
+          }
+        } catch (sampleErr) {
+          console.warn(`[Job ${jobId}] Ekstraksi frame (percobaan ${sampleAttempts}/${maxSampleAttempts}) gagal: ${sampleErr.message}`);
+        }
+      }
+
+      // Sesuai instruksi: Jika frame gagal diekstrak setelah dicoba ulang,
+      // JANGAN LANGSUNG DIALIHKAN KE AI ANALISNYA! Tolak kandidat ini agar sistem mencari video lainnya.
+      if (!sampled || sampled.length < 5) {
+        console.warn(`[Job ${jobId}] ⛔ Gagal mengekstrak frame visual (${sampled?.length || 0} frame) setelah ${sampleAttempts}x percobaan. Menolak video dan mencari video lainnya...`);
+        const frameFailErr = new Error(`Ekstraksi frame visual gagal (${sampled?.length || 0} frame) setelah ${sampleAttempts}x percobaan. Mencari video lainnya...`);
+        frameFailErr.isAiRejection = true;
+        frameFailErr.rejectionReason = 'Ekstraksi frame visual gagal (stream video tidak dapat dibaca).';
+        throw frameFailErr;
+      }
+
+      preSampledFrames = sampled;
+      const localCheck = await inspectFramesLocally(sampled, {
+        aspectRatio: options.aspectRatio || '9:16',
+        onProgress: updateProgress,
+        niche: options.niche || jobMeta.niche || 'kitchen_tools'
+      });
+
+      if (!localCheck.eligible || !Array.isArray(localCheck.cleanFrames) || localCheck.cleanFrames.length < 3) {
+        trackSavedBandwidth(35 * 1024 * 1024, `Hemat kuota (Filter 2 Lokal): ${localCheck.reason}`);
+        console.warn(`[Job ${jobId}] ⛔ [Filter 2/3 Ditolak Lokal] ${candidateLabel || targetUrl}: ${localCheck.reason}`);
+        const localErr = new Error(`Analisa lokal ditolak: ${localCheck.reason}`);
+        localErr.isAiRejection = true;
+        localErr.rejectionReason = localCheck.reason;
+        throw localErr;
+      }
+      if (localCheck.hasOpeningIntro) {
+        candidateIntroCutoff = localCheck.introCutoffSec || 5.0;
+        console.log(`[Job ${jobId}] ℹ️ Intro bumper pembuka terdeteksi (${candidateIntroCutoff}s). AI & backend akan membuang detik awal ini.`);
+      }
+
+      // Coarse-to-Dense Sampling (Audit GPT 2026):
+      // Jika scan coarse menemukan area peragaan bersih, lakukan sampling rapat (dense 1 frame / 1.2s)
+      // di sekitar area tersebut untuk memverifikasi gerakan fisik nyata & memberi Gemini sekuens aksi yang kaya!
+      if (localCheck.eligible && Array.isArray(localCheck.cleanFrames) && localCheck.cleanFrames.length >= 2 && activeStreamUrl) {
+        try {
+          const denseFrames = await sampleDenseClustersAroundCleanFrames(
+            activeStreamUrl,
+            rawFramesDir,
+            localCheck.cleanFrames,
+            { duration: meta.duration, onProgress: updateProgress }
+          );
+          if (denseFrames && denseFrames.length > 0) {
+            sampled = [...sampled, ...denseFrames].sort((a, b) => a.timestamp - b.timestamp);
+            preSampledFrames = sampled;
+            console.log(`[Job ${jobId}] 🎯 Coarse-to-Dense sampling sukses: ditambahkan ${denseFrames.length} frame rapat di sekitar area aksi fisik (total ${sampled.length} frame).`);
+          }
+        } catch (denseErr) {
+          console.warn(`[Job ${jobId}] Sampling rapat tambahan dilewati: ${denseErr.message}`);
+        }
+      }
+
+      console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Frame visual valid (${localCheck.cleanFrames.length} frame VERIFIED_CLEAN dalam ${localCheck.verifiedSegments?.length || 1} segmen temporal). Verifikasi grafis visual & storyboard diserahkan ke AI Vision.`);
+
+      // ── JALUR 1: GOOGLE GEMINI NATIVE YOUTUBE STREAM (0 MB KUOTA LOKAL, 1.500 REQ/HARI) ──
+      const reqEngine = (options.aiProvider || aiProvider || process.env.ACTIVE_AI_ENGINE || '').toLowerCase();
+      const isGeminiEngine = reqEngine === 'gemini' || reqEngine === 'gemini_direct' || (process.env.GEMINI_API_KEY && reqEngine !== 'openrouter');
+      const hasGeminiKey = Boolean(getDirectGeminiApiKey(apiKey));
+
+      if (isGeminiEngine && hasGeminiKey && (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be'))) {
+        const streamMsg = candidateLabel
+          ? `[${candidateLabel}] [Gemini Stream] Google Gemini 3.6 Flash menganalisa video langsung dari YouTube (0 MB kuota lokal)...`
+          : '[Gemini Stream] Google Gemini 3.6 Flash menganalisa video langsung dari YouTube (0 MB kuota lokal)...';
+        updateProgress({ step: 'gemini_vision', message: streamMsg, progress: 38, status: 'running' });
+
+        const hl = await analyzeYouTubeVideoWithGemini({
+          youtubeUrl: targetUrl,
+          apiKey,
+          productTitle,
+          productDescription,
+          productImage: effectiveProductImage,
+          shopeeLink,
+          sceneDuration,
+          allowFallbackClips: !requireCleanGeminiPlan,
+          totalDuration: meta.duration,
+          introCutoffSec: candidateIntroCutoff,
+          verifiedSegments: localCheck.verifiedSegments || [],
+          cleanTimeWindows: (localCheck.verifiedSegments || []).map(s => ({ start: s.startSec, end: s.endSec })),
+          discardedFaceTimestamps: localCheck.discardedFaceTimestamps || [],
+          discardedViolationTimestamps: localCheck.discardedViolationTimestamps || [],
+          isVideoFirst: Boolean(options.isVideoFirst),
+          niche: options.niche || jobMeta?.niche || 'kitchen_tools',
+          onProgress: updateProgress,
+        });
+
+        if (!hl || !Array.isArray(hl.clips) || hl.clips.length === 0) {
+          const noClipErr = new Error('Gemini tidak menemukan cuplikan produk yang memenuhi syarat (wajib faceless, tanpa watermark 9:16, tanpa subtitle).');
+          noClipErr.isAiRejection = true;
+          noClipErr.rejectionReason = 'Tidak ditemukan cuplikan bersih yang memenuhi syarat.';
+          throw noClipErr;
+        }
+
+        // Pastikan backend membuang intro pembuka jika terdeteksi tanpa menduplikasi timestamp
+        if (candidateIntroCutoff > 0 && Array.isArray(hl.clips)) {
+          hl.clips = hl.clips.filter(c => (c.startSeconds + c.duration) > candidateIntroCutoff);
+          let prevEnd = candidateIntroCutoff;
+          hl.clips = hl.clips.map(c => {
+            let start = Math.max(c.startSeconds, prevEnd);
+            prevEnd = start + c.duration;
+            return {
+              ...c,
+              startSeconds: start,
+              endSeconds: start + c.duration,
+              startTime: formatSeconds(start),
+              endTime: formatSeconds(start + c.duration),
+            };
+          });
+        }
+
+        console.log(`[Job ${jobId}] 🎉 [Gemini Stream Lolos] AI menyetujui video langsung dari YouTube! Ditemukan ${hl.clips.length} cuplikan produk bersih.`);
+        return { highlight: hl, videoMeta: meta, previewVideoPath: null };
+      }
+
+      // ── JALUR 2: OPENROUTER / STREAM SAMPLING LOKAL DENGAN VERIFIED CLEAN FRAMES ──
+      // STRICT SAFETY GATE: Hanya kirim frame yang telah lolos verifikasi segmen bersih (VERIFIED_CLEAN)
+      let verifiedCleanFrames = (localCheck.cleanFrames && localCheck.cleanFrames.length >= 3)
+        ? localCheck.cleanFrames
+        : [];
+
+      if (!verifiedCleanFrames || verifiedCleanFrames.length < 3) {
+        const frameErr = new Error(`Tidak cukup frame bersih terverifikasi (${verifiedCleanFrames?.length || 0} frames) untuk dikirim ke AI Vision.`);
+        frameErr.isAiRejection = true;
+        frameErr.rejectionReason = 'Frame bersih tidak mencukupi standar Clean Temporal Segment (minimal 3 frame berurutan).';
+        throw frameErr;
+      }
+
+      // ── TAHAP 3: VERIFIKASI AI VISION (QUALITY ASSURANCE FINAL) ──
+      const visionMsg = candidateLabel
+        ? `[${candidateLabel}] [Filter 3/3] AI (${aiProvider}) verifikasi produk & QC bebas wajah (${verifiedCleanFrames.length} frame VERIFIED_CLEAN)...`
+        : `[Filter 3/3] AI (${aiProvider}) menganalisa frame produk dan menentukan cuplikan terbaik (${verifiedCleanFrames.length} frame VERIFIED_CLEAN)...`;
+      updateProgress({ step: 'gemini_vision', message: visionMsg, progress: 48, status: 'running' });
+
+      const hl = await selectHighlightWithAI({
+        apiKey,
+        aiProvider,
+        frames: verifiedCleanFrames,
+        videoPath: null,
+        youtubeUrl: targetUrl,
+        videoMetadata: meta,
+        productTitle,
+        productDescription,
+        productImage: effectiveProductImage,
+        shopeeLink,
+        sceneDuration,
+        allowFallbackClips: !requireCleanGeminiPlan,
+        introCutoffSec: candidateIntroCutoff,
+        isVideoFirst: Boolean(options.isVideoFirst),
+        niche: options.niche || 'kitchen_tools',
+        onProgress: updateProgress,
+      });
+
+      if (!hl || !Array.isArray(hl.clips) || hl.clips.length === 0) {
+        const noClipErr = new Error('AI tidak menemukan cuplikan produk yang memenuhi syarat (wajib faceless, tanpa watermark, tanpa logo sosmed/channel, dan tanpa subtitle).');
+        noClipErr.isAiRejection = true;
+        noClipErr.rejectionReason = 'Tidak ditemukan cuplikan bersih yang memenuhi syarat.';
+        throw noClipErr;
+      }
+
+      // Pastikan backend membuang intro pembuka jika terdeteksi tanpa menduplikasi timestamp
+      if (candidateIntroCutoff > 0 && Array.isArray(hl.clips)) {
+        hl.clips = hl.clips.filter(c => (c.startSeconds + c.duration) > candidateIntroCutoff);
+        let prevEnd = candidateIntroCutoff;
+        hl.clips = hl.clips.map(c => {
+          let start = Math.max(c.startSeconds, prevEnd);
+          prevEnd = start + c.duration;
+          return {
+            ...c,
+            startSeconds: start,
+            endSeconds: start + c.duration,
+            startTime: formatSeconds(start),
+            endTime: formatSeconds(start + c.duration),
+          };
+        });
+      }
+
+      console.log(`[Job ${jobId}] 🎉 [Filter 3/3 Lolos] AI menyetujui video! Ditemukan ${hl.clips.length} cuplikan produk bersih.`);
+      return { highlight: hl, videoMeta: meta, previewVideoPath: null };
+    };
+
+    // Evaluasi video dari cache jika tersedia
+    if (rawVideoPath) {
+      try {
+        const rawDur = Number(videoMeta?.duration) || 300;
+        const rawInterval = Math.max(1, Math.floor(rawDur / 30));
+        updateProgress({ step: 'frames_raw', message: `Mengekstrak 30 frame video 1080p untuk analisa AI (interval ${rawInterval}s)...`, progress: 38, status: 'running' });
+        const { frames: rawFrames } = await extractFrames(rawVideoPath, rawFramesDir, updateProgress, {
+          sampleIntervalSec: rawInterval,
+          maxSampleFrames: 30,
+          duration: rawDur,
+        });
+
+        // Verifikasi filter lokal pada frame video cache (bebas teks mengambang & bebas wajah)
+        const localCacheCheck = await inspectFramesLocally(rawFrames, {
+          aspectRatio: options.aspectRatio || '9:16',
+          onProgress: updateProgress,
+        });
+        if (!localCacheCheck.eligible || !Array.isArray(localCacheCheck.cleanFrames) || localCacheCheck.cleanFrames.length < 3) {
+          console.warn(`[Job ${jobId}] ⛔ [Cache Ditolak Lokal] ${rawVideoPath}: ${localCacheCheck.reason}`);
+          const localCacheErr = new Error(`Analisa lokal ditolak pada cache: ${localCacheCheck.reason}`);
+          localCacheErr.isAiRejection = true;
+          localCacheErr.rejectionReason = localCacheCheck.reason;
+          throw localCacheErr;
+        }
+
+        highlight = await selectHighlightWithAI({
+          apiKey,
+          aiProvider,
+          frames: localCacheCheck.cleanFrames,
+          videoPath: rawVideoPath,
+          videoMetadata: videoMeta,
+          productTitle,
+          productDescription,
+          productImage: effectiveProductImage,
+          shopeeLink,
+          sceneDuration,
+          allowFallbackClips: !requireCleanGeminiPlan,
+          isVideoFirst: Boolean(options.isVideoFirst),
+          niche: options.niche || 'kitchen_tools',
+          onProgress: updateProgress,
+        });
+        if (!highlight || !Array.isArray(highlight.clips) || highlight.clips.length === 0) {
+          const noClipErr = new Error('AI tidak menemukan cuplikan produk yang memenuhi syarat pada cache video.');
+          noClipErr.isAiRejection = true;
+          noClipErr.rejectionReason = 'Tidak ditemukan cuplikan bersih pada cache.';
+          throw noClipErr;
+        }
+        approved = true;
+      } catch (cacheEvalErr) {
+        if (cacheEvalErr.isAiRejection || String(cacheEvalErr?.message || '').toLowerCase().includes('ditolak')) {
+          console.warn(`[Job ${jobId}] Cached video 1080p ditolak AI: ${cacheEvalErr.message}. Menghapus cache dan mencoba online...`);
+          try { fs.unlinkSync(rawVideoPath); } catch {}
+          rawVideoPath = null;
+        } else {
+          throw cacheEvalErr;
+        }
+      }
+    }
+
+    // Evaluasi video YouTube awal jika belum disetujui dari cache
+    // Multi-Video Harvesting: WAJIB default TRUE untuk affiliate faceless (multi-source clipper profesional)
+    const preferMultiVideo = options.singleVideoOnly === true ? false : true;
+
+    if (!approved && currentYoutubeUrl && !preferMultiVideo) {
+      try {
+        const initialRes = await evaluateCandidate(currentYoutubeUrl, '', {
+          isVisualSearch: Boolean(effectiveProductImage),
+        });
+        const initialClips = initialRes.highlight?.clips || [];
+        const initialDuration = initialClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+        const minRequiredClips = options.singleVideoOnly ? 3 : 5;
+        const minRequiredDur = options.singleVideoOnly ? 15.0 : 25.0;
+        if (initialClips.length >= minRequiredClips && initialDuration >= minRequiredDur) {
+          highlight = initialRes.highlight;
+          videoMeta = initialRes.videoMeta;
+          previewVideoPath = initialRes.previewVideoPath;
+          approved = true;
+        } else {
+          console.log(`[Job ${jobId}] ⚠️ Video tunggal (${currentYoutubeUrl}) hanya menghasilkan ${initialClips.length} klip (${initialDuration.toFixed(1)}s, target minimal ${minRequiredDur}s). Membuka Multi-Video Harvesting (stream 3-5 video) untuk variasi adegan & durasi penuh...`);
+          if (!targetCandidates) targetCandidates = [];
+          targetCandidates.unshift({
+            url: currentYoutubeUrl,
+            title: initialRes.videoMeta?.title || productTitle,
+            duration: initialRes.videoMeta?.duration || 60,
+          });
+        }
+      } catch (initErr) {
+        if (initErr.isAiRejection || String(initErr?.message || '').toLowerCase().includes('ditolak')) {
+          console.warn(`[Job ${jobId}] ⛔ Video awal (${currentYoutubeUrl}) ditolak AI: ${initErr.message}`);
+          lastRejectionError = initErr;
+          try { if (previewVideoPath && fs.existsSync(previewVideoPath)) fs.unlinkSync(previewVideoPath); } catch {}
+          previewVideoPath = null;
+        } else {
+          throw initErr;
+        }
+      }
+    }
+
+    // Jika belum disetujui atau masuk mode Multi-Video Harvesting: Jalankan Stream 3-5 Video & Frame Pooling!
+    if (!approved) {
+      const allowAutoSearch = options.autoSearchFallback !== false && Boolean(productTitle);
+      if (!allowAutoSearch && !preferMultiVideo) {
+        throw lastRejectionError || new Error('Video ditolak oleh AI.');
+      }
+
+      const engineName = aiProvider === 'gemini' ? 'Google Gemini Direct' : 'AI';
+      updateProgress({
+        step: 'auto_search_fallback',
+        message: preferMultiVideo
+          ? `Menyiapkan streaming 3-5 video untuk target "${coreProductNoun}"...`
+          : `⛔ Video awal ditolak AI (${lastRejectionError?.rejectionReason || 'tidak cocok'}). ${engineName} mencari video YouTube baru untuk target "${coreProductNoun}"...`,
+        progress: 15,
+        status: 'running',
+        coreProductNoun,
+      });
+
+      console.log(`[Job ${jobId}] Memulai pencarian/streaming kandidat YouTube (3-5 video) untuk "${productTitle}"...`);
+
+      let searchIteration = 0;
+      let candidatePool = Array.isArray(targetCandidates) ? [...targetCandidates] : [];
+      if (currentYoutubeUrl && !candidatePool.some(c => c.url === currentYoutubeUrl)) {
+        candidatePool.unshift({
+          url: currentYoutubeUrl,
+          title: productTitle,
+        });
+      }
+
+      // 1. Prioritas Visual Search: Jika URL foto produk tersedia, cari video berbasis gambar!
+      if (effectiveProductImage && candidatePool.length < 3) {
+        try {
+          updateProgress({
+            step: 'auto_search_fallback',
+            message: `Mencari video pengganti via pencarian visual gambar produk...`,
+            progress: 18,
+            status: 'running',
+            coreProductNoun,
+          });
+          console.log(`[Job ${jobId}] Mencari kandidat video via Visual Image Search: ${effectiveProductImage}`);
+          const visualCandidates = await searchVideosByProductImage({
+            imageUrl: effectiveProductImage,
+            productTitle,
+            productDescription,
+            limit: 10,
+            excludeVideoIds: usedVids,
+            onProgress: (p) => updateProgress({ ...p, status: 'running' }),
+          });
+          if (visualCandidates && visualCandidates.length > 0) {
+            for (const cand of visualCandidates) {
+              if (!candidatePool.some(t => (t.url && t.url === cand.url) || (t.id && t.id === cand.id))) {
+                candidatePool.push(cand);
+              }
+            }
+            console.log(`[Job ${jobId}] ✅ Ditemukan ${visualCandidates.length} kandidat video dari pencarian visual gambar!`);
+          }
+        } catch (vErr) {
+          console.warn(`[Job ${jobId}] Pencarian visual gambar dilewati: ${vErr.message}`);
+        }
+      }
+
+      // 2. Multi-Engine Keyword Search jika belum mencapai target minimal 10 kandidat
+      while (searchIteration < 3 && candidatePool.length < 10) {
+        const fresh = await discoverYouTubeCandidatesForProduct({
+          productTitle,
+          productDescription,
+          limit: 8,
+          excludeVideoIds: usedVids,
+          searchIteration,
+          onProgress: (p) => updateProgress({ ...p, status: 'running' }),
+        });
+        if (fresh && fresh.length > 0) {
+          for (const cand of fresh) {
+            if (!candidatePool.some(t => (t.url && t.url === cand.url) || (t.id && t.id === cand.id))) {
+              candidatePool.push(cand);
+            }
+          }
+        }
+        searchIteration++;
+      }
+
+      if (!candidatePool || candidatePool.length === 0) {
+        throw new Error(`Tidak ditemukan video YouTube yang cocok untuk "${productTitle}": ${lastRejectionError?.rejectionReason || 'kandidat kosong'}.`);
+      }
+
+      console.log(`[Job ${jobId}] Menemukan ${candidatePool.length} kandidat video YouTube. Memulai Multi-Video Stream & Harvesting (stream 3-5 video, target klip 30-35s)...`);
+
+      // Ambil hingga 12 kandidat untuk memastikan cukup video yang mereview produk yang sama persis
+      const candidatesToProcess = candidatePool.slice(0, 12);
+      const candidateResults = [];
+      const downloadedCandidatesMap = new Map();
+      let totalCleanCount = 0;
+
+      for (let i = 0; i < candidatesToProcess.length; i++) {
+        // Footage Budget Target (Audit GPT 2026):
+        // Hitung estimasi clean usable duration (setiap frame bersih mewakili ~4 detik footage aksi).
+        const totalUsableDuration = candidateResults.reduce((acc, cr) => {
+          const cleanCount = cr.cleanFrames?.length || 0;
+          return acc + Math.min(cr.videoMeta?.duration || 60, cleanCount * 4.0);
+        }, 0);
+
+        // Multi-source is mandatory whenever at least 2 viable candidates are available.
+        // Do NOT stop after one rich video: that was the root cause of the "always 1 URL" behavior.
+        const maxTargetSources = Math.min(3, candidatesToProcess.length);
+        const minimumTargetSources = Math.min(2, maxTargetSources);
+        const reachedPreferredSourceCount = candidateResults.length >= maxTargetSources;
+        const reachedMinimumSourceCount = candidateResults.length >= minimumTargetSources;
+
+        const enoughFootageAfterMinimumSources =
+          totalCleanCount >= 8 ||
+          totalUsableDuration >= 35.0 ||
+          candidateResults.length >= 3;
+
+        const hasEnoughFootage =
+          (reachedPreferredSourceCount && enoughFootageAfterMinimumSources) ||
+          (reachedMinimumSourceCount && enoughFootageAfterMinimumSources);
+
+        if (hasEnoughFootage) {
+          console.log(
+            `[Job ${jobId}] ✅ Target footage budget terpenuhi (~${totalUsableDuration.toFixed(1)}s usable footage dari ${candidateResults.length} video kandidat; target multi-source=${minimumTargetSources}-${maxTargetSources}). Menghentikan pencarian awal, langsung ke AI Vision!`
+          );
+          break;
+        }
+
+        const candidate = candidatesToProcess[i];
+        const candVid = extractVideoId(candidate.url) || candidate.id;
+        if (candVid) usedVids.add(candVid);
+
+        const candLabel = `Video ${candidateResults.length + 1} (Kandidat ${i + 1}/${candidatesToProcess.length})`;
+        updateProgress({
+          step: 'stream_sampling',
+          message: `[${candLabel}] Streaming & sampling frame: "${(candidate.title || productTitle).slice(0, 32)}..."`,
+          progress: 18 + Math.round((i / candidatesToProcess.length) * 18),
+          status: 'running',
+        });
+
+        try {
+          const candFramesDir = path.join(rawFramesDir, `cand_${i}`);
+          if (!fs.existsSync(candFramesDir)) fs.mkdirSync(candFramesDir, { recursive: true });
+
+          const { metadata: candMeta, streamUrl: candStreamUrl } = await fetchVideoMetadataAndStream(candidate.url, {
+            onProgress: updateProgress,
+          });
+
+          // Cek kepatuhan metadata dasar
+          const comp = checkVideoMetadataCompliance(candMeta, productTitle, {
+            ...options,
+            isVisualSearch: Boolean(options.isVisualSearch || candidate.source === 'bing_visual_search'),
+          });
+          if (!comp.eligible) {
+            console.log(`[Job ${jobId}] ⚠️ ${candLabel} metadata tidak lolos: ${comp.reason}. Melewati kandidat ini...`);
+            continue;
+          }
+
+          const sampleRes = await sampleFramesFromStream(candStreamUrl, candFramesDir, {
+            duration: candMeta.duration,
+            maxSampleFrames: 25,
+            onProgress: updateProgress,
+          });
+
+          if (!sampleRes.frames || sampleRes.frames.length < 4) {
+            console.warn(`[Job ${jobId}] ${candLabel} gagal mengekstrak frame dari stream URL. Melewati...`);
+            continue;
+          }
+
+          // Filter granular per-frame: buang frame wajah/intro/rusak, simpan frame peragaan produk!
+          const frameFilterRes = await filterCandidateFramesPerFrame(sampleRes.frames, {
+            candidateIndex: i,
+            candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
+          });
+
+          console.log(`[Job ${jobId}] [${candLabel}] Hasil filter frame: ${frameFilterRes.cleanFrames.length} frame peragaan tangan disimpan (${frameFilterRes.discardedCount} frame wajah/intro disingkirkan).`);
+
+          if (frameFilterRes.cleanFrames.length > 0) {
+            candidateResults.push({
+              candidateIndex: i,
+              candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
+              videoMeta: candMeta,
+              cleanFrames: frameFilterRes.cleanFrames,
+            });
+            totalCleanCount += frameFilterRes.cleanFrames.length;
+          }
+        } catch (candErr) {
+          console.warn(`[Job ${jobId}] Gagal memproses stream ${candLabel}: ${candErr.message}`);
+          lastRejectionError = candErr;
+        }
+      }
+
+      if (candidateResults.length === 0) {
+        throw new Error(`Tidak ditemukan video YouTube yang cocok dan memiliki frame bersih untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'semua kandidat tidak memenuhi standar kualitas'}.`);
+      }
+
+      if (candidateResults.length === 1) {
+        const singleCleanCount = candidateResults[0].cleanFrames?.length || 0;
+        if (singleCleanCount < 2) {
+          throw new Error(`Hanya ditemukan 1 video kandidat untuk "${productTitle}" dan frame bersihnya terlalu sedikit (${singleCleanCount} frame). Dibutuhkan minimal 2 frame peragaan bersih.`);
+        }
+        console.warn(`[Job ${jobId}] ℹ️ Beroperasi dalam mode Single-Source Kaya Adegan (${singleCleanCount} frame bersih dari 1 video). Melanjutkan proses storyboard...`);
+      }
+
+      // Kumpulkan frame bersih gabungan dari seluruh kandidat (maksimal 30 frame pilihan)
+      pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 30 });
+      console.log(`[Job ${jobId}] 🎯 Pool Multi-Kandidat Terbentuk: ${pooledFrames.length} frame bersih gabungan dari ${candidateResults.length} video kandidat.`);
+
+      if (pooledFrames.length < 2) {
+        throw new Error(`Semua kandidat video YouTube (${candidatesToProcess.length} video) tidak memiliki cukup frame bersih peragaan produk untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'terlalu banyak wajah / video rusak'}.`);
+      }
+
+      // Kirim 30 frame gabungan + foto referensi produk Shopee ke AI Vision
+      updateProgress({
+        step: 'gemini_vision',
+        message: `AI Vision menganalisa ${pooledFrames.length} frame peragaan dari ${candidateResults.length} video kandidat & menentukan cuplikan viral...`,
+        progress: 38,
+        status: 'running',
+      });
+
+      let hl = null;
+      try {
+        hl = await selectHighlightWithAI({
+          apiKey,
+          aiProvider,
+          frames: pooledFrames,
+          videoPath: null,
+          youtubeUrl: null, // Pakai frame pooling AI Vision
+          videoMetadata: { duration: 600, title: productTitle },
+          productTitle,
+          productDescription,
+          productImage: effectiveProductImage,
+          shopeeLink,
+          sceneDuration,
+          allowFallbackClips: true,
+          introCutoffSec: 0,
+          isVideoFirst: Boolean(options.isVideoFirst),
+          niche: options.niche || 'kitchen_tools',
+          onProgress: updateProgress,
+        });
+      } catch (aiErr) {
+        console.warn(`[Job ${jobId}] ⚠️ AI Vision menolak video: ${aiErr.message}`);
+        // USER MANDATE: Jangan buang video hanya karena ada frame tidak sesuai!
+        // Ambil frame peragaan bersih dari video yang sama untuk menggantikan frame yang ditolak.
+        if (pooledFrames.length >= 3) {
+          console.log(`[Job ${jobId}] 🛡️ Memulihkan video: Membangun 7-slot storyboard dari ${pooledFrames.length} frame peragaan bersih yang lolos filter visual...`);
+          const fallbackClips = build7SlotStoryboardClips({
+            parsed: {},
+            frames: pooledFrames,
+            totalDuration: 600,
+            clipSec: sceneDuration,
+            introCutoffSec: 0,
+            niche: options.niche || 'kitchen_tools'
+          });
+          if (fallbackClips && fallbackClips.length > 0) {
+            hl = {
+              status: 'accept',
+              clips: fallbackClips,
+              frames: fallbackClips.map((_, i) => i + 1),
+              detectedProduct: productTitle,
+              isExactProductMatch: true,
+              productHook: getDynamicProductHookFallback(productTitle, options.niche || 'kitchen_tools'),
+              hasProductBrand: false,
+            };
+          }
+        }
+        if (!hl) {
+          throw aiErr;
+        }
+      }
+
+      if (!hl || !Array.isArray(hl.clips) || hl.clips.length === 0) {
+        throw new Error(`AI Vision tidak menemukan cuplikan produk yang memenuhi syarat dari pool multi-kandidat untuk "${productTitle}".`);
+      }
+
+      // Targeted Download: Unduh 1080p HANYA untuk kandidat yang klipnya terpilih oleh AI!
+      const neededIndices = [...new Set(hl.clips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0))];
+      if (neededIndices.length < 1) {
+        throw new Error(`Klip terpilih tidak memiliki video sumber yang valid.`);
+      }
+      console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari ${neededIndices.length} video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh 1080p Full HD...`);
+
+      let lastDlError = null;
+      for (const candIdx of neededIndices) {
+        const candObj = candidateResults.find(c => c.candidateIndex === candIdx)?.candidate || candidatesToProcess[candIdx];
+        if (!candObj?.url) continue;
+
+        updateProgress({
+          step: 'download_hd',
+          message: `Mengunduh video sumber #${candIdx + 1} (${(candObj.title || '').slice(0, 30)}...) kualitas 1080p Full HD...`,
+          progress: 46 + Math.round((downloadedCandidatesMap.size / neededIndices.length) * 12),
+          status: 'running',
+        });
+
+        try {
+          const hdDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
+            quality: '1080p',
+            prefix: `raw_cand_${candIdx}`,
+          });
+
+          if (hdDl?.filePath && fs.existsSync(hdDl.filePath)) {
+            downloadedCandidatesMap.set(candIdx, hdDl.filePath);
+            console.log(`[Job ${jobId}] ✅ Video 1080p Full HD untuk Kandidat #${candIdx + 1} berhasil diunduh (${hdDl.filePath}).`);
+          } else {
+            console.warn(`[Job ${jobId}] Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}.`);
+          }
+        } catch (dlErr) {
+          lastDlError = dlErr;
+          console.warn(`[Job ${jobId}] ⚠️ Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}: ${dlErr.message}`);
+        }
+      }
+
+      // Jika seluruh kandidat yang dipilih AI gagal diunduh,
+      // coba unduh kandidat cadangan dari candidateResults yang sudah lolos filter visual!
+      if (downloadedCandidatesMap.size === 0) {
+        console.warn(`[Job ${jobId}] ⚠️ Tidak ada kandidat terpilih yang berhasil diunduh HD. Mencoba kandidat cadangan dari pool yang lolos filter visual...`);
+        const fallbackCandidates = candidateResults.filter(c => !neededIndices.includes(c.candidateIndex));
+        for (const altCand of fallbackCandidates) {
+          if (downloadedCandidatesMap.size >= 1) break;
+          const altIdx = altCand.candidateIndex;
+          const candObj = altCand.candidate;
+          if (!candObj?.url) continue;
+
+          try {
+            console.log(`[Job ${jobId}] 🔄 Mencoba mengunduh HD kandidat cadangan #${altIdx + 1}: ${candObj.title}...`);
+            const altDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
+              quality: '1080p',
+              prefix: `raw_cand_${altIdx}`,
+            });
+            if (altDl?.filePath && fs.existsSync(altDl.filePath)) {
+              downloadedCandidatesMap.set(altIdx, altDl.filePath);
+              console.log(`[Job ${jobId}] ✅ Kandidat cadangan #${altIdx + 1} berhasil diunduh HD (${altDl.filePath}).`);
+
+              // Remap klip yang video-nya gagal diunduh ke kandidat cadangan ini
+              const failedIndices = neededIndices.filter(idx => !downloadedCandidatesMap.has(idx));
+              if (failedIndices.length > 0) {
+                const targetFailedIdx = failedIndices[0];
+                hl.clips = hl.clips.map(c => {
+                  if (c.candidateIndex === targetFailedIdx) {
+                    return { ...c, candidateIndex: altIdx, videoPath: altDl.filePath };
+                  }
+                  return c;
+                });
+              }
+            }
+          } catch (altErr) {
+            console.warn(`[Job ${jobId}] ⚠️ Kandidat cadangan #${altIdx + 1} gagal diunduh: ${altErr.message}`);
+          }
+        }
+      }
+
+      // Jika seluruh kandidat gagal diunduh (termasuk jika diblokir YouTube)
+      if (downloadedCandidatesMap.size === 0) {
+        throw lastDlError || new Error('Gagal mengunduh video 1080p Full HD dari seluruh kandidat terpilih.');
+      }
+
+      // Evaluasi apakah video 1080p yang sudah terunduh dapat memenuhi kebutuhan frame
+      const validDownloadedClips = hl.clips.filter(c => {
+        const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
+        return downloadedCandidatesMap.has(candIdx);
+      });
+      const validDownloadedCandidates = new Set(validDownloadedClips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0));
+
+      if (validDownloadedCandidates.size < 1) {
+        console.warn(`[Job ${jobId}] ⛔ Tidak ada video 1080p yang berhasil diunduh.`);
+        throw lastDlError || new Error(`Video 1080p yang berhasil diunduh tidak valid.`);
+      }
+
+      if (validDownloadedClips.length >= 1) {
+        hl.clips = validDownloadedClips;
+        console.log(`[Job ${jobId}] 🎯 Menggunakan video 1080p yang telah terunduh (${hl.clips.length} cuplikan dari ${validDownloadedCandidates.size} video sumber).`);
+      }
+
+      // Petakan videoPath 1080p ke masing-masing klip yang terpilih
+      hl.clips = hl.clips.map(c => {
+        const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
+        let vPath = downloadedCandidatesMap.get(candIdx);
+        if (!vPath) {
+          const altCand = [...downloadedCandidatesMap.entries()][0];
+          console.warn(`[Job ${jobId}] ⚠️ Video kandidat #${candIdx + 1} tidak tersedia di 1080p. Mengalihkan ke kandidat #${altCand ? altCand[0] + 1 : 1}...`);
+          return {
+            ...c,
+            candidateIndex: altCand ? altCand[0] : candIdx,
+            videoPath: altCand ? altCand[1] : null,
+          };
+        }
+        return {
+          ...c,
+          videoPath: vPath,
+        };
+      });
+
+      // Jaminan klip minimal 6-8 klip (30-35s) dengan adegan berganti dinamis:
+      const currentHlDuration = hl.clips.reduce((sum, c) => sum + (c.duration || sceneDuration), 0);
+      if (hl.clips.length < 6 || currentHlDuration < 30.0) {
+        console.log(`[Job ${jobId}] ⚠️ AI Vision memilih ${hl.clips.length} klip (${currentHlDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai durasi standar minimal 30-35s...`);
+        const baseClips = [...hl.clips];
+        let expRound = 1;
+        while (hl.clips.length < 7 && expRound <= 4) {
+          for (const base of baseClips) {
+            if (hl.clips.length >= 7) break;
+            const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 4.0));
+            hl.clips.push({
+              ...base,
+              startSeconds: newStart,
+              endSeconds: newStart + sceneDuration,
+              duration: sceneDuration,
+              startTime: formatSeconds(newStart),
+              endTime: formatSeconds(newStart + sceneDuration),
+              storyboardSlot: hl.clips.length + 1,
+              reason: `${base.reason} (Dynamic Scene Cut #${expRound})`,
+            });
+          }
+          expRound++;
+        }
+        hl.duration = hl.clips.reduce((sum, c) => sum + (c.duration || sceneDuration), 0);
+      }
+
+      rawVideoPath = [...downloadedCandidatesMap.values()][0];
+      highlight = hl;
+      approved = true;
+
+      // Update metadata job
+      const primeCand = candidateResults[0]?.candidate || candidatesToProcess[0];
+      currentYoutubeUrl = primeCand?.url || currentYoutubeUrl;
+      jobMeta.youtubeUrl = currentYoutubeUrl;
+      jobMeta.videoTitle = primeCand?.title || productTitle;
+      activeJobs.set(jobId, jobMeta);
+      persistJob(jobId, jobMeta);
+    }
+
+    // TAHAP 2: AI telah menyetujui video! Backend langsung mengunduh video 1080p Full HD asli dari YouTube untuk rendering
+    if (!rawVideoPath) {
+      updateProgress({ step: 'download_hd', message: '✅ Video disetujui AI! Mengunduh kualitas 1080p Full HD langsung dari YouTube...', progress: 55, status: 'running' });
+      try {
+        const hdDl = await downloadYouTubeVideo(currentYoutubeUrl, sessionTempDir, jobId, updateProgress, { quality: '1080p', prefix: 'raw' });
+        if (!hdDl || !hdDl.filePath || !fs.existsSync(hdDl.filePath)) {
+          throw new Error('File video 1080p tidak ditemukan setelah download.');
+        }
+
+        const hdDims = await getVideoDimensions(hdDl.filePath);
+        const isStrict1080p = hdDims && hdDims.is1080pOrHigher;
+        if (!isStrict1080p) {
+          try { fs.unlinkSync(hdDl.filePath); } catch {}
+          throw new Error(`Resolusi video YouTube (${hdDims?.width}x${hdDims?.height}) tidak memenuhi standar minimal 1080p Full HD ke atas.`);
+        }
+
+        console.log(`[Job ${jobId}] ✅ Video 1080p+ Full HD asli berhasil diunduh (${hdDims.width}x${hdDims.height}). Menggantikan preview 360p.`);
+        rawVideoPath = hdDl.filePath;
+
+        // Hapus file preview 360p agar tidak memakan ruang penyimpanan HP dan tidak tertukar
+        try {
+          if (previewVideoPath && fs.existsSync(previewVideoPath) && previewVideoPath !== rawVideoPath) {
+            fs.unlinkSync(previewVideoPath);
+          }
+        } catch {}
+      } catch (hdErr) {
+        console.error(`[Job ${jobId}] ❌ Gagal mengunduh video 1080p Full HD dari YouTube: ${hdErr.message}`);
+        // Wajib lempar error dan BATALKAN render jika 1080p gagal, TIDAK BOLEH render video 360p!
+        throw new Error(`Gagal mengunduh video kualitas 1080p Full HD langsung dari YouTube untuk rendering: ${hdErr.message}`);
+      }
+
+      const updatedMeta = { ...jobMeta, downloadedVideoPath: rawVideoPath, stage: 'downloaded' };
+      activeJobs.set(jobId, updatedMeta);
+      persistJob(jobId, updatedMeta);
+    }
+
+    // ── AUDIT WAJAH MULTI-TITIK PASCA-DOWNLOAD (ANTI-WAJAH 1 DETIK) ──
+    // Mengekstrak 2 frame per klip (t+0.8s dan t+2.2s) dari video 1080p yang sudah diunduh
+    // untuk memverifikasi kualitas klip (bebas teks overlay/animasi promosi, wajah manusia, dan bumper grafis).
+    if (Array.isArray(highlight.clips) && highlight.clips.length > 0) {
+      updateProgress({
+        step: 'clip_audit',
+        message: 'Melakukan audit kualitas multi-titik (anti-teks & anti-wajah) pada klip terpilih...',
+        progress: 60,
+        status: 'running'
+      });
+
+      const auditFramesDir = path.join(sessionTempDir, 'clip_audit_frames');
+      if (!fs.existsSync(auditFramesDir)) fs.mkdirSync(auditFramesDir, { recursive: true });
+
+      const cleanAuditedClips = [];
+      const discardedDirtyClips = [];
+
+      for (let cIdx = 0; cIdx < highlight.clips.length; cIdx++) {
+        const c = highlight.clips[cIdx];
+        const clipVid = c.videoPath || rawVideoPath;
+        if (!clipVid || !fs.existsSync(clipVid)) {
+          cleanAuditedClips.push(c);
+          continue;
+        }
+
+        const dur = Math.max(1.5, Number(c.duration || 3.3));
+        // High-density temporal audit (2.5 FPS across entire clip span)
+        // Eliminates temporal blind spots where watermarks, creator logos, or faces flash in between snapshots
+        const sampleStepSec = 0.40; // Every 400ms (2.5 fps)
+        const sampleOffsets = [];
+        for (let offset = 0.20; offset <= Math.max(0.20, dur - 0.20); offset += sampleStepSec) {
+          sampleOffsets.push(Math.round(offset * 100) / 100);
+        }
+        // Always include near the end of the clip to catch closing subtitles or logos
+        const endOffset = Math.round(Math.max(0.20, dur - 0.20) * 100) / 100;
+        if (!sampleOffsets.includes(endOffset)) {
+          sampleOffsets.push(endOffset);
+        }
+        const sampleTimestamps = sampleOffsets.map(offset => Math.round((c.startSeconds + offset) * 100) / 100);
+
+        const frameExtractTasks = sampleTimestamps.map((ts, sIdx) => {
+          const framePath = path.join(auditFramesDir, `clip_${cIdx}_s${sIdx}.jpg`);
+          return extractSingleFrameAsync(clipVid, ts, framePath).then(ok => (ok ? { filePath: framePath, timestamp: ts } : null));
+        });
+
+        const testFrames = (await Promise.all(frameExtractTasks)).filter(Boolean);
+
+        let hasDirtyContent = false;
+        let dirtyReason = '';
+        if (testFrames.length > 0) {
+          let gkRes = null;
+          try {
+            gkRes = await callAIGatekeeperMicroservice(testFrames, { timeoutSec: 12, niche: options?.niche || 'kitchen_tools' });
+          } catch (e) {}
+
+          if (gkRes && Array.isArray(gkRes.allFrames)) {
+            const dirtyDet = gkRes.allFrames.find(f => f.status !== 'clean');
+            if (dirtyDet) {
+              hasDirtyContent = true;
+              dirtyReason = `[${dirtyDet.stage ? dirtyDet.stage.toUpperCase() : 'DIRTY'}] ${dirtyDet.reason || 'Konten tidak layak'}`;
+            }
+          } else {
+            // SAFETY FALLBACK: Jika Gatekeeper microservice port 5050 belum menyala / offline,
+            // jalankan fallback heuristik lokal agar klip kotor TIDAK lolos tanpa pengawasan!
+            const fallbackRes = await inspectFramesLocally(testFrames, { niche: options?.niche || 'kitchen_tools' });
+            if (fallbackRes && (!fallbackRes.eligible || fallbackRes.discardedFrames?.length > 0)) {
+              hasDirtyContent = true;
+              dirtyReason = `[HEURISTIC] ${fallbackRes.reason || 'Terdeteksi teks overlay/bumper statis pada klip'}`;
+            }
+          }
+
+          if (hasDirtyContent) {
+            console.warn(`[ClipAudit] ⛔ Segment klip #${cIdx + 1} (${c.startSeconds}s - ${Math.round((c.startSeconds + dur) * 10) / 10}s) REJECTED (${dirtyReason}). Klip dibuang!`);
+          }
+        }
+
+        if (hasDirtyContent) {
+          discardedDirtyClips.push({ clip: c, reason: dirtyReason });
+        } else {
+          cleanAuditedClips.push(c);
+        }
+      }
+
+      if (discardedDirtyClips.length > 0) {
+        console.log(`[ClipAudit] Berhasil membuang ${discardedDirtyClips.length} klip kotor (teks overlay/wajah/bumper). Tersisa ${cleanAuditedClips.length} klip bersih.`);
+
+        // 1. Pastikan Slot 1 (Visual Produk Utuh) tetap ada!
+        const hasSlot1 = cleanAuditedClips.some(c => c.storyboardSlot === 1);
+        if (!hasSlot1 && cleanAuditedClips.length > 0) {
+          console.warn(`[ClipAudit] ⚠️ Slot 1 (Hero Produk Utuh) terbuang pada audit. Memulihkan Slot 1 dari klip pertama bersih...`);
+          cleanAuditedClips[0].storyboardSlot = 1;
+          cleanAuditedClips[0].storyboardRole = 'full_product';
+        }
+
+        // 2. Replenish durasi jika klip bersih tersisa < 6 atau durasi < 28s
+        if (cleanAuditedClips.length >= 1) {
+          highlight.clips = cleanAuditedClips;
+          const currentDuration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+          if (cleanAuditedClips.length < 6 || currentDuration < 28.0) {
+            console.log(`[ClipAudit] ℹ️ Klip bersih pasca-audit berjumlah ${cleanAuditedClips.length} (${currentDuration.toFixed(1)}s). Melakukan ekspansi adegan dinamis agar mencapai minimal 6-7 klip (30-35s)...`);
+            const baseClips = [...cleanAuditedClips];
+            let expRound = 1;
+            while (cleanAuditedClips.length < 7 && expRound <= 6) {
+              for (const base of baseClips) {
+                if (cleanAuditedClips.length >= 7) break;
+                const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
+                cleanAuditedClips.push({
+                  ...base,
+                  startSeconds: newStart,
+                  endSeconds: newStart + sceneDuration,
+                  duration: sceneDuration,
+                  startTime: formatSeconds(newStart),
+                  endTime: formatSeconds(newStart + sceneDuration),
+                  storyboardSlot: cleanAuditedClips.length + 1,
+                  reason: `${base.reason} (Safe Clean Re-stride #${expRound})`,
+                });
+              }
+              expRound++;
+            }
+          }
+          highlight.clips = cleanAuditedClips;
+          highlight.duration = cleanAuditedClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+        } else {
+          // USER MANDATE: Jika klip terpilih terbuang seluruhnya pada audit, JANGAN buang video!
+          // Ambil frame peragaan bersih yang tersimpan di pooledFrames dari video yang sama!
+          console.warn(`[ClipAudit] ⚠️ Seluruh klip awal terbuang pada audit. Memulihkan klip dari frame bersih alternatif pada video yang sama...`);
+          const fallbackCleanTimestamps = (pooledFrames || [])
+            .map(f => f.timestamp)
+            .filter(t => t !== undefined && t > 0);
+
+          const recoveryClips = [];
+          const usedStarts = new Set();
+          for (let rIdx = 0; rIdx < Math.min(7, fallbackCleanTimestamps.length); rIdx++) {
+            const ts = fallbackCleanTimestamps[rIdx];
+            if (!usedStarts.has(ts)) {
+              usedStarts.add(ts);
+              recoveryClips.push({
+                startSeconds: ts,
+                endSeconds: ts + sceneDuration,
+                duration: sceneDuration,
+                startTime: formatSeconds(ts),
+                endTime: formatSeconds(ts + sceneDuration),
+                storyboardSlot: recoveryClips.length + 1,
+                reason: `Recovered Clean Segment #${rIdx + 1}`,
+                candidateIndex: 0,
+                videoPath: rawVideoPath,
+              });
+            }
+          }
+
+          if (recoveryClips.length > 0) {
+            let expRound = 1;
+            const baseClips = [...recoveryClips];
+            while (recoveryClips.length < 7 && expRound <= 6) {
+              for (const base of baseClips) {
+                if (recoveryClips.length >= 7) break;
+                const newStart = Math.max(0, base.startSeconds + base.duration + (expRound * 3.5));
+                recoveryClips.push({
+                  ...base,
+                  startSeconds: newStart,
+                  endSeconds: newStart + sceneDuration,
+                  duration: sceneDuration,
+                  startTime: formatSeconds(newStart),
+                  endTime: formatSeconds(newStart + sceneDuration),
+                  storyboardSlot: recoveryClips.length + 1,
+                  reason: `${base.reason} (Recovery Expansion #${expRound})`,
+                });
+              }
+              expRound++;
+            }
+            highlight.clips = recoveryClips;
+            highlight.duration = recoveryClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
+            console.log(`[ClipAudit] 🛡️ Berhasil memulihkan ${highlight.clips.length} klip bersih (${highlight.duration.toFixed(1)}s) dari video yang sama!`);
+          } else {
+            console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
+            const auditErr = new Error('Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi, bumper statis, atau wajah.');
+            auditErr.isAiRejection = true;
+            auditErr.rejectionReason = 'Mengandung teks overlay promosi, bumper statis, atau wajah manusia.';
+            throw auditErr;
+          }
+        }
+      } else {
+        console.log(`[ClipAudit] ✅ Seluruh ${highlight.clips.length} klip terverifikasi 100% bersih bebas teks overlay, bumper statis, dan wajah.`);
+      }
+    }
+
+    const isBrandDetected = highlight.hasProductBrand === true ||
+      (Array.isArray(highlight.clips) && highlight.clips.some(c => c.hasProductBrand === true));
+    const requestedHflip = options.hflip !== undefined ? Boolean(options.hflip) : false;
+    const effectiveHflip = (isBrandDetected || highlight.allowHflip === false) ? false : requestedHflip;
+
+    if (isBrandDetected && requestedHflip) {
+      console.log(`[Job ${jobId}] Merek/Logo produk terdeteksi ("${highlight.detectedBrand || 'Brand'}"). Video mirror (H-Flip) dinonaktifkan otomatis agar logo/merek produk tidak terbalik.`);
+    }
+
+    const renderMessage = isBrandDetected
+      ? `Rendering ${highlight.clips.length} cuplikan produk (${highlight.duration.toFixed(1)}s) [Mirror H-Flip OFF: Merek "${highlight.detectedBrand || 'Terdeteksi'}"]...`
+      : `Rendering ${highlight.clips.length} AI-selected fast product shots (${highlight.duration.toFixed(1)}s)...`;
+
+    const effectiveRenderMode = options.renderMode || highlight.reframe?.renderMode || 'stage_80';
+    const effectiveReframe = {
+      ...(highlight.reframe || {}),
+      renderMode: effectiveRenderMode,
+    };
+
+    updateProgress({ step: 'render_silent', message: renderMessage, progress: 62, status: 'running' });
+    await renderSilentAntiDetectionVideo({
+      inputVideo: rawVideoPath, startTime: highlight.startTime,
+      endTime: highlight.endTime, outputVideo: silentOutputPath,
+      clips: highlight.clips,
+      hflip: effectiveHflip,
+      speedMultiplier: options.speedMultiplier || 1,
+      reframe: effectiveReframe,
+      onProgress: updateProgress,
+    });
+
+    const actualSilentDuration = (await getMediaDurationSec(silentOutputPath)) || highlight.duration || 33;
+    highlight.duration = actualSilentDuration;
+
+    updateProgress({ step: 'frames_trimmed', message: 'Sampling frames from trimmed video for AI scripting...', progress: 72, status: 'running' });
+    const { frames: trimmedFrames } = await extractFrames(silentOutputPath, trimmedFramesDir, updateProgress, {
+      sampleIntervalSec: 2.2,
+      maxSampleFrames: 12,
+    });
+
+    updateProgress({ step: 'gpt_scripting', message: 'AI generating Kotak Scene, Context, Naskah...', progress: 80, status: 'running' });
+    let scriptData;
+    try {
+      scriptData = await generateAdAdvisorScriptWithAI({
+        apiKey,
+        aiProvider,
+        trimmedFrames,
+        videoMetadata: videoMeta,
+        productTitle: (highlight.detectedProduct || productTitle || '').trim(),
+        productDescription,
+        shopeeLink,
+        productHook: highlight.productHook,
+        segmentDuration: actualSilentDuration,
+        sceneDuration,
+        niche: options.niche || 'kitchen_tools',
+        onProgress: updateProgress,
+      });
+    } catch (scriptErr) {
+      const isGadget = (options.niche === 'gadget_smartphone');
+      console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah ${isGadget ? 'Smartphone Shorts' : 'Shopee'}...`);
+      const fallbackHook = highlight.productHook || getDynamicProductHookFallback(productTitle, options.niche || 'kitchen_tools');
+      const stepSec = Math.max(3.0, actualSilentDuration / 5);
+      const ts0 = '00:00';
+      const ts1 = formatSeconds(Math.round(stepSec));
+      const ts2 = formatSeconds(Math.round(stepSec * 2));
+      const ts3 = formatSeconds(Math.round(stepSec * 3));
+      const ts4 = formatSeconds(Math.round(Math.max(stepSec * 4, actualSilentDuration - 3.5)));
+
+      const fallbackVoiceScript = isGadget
+        ? `[${ts0}] [excited] ${fallbackHook}
+[${ts1}] [emphasis] Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam.
+[${ts2}] [neutral] Layar seratus dua puluh Hertz bikin scrolling sosmed super mulus.
+[${ts3}] [excited] Hasil jepretan kamera dan rekaman videonya jernih serta stabil.
+[${ts4}] [excited] Di kisaran harga terjangkau ini, menurut kalian worth it gak? Komen di bawah ya!`
+        : `[${ts0}] [excited] ${fallbackHook}
+[${ts1}] [emphasis] Begini cara penggunaan produk ini.
+[${ts2}] [neutral] Lihat langkah penggunaannya secara langsung.
+[${ts3}] [excited] Perhatikan hasil yang terlihat di adegan ini.
+[${ts4}] [excited] Cek produk di bawah sekarang sebelum kehabisan!`;
+
+      scriptData = {
+        sampleContext: {
+          productName: productTitle || videoMeta?.title || (isGadget ? 'Smartphone Pilihan' : 'Produk Pilihan'),
+          videoDuration: `${Math.round(actualSilentDuration)} detik`,
+          targetAudience: isGadget ? 'Pencari smartphone, tech enthusiast, dan penonton YouTube Shorts' : 'Pengguna harian dan pembeli online',
+          coreProblem: isGadget ? 'HP lama lemot, kamera buram, dan baterai boros' : 'Cara konvensional yang merepotkan dan memakan waktu',
+          keyFeatures: isGadget ? ['Layar AMOLED 120Hz', 'Chipset Kencang & RAM Lega', 'Kamera Jernih 4K'] : ['Praktis & Ringkas', 'Kualitas Teruji', 'Mudah Digunakan'],
+          buyingTrigger: isGadget ? 'Spek gahar di harga terjangkau' : 'Kemudahan pemakaian dan hasil presisi',
+        },
+        scenes: [
+          {
+            sceneNumber: 1,
+            timeRange: `00:00 - ${ts1}`,
+            visualDescription: isGadget ? 'Tampilan bodi belakang dan modul kamera smartphone' : 'Demonstrasi pembuka produk',
+            voiceover: fallbackHook,
+            adAdvisorNotes: 'Hook visual pembuka',
+          },
+          {
+            sceneNumber: 2,
+            timeRange: `${ts1} - ${ts2}`,
+            visualDescription: 'Peragaan aksi awal produk',
+            voiceover: isGadget ? 'Bodi belakangnya mewah dan nyaman digenggam.' : 'Untung ada inovasi praktis ini, cara pakainya simpel dan efisien.',
+            adAdvisorNotes: 'Pengenalan manfaat',
+          },
+          {
+            sceneNumber: 3,
+            timeRange: `${ts2} - ${ts3}`,
+            visualDescription: 'Fitur dan kemudahan pengoperasian',
+            voiceover: isGadget ? 'Layar mulus dan navigasi responsif.' : 'Tinggal gunakan dengan santai, cepat tanpa perlu repot.',
+            adAdvisorNotes: 'Bukti kemudahan',
+          },
+          {
+            sceneNumber: 4,
+            timeRange: `${ts3} - ${ts4}`,
+            visualDescription: 'Hasil nyata peragaan',
+            voiceover: isGadget ? 'Kamera jernih dan rekaman video stabil.' : 'Lihat peragaannya, hasilnya rapi dan memuaskan.',
+            adAdvisorNotes: 'Hasil nyata',
+          },
+          {
+            sceneNumber: 5,
+            timeRange: `${ts4} - ${formatSeconds(Math.round(actualSilentDuration))}`,
+            visualDescription: isGadget ? 'Tampilan display penutup' : 'Ajakan cek keranjang pojok kiri bawah',
+            voiceover: isGadget ? 'Di kisaran harga ini, worth it gak? Komen di bawah!' : 'Yuk buruan cek produk di keranjang pojok kiri bawah sekarang!',
+            adAdvisorNotes: 'CTA penutup',
+          },
+        ],
+        voiceoverScript: fallbackVoiceScript,
+        aiStudioPrompt: fallbackVoiceScript,
+        caption: formatEnrichedCaption({
+          caption: '',
+          productTitle,
+          productDescription,
+          platform: 'clipper'
+        }),
+        lexicon_to_replace: {},
+      };
+    }
+
+    cleanupTempFiles([], [rawFramesDir, trimmedFramesDir]);
+
+    // ─── TAHAP OTOMATIS: Auto-Match Shopee Link, Voiceover TTS & Subtitle Burning ───
+    effectiveShopeeLink = effectiveShopeeLink || shopeeLink || '';
+    const detectedItemName = (highlight.detectedProduct || '').trim() || productTitle || videoMeta?.title || '';
+    if (options.isVideoFirst && highlight.detectedProduct) {
+      effectiveShopeeLink = buildShopeeSearchUrl(highlight.detectedProduct, highlight.detectedBrand);
+      console.log(`[Job ${jobId}] 🎯 [Video-First] Link Shopee diperbarui sesuai produk nyata di video: "${highlight.detectedProduct}" -> ${effectiveShopeeLink}`);
+    } else if (!effectiveShopeeLink || effectiveShopeeLink.includes('localhost')) {
+      effectiveShopeeLink = buildShopeeSearchUrl(detectedItemName, highlight.detectedBrand);
+      console.log(`[Job ${jobId}] ✅ Link Shopee pencarian akurat (anti-captcha): ${effectiveShopeeLink}`);
+    }
+
+    const rawVoiceScript = scriptData.voiceoverScript || scriptData.aiStudioPrompt || '';
+    const voiceoverFileName = `voiceover_${jobId}.mp3`;
+    const autoVoiceoverPath = path.join(uploadsDir, voiceoverFileName);
+    const silentDurationSec = (await getMediaDurationSec(silentOutputPath)) || highlight.duration || 20;
+
+    const activeTtsProvider = (options.ttsProvider || process.env.TTS_PROVIDER || 'gemini_tts').toLowerCase().trim();
+    const isGeminiTts = activeTtsProvider === 'gemini_tts';
+    const ttsModelToUse = options.ttsModel || process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL;
+    const ttsFallbackModelToUse = options.ttsFallbackModel || process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL;
+    const ttsVoiceToUse = options.ttsVoice || process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE;
+    const ttsLabel = isGeminiTts
+      ? `Gemini Flash (${ttsModelToUse} - ${ttsVoiceToUse})`
+      : 'Edge-TTS Gadis';
+
+    updateProgress({
+      step: 'tts_generating',
+      message: `🎙️ Menghasilkan voice over ${ttsLabel}...`,
+      progress: 84,
+      status: 'running',
+    });
+
+    let ttsSucceeded = false;
+    let ttsResult = null;
+    for (let ttsAttempt = 0; ttsAttempt < 3; ttsAttempt++) {
+      try {
+        if (ttsAttempt > 0) {
+          console.log(`[Job ${jobId}] Retrying TTS (${ttsLabel}) (attempt ${ttsAttempt + 1})...`);
+          await new Promise(r => setTimeout(r, 2000));
+        }
+        ttsResult = await generateVoiceoverTTS({
+          script: scriptData.voiceoverScript || rawVoiceScript,
+          outputPath: autoVoiceoverPath,
+          targetDurationSec: silentDurationSec,
+          provider: activeTtsProvider,
+          modelId: ttsModelToUse,
+          fallbackModelId: ttsFallbackModelToUse,
+          voice: ttsVoiceToUse,
+          apiKey: options.geminiApiKey || apiKey || process.env.GEMINI_API_KEY,
+          onProgress: (msg) => updateProgress({ step: 'tts_generating', message: `🎙️ ${msg}`, progress: 86, status: 'running' }),
+          jobId,
+          lexicon: scriptData.lexicon_to_replace || {},
+        });
+        ttsSucceeded = true;
+        break;
+      } catch (ttsErr) {
+        console.error(`[Job ${jobId}] TTS (${ttsLabel}) Attempt ${ttsAttempt + 1} Error:`, ttsErr.message);
+        if (ttsAttempt === 2) {
+          console.warn(`[Job ${jobId}] TTS gagal setelah 3 percobaan. Video 1080p tetap disimpan di history sebagai awaiting_voiceover.`);
+        }
+      }
+    }
+
+    if (ttsSucceeded && fs.existsSync(autoVoiceoverPath)) {
+      try {
+        updateProgress({
+          step: 'merge_start',
+          message: 'Menggabungkan Voiceover AI & membakar subtitle ke video final 9:16...',
+          progress: 90,
+          status: 'running',
+        });
+
+        const finalFileName = `final_clip_${jobId}.mp4`;
+        const finalOutputPath = path.join(outputDir, finalFileName);
+        const srtPath = path.join(uploadsDir, `subtitles_${jobId}.ass`);
+
+        const audioDurationSec = (await getMediaDurationSec(autoVoiceoverPath)) || silentDurationSec;
+
+        updateProgress({
+          step: 'subtitles',
+          message: `Menyinkronkan subtitle narasi (${audioDurationSec.toFixed(1)}s / video ${silentDurationSec.toFixed(1)}s)...`,
+          progress: 93,
+          status: 'running',
+        });
+        // Pass structured script and exact audio duration to guarantee subtitles sync 1:1 with spoken voice!
+        const scriptForSubtitles = scriptData.voiceoverScript || rawVoiceScript || ttsResult.cleanScript;
+        generateSrtSubtitles(scriptForSubtitles, audioDurationSec, srtPath, {
+          wordBoundaries: ttsResult.wordBoundaries,
+          videoDurationSec: silentDurationSec,
+          lexicon: scriptData.lexicon_to_replace || {},
+        });
+
+        updateProgress({
+          step: 'render_final',
+          message: 'Rendering video final 9:16 dengan Voiceover & Subtitles...',
+          progress: 95,
+          status: 'running',
+        });
+        await mergeVoiceoverAndBurnSubtitles({
+          silentVideoPath: silentOutputPath,
+          voiceoverAudioPath: autoVoiceoverPath,
+          srtPath,
+          outputVideoPath: finalOutputPath,
+          targetDurationSec: silentDurationSec,
+          onProgress: updateProgress,
+        });
+
+        cleanupTempFiles([srtPath]);
+        deleteJobTempDirectory(jobId, tempDir);
+
+        const cacheBuster = Date.now();
+        const completedResult = {
+          ...extraJobMeta,
+          jobId,
+          stage: 'completed',
+          createdAt: jobMeta.createdAt,
+          silentFileName,
+          silentVideoUrl: `/api/video/${silentFileName}`,
+          silentLocalPath: silentOutputPath,
+          finalFileName,
+          videoUrl: `/api/video/${finalFileName}?t=${cacheBuster}`,
+          downloadUrl: `/api/download/${finalFileName}?t=${cacheBuster}`,
+          finalLocalPath: finalOutputPath,
+          voiceoverAudioUrl: `/api/audio/${voiceoverFileName}?t=${cacheBuster}`,
+          ttsVoice: ttsResult.voice || ttsVoiceToUse,
+          ttsProvider: ttsResult.provider || activeTtsProvider,
+          ttsModel: ttsResult.modelId || ttsModelToUse,
+          ttsFallbackModel: ttsFallbackModelToUse,
+          cleanScript: ttsResult.cleanScript,
+          wordBoundaries: ttsResult.wordBoundaries || [],
+          downloadedVideoPath: null,
+          hasDownloadedVideo: false,
+          hasFinalVideo: true,
+          hasSilentVideo: true,
+          productTitle: highlight.detectedProduct || productTitle || videoMeta.title,
+          productDescription: productDescription || '',
+          youtubeUrl,
+          shopeeLink: effectiveShopeeLink || shopeeLink || '',
+          highlight: {
+            startTime: highlight.startTime,
+            endTime: highlight.endTime,
+            duration: highlight.duration,
+            hasProductBrand: isBrandDetected,
+            detectedBrand: highlight.detectedBrand || 'none',
+            allowHflip: !isBrandDetected,
+            reframe: highlight.reframe,
+            clips: highlight.clips,
+          },
+          hasProductBrand: isBrandDetected,
+          detectedBrand: highlight.detectedBrand || 'none',
+          productHook: highlight.productHook,
+          sampleContext: scriptData.sampleContext,
+          scenes: scriptData.scenes,
+          voiceoverScript: scriptData.voiceoverScript,
+          aiStudioPrompt: scriptData.aiStudioPrompt,
+          caption: scriptData.caption,
+          lexicon: scriptData.lexicon_to_replace || {},
+          videoTitle: videoMeta.title,
+          isOrphan: false,
+        };
+
+        activeJobs.set(jobId, completedResult);
+        persistJob(jobId, completedResult);
+
+        updateProgress({
+          step: 'completed',
+          message: '🎉 Video Final 9:16 + Voiceover Gadis Indonesia & Subtitle Selesai!',
+          progress: 100,
+          status: 'completed',
+          result: completedResult,
+        });
+
+        return completedResult;
+      } catch (mergeErr) {
+        console.warn(`[Job ${jobId}] Auto merge error, falling back to awaiting_voiceover:`, mergeErr.message);
+      }
+    }
+
+    // Fallback: If TTS or auto merge fails, pause at awaiting_voiceover so user can still continue
+    const stage1Result = {
+      ...extraJobMeta,
+      jobId,
+      stage: 'awaiting_voiceover',
+      createdAt: jobMeta.createdAt,
+      silentFileName,
+      silentVideoUrl: `/api/video/${silentFileName}`,
+      silentLocalPath: silentOutputPath,
+      downloadedVideoPath: rawVideoPath,
+      hasSilentVideo: true,
+      hasFinalVideo: false,
+      productTitle: highlight.detectedProduct || productTitle || videoMeta.title,
+      productDescription: productDescription || '',
+      youtubeUrl,
+      shopeeLink: effectiveShopeeLink || shopeeLink || '',
+      highlight: {
+        startTime: highlight.startTime,
+        endTime: highlight.endTime,
+        duration: highlight.duration,
+        hasProductBrand: isBrandDetected,
+        detectedBrand: highlight.detectedBrand || 'none',
+        allowHflip: !isBrandDetected,
+        reframe: highlight.reframe,
+        clips: highlight.clips
+      },
+      hasProductBrand: isBrandDetected,
+      detectedBrand: highlight.detectedBrand || 'none',
+      productHook: highlight.productHook,
+      sampleContext: scriptData.sampleContext,
+      scenes: scriptData.scenes,
+      voiceoverScript: scriptData.voiceoverScript,
+      aiStudioPrompt: scriptData.aiStudioPrompt,
+      cleanScript: cleanScriptForTTS(rawVoiceScript),
+      caption: scriptData.caption,
+      lexicon: scriptData.lexicon_to_replace || {},
+      videoTitle: videoMeta.title,
+      isOrphan: false,
+    };
+
+    activeJobs.set(jobId, stage1Result);
+    persistJob(jobId, stage1Result);
+
+    updateProgress({
+      step: 'awaiting_voiceover',
+      message: 'Tahap 1 Selesai! Kotak Scene, Naskah, dan Muted 9:16 Video Ready.',
+      progress: 100, status: 'awaiting_voiceover', result: stage1Result
+    });
+
+    return stage1Result;
+  } catch (error) {
+    if (error.isAiRejection) {
+      console.warn(`[Job ${jobId}] ℹ️ Video ditolak Filter AI: ${error.rejectionReason || error.message}`);
+    } else {
+      console.error(`[Job ${jobId}] Stage 1 Pipeline Error:`, error);
+    }
+
+    // Immediately clean up temporary files so disk storage is freed
+    deleteJobTempDirectory(jobId, tempDir);
+
+    const hasSilentVideo = silentOutputPath && fs.existsSync(silentOutputPath);
+    const hasRawVideo = rawVideoPath && fs.existsSync(rawVideoPath);
+
+    const isAuto = Boolean(extraJobMeta?.isAutoGenerated);
+
+    // If 1080p video was already downloaded or rendered into silent 9:16, NEVER delete or purge it!
+    // Note: For auto jobs, only preserve if silent 9:16 was actually rendered (hasSilentVideo).
+    if ((!isAuto && (hasSilentVideo || hasRawVideo)) || (isAuto && hasSilentVideo)) {
+      console.log(`[Job ${jobId}] ✅ Video asset exists (${hasSilentVideo ? 'silent 9:16' : 'raw 1080p'}). Preserving job in history as awaiting_voiceover.`);
+      const currentJob = activeJobs.get(jobId) || jobMeta;
+      const preservedJob = {
+        ...currentJob,
+        ...extraJobMeta,
+        stage: 'awaiting_voiceover',
+        status: 'awaiting_voiceover',
+        lastError: error.message,
+        errorAt: new Date().toISOString(),
+        silentLocalPath: hasSilentVideo ? silentOutputPath : null,
+        silentVideoUrl: hasSilentVideo ? `/api/video/${silentFileName}` : null,
+        downloadedVideoPath: hasRawVideo ? rawVideoPath : null,
+        hasSilentVideo: Boolean(hasSilentVideo),
+        hasFinalVideo: false,
+        productTitle: productTitle || videoMeta?.title,
+        productDescription: productDescription || '',
+        youtubeUrl: currentYoutubeUrl,
+        shopeeLink: effectiveShopeeLink || shopeeLink || '',
+        videoTitle: videoMeta?.title,
+        highlight,
+      };
+      activeJobs.set(jobId, preservedJob);
+      persistJob(jobId, preservedJob);
+
+      updateProgress({
+        step: 'awaiting_voiceover',
+        message: `Video 1080p tersimpan! (${error.message}). Siap untuk Retry Voiceover.`,
+        progress: 100,
+        status: 'awaiting_voiceover',
+        result: preservedJob,
+      });
+
+      return preservedJob;
+    }
+
+    if (isAuto) {
+      // Failed auto jobs should not clutter the job list or disk
+      deleteJobFiles(jobId, outputDir, tempDir);
+      activeJobs.delete(jobId);
+      deletePersistedJob(jobId);
+    } else {
+      const currentJob = activeJobs.get(jobId) || jobMeta;
+      const errorJob = {
+        ...currentJob,
+        ...extraJobMeta,
+        stage: 'error',
+        lastError: error.message,
+        errorAt: new Date().toISOString(),
+      };
+      activeJobs.set(jobId, errorJob);
+      persistJob(jobId, errorJob);
+    }
+
+    const isQuotaError = isQuotaErrorMessage(error.message);
+    updateProgress({
+      step: 'error',
+      message: error.message || 'An error occurred during video processing.',
+      progress: 0, status: 'error', error: error.message, isQuotaError, canRetry: true
+    });
+
+    error.jobId = jobId;
+    error.isQuotaError = isQuotaError;
+    throw error;
+  }
+}
+
+// 5. Manual STAGE 1 Endpoint
+app.post('/api/generate', async (req, res) => {
+  reloadEnvironment();
+  const {
+    youtubeUrl,
+    shopeeLink,
+    productTitle,
+    productDescription,
+    apiKey,
+    options = {},
+    aiProvider,
+    jobId: clientJobId,
+  } = req.body;
+
+  if (aiProvider) {
+    options.aiProvider = aiProvider;
+  }
+
+  if (!youtubeUrl) {
+    return res.status(400).json({ error: 'YouTube Video URL is required.' });
+  }
+  if (!isValidHttpUrl(youtubeUrl) || !extractVideoId(youtubeUrl)) {
+    return res.status(400).json({ error: 'URL YouTube tidak valid. Gunakan URL youtube.com atau youtu.be yang berisi video ID.' });
+  }
+  if (shopeeLink && !isValidHttpUrl(shopeeLink)) {
+    return res.status(400).json({ error: 'Link produk harus berupa URL http/https yang valid.' });
+  }
+  if (productTitle && isBulkyOrUnsuitableProduct(productTitle)) {
+    return res.status(400).json({ error: 'Produk ditolak karena tergolong perabot besar / rak besar yang memenuhi frame. Niche disetel hanya untuk alat dapur praktis.' });
+  }
+
+  const dailyStats = getDailyOutputVideoStats();
+  if (dailyStats.isLimitReached && !req.body.forceOverrideDailyLimit) {
+    return res.status(429).json({
+      error: `Batas kuota harian ${dailyStats.limit} video telah tercapai hari ini (${dailyStats.count}/${dailyStats.limit} video). Dibatasi untuk mencegah pemblokiran IP YouTube/AI. Silakan coba lagi besok.`,
+      dailyStats,
+    });
+  }
+
+  const jobId = clientJobId || crypto.randomBytes(6).toString('hex');
+  if (clientJobId && req.body.forceFreshVideo) {
+    console.log(`[Job ${clientJobId}] Force-fresh generation requested: cleaning up old files...`);
+    deleteJobFiles(clientJobId, outputDir, tempDir);
+    const existingJob = activeJobs.get(clientJobId);
+    if (existingJob) {
+      existingJob.downloadedVideoPath = null;
+      existingJob.hasDownloadedVideo = false;
+      existingJob.hasFinalVideo = false;
+      existingJob.hasSilentVideo = false;
+      existingJob.stage = 'running';
+    }
+  }
+
+  try {
+    const stage1Result = await runStage1Pipeline({
+      jobId,
+      youtubeUrl,
+      shopeeLink,
+      productTitle,
+      productDescription,
+      apiKey,
+      options,
+    });
+    res.json(stage1Result);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      isQuotaError: error.isQuotaError || false,
+      canRetry: true,
+      jobId,
+    });
+  }
+});
+
+// ─── Auto Mode State & Endpoints ─────────────────────────────────────────────
+
+function publicAutoRunState(run) {
+  const dailyStats = getDailyOutputVideoStats();
+  if (!run) return { status: 'idle', dailyStats };
+  return {
+    runId: run.runId,
+    status: run.status,
+    maxJobs: run.maxJobs,
+    successfulJobs: run.successfulJobs,
+    failedJobs: run.failedJobs,
+    skippedProducts: run.skippedProducts,
+    currentJobId: run.currentJobId,
+    currentProductTitle: run.currentProductTitle,
+    message: run.message,
+    progress: run.progress,
+    startedAt: run.startedAt,
+    updatedAt: run.updatedAt,
+    finishedAt: run.finishedAt || null,
+    failures: run.failures.slice(-10),
+    dailyStats,
+  };
+}
+
+function updateAutoRun(run, patch) {
+  Object.assign(run, patch, { updatedAt: new Date().toISOString() });
+  autoRuns.set(run.runId, run);
+  console.log(`[Auto ${run.runId}] [${run.progress || 0}%] ${run.message || run.status}`);
+}
+
+function getLatestAutoRun() {
+  const all = Array.from(autoRuns.values()).sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
+  return all[0] || null;
+}
+
+async function runAutoStage1Worker(run) {
+  try {
+    const isUnlimited = run.maxJobs === 'unlimited' || run.maxJobs === Infinity || !run.maxJobs;
+    updateAutoRun(run, {
+      status: 'running',
+      message: isUnlimited ? 'Memulai pipeline Auto Mode (Unlimited)...' : 'Memulai pencarian produk viral Shopee...',
+      progress: 5,
+    });
+
+    const seenShopeeUrls = new Set();
+    const usedYouTubeVideoIds = getAllUsedYouTubeVideoIds();
+    let keywordQueue = getAutoKeywords(200, { niche: run.niche, excludeUsed: true, shuffle: true });
+    let emptyKeywordRetryCount = 0;
+    let quotaExhausted = false;
+    let quotaErrorMessage = '';
+
+    while (run.status !== 'stopping' && run.status !== 'stopped') {
+      const dailyStats = getDailyOutputVideoStats();
+      if (dailyStats.isLimitReached) {
+        console.log(`[Auto] 🛑 Batas harian ${dailyStats.limit} video telah tercapai (${dailyStats.count}/${dailyStats.limit} video hari ini). Auto Mode dihentikan untuk mencegah pemblokiran IP.`);
+        updateAutoRun(run, {
+          status: 'completed',
+          message: `🛑 Batas harian ${dailyStats.limit} video telah tercapai (${dailyStats.count}/${dailyStats.limit} video hari ini). Auto Mode dihentikan untuk mencegah pemblokiran IP. Silakan lanjutkan besok.`,
+          progress: 100,
+          finishedAt: new Date().toISOString(),
+          currentJobId: null,
+          currentProductTitle: null,
+          dailyStats,
+        });
+        break;
+      }
+
+      if (run.status === 'stopping' || run.status === 'stopped') {
+        break;
+      }
+
+      if (!isUnlimited && run.successfulJobs >= run.maxJobs) {
+        break;
+      }
+
+      if (keywordQueue.length === 0) {
+        const freshKeywords = getAutoKeywords(200, { niche: run.niche, excludeUsed: true, shuffle: true });
+        if (freshKeywords && freshKeywords.length > 0) {
+          keywordQueue = freshKeywords;
+          emptyKeywordRetryCount = 0;
+        } else {
+          emptyKeywordRetryCount++;
+          if (emptyKeywordRetryCount > 3) {
+            console.log('[Auto] Tidak ada kata kunci baru yang tersedia setelah 3x percobaan.');
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
+        }
+      }
+
+      const keyword = keywordQueue.shift();
+      if (!keyword) continue;
+
+      // ── DEDUPLIKASI PRODUK HARIAN ──
+      // Hindari membuat video produk sejenis berulang kali pada hari yang sama (misal 2x atau 3x crepes maker)
+      const keywordCoreInfo = extractCoreProductInfo(keyword);
+      const coreNoun = (keywordCoreInfo.coreProductNoun || '').toLowerCase().trim();
+      const usedNouns = getAllUsedProductNounsToday();
+      if (coreNoun && usedNouns.has(coreNoun)) {
+        console.log(`[Auto] Skip "${keyword}": Produk dasar sejenis ("${coreNoun}") sudah pernah dibuat hari ini.`);
+        continue;
+      }
+
+      const currentTargetIndex = run.successfulJobs + 1;
+      const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${dailyStats.limit})`;
+
+      updateAutoRun(run, {
+        message: `[${targetLabel}] Mencari video di mesin telusur (YouTube & Bing) untuk: "${keyword}"...`,
+        progress: isUnlimited ? 10 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 2),
+      });
+
+      // ── STRATEGI VIDEO-FIRST: Cari video demonstrasi produk langsung di multi-engine ──
+      let candidates = await searchMultiEngineVideos(keyword, {
+        limit: 16,
+        excludeVideoIds: usedYouTubeVideoIds,
+        onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
+      });
+
+      // Jika pencarian teks multi-engine kosong, coba temukan produk Shopee dan cari video via gambar produknya!
+      if (!candidates || candidates.length === 0) {
+        try {
+          const shopeeCandidate = await discoverSingleShopeeProduct(keyword, seenShopeeUrls);
+          if (shopeeCandidate && shopeeCandidate.imageUrl) {
+            updateAutoRun(run, { message: `[${targetLabel}] Mencoba pencarian video via gambar produk Shopee: "${shopeeCandidate.title.slice(0, 30)}..."` });
+            const visualCandidates = await searchVideosByProductImage({
+              imageUrl: shopeeCandidate.imageUrl,
+              productTitle: shopeeCandidate.title,
+              productDescription: shopeeCandidate.description,
+              limit: 16,
+              excludeVideoIds: usedYouTubeVideoIds,
+              onProgress: (p) => updateAutoRun(run, { message: `[${targetLabel}] ${p.message}` }),
+            });
+            if (visualCandidates && visualCandidates.length > 0) {
+              candidates = visualCandidates;
+            }
+          }
+        } catch (visAutoErr) {
+          console.warn(`[Auto] Fallback visual search error for ${keyword}:`, visAutoErr.message);
+        }
+      }
+
+      if (!candidates || candidates.length === 0) {
+        run.skippedProducts++;
+        updateAutoRun(run, { message: `[${targetLabel}] Skip "${keyword}": Tidak ada video kandidat baru yang cocok.` });
+        continue;
+      }
+
+      let jobSuccess = false;
+      if (run.status === 'stopping' || run.status === 'stopped') break;
+
+      const autoJobId = `auto_${crypto.randomBytes(5).toString('hex')}`;
+      run.currentJobId = autoJobId;
+      const currentCandidateTitle = keyword || candidates[0]?.title;
+
+      for (const cand of candidates) {
+        const candidateVid = extractVideoId(cand.url) || cand.id;
+        if (candidateVid) usedYouTubeVideoIds.add(candidateVid);
+      }
+
+      try {
+        updateAutoRun(run, {
+          currentProductTitle: currentCandidateTitle,
+          message: `[${targetLabel}] Multi-Video Stream (3-5 video) untuk "${currentCandidateTitle.slice(0, 30)}..."...`,
+          progress: isUnlimited ? 25 : Math.min(95, Math.round((run.successfulJobs / run.maxJobs) * 100) + 5),
+        });
+
+        const candidateShopeeLink = buildShopeeSearchUrl(keyword || currentCandidateTitle);
+        const completedResult = await runStage1Pipeline({
+          jobId: autoJobId,
+          youtubeUrl: null, // Mode Multi-Video Harvesting!
+          targetCandidates: candidates,
+          shopeeLink: candidateShopeeLink || '',
+          productTitle: currentCandidateTitle,
+          productDescription: candidates[0]?.description || '',
+          apiKey: undefined,
+          options: {
+            ...run.options,
+            niche: run.niche || 'kitchen_tools',
+            aiProvider: run.options?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter'),
+            autoSearchFallback: true,
+            multiVideoHarvesting: true,
+            isVideoFirst: true,
+            sceneDuration: 4.8,
+            minDuration: 30.0,
+          },
+          extraJobMeta: { autoRunId: run.runId, isAutoGenerated: true, isVideoFirst: true, searchKeyword: keyword },
+          requireCleanGeminiPlan: true,
+          onProgress: (p) => {
+            if (isUnlimited) {
+              updateAutoRun(run, {
+                message: `[${targetLabel}] ${p.message}`,
+                progress: Math.min(98, Math.max(10, p.progress || 10)),
+              });
+            } else {
+              const baseProgress = Math.round((run.successfulJobs / run.maxJobs) * 100);
+              const stepFraction = Math.round(((p.progress || 0) / 100) * (100 / run.maxJobs));
+              updateAutoRun(run, {
+                message: `[${targetLabel}] ${p.message}`,
+                progress: Math.min(98, baseProgress + stepFraction),
+              });
+            }
+          },
+        });
+
+        const finalItemTitle = (completedResult?.detectedProduct || '').trim() || completedResult?.productTitle || currentCandidateTitle;
+        run.successfulJobs++;
+        jobSuccess = true;
+        markKeywordAsUsed(keyword, { productTitle: finalItemTitle, jobId: autoJobId, source: 'auto_worker' });
+        
+        const dailyStatsAfter = getDailyOutputVideoStats();
+        const finishedDisplay = isUnlimited ? `Hari ini: ${dailyStatsAfter.count}/${dailyStatsAfter.limit} video` : `${run.successfulJobs}/${run.maxJobs}`;
+        updateAutoRun(run, {
+          message: `✅ [${finishedDisplay}] Selesai: "${finalItemTitle.slice(0, 35)}..."`,
+          progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
+        });
+
+        if (dailyStatsAfter.isLimitReached) {
+          console.log(`[Auto] 🛑 Batas kuota harian ${dailyStatsAfter.limit} video telah tercapai (${dailyStatsAfter.count}/${dailyStatsAfter.limit} video). Auto Mode dihentikan.`);
+          updateAutoRun(run, {
+            status: 'completed',
+            message: `🛑 Batas harian ${dailyStatsAfter.limit} video telah tercapai (${dailyStatsAfter.count}/${dailyStatsAfter.limit} video hari ini). Auto Mode dihentikan untuk mencegah pemblokiran IP. Silakan lanjutkan besok.`,
+            progress: 100,
+            finishedAt: new Date().toISOString(),
+            currentJobId: null,
+            currentProductTitle: null,
+            dailyStats: dailyStatsAfter,
+          });
+          break;
+        }
+      } catch (err) {
+        console.warn(`[Auto] Multi-video harvesting failed for ${keyword}:`, err.message);
+        // Delete temporary files ONLY IF the job did NOT already save a media asset
+        const existingJob = activeJobs.get(autoJobId);
+        const hasSavedMedia = existingJob && (existingJob.finalLocalPath || existingJob.silentLocalPath || existingJob.downloadedVideoPath);
+        if (!hasSavedMedia) {
+          deleteJobFiles(autoJobId, outputDir, tempDir);
+          activeJobs.delete(autoJobId);
+          deletePersistedJob(autoJobId);
+        } else {
+          const savedItemTitle = existingJob.productTitle || currentCandidateTitle;
+          run.successfulJobs++;
+          jobSuccess = true;
+          markKeywordAsUsed(keyword, { productTitle: savedItemTitle, jobId: autoJobId, source: 'auto_worker' });
+          
+          const dailyStatsAfterMedia = getDailyOutputVideoStats();
+          const savedDisplay = isUnlimited ? `Hari ini: ${dailyStatsAfterMedia.count}/${dailyStatsAfterMedia.limit} video` : `${run.successfulJobs}/${run.maxJobs}`;
+          updateAutoRun(run, {
+            message: `✅ [${savedDisplay}] Video 1080p tersimpan (Menunggu Voiceover): "${savedItemTitle.slice(0, 30)}..."`,
+            progress: isUnlimited ? 100 : Math.round((run.successfulJobs / run.maxJobs) * 100),
+          });
+
+          if (dailyStatsAfterMedia.isLimitReached) {
+            console.log(`[Auto] 🛑 Batas kuota harian ${dailyStatsAfterMedia.limit} video telah tercapai (${dailyStatsAfterMedia.count}/${dailyStatsAfterMedia.limit} video). Auto Mode dihentikan.`);
+            updateAutoRun(run, {
+              status: 'completed',
+              message: `🛑 Batas harian ${dailyStatsAfterMedia.limit} video telah tercapai (${dailyStatsAfterMedia.count}/${dailyStatsAfterMedia.limit} video hari ini). Auto Mode dihentikan untuk mencegah pemblokiran IP. Silakan lanjutkan besok.`,
+              progress: 100,
+              finishedAt: new Date().toISOString(),
+              currentJobId: null,
+              currentProductTitle: null,
+              dailyStats: dailyStatsAfterMedia,
+            });
+            break;
+          }
+        }
+
+        run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
+
+        // Pengecekan Error Kritis untuk Menghentikan Auto Mode secara Tepat:
+        const msg = (err.message || '').toLowerCase();
+
+        // 1. YouTube IP Block / Bot Detection / HTTP 429 (Stop Auto Mode untuk mencegah ban/looping sia-sia)
+        const isYouTubeBotBlock = (
+          msg.includes('youtube membatasi') ||
+          msg.includes('memblokir ip') ||
+          msg.includes('bot detection') ||
+          (msg.includes('youtube') && (msg.includes('429') || msg.includes('too many requests') || msg.includes('sign in to confirm')))
+        );
+        if (isYouTubeBotBlock) {
+          console.error(`[Auto] 🛑 YouTube memblokir/membatasi IP server (HTTP 429 / Bot Detection). Menghentikan Auto Mode.`);
+          updateAutoRun(run, {
+            status: 'stopped',
+            message: `⚠️ Auto Mode berhenti otomatis: YouTube memblokir IP server (HTTP 429 / Bot Detection). Solusi: Ganti IP proxy / aktifkan Mode Pesawat HP atau perbarui cookies.txt. (Berhasil: ${run.successfulJobs}, Gagal: ${run.failedJobs}).`,
+            progress: 100,
+            finishedAt: new Date().toISOString(),
+            currentJobId: null,
+            currentProductTitle: null,
+          });
+          return;
+        }
+
+        // 2. YouTube Cookies / Authentication Error
+        const isYouTubeAuthError = msg.includes('from-browser') || msg.includes('--cookies') ||
+          msg.includes('cookies for the authentication') || msg.includes('login required') || msg.includes('private video') ||
+          (msg.includes('yt-dlp') && msg.includes('authentication'));
+        if (isYouTubeAuthError) {
+          const isProxyActive = isLocalPortListening(10808) || Boolean(process.env.PROXY_URL || process.env.RESIDENTIAL_PROXY);
+          const isCookiesDisabled = process.env.DISABLE_COOKIES === 'true' || process.env.NO_COOKIES === 'true';
+
+          if (isProxyActive || isCookiesDisabled) {
+            console.warn(`[Auto] ⚠️ Video ini membutuhkan login / autentikasi. Melewati produk ini dan lanjut ke antrean berikutnya (Mode Proxy 10808 / Tanpa Cookies aktif).`);
+          } else {
+            console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
+            updateAutoRun(run, {
+              status: 'stopped',
+              message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Solusi: Hubungkan SSH Reverse Proxy Termux (port 10808) atau upload cookies.txt.',
+              progress: 100,
+              finishedAt: new Date().toISOString(),
+              currentJobId: null,
+              currentProductTitle: null,
+            });
+            return;
+          }
+        }
+
+        // 3. Limit Kuota Model Gemini AI (Visual atau TTS)
+        const isYouTubeError = isYouTubeBotBlock || isYouTubeAuthError || msg.includes('youtube') || msg.includes('yt-dlp');
+        const isQuota = !isYouTubeError && Boolean(
+          err.isAllModelsQuotaExhausted ||
+          err.isQuotaError ||
+          isQuotaErrorMessage(err.message) ||
+          msg.includes('resource_exhausted') ||
+          (msg.includes('quota') && !msg.includes('disk')) ||
+          (msg.includes('kuota') && !msg.includes('lokal')) ||
+          msg.includes('rate_limit') ||
+          (msg.includes('rate limit') && msg.includes('gemini')) ||
+          ((err.status === 429 || err.statusCode === 429) && !isYouTubeError) ||
+          (msg.includes('gemini') && (msg.includes('limit') || msg.includes('exhausted') || msg.includes('too many requests')))
+        );
+
+        if (isQuota) {
+          console.error(`[Auto] 🛑 Limit kuota/rate limit Gemini (Visual atau TTS) telah habis: ${err.message}. Menghentikan Auto Mode.`);
+          quotaExhausted = true;
+          quotaErrorMessage = err.message;
+          break;
+        }
+
+        // 4. Fatal authentication error (401 with invalid api key)
+        const isFatalAuth = (err.status === 401 || err.statusCode === 401) && (msg.includes('api key') || msg.includes('unauthorized'));
+        if (isFatalAuth) {
+          console.error('[Auto] API Key tidak valid. Menghentikan Auto Mode.');
+          throw err;
+        }
+      }
+
+      if (quotaExhausted) {
+        break;
+      }
+
+      if (!jobSuccess) {
+        run.failedJobs++;
+        updateAutoRun(run, {
+          failedJobs: run.failedJobs,
+          message: `❌ [${targetLabel}] Gagal menemukan video bersih untuk: "${keyword.slice(0, 30)}..."`,
+        });
+      }
+
+      // If user stopped auto mode, break immediately after current job finishes!
+      if (run.status === 'stopping' || run.status === 'stopped') {
+        break;
+      }
+
+      // Graceful jitter delay between product batches to prevent aggressive scraping blocks
+      if ((isUnlimited || currentTargetIndex < run.maxJobs) && (run.status === 'running' || run.status === 'starting')) {
+        const delayMs = 3000 + Math.floor(Math.random() * 2000);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+
+    if (quotaExhausted) {
+      updateAutoRun(run, {
+        status: 'completed',
+        message: `⚠️ Auto Mode berhenti otomatis: Limit kuota/rate limit model Gemini (Visual atau TTS) telah habis (${quotaErrorMessage || 'Batas kuota harian tercapai'}). Total video berhasil dibuat: ${run.successfulJobs}, Gagal: ${run.failedJobs}, Dilewati: ${run.skippedProducts}.`,
+        progress: 100,
+        finishedAt: new Date().toISOString(),
+        currentJobId: null,
+        currentProductTitle: null,
+      });
+      return;
+    }
+
+    const finalStatus = run.status === 'stopping' ? 'stopped' : 'completed';
+    const totalDisplay = isUnlimited ? `${run.successfulJobs} video (Mode Unlimited)` : `${run.successfulJobs}/${run.maxJobs}`;
+    updateAutoRun(run, {
+      status: finalStatus,
+      message: `Auto Mode selesai. Berhasil: ${totalDisplay}, Gagal: ${run.failedJobs}, Dilewati: ${run.skippedProducts}.`,
+      progress: 100,
+      finishedAt: new Date().toISOString(),
+      currentJobId: null,
+      currentProductTitle: null,
+    });
+  } catch (err) {
+    console.error('[Auto] Fatal worker error:', err);
+    updateAutoRun(run, {
+      status: 'error',
+      message: err.message || 'Auto Mode terhenti karena error.',
+      progress: 100,
+      finishedAt: new Date().toISOString(),
+    });
+  }
+}
+
+app.get('/api/auto/status', (req, res) => {
+  res.json({ run: publicAutoRunState(getLatestAutoRun()) });
+});
+
+app.get('/api/auto/keywords/stats', (req, res) => {
+  try {
+    const stats = getUsedKeywordsStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auto/keywords/reset', (req, res) => {
+  try {
+    const result = clearUsedKeywords();
+    res.json({ success: true, message: 'Riwayat kata kunci berhasil di-reset.', result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/daily-limit', (req, res) => {
+  try {
+    const stats = getDailyOutputVideoStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/niches', (req, res) => {
+  try {
+    res.json({ niches: getAllNiches() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/auto/start', (req, res) => {
+  reloadEnvironment();
+  const latest = getLatestAutoRun();
+  if (latest && (latest.status === 'running' || latest.status === 'starting')) {
+    if (req.body?.niche && latest.niche && latest.niche !== req.body.niche) {
+      return res.status(400).json({
+        error: `Auto Mode sedang aktif berjalan dengan niche "${latest.niche}". Hentikan terlebih dahulu sebelum beralih ke niche "${req.body.niche}".`,
+        run: publicAutoRunState(latest),
+      });
+    }
+    return res.json({ run: publicAutoRunState(latest) });
+  }
+
+  const dailyStats = getDailyOutputVideoStats();
+  if (dailyStats.isLimitReached && !req.body.forceOverrideDailyLimit) {
+    return res.status(429).json({
+      error: `Batas kuota harian ${dailyStats.limit} video telah tercapai hari ini (${dailyStats.count}/${dailyStats.limit} video). Auto Mode dicegah untuk melindungi IP dari pemblokiran YouTube/AI. Silakan coba lagi besok.`,
+      dailyStats,
+    });
+  }
+
+  const { maxJobs = 'unlimited', options = {}, niche = 'kitchen_tools' } = req.body || {};
+  const isUnlimited = maxJobs === 'unlimited' || maxJobs === Infinity || !maxJobs || Number(maxJobs) <= 0;
+  const runId = `autorun_${crypto.randomBytes(4).toString('hex')}`;
+  const run = {
+    runId,
+    status: 'starting',
+    maxJobs: isUnlimited ? 'unlimited' : Math.max(1, Math.min(500, Number(maxJobs) || 10)),
+    successfulJobs: 0,
+    failedJobs: 0,
+    skippedProducts: 0,
+    niche,
+    currentJobId: null,
+    currentProductTitle: null,
+    message: isUnlimited ? 'Memulai pipeline Auto Mode (Unlimited)...' : 'Memulai pipeline Auto Mode...',
+    progress: 0,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    options,
+    failures: [],
+  };
+
+  autoRuns.set(runId, run);
+  runAutoStage1Worker(run);
+  res.json({ run: publicAutoRunState(run) });
+});
+
+app.post('/api/auto/stop', (req, res) => {
+  const { runId } = req.body || {};
+  const run = autoRuns.get(runId) || getLatestAutoRun();
+  if (run && (run.status === 'running' || run.status === 'starting')) {
+    updateAutoRun(run, { status: 'stopping', message: 'Menghentikan Auto Mode setelah job saat ini selesai...' });
+  }
+  res.json({ run: publicAutoRunState(run) });
+});
+
+app.get('/api/auto/progress/:runId', (req, res) => {
+  const { runId } = req.params;
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sendProgress = () => {
+    const run = autoRuns.get(runId);
+    res.write(`data: ${JSON.stringify({ run: publicAutoRunState(run) })}\n\n`);
+    if (run && ['completed', 'stopped', 'error'].includes(run.status)) {
+      clearInterval(interval);
+      res.end();
+    }
+  };
+
+  const interval = setInterval(sendProgress, 800);
+  sendProgress();
+
+  req.on('close', () => clearInterval(interval));
+});
+
+// 6. STAGE 2: Upload Voiceover & Merge Subtitles
+app.post('/api/upload-voiceover', upload.single('audio'), async (req, res) => {
+  reloadEnvironment();
+  const { jobId } = req.body;
+  const audioFile = req.file;
+
+  if (!jobId) return res.status(400).json({ error: 'Job ID is required.' });
+  if (!audioFile) return res.status(400).json({ error: 'Voiceover audio file is required.' });
+
+  const job = activeJobs.get(jobId);
+  const silentPath = job?.silentLocalPath || path.join(outputDir, `silent_clip_${jobId}.mp4`);
+
+  if (!job || !fs.existsSync(silentPath)) {
+    return res.status(404).json({ error: 'Job session expired or silent video not found. Please regenerate Stage 1.' });
+  }
+
+  const finalFileName = `final_clip_${jobId}.mp4`;
+  const finalOutputPath = path.join(outputDir, finalFileName);
+  const srtPath = path.join(uploadsDir, `subtitles_${jobId}.ass`);
+
+  const updateProgress = (data) => {
+    const payload = typeof data === 'string'
+      ? { step: 'processing', message: data, progress: 50, jobId }
+      : { ...data, jobId };
+    jobProgress.set(jobId, payload);
+    console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message}`);
+  };
+
+  updateProgress({ step: 'merge_start', message: 'Merging voiceover & burning subtitles...', progress: 20, status: 'running' });
+
+  try {
+    const silentDurationSec = await getMediaDurationSec(silentPath) || job.highlight?.duration || 45;
+    const audioDurationSec = await getMediaDurationSec(audioFile.path);
+
+    const subtitleTargetDuration = Math.max(silentDurationSec, audioDurationSec || 0);
+
+    const scriptToUse = (req.body?.customScript && req.body.customScript.trim())
+      ? req.body.customScript.trim()
+      : (job.aiStudioPrompt || job.voiceoverScript || '');
+
+    updateProgress({ step: 'subtitles', message: `Generating synchronized subtitle captions for ${silentDurationSec.toFixed(1)}s video...`, progress: 40, status: 'running' });
+    generateSrtSubtitles(scriptToUse, subtitleTargetDuration, srtPath, {
+      wordBoundaries: job?.wordBoundaries || [],
+      videoDurationSec: silentDurationSec,
+      lexicon: job?.lexicon || {},
+    });
+
+    updateProgress({ step: 'render_final', message: 'Rendering final 9:16 video with Voiceover & Subtitles...', progress: 60, status: 'running' });
+    await mergeVoiceoverAndBurnSubtitles({
+      silentVideoPath: silentPath, voiceoverAudioPath: audioFile.path,
+      srtPath,
+      outputVideoPath: finalOutputPath,
+      targetDurationSec: silentDurationSec,
+      onProgress: updateProgress,
+    });
+
+    cleanupTempFiles([audioFile.path, srtPath]);
+
+    deleteJobTempDirectory(jobId, tempDir);
+    console.log(`[Cleaner] Raw YouTube video and temp files for job ${jobId} permanently removed.`);
+
+    const cacheBuster = Date.now();
+    const finalResult = {
+      ...job,
+      stage: 'completed',
+      finalFileName,
+      videoUrl: `/api/video/${finalFileName}?t=${cacheBuster}`,
+      downloadUrl: `/api/download/${finalFileName}?t=${cacheBuster}`,
+      finalLocalPath: finalOutputPath,
+      downloadedVideoPath: null,
+      hasDownloadedVideo: false,
+    };
+
+    activeJobs.set(jobId, finalResult);
+    persistJob(jobId, finalResult);
+
+    updateProgress({ step: 'completed', message: 'Final 9:16 Video Ready!', progress: 100, status: 'completed', result: finalResult });
+
+    res.json({ success: true, ...finalResult });
+  } catch (error) {
+    console.error(`[Job ${jobId}] Stage 2 Error:`, error);
+    cleanupTempFiles([audioFile?.path, srtPath]);
+    updateProgress({ step: 'error', message: error.message, progress: 0, status: 'error', error: error.message });
+    res.status(500).json({ success: false, error: error.message, jobId });
+  }
+});
+
+/** Helper function to automatically sync final videos to Android MyProject on Termux */
+function syncVideoToAndroidStorage(finalOutputPath, finalFileName, projectName = 'clipper') {
+  if (process.platform !== 'android' && process.platform !== 'linux') return;
+  if (!finalOutputPath || !fs.existsSync(finalOutputPath)) return;
+
+  const candidateDirs = [
+    path.join('/storage/emulated/0/MyProject', projectName),
+    path.join(process.env.HOME || '', 'storage', 'shared', 'MyProject', projectName),
+    path.join('/sdcard/MyProject', projectName),
+    path.join('/storage/emulated/0/MyProject'),
+    path.join(process.env.HOME || '', 'storage', 'shared', 'MyProject'),
+    path.join('/sdcard/MyProject'),
+  ];
+
+  for (const dir of candidateDirs) {
+    try {
+      const parent = path.dirname(dir);
+      if (fs.existsSync(parent) || fs.existsSync(dir)) {
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        const targetPath = path.join(dir, finalFileName);
+        fs.copyFileSync(finalOutputPath, targetPath);
+        console.log(`[Android Sync] ✅ Video final otomatis disalin ke MyProject HP: ${targetPath}`);
+        return targetPath;
+      }
+    } catch (err) {
+      // Continue to next candidate
+    }
+  }
+}
+
+/** Helper function to process voiceover & final video merge for a single job */
+async function processJobVoiceover(jobId, customScript = null, options = {}) {
+  let job = activeJobs.get(jobId);
+  if (!job && fs.existsSync(jobsFilePath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
+      if (existing[jobId]) {
+        job = existing[jobId];
+        activeJobs.set(jobId, job);
+      }
+    } catch {}
+  }
+
+  const silentPath = job?.silentLocalPath || path.join(outputDir, `silent_clip_${jobId}.mp4`);
+
+  if (!job || !fs.existsSync(silentPath)) {
+    const notFoundErr = new Error(`File video 9:16 untuk job ${jobId} tidak ditemukan di folder output.`);
+    notFoundErr.statusCode = 404;
+    throw notFoundErr;
+  }
+
+  let scriptToUse = (customScript && customScript.trim())
+    ? customScript.trim()
+    : (job.voiceoverScript || job.aiStudioPrompt || '');
+
+  if (!scriptToUse && Array.isArray(job.scenes) && job.scenes.length > 0) {
+    scriptToUse = job.scenes.map((s, idx) => `[00:${String(idx * 5).padStart(2, '0')}] ${s.voiceover || ''}`).join('\n');
+  }
+
+  if (!scriptToUse && job.productTitle) {
+    scriptToUse = `Kenalin, ${job.productTitle}! Solusi paling praktis buat kamu. Cek produk di bawah sekarang sebelum kehabisan!`;
+  }
+
+  if (!scriptToUse) {
+    const emptyErr = new Error('Naskah voiceover tidak boleh kosong.');
+    emptyErr.statusCode = 400;
+    throw emptyErr;
+  }
+
+  const voiceoverFileName = `voiceover_${jobId}_${Date.now()}.mp3`;
+  const voiceoverAudioPath = path.join(uploadsDir, voiceoverFileName);
+  const finalFileName = `final_clip_${jobId}.mp4`;
+  const finalOutputPath = path.join(outputDir, finalFileName);
+  const srtPath = path.join(uploadsDir, `subtitles_${jobId}.ass`);
+
+  const updateProgress = (data) => {
+    const payload = typeof data === 'string'
+      ? { step: 'processing', message: data, progress: 50, jobId }
+      : { ...data, jobId };
+    jobProgress.set(jobId, payload);
+    console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message}`);
+  };
+
+  try {
+    const activeTtsProvider = (options.ttsProvider || job.ttsProvider || process.env.TTS_PROVIDER || 'gemini_tts').toLowerCase().trim();
+    const isGeminiTts = activeTtsProvider === 'gemini_tts';
+    const ttsModelToUse = options.ttsModel || job.ttsModel || process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL;
+    const ttsFallbackModelToUse = options.ttsFallbackModel || job.ttsFallbackModel || process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL;
+    const ttsVoiceToUse = options.ttsVoice || job.ttsVoice || process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE;
+    const ttsLabel = isGeminiTts
+      ? `Gemini Flash (${ttsModelToUse} - ${ttsVoiceToUse})`
+      : 'Edge-TTS Gadis';
+
+    updateProgress({ step: 'tts_generating', message: `🎙️ Menghasilkan voice over ${ttsLabel}...`, progress: 20, status: 'running' });
+
+    const silentDurationSec = (await getMediaDurationSec(silentPath)) || job.highlight?.duration || 20;
+
+    const effectiveLexicon = options.lexicon || job.lexicon || {};
+    if (options.lexicon && typeof options.lexicon === 'object') {
+      saveToEnglishDictionary(options.lexicon);
+    }
+
+    const ttsResult = await generateVoiceoverTTS({
+      script: scriptToUse,
+      outputPath: voiceoverAudioPath,
+      targetDurationSec: silentDurationSec,
+      provider: activeTtsProvider,
+      modelId: ttsModelToUse,
+      fallbackModelId: ttsFallbackModelToUse,
+      voice: ttsVoiceToUse,
+      apiKey: options.geminiApiKey || job.geminiApiKey || process.env.GEMINI_API_KEY,
+      onProgress: (msg) => updateProgress({ step: 'tts_generating', message: `🎙️ ${msg}`, progress: 35, status: 'running' }),
+      jobId,
+      lexicon: effectiveLexicon,
+    });
+
+    const audioDurationSec = await getMediaDurationSec(voiceoverAudioPath);
+    const subtitleTargetDuration = Math.max(silentDurationSec, audioDurationSec || 0);
+
+    updateProgress({ step: 'subtitles', message: `Menyinkronkan subtitle narasi (${silentDurationSec.toFixed(1)}s)...`, progress: 55, status: 'running' });
+    generateSrtSubtitles(scriptToUse, subtitleTargetDuration, srtPath, {
+      wordBoundaries: ttsResult.wordBoundaries,
+      videoDurationSec: silentDurationSec,
+      lexicon: effectiveLexicon,
+    });
+
+    updateProgress({ step: 'render_final', message: 'Rendering video final 9:16 dengan Voiceover & Subtitles...', progress: 75, status: 'running' });
+    await mergeVoiceoverAndBurnSubtitles({
+      silentVideoPath: silentPath,
+      voiceoverAudioPath,
+      srtPath,
+      outputVideoPath: finalOutputPath,
+      targetDurationSec: silentDurationSec,
+      onProgress: updateProgress,
+    });
+
+    cleanupTempFiles([srtPath]);
+
+    // Automatically sync final video to Android MyProject / shared storage if running on Termux/Android
+    syncVideoToAndroidStorage(finalOutputPath, finalFileName, 'clipper');
+
+    const cacheBuster = Date.now();
+    const updatedJob = {
+      ...job,
+      stage: 'completed',
+      finalFileName,
+      videoUrl: `/api/video/${finalFileName}?t=${cacheBuster}`,
+      downloadUrl: `/api/download/${finalFileName}?t=${cacheBuster}`,
+      finalLocalPath: finalOutputPath,
+      voiceoverAudioUrl: `/api/audio/${voiceoverFileName}?t=${cacheBuster}`,
+      ttsVoice: ttsResult.voice || ttsVoiceToUse,
+      ttsProvider: ttsResult.provider || activeTtsProvider,
+      ttsModel: ttsResult.modelId || ttsModelToUse,
+      ttsFallbackModel: ttsFallbackModelToUse,
+      cleanScript: ttsResult.cleanScript,
+      lexicon: effectiveLexicon,
+      wordBoundaries: ttsResult.wordBoundaries || [],
+      hasFinalVideo: true,
+      hasSilentVideo: true,
+      updatedAt: new Date().toISOString(),
+    };
+
+    activeJobs.set(jobId, updatedJob);
+    persistJob(jobId, updatedJob);
+
+    updateProgress({ step: 'completed', message: 'Final 9:16 Video Ready!', progress: 100, status: 'completed', result: updatedJob });
+    return updatedJob;
+  } catch (error) {
+    console.error(`[Job ${jobId}] Voiceover Process Error:`, error.message);
+    cleanupTempFiles([voiceoverAudioPath, srtPath]);
+    const isQuota = error.isQuotaError || isQuotaErrorMessage(error.message);
+    error.isQuotaError = isQuota;
+    updateProgress({ step: 'error', message: error.message, progress: 0, status: 'error', error: error.message, isQuotaError: isQuota, canRetry: true });
+    throw error;
+  }
+}
+
+// 6b. Regenerate Voiceover automatically via TTS & Re-render Final Video (Single Job)
+app.post('/api/regenerate-voiceover', async (req, res) => {
+  reloadEnvironment();
+  const { jobId, customScript, lexicon, ttsProvider, ttsModel, ttsFallbackModel, ttsVoice, apiKey } = req.body;
+
+  if (!jobId) return res.status(400).json({ error: 'Job ID is required.' });
+
+  try {
+    const updatedJob = await processJobVoiceover(jobId, customScript, {
+      lexicon,
+      ttsProvider,
+      ttsModel,
+      ttsFallbackModel,
+      ttsVoice,
+      geminiApiKey: apiKey,
+    });
+    res.json({ success: true, ...updatedJob });
+  } catch (error) {
+    const isQuota = error.isQuotaError || isQuotaErrorMessage(error.message);
+    const status = error.statusCode || (isQuota ? 402 : 500);
+    res.status(status).json({ success: false, error: error.message, isQuotaError: isQuota, jobId });
+  }
+});
+
+// 6b2. Dedicated Retry TTS Endpoint:
+// Uses AI to detect English words in the job script & title,
+// automatically appends new phonetic pronunciations into english_dictionary.json,
+// regenerates TTS audio with the phonetic lexicon,
+// ensures output subtitles remain 100% normal non-phonetic text, and re-renders video.
+app.post('/api/retry-job-tts', async (req, res) => {
+  reloadEnvironment();
+  const { jobId, customScript, apiKey, aiProvider, ttsProvider, ttsModel, ttsFallbackModel, ttsVoice } = req.body;
+
+  if (!jobId) return res.status(400).json({ error: 'Job ID is required.' });
+
+  loadJobsFromDisk();
+  let job = activeJobs.get(jobId);
+  if (!job && fs.existsSync(jobsFilePath)) {
+    try {
+      const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
+      if (existing[jobId]) {
+        job = existing[jobId];
+        activeJobs.set(jobId, job);
+      }
+    } catch {}
+  }
+
+  if (!job) {
+    return res.status(404).json({ error: `Job ${jobId} tidak ditemukan di riwayat.` });
+  }
+
+  const scriptToAnalyze = (customScript && customScript.trim())
+    ? customScript.trim()
+    : (job.voiceoverScript || job.aiStudioPrompt || '');
+
+  try {
+    let newlyDetected = {};
+    try {
+      newlyDetected = await detectPhoneticLexiconWithAI({
+        script: scriptToAnalyze,
+        productTitle: job.productTitle || '',
+        apiKey,
+        aiProvider,
+        onProgress: (p) => {
+          jobProgress.set(jobId, { step: 'tts_lexicon', message: p.message, progress: 15, jobId });
+        },
+      });
+    } catch (aiErr) {
+      console.warn(`[Job ${jobId}] AI phonetic detection warning (continuing with existing dictionary):`, aiErr.message);
+    }
+
+    const currentLexicon = loadEnglishDictionary();
+    const mergedLexicon = { ...currentLexicon, ...(job.lexicon || {}), ...newlyDetected };
+
+    const updatedJob = await processJobVoiceover(jobId, customScript, {
+      lexicon: mergedLexicon,
+      ttsProvider,
+      ttsModel,
+      ttsFallbackModel,
+      ttsVoice,
+      geminiApiKey: apiKey,
+    });
+
+    res.json({
+      success: true,
+      newlyDetectedLexicon: newlyDetected,
+      newWordCount: Object.keys(newlyDetected).length,
+      ...updatedJob,
+    });
+  } catch (error) {
+    console.error(`[Job ${jobId}] Retry TTS Error:`, error);
+    const isQuota = error.isQuotaError || isQuotaErrorMessage(error.message);
+    const status = error.statusCode || (isQuota ? 402 : 500);
+    res.status(status).json({ success: false, error: error.message, isQuotaError: isQuota, jobId });
+  }
+});
+
+
+// State tracker for server-side Batch TTS Queue
+let currentBatchTTS = {
+  isRunning: false,
+  isStopping: false,
+  totalJobs: 0,
+  currentIndex: 0,
+  currentJobId: null,
+  currentProductTitle: '',
+  successfulJobs: 0,
+  failedJobs: 0,
+  lastError: null,
+  isQuotaExhausted: false,
+  startedAt: null,
+  completedAt: null,
+};
+
+// 6c. Start Server-Side Batch TTS Queue
+app.post('/api/batch-tts/start', async (req, res) => {
+  reloadEnvironment();
+  const { ttsProvider, ttsModel, ttsFallbackModel, ttsVoice, apiKey } = req.body || {};
+
+  if (currentBatchTTS.isRunning) {
+    return res.json({ success: true, batch: currentBatchTTS, message: 'Batch TTS sudah berjalan di server.' });
+  }
+
+  // Reload disk jobs to make sure we don't miss any jobs
+  loadJobsFromDisk();
+
+  // Find all candidate jobs that have a 9:16 silent video ready on disk but do not have a completed final video yet
+  const candidateJobs = [];
+  for (const [jobId, job] of activeJobs.entries()) {
+    const silentPath = job.silentLocalPath || path.join(outputDir, `silent_clip_${jobId}.mp4`);
+    const finalPath = job.finalLocalPath || path.join(outputDir, `final_clip_${jobId}.mp4`);
+
+    const hasSilent = fs.existsSync(silentPath);
+    const hasFinal = fs.existsSync(finalPath);
+
+    if (hasSilent && !hasFinal) {
+      candidateJobs.push({ jobId, job });
+    }
+  }
+
+  if (candidateJobs.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Tidak ada job yang siap untuk TTS (semua video sudah selesai atau belum ada klip 9:16 tersimpan).',
+    });
+  }
+
+  // Sort candidate jobs: oldest first so we complete earlier jobs in sequence
+  candidateJobs.sort((a, b) => {
+    const dateA = a.job.createdAt ? new Date(a.job.createdAt).getTime() : 0;
+    const dateB = b.job.createdAt ? new Date(b.job.createdAt).getTime() : 0;
+    return dateA - dateB;
+  });
+
+  currentBatchTTS = {
+    isRunning: true,
+    isStopping: false,
+    totalJobs: candidateJobs.length,
+    currentIndex: 0,
+    currentJobId: candidateJobs[0]?.jobId || null,
+    currentProductTitle: candidateJobs[0]?.job?.productTitle || '',
+    successfulJobs: 0,
+    failedJobs: 0,
+    lastError: null,
+    isQuotaExhausted: false,
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+  };
+
+  res.json({ success: true, batch: currentBatchTTS });
+
+  // Run the batch asynchronously in the background on the server!
+  (async () => {
+    console.log(`[Batch TTS] 🚀 Starting server-side sequential queue for ${candidateJobs.length} jobs...`);
+
+    for (let i = 0; i < candidateJobs.length; i++) {
+      if (currentBatchTTS.isStopping) {
+        console.log('[Batch TTS] ⏹️ Queue stopped by user request.');
+        break;
+      }
+
+      const { jobId, job } = candidateJobs[i];
+      currentBatchTTS.currentIndex = i;
+      currentBatchTTS.currentJobId = jobId;
+      currentBatchTTS.currentProductTitle = job.productTitle || `Job ${jobId}`;
+
+      console.log(`[Batch TTS] (${i + 1}/${candidateJobs.length}) Processing: "${currentBatchTTS.currentProductTitle}" [${jobId}]`);
+
+      try {
+        await processJobVoiceover(jobId, null, {
+          ttsProvider,
+          ttsModel,
+          ttsFallbackModel,
+          ttsVoice,
+          geminiApiKey: apiKey,
+        });
+        currentBatchTTS.successfulJobs++;
+        console.log(`[Batch TTS] ✅ Success (${currentBatchTTS.successfulJobs}/${candidateJobs.length}) on Job [${jobId}]`);
+      } catch (err) {
+        console.error(`[Batch TTS] ❌ Failed Job [${jobId}]:`, err.message);
+        currentBatchTTS.failedJobs++;
+        currentBatchTTS.lastError = err.message;
+
+        if (err.isQuotaError || isQuotaErrorMessage(err.message)) {
+          currentBatchTTS.isQuotaExhausted = true;
+          console.warn('[Batch TTS] ⚠️ TTS quota exhausted or rate limit hit. Pausing batch queue.');
+          break;
+        }
+        // Non-quota error: DO NOT STOP! Keep processing the remaining jobs!
+      }
+    }
+
+    currentBatchTTS.isRunning = false;
+    currentBatchTTS.isStopping = false;
+    currentBatchTTS.completedAt = new Date().toISOString();
+    console.log(`[Batch TTS] 🏁 Finished queue: ${currentBatchTTS.successfulJobs} success, ${currentBatchTTS.failedJobs} failed.`);
+  })().catch(fatalErr => {
+    console.error('[Batch TTS] Fatal queue failure:', fatalErr);
+    currentBatchTTS.isRunning = false;
+  });
+});
+
+// 6d. Get Batch TTS Status
+app.get('/api/batch-tts/status', (req, res) => {
+  res.json({ batch: currentBatchTTS });
+});
+
+// 6e. Stop Batch TTS
+app.post('/api/batch-tts/stop', (req, res) => {
+  if (currentBatchTTS.isRunning) {
+    currentBatchTTS.isStopping = true;
+  }
+  res.json({ success: true, batch: currentBatchTTS });
+});
+
+// 6c. Stream generated audio files
+app.get('/api/audio/:filename', (req, res) => {
+  const safeName = path.basename(req.params.filename || '');
+  if (!safeName.endsWith('.mp3') && !safeName.endsWith('.wav') && !safeName.endsWith('.m4a')) {
+    return res.status(400).send('Invalid audio filename.');
+  }
+
+  const audioPath = path.resolve(uploadsDir, safeName);
+  if (!audioPath.startsWith(path.resolve(uploadsDir)) || !fs.existsSync(audioPath)) {
+    return res.status(404).send('Audio file not found.');
+  }
+
+  const stat = fs.statSync(audioPath);
+  res.writeHead(200, {
+    'Content-Type': 'audio/mpeg',
+    'Content-Length': stat.size,
+    'Accept-Ranges': 'bytes',
+  });
+  fs.createReadStream(audioPath).pipe(res);
+});
+
+// 7. Stream output video
+app.get('/api/video/:filename', (req, res) => {
+  const filePath = resolveOutputVideoPath(req.params.filename);
+  if (!filePath) return res.status(400).send('Invalid video filename.');
+  if (!fs.existsSync(filePath)) return res.status(404).send('Video not found.');
+  const stat = fs.statSync(filePath);
+  const fileSize = stat.size;
+  const range = req.headers.range;
+
+  if (range) {
+    const parts = range.replace(/bytes=/, '').split('-');
+    const start = parseInt(parts[0], 10);
+    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end < start || end >= fileSize) {
+      return res.status(416).set('Content-Range', `bytes */${fileSize}`).end();
+    }
+    const chunksize = end - start + 1;
+    res.writeHead(206, {
+      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+      'Accept-Ranges': 'bytes', 'Content-Length': chunksize, 'Content-Type': 'video/mp4',
+    });
+    fs.createReadStream(filePath, { start, end }).pipe(res);
+  } else {
+    res.writeHead(200, { 'Content-Length': fileSize, 'Content-Type': 'video/mp4' });
+    fs.createReadStream(filePath).pipe(res);
+  }
+});
+
+// 8. Download endpoint for videos
+app.get('/api/download/:filename', (req, res) => {
+  const filePath = resolveOutputVideoPath(req.params.filename);
+  if (!filePath) return res.status(400).json({ error: 'Invalid filename.' });
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found.' });
+  res.download(filePath, req.params.filename);
+});
+
+// 8b. Download script & marketing text as .txt file via HTTP
+app.get('/api/jobs/:jobId/script.txt', (req, res) => {
+  const { jobId } = req.params;
+  const job = activeJobs.get(jobId);
+  if (!job) return res.status(404).send('Job not found.');
+
+  const filename = `naskah_${(job.productTitle || jobId).replace(/[^\p{L}\p{N}]+/gu, '_').slice(0, 40)}_${jobId}.txt`;
+  
+  const content = [
+    `======================================================`,
+    `AFFILIATE VIDEO ASSETS & SCRIPT`,
+    `Job ID        : ${jobId}`,
+    `Judul Produk  : ${job.productTitle || '-'}`,
+    `Link Shopee   : ${job.shopeeLink || '-'}`,
+    `Hook Visual   : ${job.productHook || '-'}`,
+    `Dibuat Pada   : ${job.createdAt || new Date().toISOString()}`,
+    `======================================================\n`,
+    `--- 1. NASKAH VOICEOVER (AD ADVISOR) ---`,
+    job.voiceoverScript || '(Belum ada naskah)',
+    `\n------------------------------------------------------\n`,
+    `--- 2. PROMPT GOOGLE AI STUDIO (TTS Composer) ---`,
+    job.aiStudioPrompt || '(Belum ada prompt AI Studio)',
+    `\n------------------------------------------------------\n`,
+    `--- 3. CAPTION & HASHTAGS REELS / TIKTOK ---`,
+    sanitizeCaptionText(job.caption || '', job) || '(Belum ada caption)',
+    `\n------------------------------------------------------\n`,
+    `--- 4. KOTAK SCENE BREAKDOWN (5 DETIK) ---`,
+    ...(Array.isArray(job.scenes) ? job.scenes.map(s => `[Scene ${s.sceneNumber}] (${s.timeRange || s.startTime + ' - ' + s.endTime})\nVisual: ${s.visualDescription}\nNarasi: "${s.voiceover}"\nNotes : ${s.adAdvisorNotes || '-'}\n`) : ['-']),
+    `======================================================`
+  ].join('\n');
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(content);
+});
+
+// 8c. Serve & list rejected face frames (YuNet / Face Gatekeeper)
+app.use('/api/rejected-frames/yunet', express.static(rejectedYunetDir));
+
+app.get('/api/rejected-frames', (req, res) => {
+  try {
+    if (!fs.existsSync(rejectedYunetDir)) {
+      return res.json({ success: true, count: 0, files: [] });
+    }
+    const files = fs.readdirSync(rejectedYunetDir)
+      .filter(f => f.endsWith('.jpg') || f.endsWith('.png'))
+      .map(f => {
+        const stat = fs.statSync(path.join(rejectedYunetDir, f));
+        return {
+          filename: f,
+          url: `/api/rejected-frames/yunet/${f}`,
+          size: stat.size,
+          createdAt: stat.birthtime || stat.mtime,
+        };
+      })
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    res.json({ success: true, count: files.length, folderPath: rejectedYunetDir, files });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 9. Open output folder in native OS file explorer
+app.post('/api/open-folder', (req, res) => {
+  const { filename } = req.body || {};
+  let targetFile = null;
+
+  if (filename) {
+    const candidate = resolveOutputVideoPath(filename);
+    if (candidate && fs.existsSync(candidate)) {
+      targetFile = candidate;
+    }
+  }
+
+  let command = '';
+  if (process.platform === 'win32') {
+    if (targetFile) {
+      command = `explorer.exe /select,"${targetFile.replace(/\//g, '\\')}"`;
+    } else {
+      command = `explorer.exe "${outputDir.replace(/\//g, '\\')}"`;
+    }
+  } else if (process.platform === 'darwin') {
+    if (targetFile) {
+      command = `open -R "${targetFile}"`;
+    } else {
+      command = `open "${outputDir}"`;
+    }
+  } else {
+    command = `xdg-open "${outputDir}"`;
+  }
+
+  console.log(`[System] Opening output folder in file manager: ${command}`);
+  exec(command, (err) => {
+    if (err) {
+      console.warn('[System] Could not open folder:', err.message);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+    res.json({ success: true, folder: outputDir, target: targetFile });
+  });
+});
+
+app.get('/api/open-folder', (req, res) => {
+  let command = process.platform === 'win32'
+    ? `explorer.exe "${outputDir.replace(/\//g, '\\')}"`
+    : process.platform === 'darwin' ? `open "${outputDir}"` : `xdg-open "${outputDir}"`;
+  exec(command, (err) => {
+    if (err) return res.status(500).json({ success: false, error: err.message });
+    res.json({ success: true, folder: outputDir });
+  });
+});
+
+// 10. Restart Server & Execute ./update.sh (Designed for VPS, Termux, Codespace & Local Dev)
+app.post('/api/restart', async (req, res) => {
+  const { runUpdate = true, cleanReset = true } = req.body || {};
+  const rootDir = path.resolve(__dirname, '..');
+  const updateScriptPath = path.join(rootDir, 'update.sh');
+
+  console.log(`[System] Received restart request (runUpdate=${runUpdate}, cleanReset=${cleanReset})...`);
+  let updateLog = '';
+  let updateExitCode = 0;
+
+  // 1. Bersihkan proses in-memory & background workers aktif, simpan status stopped ke jobs.json
+  try {
+    if (typeof autoRuns !== 'undefined') {
+      for (const [runId, autoRun] of autoRuns.entries()) {
+        autoRun.status = 'stopped';
+        autoRun.message = 'Server di-restart.';
+      }
+    }
+    if (typeof autoRetryRuns !== 'undefined') {
+      for (const [runId, retryRun] of autoRetryRuns.entries()) {
+        retryRun.status = 'stopped';
+      }
+    }
+    if (typeof activeJobs !== 'undefined') {
+      for (const [jobId, job] of activeJobs.entries()) {
+        if (job.stage === 'running') {
+          job.stage = 'stopped';
+          job.message = 'Dihentikan karena server di-restart.';
+        }
+      }
+      // Simpan perubahan status ke jobs.json secara atomik & bersih dari secret
+      if (fs.existsSync(jobsFilePath)) {
+        try {
+          const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
+          for (const [jobId, job] of activeJobs.entries()) {
+            existing[jobId] = sanitizeJobForDisk(job);
+          }
+          atomicWriteJsonSync(jobsFilePath, existing);
+        } catch {}
+      }
+    }
+  } catch (cleanErr) {
+    console.warn('[System] Warning stopping active processes:', cleanErr.message);
+  }
+
+  // 2. Pembersihan file cache transient (TIDAK menyentuh jobs.json atau video jadi)
+  if (cleanReset) {
+    try {
+      console.log('[System] Membersihkan file cache sementara (riwayat jobs & video tetap aman)...');
+      const tempUploads = path.join(__dirname, 'temp', 'uploads');
+      if (fs.existsSync(tempUploads)) {
+        const files = fs.readdirSync(tempUploads);
+        for (const file of files) {
+          try { fs.unlinkSync(path.join(tempUploads, file)); } catch {}
+        }
+      }
+    } catch (cleanErr) {
+      console.warn('[System] Warning cleaning temp files:', cleanErr.message);
+    }
+  }
+
+  // 3. Jalankan update script / clean sync dari GitHub
+  if (runUpdate) {
+    console.log('[System] Mengambil isi repo terbaru dari GitHub (clean sync & update.sh)...');
+    try {
+      updateExitCode = await new Promise((resolve) => {
+        const isWin = process.platform === 'win32';
+        const child = !isWin && fs.existsSync(updateScriptPath)
+          ? spawn('bash', [updateScriptPath], { cwd: rootDir })
+          : spawn(isWin ? 'git.cmd' : 'git', ['pull', 'origin', 'main'], { cwd: rootDir, shell: isWin });
+
+        child.stdout.on('data', (chunk) => { updateLog += chunk.toString(); });
+        child.stderr.on('data', (chunk) => { updateLog += chunk.toString(); });
+        child.on('error', (err) => {
+          updateLog += `\nError: ${err.message}`;
+          console.warn('[System] Warning saat menjalankan update:', err.message);
+          resolve(1);
+        });
+        child.on('close', (code) => {
+          if (code !== 0) {
+            console.warn(`[System] Warning: update process exited with code ${code}`);
+          }
+          console.log('[System] Log update:\n' + updateLog);
+          resolve(code || 0);
+        });
+      });
+    } catch (e) {
+      console.warn('[System] Gagal menjalankan update script:', e.message);
+      updateLog += `\nError: ${e.message}`;
+      updateExitCode = 1;
+    }
+
+    if (updateExitCode !== 0) {
+      return res.status(500).json({
+        success: false,
+        message: 'Update repo GitHub gagal atau dibatalkan. Server tidak di-restart.',
+        updateLog,
+      });
+    }
+  }
+
+  res.json({
+    success: true,
+    message: 'Server sedang di-restart bersih tanpa sisa konfigurasi lama...',
+    updateLog,
+  });
+
+  // Gracefully restart via PM2 dengan flag --update-env agar env baru terbaca dan proses segar
+  setTimeout(() => {
+    console.log('[System] Restarting clipper services via PM2 with --update-env...');
+    exec('pm2 restart all --update-env', (pm2Err) => {
+      if (pm2Err) {
+        exec('pm2 restart clipper --update-env', (singleErr) => {
+          if (singleErr) {
+            console.log('[System] PM2 restart fallback: exiting process for dev-runner watcher...');
+            process.exit(0);
+          }
+        });
+      }
+    });
+  }, 1000);
+});
+
+// ── Cookie Management Routes (for Codespace / Linux servers with no browser) ──
+
+// GET /api/cookies-status – check if cookies.txt is present on the server
+app.get('/api/cookies-status', (req, res) => {
+  const cookiesPath = path.join(__dirname, 'cookies.txt');
+  if (fs.existsSync(cookiesPath)) {
+    const stat = fs.statSync(cookiesPath);
+    res.json({ exists: true, sizeBytes: stat.size });
+  } else {
+    res.json({ exists: false });
+  }
+});
+
+// POST /api/upload-cookies – receive cookies.txt content and save to server/cookies.txt
+app.post('/api/upload-cookies', express.text({ type: '*/*', limit: '10mb' }), (req, res) => {
+  const content = req.body;
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    return res.status(400).json({ success: false, error: 'Request body is empty. Please send cookies.txt content.' });
+  }
+  if (!content.includes('youtube.com') && !content.includes('# Netscape HTTP Cookie File')) {
+    return res.status(400).json({ success: false, error: 'File tidak terdeteksi sebagai YouTube cookies.txt yang valid. Pastikan Anda mengekspor cookies dari youtube.com.' });
+  }
+  const cookiesPath = path.join(__dirname, 'cookies.txt');
+  fs.writeFileSync(cookiesPath, content, 'utf8');
+  console.log(`[Cookies] cookies.txt saved to ${cookiesPath} (${content.length} bytes)`);
+  res.json({ success: true, message: 'cookies.txt berhasil disimpan. Sekarang retry job Anda.' });
+});
+
+// ── English Phonetic Dictionary Routes ──
+
+// GET /api/english-dictionary – list all active English phonetic mappings
+app.get('/api/english-dictionary', (req, res) => {
+  try {
+    const dict = loadEnglishDictionary();
+    res.json({ success: true, count: Object.keys(dict).length, dictionary: dict });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/english-dictionary – add or update phonetic dictionary entries
+app.post('/api/english-dictionary', (req, res) => {
+  try {
+    const entries = req.body;
+    if (!entries || typeof entries !== 'object') {
+      return res.status(400).json({ success: false, error: 'Request body must be a JSON object mapping English words to Indonesian phonetics.' });
+    }
+    saveToEnglishDictionary(entries);
+    const updated = loadEnglishDictionary();
+    res.json({ success: true, count: Object.keys(updated).length, dictionary: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/bandwidth-stats – get real-time internet data usage and savings
+app.get('/api/bandwidth-stats', (req, res) => {
+  try {
+    const stats = getBandwidthStats();
+    res.json({ success: true, stats });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/bandwidth-stats/reset – reset bandwidth counter
+app.post('/api/bandwidth-stats/reset', (req, res) => {
+  try {
+    const scope = req.body?.scope || 'session';
+    const stats = resetBandwidthStats(scope);
+    res.json({ success: true, stats });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? 'File voiceover maksimal 50 MB.'
+      : err.message;
+    return res.status(400).json({ success: false, error: message });
+  }
+  if (err) {
+    return res.status(400).json({ success: false, error: err.message || 'Request tidak valid.' });
+  }
+  next();
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  reloadEnvironment();
+  const envActive = (process.env.ACTIVE_AI_ENGINE || '').trim().toLowerCase();
+  const openRouterKey = process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.trim() : '';
+  const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
+  const openRouterOk = openRouterKey && openRouterKey !== 'your_openrouter_api_key_here';
+  const geminiOk = geminiKey && geminiKey !== 'your_gemini_api_key_here';
+
+  let activeProvider = '❌ None (Set OPENROUTER_API_KEY or GEMINI_API_KEY in server/.env)';
+  if (envActive === 'gemini' && geminiOk) {
+    activeProvider = '✨ Google Gemini Direct (Primary)';
+  } else if (envActive === 'openrouter' && openRouterOk) {
+    activeProvider = '✨ OpenRouter (Primary)';
+  } else if (geminiOk && !openRouterOk) {
+    activeProvider = '✨ Google Gemini Direct (Primary)';
+  } else if (openRouterOk) {
+    activeProvider = '✨ OpenRouter (Primary)';
+  } else if (geminiOk) {
+    activeProvider = '✨ Google Gemini Direct (Primary)';
+  }
+
+  console.log(`\n======================================================`);
+  console.log(`🎬 Local AI Affiliate Clipper Backend Server`);
+  console.log(`🌐 Running at: http://localhost:${PORT}`);
+  if (loadedEnvFiles.length) {
+    console.log(`[Env] Loaded: ${loadedEnvFiles.map((envPath) => path.relative(path.resolve(__dirname, '..'), envPath).replace(/\\/g, '/')).join(', ')}`);
+  }
+  console.log(`⚡ Active AI Engine: ${activeProvider}`);
+  if (openRouterKey && openRouterKey !== 'your_openrouter_api_key_here') {
+    console.log(`🔑 OpenRouter Key: configured (${openRouterKey.length} chars)`);
+  }
+  if (geminiKey && geminiKey !== 'your_gemini_api_key_here') {
+    console.log(`🔑 Google Gemini API: configured (Direct fallback ready)`);
+  }
+  console.log(`======================================================\n`);
+
+  // ── HEALTH CHECK AI LOCAL GATEKEEPER (port 5050) ──
+  (async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:5050/health', { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const health = await res.json();
+        const m = health.models || {};
+        console.log(`🤖 AI Local Gatekeeper: ONLINE (face: ${m.face || '?'}, text: ${m.text || '?'}, scene: ${m.scene || '?'})`);
+        const weakBackends = [];
+        if (!m.face || m.face === 'none') weakBackends.push('face');
+        if (!m.text || m.text === 'gradient_fallback' || m.text === 'none') weakBackends.push('text');
+        if (!m.scene || m.scene === 'entropy_variance') weakBackends.push('scene');
+        if (weakBackends.length > 0) {
+          console.warn(`⚠️  Gatekeeper berjalan TANPA model AI untuk: [${weakBackends.join(', ')}]. Jalankan: bash setup-gatekeeper.sh agar akurasi filter lokal maksimal.`);
+        }
+      } else {
+        console.warn(`⚠️  AI Local Gatekeeper merespons HTTP ${res.status}.`);
+      }
+    } catch {
+      console.warn('⚠️  AI Local Gatekeeper (port 5050) OFFLINE.');
+    }
+  })();
+});

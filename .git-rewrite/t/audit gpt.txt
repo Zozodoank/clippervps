@@ -1,0 +1,413 @@
+Ya. Setelah saya cek ulang kode project yang dikirim, **saya justru melihat alasan yang sangat kuat mengapa setelah perubahan filter menjadi terlalu ketat, job bisa berjam-jam tanpa output.**
+
+Dan menurut saya benar: **2 video sumber yang panjang dan kaya adegan seharusnya sudah cukup** untuk menghasilkan satu short affiliate 30–35 detik. Tidak perlu memaksa 3–5 video.
+
+### Masalah utamanya ada di sini
+
+Di `server.js`, pipeline sekarang memang masih mencari sampai **10 kandidat**, lalu memproses beberapa video:
+
+```text
+candidatePool < 10
+```
+
+Kemudian streaming berhenti ketika:
+
+```text
+≥ 3 video + ≥ 18 clean frames
+```
+
+atau maksimal 5 video.
+
+Lebih penting lagi, ada hard requirement:
+
+> minimal 2–3 video sumber
+
+dan prompt Gemini meminta:
+
+> **10–12 timestamp non-overlapping**, masing-masing sekitar 3,3 detik, untuk setiap video yang dianalisis.
+
+Jadi sistem sekarang secara tidak langsung meminta footage yang **sangat banyak**, padahal output akhirnya hanya 30–35 detik.
+
+---
+
+## Menurut saya targetnya harus diubah
+
+Untuk niche **perlengkapan dapur faceless**, saya akan menggunakan:
+
+### Mode normal
+
+```text
+2 video sumber
+       ↓
+masing-masing ≥ 60–90 detik
+       ↓
+cari clean segments
+       ↓
+gabungkan
+       ↓
+30–35 detik final
+```
+
+Tidak perlu:
+
+```text
+3–5 video
+10–12 clip dari setiap video
+18–30 frame clean minimum
+```
+
+Itu terlalu agresif.
+
+---
+
+# Yang lebih masuk akal
+
+Misalnya:
+
+### Video A — 3 menit
+
+```text
+00:05  hero product
+00:18  tangan mengambil produk
+00:31  memasukkan bahan
+00:43  mulai digunakan
+01:02  close-up
+01:25  hasil
+01:50  penggunaan lain
+02:15  close-up
+```
+
+### Video B — 2 menit
+
+```text
+00:08  product close-up
+00:21  tangan
+00:34  demonstrasi
+00:50  action
+01:07  hasil
+01:22  detail
+01:40  action
+```
+
+Dari dua video tersebut sebenarnya sudah tersedia **jauh lebih banyak footage daripada kebutuhan 30–35 detik**.
+
+AI tinggal memilih:
+
+```text
+A 00:18–00:21
+B 00:34–00:38
+A 00:43–00:47
+B 00:50–00:54
+A 01:02–01:06
+B 01:07–01:11
+A 01:50–01:54
+B 01:22–01:26
+```
+
+Total sekitar 30–35 detik.
+
+---
+
+# Bahkan saya sarankan jangan memakai "10 clean clips" sebagai syarat video
+
+Ini terlalu kaku:
+
+```text
+VIDEO HARUS MEMILIKI 10 CLEAN CLIPS
+```
+
+Lebih baik:
+
+```text
+TOTAL CLEAN USABLE DURATION
+≥ 40–60 detik
+```
+
+dari gabungan 2 source.
+
+Misalnya:
+
+```text
+Video A
+clean footage = 28 detik
+
+Video B
+clean footage = 37 detik
+
+TOTAL = 65 detik
+```
+
+**LULUS.**
+
+Kemudian AI memilih 30–35 detik terbaik.
+
+Ini jauh lebih logis.
+
+---
+
+# Saya akan membuat "footage budget"
+
+Ini menurut saya cocok sekali dengan aplikasi pengguna.
+
+```text
+TARGET OUTPUT
+30–35 detik
+
+TARGET USABLE FOOTAGE
+60–90 detik
+
+SOURCE
+2 video
+
+MINIMUM SOURCE
+45–60 detik usable
+```
+
+Kemudian:
+
+```text
+Jika usable footage < 30 detik
+→ cari source tambahan
+
+Jika usable footage 30–60 detik
+→ boleh lanjut tetapi variasi terbatas
+
+Jika usable footage 60–90 detik
+→ ideal
+
+Jika usable footage > 90 detik
+→ tidak perlu mencari video tambahan
+```
+
+Dengan begitu sistem **berhenti mencari ketika kebutuhan sudah terpenuhi**.
+
+---
+
+# Yang lebih penting: "faceless" jangan membuat footage otomatis ditolak
+
+Untuk niche dapur, ini:
+
+```text
+tangan + produk + meja + bahan
+```
+
+adalah footage yang justru sangat berguna.
+
+Sedangkan:
+
+```text
+wajah
+talking head
+presenter
+```
+
+ditolak.
+
+Jadi aturan:
+
+```text
+FACE = 0
+HAND = boleh
+BODY = boleh jika wajah tidak terlihat
+```
+
+sudah tepat.
+
+---
+
+# Saya juga akan mengubah strategi pencarian
+
+Saat ini project terlalu berorientasi:
+
+> cari banyak video → filter sebanyak mungkin → pool frame.
+
+Saya lebih suka:
+
+```text
+SEARCH
+ ↓
+pilih 2 kandidat terbaik
+ ↓
+stream
+ ↓
+ukur usable footage
+ ↓
+cukup?
+ ├─ YES → berhenti
+ └─ NO → ambil kandidat ke-3
+```
+
+Contohnya:
+
+```text
+Candidate #1
+usable = 42 sec
+
+Candidate #2
+usable = 38 sec
+
+TOTAL = 80 sec
+       ↓
+STOP SEARCH
+```
+
+Tidak perlu candidate #3, #4, #5.
+
+---
+
+# Ada satu hal lagi yang perlu diperbaiki dari prompt Gemini
+
+Sekarang prompt mengatakan:
+
+> Select 10 to 12 non-overlapping timestamps...
+
+Saya akan **menghapus angka 10–12 tersebut**.
+
+Ganti konsepnya menjadi:
+
+```text
+Determine the minimum number of clean, non-overlapping segments
+needed to construct a coherent 30–35 second final video.
+
+Do NOT require 10–12 segments.
+
+Prefer 5–8 strong segments when sufficient.
+Each segment should normally be 2–5 seconds,
+but duration may vary according to natural shot boundaries.
+```
+
+Ini akan menghasilkan editing yang lebih natural.
+
+Contohnya:
+
+```text
+2.8 s
+4.1 s
+3.2 s
+5.0 s
+3.6 s
+4.4 s
+5.1 s
+```
+
+lebih natural daripada:
+
+```text
+3.3
+3.3
+3.3
+3.3
+3.3
+3.3
+3.3
+3.3
+3.3
+3.3
+```
+
+---
+
+# Dan jangan membuat "30 frame" menjadi syarat
+
+Sekarang:
+
+```text
+poolMultiCandidateFrames(... maxTotalFrames = 30)
+```
+
+Ini sebenarnya bukan masalah besar untuk AI Vision, tetapi **30 frame bukan indikator bahwa video memiliki cukup footage**.
+
+Misalnya:
+
+```text
+Video A
+10 clean frames
+
+Video B
+10 clean frames
+
+TOTAL 20
+```
+
+belum tentu buruk.
+
+Kalau 20 frame tersebut tersebar sepanjang 5 menit, bisa jadi justru sangat kaya.
+
+Sebaliknya:
+
+```text
+30 frame
+```
+
+yang semuanya berasal dari 15 detik footage yang hampir identik juga tidak berguna.
+
+Lebih baik AI diberi:
+
+```text
+timestamp
++
+source ID
++
+scene ID
++
+clean interval
++
+motion
++
+scene change
+```
+
+---
+
+# Target baru yang saya rekomendasikan
+
+Untuk Clipper pengguna, saya akan menetapkan:
+
+| Parameter             |                    Sekarang |                      Saya sarankan |
+| --------------------- | --------------------------: | ---------------------------------: |
+| Source                |                         3–5 |                      **2 default** |
+| Tambah source         | berdasarkan jumlah kandidat |      **hanya jika footage kurang** |
+| Minimum video         |                    35 detik |                    **20–30 detik** |
+| Usable footage        |                 frame count |                   **durasi clean** |
+| Target usable footage |                   18+ frame |                    **60–90 detik** |
+| Final                 |                 30–35 detik |                    **30–35 detik** |
+| Clip count            |                       10–12 |             **5–8 biasanya cukup** |
+| Clip duration         |                      ±3.3 s |                  **2–5 s dinamis** |
+| Face                  |                      reject |                         **reject** |
+| Hand                  |                     reject? |                          **ALLOW** |
+| Watermark             |                      reject |                         **reject** |
+| Subtitle              |                      reject |                         **reject** |
+| Graphic overlay       |                      reject |                         **reject** |
+| Scene change          |                      wajib? | **prioritas, bukan syarat mutlak** |
+
+---
+
+## Yang paling penting
+
+**Jangan melonggarkan filter kebersihan. Longgarkan persyaratan jumlah footage/source.**
+
+Ini dua hal berbeda.
+
+Tetap:
+
+```text
+FACE       ❌
+WATERMARK  ❌
+SUBTITLE   ❌
+LOGO       ❌
+GRAPHIC    ❌
+STATIC     ❌
+```
+
+Tetapi:
+
+```text
+2 source       ✅
+5–8 scene      ✅
+60 sec usable  ✅
+30–35 sec final ✅
+```
+
+Jadi AI tetap **galak terhadap kualitas frame**, tetapi **tidak bodoh dalam kebutuhan footage**.
+
+Dan berdasarkan kode project yang saya lihat, **saya sangat menyarankan perubahan ini sebelum menambah dataset lagi**. Kemungkinan besar masalah "sudah beberapa jam tidak ada output" sekarang bukan karena dua video terlalu sedikit, melainkan karena **pipeline meminta kombinasi footage bersih yang terlalu banyak dibanding kebutuhan output 30–35 detik.**

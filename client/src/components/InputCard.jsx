@@ -118,9 +118,6 @@ export default function InputCard({
 
   return (
     <div className="glass-panel rounded-2xl p-6 shadow-xl relative overflow-hidden">
-      {/* Decorative gradient blur */}
-      <div className="absolute top-0 right-0 -mr-16 -mt-16 w-48 h-48 bg-orange-500/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-0 left-0 -ml-16 -mb-16 w-48 h-48 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
 
       <form onSubmit={handleSubmit} className="relative z-10 space-y-4">
         

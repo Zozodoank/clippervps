@@ -1,0 +1,154 @@
+[
+  {
+    "filename": "static_ad04ef356c_t002.jpg",
+    "timestamp_sec": 2,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 0.04,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.04)"
+  },
+  {
+    "filename": "static_ad04ef356c_t003.jpg",
+    "timestamp_sec": 3,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 2.68,
+    "reason": "Foto statis / gambar diam non-video (MAD: 2.68)"
+  },
+  {
+    "filename": "static_ad04ef356c_t004.jpg",
+    "timestamp_sec": 4,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 0.01,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.01)"
+  },
+  {
+    "filename": "static_ad04ef356c_t006.jpg",
+    "timestamp_sec": 6,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 1.52,
+    "reason": "Foto statis / gambar diam non-video (MAD: 1.52)"
+  },
+  {
+    "filename": "static_ad04ef356c_t009.jpg",
+    "timestamp_sec": 9,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 1.01,
+    "reason": "Foto statis / gambar diam non-video (MAD: 1.01)"
+  },
+  {
+    "filename": "static_ad04ef356c_t010.jpg",
+    "timestamp_sec": 10,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 1.66,
+    "reason": "Foto statis / gambar diam non-video (MAD: 1.66)"
+  },
+  {
+    "filename": "static_ad04ef356c_t011.jpg",
+    "timestamp_sec": 11,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 0.96,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.96)"
+  },
+  {
+    "filename": "static_ad04ef356c_t012.jpg",
+    "timestamp_sec": 12,
+    "label": "rejected",
+    "split": "val",
+    "mad_diff": 0.05,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.05)"
+  },
+  {
+    "filename": "static_ad04ef356c_t015.jpg",
+    "timestamp_sec": 15,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 1.25,
+    "reason": "Foto statis / gambar diam non-video (MAD: 1.25)"
+  },
+  {
+    "filename": "static_ad04ef356c_t016.jpg",
+    "timestamp_sec": 16,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 1.54,
+    "reason": "Foto statis / gambar diam non-video (MAD: 1.54)"
+  },
+  {
+    "filename": "static_ad04ef356c_t017.jpg",
+    "timestamp_sec": 17,
+    "label": "rejected",
+    "split": "val",
+    "mad_diff": 0.79,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.79)"
+  },
+  {
+    "filename": "static_ad04ef356c_t018.jpg",
+    "timestamp_sec": 18,
+    "label": "rejected",
+    "split": "val",
+    "mad_diff": 0.56,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.56)"
+  },
+  {
+    "filename": "static_ad04ef356c_t021.jpg",
+    "timestamp_sec": 21,
+    "label": "rejected",
+    "split": "val",
+    "mad_diff": 0.0,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.00)"
+  },
+  {
+    "filename": "static_ad04ef356c_t024.jpg",
+    "timestamp_sec": 24,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 4.97,
+    "reason": "Foto statis / gambar diam non-video (MAD: 4.97)"
+  },
+  {
+    "filename": "static_ad04ef356c_t025.jpg",
+    "timestamp_sec": 25,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 0.01,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.01)"
+  },
+  {
+    "filename": "static_ad04ef356c_t026.jpg",
+    "timestamp_sec": 26,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 1.4,
+    "reason": "Foto statis / gambar diam non-video (MAD: 1.40)"
+  },
+  {
+    "filename": "static_ad04ef356c_t029.jpg",
+    "timestamp_sec": 29,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 0.8,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.80)"
+  },
+  {
+    "filename": "static_ad04ef356c_t030.jpg",
+    "timestamp_sec": 30,
+    "label": "rejected",
+    "split": "train",
+    "mad_diff": 2.87,
+    "reason": "Foto statis / gambar diam non-video (MAD: 2.87)"
+  },
+  {
+    "filename": "static_ad04ef356c_t031.jpg",
+    "timestamp_sec": 31,
+    "label": "rejected",
+    "split": "val",
+    "mad_diff": 0.01,
+    "reason": "Foto statis / gambar diam non-video (MAD: 0.01)"
+  }
+]

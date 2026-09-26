@@ -1,0 +1,506 @@
+[
+  {
+    "filename": "clip_84d2721052_t001.jpg",
+    "source_frame": "frame_001.jpg",
+    "timestamp_sec": 1,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t002.jpg",
+    "source_frame": "frame_002.jpg",
+    "timestamp_sec": 2,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t003.jpg",
+    "source_frame": "frame_003.jpg",
+    "timestamp_sec": 3,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t004.jpg",
+    "source_frame": "frame_004.jpg",
+    "timestamp_sec": 4,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t005.jpg",
+    "source_frame": "frame_005.jpg",
+    "timestamp_sec": 5,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t006.jpg",
+    "source_frame": "frame_006.jpg",
+    "timestamp_sec": 6,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t007.jpg",
+    "source_frame": "frame_007.jpg",
+    "timestamp_sec": 7,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t008.jpg",
+    "source_frame": "frame_008.jpg",
+    "timestamp_sec": 8,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t009.jpg",
+    "source_frame": "frame_009.jpg",
+    "timestamp_sec": 9,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t010.jpg",
+    "source_frame": "frame_010.jpg",
+    "timestamp_sec": 10,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t011.jpg",
+    "source_frame": "frame_011.jpg",
+    "timestamp_sec": 11,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t012.jpg",
+    "source_frame": "frame_012.jpg",
+    "timestamp_sec": 12,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t013.jpg",
+    "source_frame": "frame_013.jpg",
+    "timestamp_sec": 13,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t014.jpg",
+    "source_frame": "frame_014.jpg",
+    "timestamp_sec": 14,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t015.jpg",
+    "source_frame": "frame_015.jpg",
+    "timestamp_sec": 15,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t016.jpg",
+    "source_frame": "frame_016.jpg",
+    "timestamp_sec": 16,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t017.jpg",
+    "source_frame": "frame_017.jpg",
+    "timestamp_sec": 17,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t018.jpg",
+    "source_frame": "frame_018.jpg",
+    "timestamp_sec": 18,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t019.jpg",
+    "source_frame": "frame_019.jpg",
+    "timestamp_sec": 19,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
+    "details": {
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t020.jpg",
+    "source_frame": "frame_020.jpg",
+    "timestamp_sec": 20,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t021.jpg",
+    "source_frame": "frame_021.jpg",
+    "timestamp_sec": 21,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
+    "details": {
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t022.jpg",
+    "source_frame": "frame_022.jpg",
+    "timestamp_sec": 22,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
+    "details": {
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t023.jpg",
+    "source_frame": "frame_023.jpg",
+    "timestamp_sec": 23,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
+    "details": {
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t024.jpg",
+    "source_frame": "frame_024.jpg",
+    "timestamp_sec": 24,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t025.jpg",
+    "source_frame": "frame_025.jpg",
+    "timestamp_sec": 25,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t026.jpg",
+    "source_frame": "frame_026.jpg",
+    "timestamp_sec": 26,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t027.jpg",
+    "source_frame": "frame_027.jpg",
+    "timestamp_sec": 27,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t028.jpg",
+    "source_frame": "frame_028.jpg",
+    "timestamp_sec": 28,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t029.jpg",
+    "source_frame": "frame_029.jpg",
+    "timestamp_sec": 29,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t030.jpg",
+    "source_frame": "frame_030.jpg",
+    "timestamp_sec": 30,
+    "label": "valid_real",
+    "split": "val",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t031.jpg",
+    "source_frame": "frame_031.jpg",
+    "timestamp_sec": 31,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
+    "details": {
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t032.jpg",
+    "source_frame": "frame_032.jpg",
+    "timestamp_sec": 32,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t033.jpg",
+    "source_frame": "frame_033.jpg",
+    "timestamp_sec": 33,
+    "label": "valid_real",
+    "split": "train",
+    "stage": "clean",
+    "reason": "Peragaan fisik produk nyata alami (bebas wajah & bebas teks)",
+    "details": {
+      "product": "wadah silikon pot air fryer",
+      "has_face": false,
+      "has_text": false,
+      "verified_by_user": true
+    }
+  },
+  {
+    "filename": "clip_84d2721052_t034.jpg",
+    "source_frame": "frame_034.jpg",
+    "timestamp_sec": 34,
+    "label": "rejected",
+    "split": "train",
+    "stage": "text",
+    "reason": "Teks overlay / banner animasi promosi masuk frame (coverage 12-15%)",
+    "details": {
+      "text_type": "promo_banner_animated",
+      "coverage_range": "12-15%",
+      "verified_by_user": true
+    }
+  }
+]

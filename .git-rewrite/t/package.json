@@ -1,0 +1,15 @@
+{
+  "name": "clipper-vps",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "AI Affiliate Clipper VPS - React + Node.js + FFmpeg + Gemini AI (VPS Hosted)",
+  "scripts": {
+    "install:all": "npm --prefix server install && npm --prefix client install",
+    "build:all": "npm --prefix client run build",
+    "build": "npm --prefix client run build",
+    "server": "npm --prefix server start",
+    "server:dev": "npm --prefix server run dev",
+    "client": "npm --prefix client run dev",
+    "dev": "node dev-runner.js"
+  }
+}

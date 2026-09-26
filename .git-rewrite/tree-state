@@ -1,0 +1,10 @@
+AGENTS.md
+CARA_JALANKAN_TERMUX.md
+GEMINI.md
+JALANKAN_VPS.cmd
+LIHAT_LOG_LIVE.cmd
+README.md
+SYNC_DATASET_KE_VPS.cmd
+menu-vps.sh
+server/.env.example
+tunnel.sh

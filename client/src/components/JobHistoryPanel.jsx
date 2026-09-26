@@ -4,6 +4,7 @@ import {
   Clock, Download, Music, ChevronRight, X, Info, FolderOpen, ExternalLink,
   Sparkles, Volume2, AlertTriangle, Loader2, Search, Zap, Square
 } from 'lucide-react';
+import toast from 'react-hot-toast';
 
 const STAGE_CONFIG = {
   completed:          { label: 'Selesai (Final Video)', color: 'emerald', icon: CheckCircle2 },
@@ -15,12 +16,24 @@ const STAGE_CONFIG = {
   unknown:            { label: 'Tidak Diketahui', color: 'slate', icon: Clock },
 };
 
+const STAGE_COLOR_MAP = {
+  emerald: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
+  amber: 'bg-amber-500/20 text-amber-300 border-amber-500/30',
+  red: 'bg-red-500/20 text-red-300 border-red-500/30',
+  orange: 'bg-orange-500/20 text-orange-300 border-orange-500/30',
+  blue: 'bg-blue-500/20 text-blue-300 border-blue-500/30',
+  indigo: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/30',
+  slate: 'bg-slate-500/20 text-slate-300 border-slate-500/30',
+};
+
 function StageBadge({ stage }) {
   const cfg = STAGE_CONFIG[stage] || STAGE_CONFIG.unknown;
   const Icon = cfg.icon;
+  const colorClass = STAGE_COLOR_MAP[cfg.color] || STAGE_COLOR_MAP.slate;
+  
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-${cfg.color}-500/20 text-${cfg.color}-300 border border-${cfg.color}-500/30`}>
-      <Icon className="w-2.5 h-2.5" />
+    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold border ${colorClass}`}>
+      <Icon className="w-3 h-3" />
       {cfg.label}
     </span>
   );
@@ -134,9 +147,9 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
               setProcessingTtsId(null);
               fetchJobs(true);
               if (data.batch.isQuotaExhausted) {
-                alert(`⚠️ Terjadi kendala saat memproses TTS setelah menyelesaikan ${data.batch.successfulJobs} job.`);
+                toast.error(`⚠️ Terjadi kendala saat memproses TTS setelah menyelesaikan ${data.batch.successfulJobs} job.`);
               } else if (data.batch.successfulJobs > 0) {
-                alert(`✨ Selesai! Berhasil menyatukan ${data.batch.successfulJobs} video dengan suara Gadis & subtitle.`);
+                toast.success(`✨ Selesai! Berhasil menyatukan ${data.batch.successfulJobs} video dengan suara Gadis & subtitle.`);
               }
             }
           }
@@ -208,9 +221,9 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
 
       if (!res.ok || !data.success) {
         if (data.isQuotaError || res.status === 402) {
-          alert('⚠️ Terjadi kendala limit kuota/rate limit TTS. Silakan coba sesaat lagi.');
+          toast.error('⚠️ Terjadi kendala limit kuota/rate limit TTS. Silakan coba sesaat lagi.');
         } else {
-          alert(`Gagal membuat TTS: ${data.error || 'Terjadi kesalahan pada server.'}`);
+          toast.error(`Gagal membuat TTS: ${data.error || 'Terjadi kesalahan pada server.'}`);
         }
         return;
       }
@@ -224,7 +237,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       }
     } catch (err) {
       console.error('Error generating TTS:', err);
-      alert(`Gagal: ${err.message}`);
+      toast.error(`Gagal: ${err.message}`);
     } finally {
       setProcessingTtsId(null);
     }
@@ -253,9 +266,9 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
 
       if (!res.ok || !data.success) {
         if (data.isQuotaError || res.status === 402) {
-          alert('⚠️ Terjadi kendala limit kuota/rate limit TTS. Silakan coba sesaat lagi.');
+          toast.error('⚠️ Terjadi kendala limit kuota/rate limit TTS. Silakan coba sesaat lagi.');
         } else {
-          alert(`Gagal memproses Retry TTS: ${data.error || 'Terjadi kesalahan pada server.'}`);
+          toast.error(`Gagal memproses Retry TTS: ${data.error || 'Terjadi kesalahan pada server.'}`);
         }
         return;
       }
@@ -267,7 +280,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       const msg = newWords.length > 0
         ? `✨ Berhasil Retry TTS!\nAI mendeteksi & menambahkan ${newWords.length} istilah fonetik baru ke kamus:\n${newWords.map(w => `• ${w} -> ${data.newlyDetectedLexicon[w]}`).join('\n')}\n\nSubtitle video tetap menggunakan teks normal non-fonetik!`
         : '✨ Berhasil membuat ulang suara voiceover & subtitle dengan kamus fonetik terbaru!';
-      alert(msg);
+      toast.success(msg, { duration: 5000 });
 
       // Auto-select this completed job so user can see it right away
       if (onSelectJob) {
@@ -275,7 +288,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       }
     } catch (err) {
       console.error('Error in Retry TTS:', err);
-      alert(`Gagal memproses Retry TTS: ${err.message}`);
+      toast.error(`Gagal memproses Retry TTS: ${err.message}`);
     } finally {
       setProcessingTtsId(null);
     }
@@ -296,18 +309,19 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        alert(`Gagal regenerate subtitle: ${data.error || 'Terjadi kesalahan pada server.'}`);
+        toast.error(`Gagal regenerate subtitle: ${data.error || 'Terjadi kesalahan pada server.'}`);
         return;
       }
 
       setJobs(prev => prev.map(j => j.jobId === job.jobId ? { ...j, ...data, stage: 'completed', hasFinalVideo: true } : j));
 
       const d = data._subtitle || {};
-      alert(
+      toast.success(
         `✨ Subtitle disinkronkan ulang dari audio yang ADA (tanpa TTS baru).\n\n` +
         `Audio: ${d.audioDurationSec ? d.audioDurationSec.toFixed(1) : '?'}s\n` +
         `Video: ${d.silentDurationSec ? d.silentDurationSec.toFixed(1) : '?'}s\n` +
-        `File audio: ${d.reusedAudioFile || '-'}`
+        `File audio: ${d.reusedAudioFile || '-'}`,
+        { duration: 5000 }
       );
 
       if (onSelectJob) {
@@ -315,7 +329,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       }
     } catch (err) {
       console.error('Error in Retry Subtitle:', err);
-      alert(`Gagal regenerate subtitle: ${err.message}`);
+      toast.error(`Gagal regenerate subtitle: ${err.message}`);
     } finally {
       setProcessingTtsId(null);
     }
@@ -360,7 +374,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        alert(`Gagal memulai batch TTS: ${data.error || 'Terjadi kesalahan pada server.'}`);
+        toast.error(`Gagal memulai batch TTS: ${data.error || 'Terjadi kesalahan pada server.'}`);
         return;
       }
 
@@ -370,7 +384,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       }
     } catch (err) {
       console.error('Error starting batch TTS:', err);
-      alert(`Gagal: ${err.message}`);
+      toast.error(`Gagal: ${err.message}`);
     }
   };
 
@@ -411,7 +425,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        alert(`Gagal memulai Auto Retry: ${data.error || 'Terjadi kesalahan'}`);
+        toast.error(`Gagal memulai Auto Retry: ${data.error || 'Terjadi kesalahan'}`);
         setAutoRetryingJobs((prev) => {
           const next = new Set(prev);
           next.delete(job.jobId);
@@ -425,7 +439,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
       fetchJobs(true);
     } catch (err) {
       console.error('Error starting auto retry:', err);
-      alert(`Gagal: ${err.message}`);
+      toast.error(`Gagal: ${err.message}`);
       setAutoRetryingJobs((prev) => {
         const next = new Set(prev);
         next.delete(job.jobId);

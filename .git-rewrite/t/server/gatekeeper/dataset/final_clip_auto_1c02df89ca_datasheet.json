@@ -1,0 +1,98 @@
+[
+  {
+    "filename": "clip_1c02df89ca_text_t019.jpg",
+    "original_filename": "frame_019.jpg",
+    "video_source": "final_clip_auto_1c02df89ca.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=kYJvYc8o2gU",
+    "product_name": "wadah bumbu dapur 4 sekat praktis sendok gagang panjang anti cipratan panas",
+    "timestamp_sec": 19,
+    "time_formatted": "00:19",
+    "label": "rejected",
+    "category": "reject_text",
+    "category_label": "📝 Reject: Teks / Caption / Subtitle Bahasa Asing",
+    "split": "train",
+    "reason": "Tulisan bahasa Inggris di tengah frame peragaan produk (Design: Includes a convenient built-in handle for an easy grip and comes with a free matching spoon).",
+    "text_details": {
+      "type": "english_center_overlay",
+      "text": "Design: Includes a convenient built-in handle for an easy grip and comes with a free matching spoon",
+      "position": "center",
+      "language": "en",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_1c02df89ca"
+  },
+  {
+    "filename": "clip_1c02df89ca_text_t021.jpg",
+    "original_filename": "frame_021.jpg",
+    "video_source": "final_clip_auto_1c02df89ca.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=kYJvYc8o2gU",
+    "product_name": "wadah bumbu dapur 4 sekat praktis sendok gagang panjang anti cipratan panas",
+    "timestamp_sec": 21,
+    "time_formatted": "00:21",
+    "label": "rejected",
+    "category": "reject_text",
+    "category_label": "📝 Reject: Teks / Caption / Subtitle Bahasa Asing",
+    "split": "train",
+    "reason": "Tulisan bahasa Inggris di tengah frame peragaan produk (Design: Includes a convenient built-in handle for an easy grip and comes with a free matching spoon).",
+    "text_details": {
+      "type": "english_center_overlay",
+      "text": "Design: Includes a convenient built-in handle for an easy grip and comes with a free matching spoon",
+      "position": "center",
+      "language": "en",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_1c02df89ca"
+  },
+  {
+    "filename": "clip_1c02df89ca_text_t028.jpg",
+    "original_filename": "frame_028.jpg",
+    "video_source": "final_clip_auto_1c02df89ca.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=kYJvYc8o2gU",
+    "product_name": "wadah bumbu dapur 4 sekat praktis sendok gagang panjang anti cipratan panas",
+    "timestamp_sec": 28,
+    "time_formatted": "00:28",
+    "label": "rejected",
+    "category": "reject_text",
+    "category_label": "📝 Reject: Teks / Caption / Subtitle Bahasa Asing",
+    "split": "train",
+    "reason": "Tulisan bahasa Inggris di tengah frame peragaan produk (Design: Includes a convenient built-in handle for an easy grip and comes with a free matching spoon).",
+    "text_details": {
+      "type": "english_center_overlay",
+      "text": "Design: Includes a convenient built-in handle for an easy grip and comes with a free matching spoon",
+      "position": "center",
+      "language": "en",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_1c02df89ca"
+  },
+  {
+    "filename": "clip_1c02df89ca_text_t029.jpg",
+    "original_filename": "frame_029.jpg",
+    "video_source": "final_clip_auto_1c02df89ca.mp4",
+    "youtube_url": "https://www.youtube.com/watch?v=kYJvYc8o2gU",
+    "product_name": "wadah bumbu dapur 4 sekat praktis sendok gagang panjang anti cipratan panas",
+    "timestamp_sec": 29,
+    "time_formatted": "00:29",
+    "label": "rejected",
+    "category": "reject_text",
+    "category_label": "📝 Reject: Teks / Caption / Subtitle Bahasa Asing",
+    "split": "val",
+    "reason": "Tulisan bahasa Inggris di tengah frame peragaan produk (Design: Includes a convenient built-in handle for an easy grip and comes with a free matching spoon).",
+    "text_details": {
+      "type": "english_center_overlay",
+      "text": "Design: Includes a convenient built-in handle for an easy grip and comes with a free matching spoon",
+      "position": "center",
+      "language": "en",
+      "escaped_detection": true,
+      "verified_by_user": true
+    },
+    "curated_by_user": true,
+    "session_id": "auto_1c02df89ca"
+  }
+]

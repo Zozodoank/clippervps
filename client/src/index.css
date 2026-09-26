@@ -9,18 +9,14 @@
   }
 }
 
-/* Custom glow and glassmorphism styling */
+/* Custom glow and glassmorphism styling - Diubah menjadi solid (Sprint 1) */
 .glass-panel {
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  background: #0f172a; /* Solid color */
   border: 1px solid rgba(51, 65, 85, 0.6);
 }
 
 .glass-panel-glow {
-  background: rgba(15, 23, 42, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: #0f172a; /* Solid color */
   border: 1px solid rgba(238, 77, 45, 0.3);
   box-shadow: 0 0 25px -5px rgba(238, 77, 45, 0.15);
 }

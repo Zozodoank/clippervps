@@ -1,0 +1,53 @@
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+build/
+
+# Local temp, cache, and rendered outputs
+server/temp/
+server/output/
+server/bin/
+server/jobs.json
+server/bandwidth_stats.json
+server/used_keywords.json
+*.mp4
+*.mp3
+*.jpg
+*.jpeg
+*.png
+*.srt
+
+# Environment variables
+.env
+.env.*
+.env*.txt
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local backup folder
+copy/
+
+# Authentication and session cookies
+*cookies*.txt
+server/cookies.txt
+
+# AI Gatekeeper Model weights & test cache
+server/gatekeeper/models/*.onnx
+server/gatekeeper/models/*.tflite
+server/gatekeeper/models/*.data
+server/gatekeeper/test_temp/
+server/gatekeeper/dataset/*
+!server/gatekeeper/dataset/*.json
+*.zip
+__pycache__/
+*.pyc
+scratch/
+*.bak
