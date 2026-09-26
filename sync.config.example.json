@@ -1,0 +1,11 @@
+{
+  "termuxIp": "192.168.0.0",
+  "termuxUser": "u0_a000",
+  "termuxPort": 8022,
+  "remoteProjectRelPath": "clipperVPS/server",
+  "sshKeyPath": "",
+  "restartLocalServerAfterSync": true,
+
+  "_petunjuk": "Salin file ini menjadi 'sync.config.json' lalu isi nilai nyata. termuxIp & termuxUser dicetak oleh 'syn.sh' saat dijalankan di Termux. termuxUser Termux biasanya seperti 'u0_a123' (lihat keluaran 'whoami'). remoteProjectRelPath relatif terhadap HOME Termux. sshKeyPath opsional: isi path kunci privat (.pem/id_ed25519) supaya tidak perlu ketik password tiap sync; kosongkan untuk pakai password.",
+  "_cara_pakai": "1) Di Termux jalankan: bash syn.sh  (menyalakan sshd + menghentikan pm2 + menampilkan IP). 2) Di PC klik dua kali: sync-to-termux.bat  (push jobs.db + video ke Termux lalu restart service Termux)."
+}

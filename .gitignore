@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Device-specific sync settings (auto-created from sync.config.example.json)
+sync.config.json
+
 # Production builds
 dist/
 build/
