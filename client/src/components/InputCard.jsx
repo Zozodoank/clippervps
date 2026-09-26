@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Youtube, ShoppingBag, Key, Sparkles, Shield, Sliders, Zap, Tag, AlignLeft, Plus, Minus, Link2, CheckCircle2 } from 'lucide-react';
+import ProductFinder from './ProductFinder.jsx';
 
 const DEFAULT_MANUAL_NICHES = [
   { id: 'kitchen_tools', name: 'Alat Dapur & Kebutuhan Rumah', shortName: 'Alat Dapur', icon: '🍳', badgeColor: '#10b981' },
@@ -144,6 +145,9 @@ export default function InputCard({
             <span>Settings</span>
           </button>
         </div>
+
+        {/* Pembantu: cari merk + nama produk & video dari backend (bisa disalin / langsung dipakai) */}
+        <ProductFinder formData={formData} setFormData={setFormData} />
 
         {/* 0. Niche / Kategori Produk (manual mode) */}
         <div>

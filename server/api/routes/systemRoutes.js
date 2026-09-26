@@ -72,6 +72,7 @@ import {
   discoverYouTubeCandidatesForProduct,
   searchMultiEngineVideos,
   searchBingVideos,
+  searchShopeeProducts,
   searchVideosByProductImage,
   fetchShopeePageMeta,
   isShopeeProductUrl,
@@ -226,6 +227,69 @@ router.get('/niches', (req, res) => {
     res.json({ niches: getAllNiches() });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// 🔎 PRODUCT FINDER (bantu mode manual): telusuri merk + nama produk NYATA dari
+// hasil pencarian marketplace (engine yang sama dipakai auto mode: Bing/Brave/DDG).
+// Tidak ada efek samping (tidak menandai keyword terpakai) supaya bisa diulang "cari lagi".
+router.post('/find-products', async (req, res) => {
+  try {
+    const q = String(req.body?.query || '').trim();
+    if (!q) return res.status(400).json({ success: false, error: 'Kata kunci pencarian wajib diisi.' });
+    const cap = Math.max(1, Math.min(15, Number(req.body?.limit) || 10));
+    let raw = [];
+    try { raw = await searchShopeeProducts(q); } catch { raw = []; }
+    const seen = new Set();
+    const products = [];
+    for (const r of raw || []) {
+      const url = r?.url;
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      const rawTitle = String(r.title || '').trim();
+      const title = cleanTitle(rawTitle, url) || rawTitle;
+      if (!title) continue;
+      let brand = '', model = '', productType = '';
+      try {
+        const info = extractCoreProductInfo(rawTitle, r.snippet || '', url, '');
+        brand = String(info?.brand || '').trim();
+        model = String(info?.model || '').trim();
+        productType = String(info?.coreProductNoun || '').trim();
+      } catch { /* best-effort; judul mentah tetap ditampilkan */ }
+      products.push({ title, brand, model, productType, url, snippet: String(r.snippet || '').trim() });
+      if (products.length >= cap) break;
+    }
+    res.json({ success: true, query: q, count: products.length, products });
+  } catch (err) {
+    console.error('[find-products] error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 🎬 VIDEO FINDER: daftar kandidat video YouTube siap-salin untuk sebuah produk.
+// Memakai indeks video Bing (raw) agar hampir selalu ada hasil untuk ditinjau user.
+router.post('/find-videos', async (req, res) => {
+  try {
+    const title = String(req.body?.productTitle || '').trim();
+    if (!title) return res.status(400).json({ success: false, error: 'productTitle wajib diisi.' });
+    const cap = Math.max(1, Math.min(20, Number(req.body?.limit) || 10));
+    const query = String(req.body?.query || '').trim() || `${title} review`;
+    let vids = [];
+    try { vids = await searchBingVideos(query, { limit: cap, onProgress: () => {} }); } catch { vids = []; }
+    const seen = new Set();
+    const videos = [];
+    for (const v of vids || []) {
+      const url = v?.url;
+      const id = v?.id || (url || '');
+      if (!url || seen.has(id)) continue;
+      seen.add(id);
+      videos.push({ id, url, title: String(v.title || '').trim(), duration: Number(v.duration) || 0, channel: String(v.channel || '').trim() });
+      if (videos.length >= cap) break;
+    }
+    res.json({ success: true, query, count: videos.length, videos });
+  } catch (err) {
+    console.error('[find-videos] error:', err);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
