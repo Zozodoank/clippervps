@@ -577,10 +577,10 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   // Dense Temporal Sampling untuk Video Target 3 - 10 Menit (150s - 600s):
   // Menjamin seluruh rekaman demonstrasi fisik produk terinspeksi tanpa blind spot besar,
   // sekaligus melewati iklan/intro bumper awal (skip first 6-12s).
-  // BATCH MODE: 150 frame sudah cukup untuk cakupan Gatekeeper (interval ~4s di video 10 mnt).
-  // Cap lama 500 (dur/1.5) → terlalu boros CPU Termux. Caller boleh minta kurang, tidak lebih.
+  // BUDGET HEMAT (20 titik per menit): 10 menit (600s) = 200 frame (interval ~3s).
+  // Cap 200 menggantikan 150 lama; caller passing dur/3.0 sehingga rasio per menit konsisten.
   const requestedMax = Number(maxSampleFrames) > 0 ? Number(maxSampleFrames) : (isMobile ? 38 : 45);
-  const safeMax = Math.max(15, Math.min(150, requestedMax));
+  const safeMax = Math.max(15, Math.min(200, requestedMax));
 
   const samplePoints = [];
   if (Array.isArray(customTimestamps) && customTimestamps.length > 0) {

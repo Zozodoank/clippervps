@@ -417,11 +417,11 @@ async function _runStage1Pipeline({
           }
 
           if (activeStreamUrl) {
-            // Sampling padat penuh sesuai konfigurasi (rasio 1.5s/frame): 5 menit = 200 frame,
-            // 6 menit = 240 frame, dst. Cap absolut 500 agar video durasi panjang tidak OOM.
-            // (Dulu hardcoded 42 -> hanya ~40 frame terpakai, inkonsisten dgn jalur kandidat & cache.)
+            // Hemat (20 titik per menit): interval ~3.0 detik -> 10 menit = 200 frame, 5 menit = 100, dst.
+            // Cap absolut 200 agar video durasi panjang tetap hemat CPU/memori (Termux) namun seluruh
+            // rekaman terinspeksi. Konsisten dengan jalur kandidat & cache.
             const targetDur = Number(meta.duration) || 300;
-            const targetMaxFrames = Math.min(500, Math.max(15, Math.floor(targetDur / 1.5)));
+            const targetMaxFrames = Math.min(200, Math.max(15, Math.floor(targetDur / 3.0)));
             const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
               duration: meta.duration,
               maxSampleFrames: targetMaxFrames,
@@ -619,10 +619,10 @@ async function _runStage1Pipeline({
     if (rawVideoPath) {
       try {
         const rawDur = Number(videoMeta?.duration) || 300;
-        // Porsi dinamis: 1.5 detik per frame. 5 menit = 200 frame, 6 menit = 240 frame, dst.
-        const rawInterval = 1.5;
-        // Batasi absolut maksimum 500 frame agar server tidak OOM/memori jebol untuk video durasi 1 jam.
-        const maxFrames = Math.min(500, Math.floor(rawDur / rawInterval));
+        // Hemat (20 titik per menit): interval 3.0 detik -> 10 menit = 200 frame, 5 menit = 100, dst.
+        const rawInterval = 3.0;
+        // Cap 200 frame agar hemat CPU/memori Termux untuk video panjang (>= 10 menit).
+        const maxFrames = Math.min(200, Math.floor(rawDur / rawInterval));
         updateProgress({ step: 'frames_raw', message: `Mengekstrak ${maxFrames} frame rapat video 1080p (9:16) untuk analisa AI (interval ${rawInterval.toFixed(1)}s)...`, progress: 38, status: 'running' });
         const { frames: rawFrames } = await extractFrames(rawVideoPath, rawFramesDir, updateProgress, {
           sampleIntervalSec: rawInterval,
@@ -746,6 +746,25 @@ async function _runStage1Pipeline({
       let searchIteration = 0;
       let candidatePool = Array.isArray(targetCandidates) ? [...targetCandidates] : [];
 
+      // Dedup berbasis VIDEO-ID (bukan string URL persis) agar dua URL yang menunjuk video yang sama
+      // (mis. youtu.be/ID vs youtube.com/watch?v=ID) tidak di-stream dobel & tidak boros kuota.
+      const poolVidOf = (c) => {
+        const raw = String(c?.url || c || '');
+        return extractVideoId(raw) || c?.id || null;
+      };
+      const seenVids = new Set(candidatePool.map(poolVidOf).filter(Boolean));
+
+      // URL utama dimasukkan LEBIH DULU sebagai kandidat NORMAL (mempertahankan gerbang produk penuh),
+      // sehingga OEM duplikat yang menyamai video utama akan di-dedup terhadapnya.
+      const primaryVid = currentYoutubeUrl ? (extractVideoId(currentYoutubeUrl) || null) : null;
+      if (currentYoutubeUrl && !(primaryVid && seenVids.has(primaryVid))) {
+        if (primaryVid) seenVids.add(primaryVid);
+        candidatePool.unshift({
+          url: currentYoutubeUrl,
+          title: productTitle,
+        });
+      }
+
       // Manual OEM sources are an explicit user override. They MUST still pass
       // the local frame/scene gate, but NEVER enter Gemini product-match verification.
       const manualOemUrls = Array.from(new Set([
@@ -761,21 +780,18 @@ async function _runStage1Pipeline({
           console.warn(`[Job ${jobId}] ⚠️ OEM URL manual diabaikan karena bukan URL YouTube yang valid: ${oemUrl}`);
           continue;
         }
-        if (!candidatePool.some(c => c?.url === oemUrl)) {
-          candidatePool.push({
-            url: oemUrl,
-            title: productTitle || 'OEM Manual',
-            source: 'manual_oem',
-            manualOem: true,
-            skipGeminiProductMatch: true,
-          });
+        const oemVid = extractVideoId(oemUrl);
+        if (seenVids.has(oemVid)) {
+          console.log(`[Job ${jobId}] ↩️ OEM URL manual dilewati karena video ID ${oemVid} sudah ada di pool (hemat kuota stream).`);
+          continue;
         }
-      }
-
-      if (currentYoutubeUrl && !candidatePool.some(c => c.url === currentYoutubeUrl)) {
-        candidatePool.unshift({
-          url: currentYoutubeUrl,
-          title: productTitle,
+        seenVids.add(oemVid);
+        candidatePool.push({
+          url: oemUrl,
+          title: productTitle || 'OEM Manual',
+          source: 'manual_oem',
+          manualOem: true,
+          skipGeminiProductMatch: true,
         });
       }
 
@@ -1047,8 +1063,8 @@ async function _runStage1Pipeline({
         let sampleRes;
         try {
           const candDur = candMeta.duration || 300;
-          // Sesuai instruksi: 5 menit (300s) = 200 frame, 6 menit (360s) = 240 frame. Rasio utuh (1.5s per frame).
-          const candMaxFrames = Math.floor(candDur / 1.5);
+          // Hemat (20 titik per menit): interval ~3.0 detik -> 10 menit = 200 frame, 5 menit = 100. Cap 200 di sampler.
+          const candMaxFrames = Math.floor(candDur / 3.0);
           
           sampleRes = await sampleFramesFromStream(candStreamUrl, candFramesDir, {
             duration: candDur,

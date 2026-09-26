@@ -210,6 +210,7 @@ CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
 - MOTION FIRST (ACTIVE DEMONSTRATION OVER FROZEN PRODUCT):
   * Give highest priority to clips showing clear hands-on demonstration, crisp natural lighting, and active physical product motion (operating, cutting, pressing, demonstrating function).
   * DO NOT select frozen or lifeless shots of the product sitting idly on a table.
+  * DILARANG MEMILIH SCENE TANPA PRODUK: setiap timestamp yang dipilih WAJIB menampilkan PRODUK UTAMA secara jelas di dalam frame. Dilarang memilih scene yang hanya berisi tangan kosong, latar/ruangan, orang tanpa produk, meja kosong, atau objek yang bukan produk target.
 - MANDATORY VISUAL & ACTION DIVERSITY (ANTI-MONOTONOUS RULE):
   * Each selected timestamp MUST represent a genuinely distinct action, angle, or demonstration phase.
   * DILARANG KERAS memilih cuplikan yang secara visual mengulang satu shot atau satu gerakan yang sama secara monoton!
@@ -670,6 +671,7 @@ CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GR
   * SPEECH DIALOGUE & SUBTITLES: Speech dialogue captions, translated subtitles, or lyric bars.
 - SELECTION MANDATE (CRITICAL):
   * Every single timestamp you select in 'selectedClips' MUST BE 100% FREE of any floating text, subtitles, dimension badges, or watermarks! If a scene has a text overlay, DO NOT select it!
+  * DILARANG MEMILIH SCENE TANPA PRODUK: setiap timestamp di 'selectedClips' WAJIB menampilkan PRODUK UTAMA secara jelas dalam frame. Dilarang memilih scene tanpa produk (hanya tangan kosong, latar/ruangan, orang tanpa produk, atau objek yang bukan produk target).
 - REJECT ENTIRE VIDEO IF:
   * Teks overlay, stiker, atau subtitle mendominasi semua video sehingga Anda TIDAK BISA menemukan cuplikan yang benar-benar bersih.
 - PHYSICAL PRODUCT TEXT EXCEPTION IS STRICT:
@@ -1036,6 +1038,7 @@ CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DI
   * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, KARTU GARANSI, ATAU BUSA PACKAGING!
   * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing, buku panduan manual kertas, atau menyorot kotak kardus/kemasan!
   * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
+  * DILARANG MEMILIH SCENE TANPA PRODUK: setiap timestamp yang dipilih WAJIB menampilkan PRODUK UTAMA secara jelas di dalam frame. Dilarang memilih scene yang hanya berisi tangan kosong, latar/ruangan, orang tanpa produk, meja kosong, atau objek yang bukan produk target.
   * DILARANG KERAS memilih scene di mana produk hanya BERSALIN, TERSEDIA, tersimpan, diletakkan, didisplay di rak, meja, laci, atau counter TANPA ada tangan yang mengoperasikan atau mendemonstrasikannya. Shot "produk statis pajangan" = TIDAK VALID. Yang diterima hanyalah produk yang SEDANG DIPAKAI atau SEDANG DISENTUH/DIOPERASIKAN.
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh isi video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun demonstrasi fungsi fisik produk.
@@ -1466,6 +1469,7 @@ RULE 3B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DISCARD
   * STRICT BAN ON TAPE MEASURES, RULERS, AND PACKAGING RESIDUE: DILARANG KERAS MEMILIH FRAME DENGAN METERAN JAHIT (kuning/putih), PENGGARIS, ALAT UKUR PANJANG, BUSA KEMASAN, BUKU PANDUAN MANUAL, RESI PENGIRIMAN, ATAU KARDUS KOSONG!
   * Cuplikan orang memegang meteran jahit mengukur mangkuk/produk adalah B-roll unboxing teknis yang SANGAT MEMBOSANKAN dan MEMATIKAN retensi penonton di Reels/TikTok. JANGAN PERNAH DIPILIH!
   * HANYA pilih indeks frame ("frames") ketika produk SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA di luar kemasan (misal: saat memotong, mengupas, memasak, memutar rak carousel, menyajikan makanan, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
+    * DILARANG MEMILIH SCENE TANPA PRODUK: setiap indeks frame yang dipilih WAJIB menampilkan PRODUK UTAMA secara jelas di dalam frame. Dilarang memilih frame yang hanya berisi tangan kosong, latar/ruangan, orang tanpa produk, meja kosong, atau objek yang bukan produk target.
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun peragaan cara kerja fisik produk.
 
