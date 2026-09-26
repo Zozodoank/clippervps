@@ -126,10 +126,10 @@ export default function InputCard({
           <div>
             <h2 className="text-lg font-bold text-white flex items-center gap-2">
               <Zap className="w-5 h-5 text-shopee-500" />
-              Source Video & Informasi Produk
+              Pilih Sumber Video
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Masukkan detail produk agar AI menghasilkan naskah yang akurat dan persuasif.
+              Masukkan detail produk untuk mendapatkan naskah dan video yang akurat.
             </p>
           </div>
 
@@ -184,7 +184,7 @@ export default function InputCard({
               <Tag className="w-4 h-4 text-amber-400" />
               Judul / Nama Produk <span className="text-shopee-500">*</span>
             </span>
-            <span className="text-[11px] font-normal text-amber-300">Konteks Utama AI</span>
+            <span className="text-[11px] font-normal text-amber-300">Wajib diisi</span>
           </label>
           <input
             type="text"
@@ -197,10 +197,10 @@ export default function InputCard({
           {detectedNoun && (
             <div className="mt-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center gap-2 text-xs text-amber-300 animate-in fade-in">
               <Sparkles className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-              <span className="text-slate-400">Target Produk AI:</span>
+              <span className="text-slate-400">Produk Terdeteksi:</span>
               <span className="font-semibold text-white">"{detectedNoun}"</span>
-              <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 ml-auto">
-                Clean Noun
+              <span className="text-xs text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 ml-auto">
+                Sesuai
               </span>
             </div>
           )}
@@ -213,7 +213,7 @@ export default function InputCard({
               <AlignLeft className="w-4 h-4 text-indigo-400" />
               Deskripsi & Spesifikasi Produk (Opsional / Rekomendasi)
             </span>
-            <span className="text-[11px] font-normal text-slate-400">Poin penting naskah</span>
+            <span className="text-[11px] font-normal text-slate-400">Bahan untuk naskah suara AI</span>
           </label>
           <textarea
             rows={3}
@@ -231,7 +231,7 @@ export default function InputCard({
               <Youtube className="w-4 h-4 text-red-500" />
               YouTube Video URL <span className="text-shopee-500">*</span>
             </span>
-            <span className="text-[11px] font-normal text-slate-400">Faceless AI Highlight</span>
+            <span className="text-[11px] font-normal text-slate-400">AI akan otomatis mencari adegan produk</span>
           </label>
           <input
             type="url"
@@ -251,7 +251,7 @@ export default function InputCard({
               URL OEM / Video Tambahan
               <span className="text-[10px] font-normal normal-case text-slate-500">(opsional)</span>
             </span>
-            <span className="text-[11px] font-normal text-cyan-300">Local QC aktif • Gemini match dilewati</span>
+            <span className="text-[11px] font-normal text-cyan-300">Video langsung digabung (tanpa filter AI)</span>
           </label>
           <div className="space-y-2">
             {oemUrls.map((url, index) => (
@@ -283,8 +283,8 @@ export default function InputCard({
               </div>
             ))}
           </div>
-          <p className="mt-1.5 text-[10px] text-slate-500">
-            Tambahkan sampai 2 URL OEM jika video utama kurang variasi. Semua URL OEM tetap melewati filter lokal; verifikasi kecocokan produk oleh Gemini tidak dilakukan.
+          <p className="mt-1.5 text-xs text-slate-500">
+            Tambahkan sampai 2 URL OEM jika video utama kurang panjang. Video dari link OEM akan digabungkan secara langsung.
           </p>
         </div>
 
@@ -312,26 +312,25 @@ export default function InputCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex items-center gap-1 text-slate-300 font-medium">
               <Shield className="w-3.5 h-3.5 text-emerald-400" />
-              Active Formula:
+              Pengaturan Video:
             </span>
             <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 font-mono text-amber-300 font-bold">
-              Pacing: {settings.sceneDuration || 3.3}s (Shopee FYP)
-            </span>
-            <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono text-slate-200">
-              Subtitle: Kuning &amp; Putih
+              Potong tiap {settings.sceneDuration || 3.3} detik
             </span>
             <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 font-mono text-emerald-300 font-bold">
-              Framing: {(settings.renderMode || 'stage_80') === 'stage_80' ? 'Stage 80% (Blur)' : (settings.renderMode || 'stage_80') === 'fit_canvas' ? 'Fit 16:9' : (settings.renderMode || 'stage_80') === 'vertical_crop' ? 'Full 9:16' : 'Stage 1:1'}
+              {(settings.renderMode || 'stage_80') === 'stage_80' ? 'Blur Latar (Vertikal)' : (settings.renderMode || 'stage_80') === 'fit_canvas' ? 'Sesuai Layar' : (settings.renderMode || 'stage_80') === 'vertical_crop' ? 'Potong Vertikal' : 'Kotak 1:1'}
             </span>
             <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono text-slate-300">
-              9:16 (1080x1920)
+              Format HP (9:16)
             </span>
-            <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono text-slate-300">
-              Speed: {settings.speedMultiplier}x
-            </span>
+            {settings.speedMultiplier !== 1 && (
+              <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono text-slate-300">
+                Kecepatan: {settings.speedMultiplier}x
+              </span>
+            )}
             {settings.hflip && (
               <span className="px-2 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 font-mono text-slate-300">
-                H-Flip: ON
+                Balik Kanan-Kiri
               </span>
             )}
           </div>
@@ -351,21 +350,21 @@ export default function InputCard({
           <button
             type="submit"
             disabled={isLoading}
-            className={`w-full py-4 rounded-xl font-bold text-base flex items-center justify-center gap-2.5 transition-all shadow-lg ${
+            className={`w-full py-3.5 rounded-xl font-bold text-base flex items-center justify-center gap-2.5 transition-all shadow-lg ${
               isLoading
                 ? 'bg-slate-800 text-slate-400 cursor-not-allowed border border-slate-700'
-                : 'bg-gradient-to-r from-shopee-500 via-orange-500 to-amber-500 text-white hover:from-shopee-600 hover:to-amber-600 shadow-orange-500/25 hover:shadow-orange-500/40 hover:scale-[1.01] active:scale-[0.99]'
+                : 'bg-shopee-500 text-white hover:bg-shopee-600 shadow-shopee-500/25 hover:shadow-shopee-500/40 hover:scale-[1.02] active:scale-[0.98]'
             }`}
           >
             {isLoading ? (
               <>
                 <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-                <span>Memproses Tahap 1 (Clipping & Scripting)...</span>
+                <span>Sedang Memproses Video...</span>
               </>
             ) : (
               <>
                 <Sparkles className="w-5 h-5 fill-current" />
-                <span>Generate Kotak Scene & Video 9:16</span>
+                <span>Mulai Proses Video</span>
               </>
             )}
           </button>

@@ -5,11 +5,11 @@ export default function ProgressCard({ progressState, onRetry, onStopAutoRetry, 
   const { step, message, progress = 0, status, error, isQuotaError } = progressState;
 
   const steps = [
-    { id: 'download', label: '1. Download 1080p Video', icon: Download, desc: 'yt-dlp engine fetching max 1080p' },
-    { id: 'gemini_vision', label: '2. Faceless AI Highlight', icon: Sparkles, desc: 'Avoids creator face, finds product focus' },
-    { id: 'render_silent', label: '3. Faceless 9:16 Render', icon: Layers, desc: 'Product/hands crop without black bars' },
-    { id: 'gpt_scripting', label: '4. AI Scripting & Kotak Scene', icon: Clapperboard, desc: 'Kotak Scene, Context & Naskah' },
-    { id: 'awaiting_voiceover', label: '5. Ready for Voiceover', icon: Music, desc: 'Paste naskah to AI Studio & upload' },
+    { id: 'download', label: '1. Mengunduh Video Utama', icon: Download, desc: 'Mengambil video sumber kualitas tinggi' },
+    { id: 'gemini_vision', label: '2. Deteksi Adegan Produk', icon: Sparkles, desc: 'AI mencari bagian produk tanpa wajah' },
+    { id: 'render_silent', label: '3. Pemotongan Format 9:16', icon: Layers, desc: 'Mengubah format menjadi video vertikal' },
+    { id: 'gpt_scripting', label: '4. Penulisan Naskah', icon: Clapperboard, desc: 'AI merancang skrip berdasarkan video' },
+    { id: 'awaiting_voiceover', label: '5. Sinkronisasi Suara & Teks', icon: Music, desc: 'Membuat voiceover dan subtitle' },
   ];
 
   const getStepStatus = (stepId, index) => {
@@ -75,8 +75,8 @@ export default function ProgressCard({ progressState, onRetry, onStopAutoRetry, 
                 </span>
               )}
             </h3>
-            <p className="text-xs text-slate-400 font-mono truncate max-w-md">
-              {message || 'Menjalankan ekstraksi dan analisis AI...'}
+            <p className="text-xs text-slate-400 truncate max-w-md">
+              {message || 'Memulai sistem pemrosesan video otomatis...'}
             </p>
           </div>
         </div>
@@ -96,8 +96,8 @@ export default function ProgressCard({ progressState, onRetry, onStopAutoRetry, 
             </span>
             <span className="font-semibold text-white truncate">"{progressState.coreProductNoun}"</span>
           </div>
-          <span className="text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 font-mono flex-shrink-0 ml-2">
-            Policy Filter Aktif
+          <span className="text-xs font-semibold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20 flex-shrink-0 ml-2">
+            Akurat
           </span>
         </div>
       )}
@@ -233,8 +233,18 @@ export default function ProgressCard({ progressState, onRetry, onStopAutoRetry, 
                 <AlertCircle className="w-4 h-4" />
                 Detail Error:
               </div>
-              <p className="break-all whitespace-pre-wrap">{error || 'Terjadi kendala pada server backend.'}</p>
+              <p className="break-all whitespace-pre-wrap">{error || 'Terjadi masalah jaringan atau server lokal.'}</p>
             </div>
+          )}
+
+          {/* Error Detail Accordion */}
+          {error && !detectedQuotaError && (
+             <details className="text-xs border border-slate-700 rounded-lg bg-slate-900/50 mt-2">
+               <summary className="p-2.5 cursor-pointer text-slate-400 font-medium hover:text-slate-200">Lihat Log Teknis (Untuk Developer)</summary>
+               <div className="p-3 border-t border-slate-700 text-slate-500 font-mono whitespace-pre-wrap overflow-x-auto">
+                 {error}
+               </div>
+             </details>
           )}
 
           {/* Retry Action Button Bar */}
