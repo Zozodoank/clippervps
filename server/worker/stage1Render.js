@@ -1016,12 +1016,16 @@ async function _runStage1Pipeline({
           candidate?.source === 'manual_oem' ||
           candidate?.skipGeminiProductMatch
         );
-        // Cek kepatuhan metadata dasar
-        const comp = checkVideoMetadataCompliance(candMeta, productTitle, {
-          ...options,
-          isVisualSearch: Boolean(options.isVisualSearch || candidate.source === 'bing_visual_search'),
-          skipProductIdentityGates: candIsManualOem,
-        });
+        // MODE MANUAL: user sudah menjamin URL tepat -> SKIP SEMUA checkVideoMetadataCompliance.
+        // Tidak perlu filter durasi/resolusi/vlog/watermark/asing — semua sudah lolos.
+        let comp = { eligible: true, reason: null };
+        if (!candIsManualOem) {
+          comp = checkVideoMetadataCompliance(candMeta, productTitle, {
+            ...options,
+            isVisualSearch: Boolean(options.isVisualSearch || candidate.source === 'bing_visual_search'),
+            skipProductIdentityGates: candIsManualOem,
+          });
+        }
         if (!comp.eligible) {
           console.log(`[Job ${jobId}] ⚠️ ${candLabel} metadata tidak lolos: ${comp.reason}. Melewati kandidat ini...`);
           continue;

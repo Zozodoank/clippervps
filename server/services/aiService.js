@@ -1036,6 +1036,7 @@ CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DI
   * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, KARTU GARANSI, ATAU BUSA PACKAGING!
   * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing, buku panduan manual kertas, atau menyorot kotak kardus/kemasan!
   * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
+  * DILARANG KERAS memilih scene di mana produk hanya BERSALIN, TERSEDIA, tersimpan, diletakkan, didisplay di rak, meja, laci, atau counter TANPA ada tangan yang mengoperasikan atau mendemonstrasikannya. Shot "produk statis pajangan" = TIDAK VALID. Yang diterima hanyalah produk yang SEDANG DIPAKAI atau SEDANG DISENTUH/DIOPERASIKAN.
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh isi video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun demonstrasi fungsi fisik produk.
 
