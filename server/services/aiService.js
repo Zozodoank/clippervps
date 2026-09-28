@@ -2532,7 +2532,7 @@ CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
 
 3. 'voiceoverScript' (Naskah Voiceover Lengkap dengan Penanda Waktu & Tag Emosi):
    - Complete Indonesian spoken narration (${minWords} - ${maxWords} words total).
-   - Use dynamic emotional tone & pacing tags so the AI voiceover (Edge-TTS Gadis) sounds lively, expressive, and NEVER monotone:
+   - Use dynamic emotional tone & pacing tags so the AI voiceover (Gemini Flash TTS) sounds lively, expressive, and NEVER monotone:
      * [excited] for energetic Problem Hooks, surprise moments, and closing CTA.
      * [emphasis] to place strong vocal stress on key product features and instant benefits.
      * [soft] for empathetic problem statements.
@@ -2987,7 +2987,7 @@ export async function detectPhoneticLexiconWithAI({
 
   const systemPrompt = `Kamu adalah pakar fonetik bahasa Indonesia dan linguistik Text-to-Speech (TTS).
 Tugasmu adalah menganalisis teks naskah voiceover dan judul produk, lalu mendeteksi SEMUA kata, merk, produk, atau istilah bahasa Inggris / asing.
-Untuk setiap istilah yang kamu temukan, buatlah ejaan pelafalan fonetik bahasa Indonesia yang sesuai agar mesin TTS Bahasa Indonesia (seperti Edge-TTS Gadis) dapat melafalkannya dengan fasih, natural, dan tepat tanpa terdengar kaku atau aneh.
+Untuk setiap istilah yang kamu temukan, buatlah ejaan pelafalan fonetik bahasa Indonesia yang sesuai agar mesin TTS Bahasa Indonesia (seperti Gemini Flash TTS) dapat melafalkannya dengan fasih, natural, dan tepat tanpa terdengar kaku atau aneh.
 
 CONTOH PEMETAAN FONETIK BAHASA INDONESIA:
 - 'chopper' -> 'coper'

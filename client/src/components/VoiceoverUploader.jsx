@@ -53,7 +53,7 @@ export default function VoiceoverUploader({
 
   const hasAudioAlready = Boolean(result?.voiceoverAudioUrl || result?.hasFinalVideo || result?.stage === 'completed');
 
-  // 1. One-click Automatic Voiceover Generator (Gemini Flash TTS / Edge-TTS)
+  // 1. One-click Automatic Voiceover Generator (Gemini Flash TTS)
   const handleAutoGenerateTTS = async () => {
     if (!editableScript || !editableScript.trim()) {
       alert('Naskah voiceover tidak boleh kosong.');
@@ -165,8 +165,8 @@ export default function VoiceoverUploader({
 
   const activeTtsProvider = result?.ttsProvider || settings?.ttsProvider || 'gemini_tts';
   const isGemini = activeTtsProvider === 'gemini_tts';
-  const displayVoice = result?.ttsVoice || settings?.ttsVoice || (isGemini ? 'Despina (Gemini Flash)' : 'Gadis (Edge-TTS Neural)');
-  const providerBadge = isGemini ? 'Gemini Flash TTS' : 'Edge-TTS Neural';
+  const displayVoice = result?.ttsVoice || settings?.ttsVoice || 'Despina (Gemini Flash)';
+  const providerBadge = 'Gemini Flash TTS';
 
   return (
     <div className="glass-panel-glow rounded-2xl p-6 shadow-xl border-emerald-500/30 relative overflow-hidden">

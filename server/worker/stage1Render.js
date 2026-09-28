@@ -417,11 +417,11 @@ async function _runStage1Pipeline({
           }
 
           if (activeStreamUrl) {
-            // Hemat (20 titik per menit): interval ~3.0 detik -> 10 menit = 200 frame, 5 menit = 100, dst.
-            // Cap absolut 200 agar video durasi panjang tetap hemat CPU/memori (Termux) namun seluruh
-            // rekaman terinspeksi. Konsisten dengan jalur kandidat & cache.
+            // Sampling DENSE (20 titik per menit): interval ~3.0s -> durasi menentukan JUMLAH.
+            // Ceiling TIDAK lagi di-hardcode 200 di sini; dikontrol sampler via SAMPLE_MAX_FRAMES
+            // (default 500). Konsisten dengan jalur kandidat (candDur/3.0) & cache.
             const targetDur = Number(meta.duration) || 300;
-            const targetMaxFrames = Math.min(200, Math.max(15, Math.floor(targetDur / 3.0)));
+            const targetMaxFrames = Math.max(15, Math.floor(targetDur / 3.0));
             const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
               duration: meta.duration,
               maxSampleFrames: targetMaxFrames,
@@ -2059,14 +2059,11 @@ async function _runStage1Pipeline({
     const autoVoiceoverPath = path.join(uploadsDir, voiceoverFileName);
     const silentDurationSec = (await getMediaDurationSec(silentOutputPath)) || highlight.duration || 20;
 
-    const activeTtsProvider = (options.ttsProvider || process.env.TTS_PROVIDER || 'gemini_tts').toLowerCase().trim();
-    const isGeminiTts = activeTtsProvider === 'gemini_tts';
+    const activeTtsProvider = 'gemini_tts'; // Edge-TTS removed; Gemini Flash TTS is the sole voiceover engine.
     const ttsModelToUse = options.ttsModel || process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL;
     const ttsFallbackModelToUse = options.ttsFallbackModel || process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL;
     const ttsVoiceToUse = options.ttsVoice || process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE;
-    const ttsLabel = isGeminiTts
-      ? `Gemini Flash (${ttsModelToUse} - ${ttsVoiceToUse})`
-      : 'Edge-TTS Gadis';
+    const ttsLabel = `Gemini Flash (${ttsModelToUse} - ${ttsVoiceToUse})`;
 
     updateProgress({
       step: 'tts_generating',

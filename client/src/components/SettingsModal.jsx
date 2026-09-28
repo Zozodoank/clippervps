@@ -161,17 +161,13 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                 <Volume2 className="w-4 h-4 text-emerald-400" />
                 <span>Mesin Voiceover (Text-to-Speech)</span>
               </span>
-              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
-                (settings.ttsProvider || 'gemini_tts') === 'gemini_tts'
-                  ? 'text-blue-400 bg-blue-500/10 border-blue-500/30'
-                  : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
-              }`}>
-                {(settings.ttsProvider || 'gemini_tts') === 'gemini_tts' ? 'Gemini Flash TTS' : 'Edge-TTS'}
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full border text-blue-400 bg-blue-500/10 border-blue-500/30">
+                Gemini Flash TTS
               </span>
             </div>
 
             {/* Provider Options */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            <div className="grid grid-cols-1 gap-2.5">
               {/* Option 1: Google Gemini Flash TTS (Default) */}
               <div
                 onClick={() => setSettings({ ...settings, ttsProvider: 'gemini_tts' })}
@@ -194,39 +190,10 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                   {settings.ttsModel || 'gemini-3.1-flash-tts-preview'}
                 </div>
                 <p className="text-[10px] leading-tight text-slate-400">
-                  Free Tier (10 RPD) dengan suara natural studio Google. Fallback otomatis ke model Gemini cadangan (bukan Edge TTS).
+                  Free Tier (10 RPD) dengan suara natural studio Google. Fallback otomatis ke model Gemini cadangan.
                 </p>
                 {(settings.ttsProvider || 'gemini_tts') === 'gemini_tts' && (
                   <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-blue-400 animate-ping" />
-                )}
-              </div>
-
-              {/* Option 2: Microsoft Edge TTS */}
-              <div
-                onClick={() => setSettings({ ...settings, ttsProvider: 'edge_tts' })}
-                className={`p-3 rounded-xl border text-left cursor-pointer transition-all relative ${
-                  (settings.ttsProvider || 'gemini_tts') === 'edge_tts'
-                    ? 'bg-emerald-950/40 border-emerald-500 text-white shadow-lg shadow-emerald-950/50 ring-1 ring-emerald-500/50'
-                    : 'bg-slate-900/60 border-slate-800 text-slate-300 hover:border-slate-700 hover:bg-slate-850'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-bold text-xs flex items-center gap-1.5">
-                    <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                    Microsoft Edge TTS
-                  </span>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-emerald-500/20 text-emerald-300 border-emerald-500/30">
-                    MANUAL ONLY
-                  </span>
-                </div>
-                <div className="text-[11px] font-mono font-semibold mb-1 text-emerald-300">
-                  id-ID-GadisNeural
-                </div>
-                <p className="text-[10px] leading-tight text-slate-400">
-                  Bebas batas kuota harian (unmetered). Hanya aktif bila Anda memilih opsi ini (bukan fallback otomatis).
-                </p>
-                {(settings.ttsProvider || 'gemini_tts') === 'edge_tts' && (
-                  <div className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                 )}
               </div>
             </div>
@@ -286,15 +253,8 @@ export default function SettingsModal({ isOpen, onClose, settings, setSettings, 
                 </div>
 
                 <div className="p-2 bg-blue-950/30 border border-blue-800/40 rounded-lg text-[10px] text-blue-300/90 leading-relaxed">
-                  🛡️ <strong>Info Kuota Free Tier:</strong> Google Gemini Flash TTS dibatasi <strong>10 RPD</strong> per API key. Sesuai preferensi Anda, jika kuota harian habis, sistem <em>tidak akan</em> mengalihkan (fallback) secara otomatis ke Edge TTS.
+                  🛡️ <strong>Info Kuota Free Tier:</strong> Google Gemini Flash TTS dibatasi <strong>10 RPD</strong> per API key. Jika kuota harian habis, sistem <em>tidak</em> memiliki provider TTS alternatif (Edge-TTS telah dihapus).
                 </div>
-              </div>
-            )}
-
-            {/* Edge TTS Notice */}
-            {(settings.ttsProvider || 'gemini_tts') === 'edge_tts' && (
-              <div className="p-2.5 bg-emerald-950/30 border border-emerald-800/40 rounded-lg text-[11px] text-emerald-300/90 leading-relaxed">
-                🎙️ <strong>Edge TTS Aktif:</strong> Menggunakan suara <code className="text-white font-bold">id-ID-GadisNeural</code>. Bebas kuota harian. Opsi ini aktif karena dipilih secara eksplisit.
               </div>
             )}
           </div>

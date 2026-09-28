@@ -149,7 +149,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
               if (data.batch.isQuotaExhausted) {
                 toast.error(`⚠️ Terjadi kendala saat memproses TTS setelah menyelesaikan ${data.batch.successfulJobs} job.`);
               } else if (data.batch.successfulJobs > 0) {
-                toast.success(`✨ Selesai! Berhasil menyatukan ${data.batch.successfulJobs} video dengan suara Gadis & subtitle.`);
+                toast.success(`✨ Selesai! Berhasil menyatukan ${data.batch.successfulJobs} video dengan suara Gemini Flash TTS & subtitle.`);
               }
             }
           }
@@ -198,7 +198,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
     }
   };
 
-  // 1. Single-Job Generate TTS & Merge Video via Gemini Flash / Edge-TTS with AI Phonetic Detection
+  // 1. Single-Job Generate TTS & Merge Video via Gemini Flash TTS with AI Phonetic Detection
   const handleGenerateTTSForJob = async (e, job) => {
     e.stopPropagation();
     if (processingTtsId || batchStatus.isRunning) return;
@@ -350,10 +350,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
     e.stopPropagation();
     if (awaitingVoiceoverJobs.length === 0) return;
 
-    const isGemini = (settings?.ttsProvider || 'gemini_tts') === 'gemini_tts';
-    const ttsEngineLabel = isGemini
-      ? `Gemini Flash (${settings?.ttsModel || 'gemini-3.1-flash-tts-preview'})`
-      : 'Edge-TTS (Gadis)';
+    const ttsEngineLabel = `Gemini Flash (${settings?.ttsModel || 'gemini-3.1-flash-tts-preview'})`;
 
     if (!confirm(`Generate TTS otomatis untuk ${awaitingVoiceoverJobs.length} job yang menunggu dengan ${ttsEngineLabel}?\n\nSistem di server akan memproses seluruh video satu per satu secara berurutan tanpa terputus.`)) {
       return;
@@ -528,8 +525,8 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
                       ? `Memproses Antrean TTS Server (${batchStatus.currentIndex + 1}/${batchStatus.totalJobs})`
                       : `${awaitingVoiceoverJobs.length} Job Menunggu Voiceover`}
                   </span>
-                  <span className="text-[10px] font-mono px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded border border-emerald-500/30">
-                    Edge-TTS Gadis
+                  <span className="text-[10px] font-mono px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded border border-blue-500/30">
+                    Gemini Flash TTS
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-300 mt-0.5 truncate max-w-[340px] sm:max-w-[480px]">

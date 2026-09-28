@@ -167,7 +167,7 @@ router.get('/jobs', (req, res) => {
       voiceoverScript: job.voiceoverScript || '',
       aiStudioPrompt: job.aiStudioPrompt || '',
       cleanScript: job.cleanScript || '',
-      ttsVoice: job.ttsVoice || (job.ttsProvider === 'edge_tts' ? 'Gadis Indonesia (Neural)' : 'Despina'),
+      ttsVoice: job.ttsVoice || 'Despina',
       ttsProvider: job.ttsProvider || 'gemini_tts',
       ttsModel: job.ttsModel || 'gemini-3.1-flash-tts-preview',
       ttsFallbackModel: job.ttsFallbackModel || 'gemini-2.5-flash-preview-tts',

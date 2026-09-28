@@ -442,14 +442,11 @@ async function _processJobVoiceover(jobId, customScript = null, options = {}) {
   };
 
   try {
-    const activeTtsProvider = (options.ttsProvider || job.ttsProvider || process.env.TTS_PROVIDER || 'gemini_tts').toLowerCase().trim();
-    const isGeminiTts = activeTtsProvider === 'gemini_tts';
+    const activeTtsProvider = 'gemini_tts'; // Edge-TTS removed; Gemini Flash TTS is the sole voiceover engine.
     const ttsModelToUse = options.ttsModel || job.ttsModel || process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL;
     const ttsFallbackModelToUse = options.ttsFallbackModel || job.ttsFallbackModel || process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL;
     const ttsVoiceToUse = options.ttsVoice || job.ttsVoice || process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE;
-    const ttsLabel = isGeminiTts
-      ? `Gemini Flash (${ttsModelToUse} - ${ttsVoiceToUse})`
-      : 'Edge-TTS Gadis';
+    const ttsLabel = `Gemini Flash (${ttsModelToUse} - ${ttsVoiceToUse})`;
 
     updateProgress({ step: 'tts_generating', message: `🎙️ Menghasilkan voice over ${ttsLabel}...`, progress: 20, status: 'running' });
 

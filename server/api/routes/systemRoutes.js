@@ -187,15 +187,14 @@ router.get('/health', async (req, res) => {
     defaultAiProvider: activeAiEngine !== 'none' ? activeAiEngine : 'gemini',
     tts: {
       available: true,
-      provider: process.env.TTS_PROVIDER || 'gemini_tts',
+      provider: 'gemini_tts', // Edge-TTS removed; Google Gemini Flash TTS is the sole voiceover engine.
       model: process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL,
       fallbackModel: process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
       voice: process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
       voices: GEMINI_TTS_VOICES,
-      defaultVoice: (process.env.TTS_PROVIDER || 'gemini_tts') === 'gemini_tts' ? 'Despina (Gemini Flash)' : 'Gadis (Edge-TTS Neural)',
+      defaultVoice: 'Despina (Gemini Flash)',
       voiceName: process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
       geminiConfigured: geminiKeySet,
-      edgeTtsConfigured: true,
     },
     envFilesLoaded: envFiles.map((envPath) => path.relative(path.resolve(__dirname, '..'), envPath).replace(/\\/g, '/')),
     bandwidthStats: getBandwidthStats(),

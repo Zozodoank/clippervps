@@ -577,10 +577,15 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   // Dense Temporal Sampling untuk Video Target 3 - 10 Menit (150s - 600s):
   // Menjamin seluruh rekaman demonstrasi fisik produk terinspeksi tanpa blind spot besar,
   // sekaligus melewati iklan/intro bumper awal (skip first 6-12s).
-  // BUDGET HEMAT (20 titik per menit): 10 menit (600s) = 200 frame (interval ~3s).
-  // Cap 200 menggantikan 150 lama; caller passing dur/3.0 sehingga rasio per menit konsisten.
+  // SAMPLING DENSE (20 titik per menit): interval ~3.0s -> DURASI menentukan JUMLAH,
+  // dibatasi ceiling SAMPLE_MAX_FRAMES (default 500; dulu keras 200). Adaptive:
+  // 5mnt=100, 15mnt=300, 25mnt+=500. Berlaku utk manual (jalur target) & otomatis (kandidat)
+  // karena keduanya melewati sampler ini. PENTING: gatekeeper tetap sub-sample ke
+  // GK_MAX_BATCH_FRAMES (default 240) kecuali dinaikkan -> menaikkan ke 300-500 untuk
+  // analisa LOKAL berarti beban CPU Unisoc T7250 naik linear (lebih lambat).
+  const sampleCeil = Math.max(20, Number(process.env.SAMPLE_MAX_FRAMES) || 500);
   const requestedMax = Number(maxSampleFrames) > 0 ? Number(maxSampleFrames) : (isMobile ? 38 : 45);
-  const safeMax = Math.max(15, Math.min(200, requestedMax));
+  const safeMax = Math.max(15, Math.min(sampleCeil, requestedMax));
 
   const samplePoints = [];
   if (Array.isArray(customTimestamps) && customTimestamps.length > 0) {
