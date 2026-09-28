@@ -17,12 +17,16 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import fs from 'fs';
+import { fileURLToPath } from 'url';
 import { getFFmpegPath } from './binaryChecker.js';
 
 const execFileAsync = promisify(execFile);
 
-const AUDIO_TMP_DIR = path.join(process.cwd(), 'server', 'temp', 'audio_analysis');
-const SERVER_DIR = path.resolve(process.cwd(), 'server');
+// Basis lokasi FILE ini (server/services/) agar tahan terhadap perubahan cwd
+// (dev-runner jalan dari root, test jalan dari server/, dsb).
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SERVER_DIR = path.resolve(__dirname, '..');
+const AUDIO_TMP_DIR = path.join(SERVER_DIR, 'temp', 'audio_analysis');
 
 // Flag utama fitur audio-driven. Default OFF (perilakuan produksi tak berubah).
 export function isAudioDrivenEnabled(env = process.env) {
@@ -184,6 +188,14 @@ export async function extractSourceAudio({ videoPath, outWav, startSec = 0, endS
     logger.log(`[AudioBeat] Audio sumber diekstrak → ${target}${s > 0 || e > 0 ? ` (jendela ${s}s-${e}s)` : ''}`);
     return { ok: true, wavPath: target };
   } catch (err) {
+    const blob = `${err.message || ''} ${err.stderr || ''}`.toLowerCase();
+    // Video sumber tanpa track audio (mis. unduhan video-only utk frame) -> bukan
+    // kesalahan tools, tapi kondisi sah: kembalikan noAudio agar pemanggil memperlakukan
+    // sebagai "tanpa voice-over", bukan error keras.
+    if (blob.includes('does not contain any stream') || blob.includes('invalid argument')) {
+      logger.warn(`[AudioBeat] Video sumber tidak punya track audio untuk diekstrak.`);
+      return { ok: false, noAudio: true, error: 'Video sumber tidak memiliki track audio.' };
+    }
     logger.warn(`[AudioBeat] Gagal ekstrak audio: ${err.message}`);
     return { ok: false, error: err.message };
   }
@@ -201,19 +213,28 @@ export async function transcribeAudio({ wavPath, logger = console, env = process
   if (!cfg.modelExists) {
     return { ok: false, error: `Model whisper tidak ditemukan di: ${cfg.modelPath} (set WHISPER_MODEL / WHISPER_CPP_BIN di server/.env)` };
   }
+  // whisper.cpp modern (b49xx+) TIDAK punya '-j' ke stdout; JSON ditulis ke FILE
+  // lewat '-oj' + '-of PREFIX' -> PREFIX.json. Pakai jalur file agar andal.
+  const outPrefix = wavPath.replace(/\.wav$/i, '') + '_asr';
+  const jsonPath = `${outPrefix}.json`;
   try {
-    const { stdout } = await execFileAsync(cfg.bin, [
+    await execFileAsync(cfg.bin, [
       '-m', cfg.modelPath,
       '-f', wavPath,
       '-l', cfg.lang,
-      '-j', '-nt', '-np',
+      '-nt', '-oj', '-of', outPrefix,
     ], { timeout: Number(env.WHISPER_TIMEOUT_MS) || 600000, maxBuffer: 20 * 1024 * 1024 });
 
-    const parsed = parseWhisperJson(stdout);
-    if (!parsed) return { ok: false, error: 'Output whisper.cpp bukan JSON yang bisa dibaca.' };
+    if (!fs.existsSync(jsonPath)) {
+      return { ok: false, error: `whisper selesai tapi ${path.basename(jsonPath)} tidak dibuat (cek versi/flag whisper.cpp).` };
+    }
+    const parsed = parseWhisperJson(fs.readFileSync(jsonPath, 'utf8'));
+    try { fs.unlinkSync(jsonPath); } catch { /* cleanup best-effort */ }
+    if (!parsed) return { ok: false, error: 'Output JSON whisper.cpp tidak bisa dibaca.' };
     logger.log(`[AudioBeat] Whisper selesai: ${parsed.segments.length} segmen (bahasa ${parsed.language || '?'})`);
     return { ok: true, language: parsed.language, segments: parsed.segments };
   } catch (err) {
+    try { if (fs.existsSync(jsonPath)) fs.unlinkSync(jsonPath); } catch { /* noop */ }
     logger.warn(`[AudioBeat] Gagal memanggil whisper (${cfg.bin}): ${err.message}`);
     return { ok: false, error: err.message, missingBinary: /ENOENT/.test(err.message) };
   }
@@ -260,7 +281,19 @@ export async function analyzeSourceAudioForBeats({ videoPath, startSec = 0, endS
     return { ok: false, skipped: true, reason: 'AUDIO_DRIVEN_SCENES OFF' };
   }
   const ext = await extractSourceAudio({ videoPath, startSec, endSec, logger });
-  if (!ext.ok) return { ok: false, error: ext.error };
+  if (!ext.ok) {
+    if (ext.noAudio) {
+      // Tanpa track audio = tanpa voice-over. Kembalikan hasil terstruktur agar
+      // pemanggil (worker) memperlakukannya sebagai penolakan VO, bukan crash.
+      return {
+        ok: true,
+        language: null,
+        voiceover: { speechSec: 0, coverage: 0, wordCount: 0, hasVoiceover: false, reason: 'Video sumber tidak memiliki track audio (tidak ada voice-over).' },
+        beats: [],
+      };
+    }
+    return { ok: false, error: ext.error };
+  }
 
   const tr = await transcribeAudio({ wavPath: ext.wavPath, logger });
   try { fs.unlinkSync(ext.wavPath); } catch { /* cleanup best-effort */ }
