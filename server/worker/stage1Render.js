@@ -46,6 +46,9 @@ import {
   callAIGatekeeperMicroservice,
   sampleDenseClustersAroundCleanFrames
 } from '../services/videoFilterService.js';
+// AUDIO-DRIVEN SCENE PLANNING (Fase 1 & 2) - percobaan, di-guard flag AUDIO_DRIVEN_SCENES.
+import { analyzeSourceAudioForBeats, isAudioDrivenEnabled } from '../services/audioBeatService.js';
+import { paraphraseBeats, beatsToScript } from '../services/antiPlagiarismService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
 import { cleanupTempFiles, deleteJobTempDirectory, deleteJobFiles } from '../services/cleaner.js';
@@ -2055,6 +2058,41 @@ async function _runStage1Pipeline({
     }
 
     const rawVoiceScript = scriptData.voiceoverScript || scriptData.aiStudioPrompt || '';
+
+    // ─── AUDIO-DRIVEN NARRATION (Fase 1 & 2, guard flag; default OFF) ───
+    // Bila aktif: ekstrak VO sumber pada jendela klip → whisper beat → parafrase
+    // anti-plagiat (model teks) → pakai sebagai naskah Gemini TTS. Visual tetap
+    // conformed ke durasi audio final (conformClipsToVoiceover), sehingga potongan
+    // adegan mengikuti ritme narasi asli. Gagal-anggun: tetap pakai naskah vision.
+    let finalVoiceScript = rawVoiceScript;
+    if (isAudioDrivenEnabled()) {
+      updateProgress({ step: 'audio_analysis', message: '🎧 Menganalisis voice-over sumber (whisper beat)...', progress: 81, status: 'running' });
+      try {
+        const ad = await analyzeSourceAudioForBeats({
+          videoPath: rawVideoPath,
+          startSec: highlight.startTime,
+          endSec: highlight.endTime,
+          totalDurationSec: actualSilentDuration,
+        });
+        if (ad.ok && ad.voiceover?.hasVoiceover && Array.isArray(ad.beats) && ad.beats.length) {
+          updateProgress({ step: 'audio_paraphrase', message: `🪶 Memparafrase ${ad.beats.length} beat narasi (anti-plagiat)...`, progress: 82, status: 'running' });
+          const pp = await paraphraseBeats({ beats: ad.beats, apiKey, aiProvider });
+          const narration = beatsToScript(pp.ok ? pp.beats : ad.beats);
+          if (narration && narration.trim()) {
+            finalVoiceScript = narration.trim();
+            highlight.audioDrivenBeats = pp.ok ? pp.beats : ad.beats;
+            console.log(`[Job ${jobId}] ✅ AUDIO-DRIVEN: naskah diambil dari VO sumber terparafrase (${ad.beats.length} beat, cakupan ${(ad.voiceover.coverage * 100).toFixed(0)}%).`);
+          }
+        } else if (ad.ok && !ad.voiceover?.hasVoiceover) {
+          console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN: ${ad.voiceover?.reason || 'video tanpa voice-over'} — fallback ke naskah vision.`);
+        } else if (!ad.skipped) {
+          console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN: analisis audio gagal (${ad.missingBinary ? 'whisper.cpp belum terpasang' : ad.error}) — fallback ke naskah vision.`);
+        }
+      } catch (adErr) {
+        console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN error: ${adErr.message} — fallback ke naskah vision.`);
+      }
+    }
+
     const voiceoverFileName = `voiceover_${jobId}.mp3`;
     const autoVoiceoverPath = path.join(uploadsDir, voiceoverFileName);
     const silentDurationSec = (await getMediaDurationSec(silentOutputPath)) || highlight.duration || 20;
@@ -2081,7 +2119,7 @@ async function _runStage1Pipeline({
           await new Promise(r => setTimeout(r, 2000));
         }
         ttsResult = await generateVoiceoverTTS({
-          script: scriptData.voiceoverScript || rawVoiceScript,
+          script: finalVoiceScript,
           outputPath: autoVoiceoverPath,
           targetDurationSec: silentDurationSec,
           provider: activeTtsProvider,
@@ -2126,7 +2164,7 @@ async function _runStage1Pipeline({
         // This prevents looping/repeating footage when TTS runs longer than the first silent edit.
         const conformedClips = conformClipsToVoiceover({
           clips: highlight.clips,
-          script: scriptData.voiceoverScript || rawVoiceScript,
+          script: finalVoiceScript,
           audioDurationSec,
           creativePlan,
           niche: options.niche || jobMeta.niche || 'kitchen_tools',

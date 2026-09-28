@@ -158,7 +158,7 @@ export function buildBeatsFromSegments(segments = [], opts = {}) {
 // EKSTRAK AUDIO (I/O) — ffmpeg → mono 16 kHz WAV (format yang disukai
 // whisper.cpp). Gagal-anggun: return { ok:false } alih-alih melempar.
 // ==========================================================================
-export async function extractSourceAudio({ videoPath, outWav, logger = console } = {}) {
+export async function extractSourceAudio({ videoPath, outWav, startSec = 0, endSec = 0, logger = console } = {}) {
   if (!videoPath || !fs.existsSync(videoPath)) {
     return { ok: false, error: `Video sumber tidak ada untuk ekstrak audio: ${videoPath}` };
   }
@@ -166,13 +166,22 @@ export async function extractSourceAudio({ videoPath, outWav, logger = console }
     if (!fs.existsSync(AUDIO_TMP_DIR)) fs.mkdirSync(AUDIO_TMP_DIR, { recursive: true });
     const target = outWav || path.join(AUDIO_TMP_DIR, `audio_${Date.now()}.wav`);
     const ffmpeg = getFFmpegPath();
+    // Slice opsional ke jendela klip terpilih (fast-seek sebelum -i + durasi -t sesudah -i),
+    // sehingga offset whisper 0-based dan selaras dengan timeline klip, bukan video utuh.
+    const s = Number(startSec) || 0;
+    const e = Number(endSec) || 0;
+    const inputArgs = [];
+    if (s > 0) inputArgs.push('-ss', String(s));
+    inputArgs.push('-i', videoPath);
+    const durArgs = (e > s) ? ['-t', String(e - s)] : [];
     await execFileAsync(ffmpeg, [
-      '-y', '-nostdin', '-i', videoPath,
+      '-y', '-nostdin', ...inputArgs,
+      ...durArgs,
       '-vn', '-ac', '1', '-ar', '16000',
       '-af', 'highpass=f=120,lowpass=f=6500', // fokus pita suara manusia, hemat bandwidth Whisper
       '-c:a', 'pcm_s16le', target,
     ], { timeout: 120000, maxBuffer: 1024 * 1024 });
-    logger.log(`[AudioBeat] Audio sumber diekstrak → ${target}`);
+    logger.log(`[AudioBeat] Audio sumber diekstrak → ${target}${s > 0 || e > 0 ? ` (jendela ${s}s-${e}s)` : ''}`);
     return { ok: true, wavPath: target };
   } catch (err) {
     logger.warn(`[AudioBeat] Gagal ekstrak audio: ${err.message}`);
@@ -246,18 +255,19 @@ function parseClock(str) {
 // ORKESTRASI FASE 1 — ekstrak → transkrip → gate VO → beat. Satu panggilan.
 // Bila audio/whisper tak tersedia, return ok:false (panggilan boleh fallback).
 // ==========================================================================
-export async function analyzeSourceAudioForBeats({ videoPath, totalDurationSec = 0, logger = console } = {}) {
+export async function analyzeSourceAudioForBeats({ videoPath, startSec = 0, endSec = 0, totalDurationSec = 0, logger = console } = {}) {
   if (!isAudioDrivenEnabled()) {
     return { ok: false, skipped: true, reason: 'AUDIO_DRIVEN_SCENES OFF' };
   }
-  const ext = await extractSourceAudio({ videoPath, logger });
+  const ext = await extractSourceAudio({ videoPath, startSec, endSec, logger });
   if (!ext.ok) return { ok: false, error: ext.error };
 
   const tr = await transcribeAudio({ wavPath: ext.wavPath, logger });
   try { fs.unlinkSync(ext.wavPath); } catch { /* cleanup best-effort */ }
   if (!tr.ok) return { ok: false, error: tr.error, missingBinary: tr.missingBinary };
 
-  const vo = assessVoiceoverPresence(tr.segments, totalDurationSec);
+  const windowDur = (Number(endSec) > Number(startSec)) ? (Number(endSec) - Number(startSec)) : Number(totalDurationSec);
+  const vo = assessVoiceoverPresence(tr.segments, windowDur);
   const beats = vo.hasVoiceover ? buildBeatsFromSegments(tr.segments) : [];
   return { ok: true, language: tr.language, voiceover: vo, beats };
 }
