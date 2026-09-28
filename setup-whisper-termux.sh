@@ -23,23 +23,25 @@ IS_ROOT="$(id -u)"
 mkdir -p "$DEST" "$MODELS" "$DEST/_build"
 
 echo "==> [1/4] Deteksi lingkungan & pasang dependensi build..."
-if command -v pkg >/dev/null 2>&1; then
-  # Termux native: 'pkg' MENOLAK jalan sebagai root.
+if [ -f /etc/debian_version ] && command -v apt-get >/dev/null 2>&1; then
+  # proot-distro Ubuntu/Debian (root itu NORMAL). PENTING: JANGAN pakai 'pkg'
+  # Termux yang nyempil di PATH (akan nolak root) -> pakai apt. build-essential
+  # menyuplai gcc/g++/make; cmake utk build whisper.cpp.
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y git cmake make build-essential curl
+elif command -v pkg >/dev/null 2>&1; then
+  # Termux NATIF: 'pkg' MENOLAK jalan sebagai root.
   if [ "$IS_ROOT" = "0" ]; then
-    echo "ERROR: sedang JALAN SEBAGAI ROOT di Termux (pkg menolaknya)."
-    echo "Solusi: ketik 'exit' (mungkin 2x) sampai prompt Termux non-root,"
-    echo "        lalu jalankan lagi:  bash setup-whisper-termux.sh"
+    echo "ERROR: sedang JALAN SEBAGAI ROOT di Termux native (pkg menolaknya)."
+    echo "Solusi: ketik 'exit' (mungkin 2x) sampai prompt non-root, lalu ulangi,"
+    echo "        ATAU bangun di proot: proot-distro login ubuntu -- bash setup-whisper-termux.sh"
     exit 1
   fi
   pkg update -y || true
   pkg install -y git cmake clang make curl cpu-features
-elif command -v apt-get >/dev/null 2>&1; then
-  # proot-distro / Debian-Ubuntu: root itu normal, pakai apt.
-  # build-essential menyediakan gcc/g++/make (pengganti clang di Termux).
-  apt-get update -y
-  apt-get install -y git cmake build-essential curl
 else
-  echo "ERROR: tak menemukan 'pkg' (Termux) maupun 'apt-get' (proot/Linux)."
+  echo "ERROR: tak menemukan 'apt-get' (proot) maupun 'pkg' (Termux native)."
   exit 1
 fi
 
