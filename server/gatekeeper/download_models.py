@@ -4,6 +4,7 @@ Model Downloader for Local AI Frame Gatekeeper (ClipperVPS).
 Downloads verified ultra-lightweight ONNX & TFLite models (~15MB total):
 1. Google MediaPipe BlazeFace (~220 KB)
 2. OpenCV YuNet Face Detection (~227 KB)
+2b. SCRFD 2.5G bkps (pengganti YuNet via GK_FACE_BACKEND=scrfd, ~3.3 MB)
 3. DBNet Text Detection PP-OCRv4 (~4.7 MB)
 4. MobileNetV3 Small (~10.2 MB)
 """
@@ -32,6 +33,14 @@ MODELS = [
         "min_size": 200_000,
         "urls": [
             "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+        ]
+    },
+    {
+        "name": "SCRFD 2.5G Face Detection (bkps, pengganti YuNet)",
+        "filename": "scrfd_2.5g_bnkps.onnx",
+        "min_size": 3_000_000,
+        "urls": [
+            "https://huggingface.co/RuteNL/SCRFD-face-detection-ONNX/resolve/main/2.5g_bnkps.onnx"
         ]
     },
     {

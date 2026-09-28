@@ -138,15 +138,171 @@ def _bench_time(bench, key, fn, *args, **kwargs):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. TAHAP 1: FACE DETECTOR (MediaPipe BlazeFace + OpenCV YuNet)
+# 1. TAHAP 1: FACE DETECTOR (SCRFD / MediaPipe BlazeFace / OpenCV YuNet)
 # ─────────────────────────────────────────────────────────────────────────────
+class _ScrfdDetector:
+    """Pengganti YuNet (aktif via GK_FACE_BACKEND=scrfd): SCRFD InsightFace lewat
+    onnxruntime, CPU-only, TANPA dependensi insightface. Mendukung varian output
+    6 (tanpa landmark) dan 9 (5 landmark / bkps). Matematika dekode anchor mengikuti
+    referensi resmi insightface/model_zoo/scrfd.py (strides [8,16,32], num_anchors 2,
+    format distance-to-anchor, letterbox, NMS)."""
+
+    def __init__(self, model_path, input_size=480, det_thresh=0.5, nms_thresh=0.4):
+        self.input_mean = 127.5
+        self.input_std = 128.0
+        self.det_thresh = float(det_thresh)
+        self.nms_thresh = float(nms_thresh)
+        self.center_cache = {}
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 2
+        opts.inter_op_num_threads = 1
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.session = ort.InferenceSession(
+            model_path, sess_options=opts, providers=["CPUExecutionProvider"]
+        )
+        inp = self.session.get_inputs()[0]
+        self.input_name = inp.name
+        shape = inp.shape or []
+        if len(shape) >= 4 and all(isinstance(v, int) and v > 0 for v in shape[2:4]):
+            self.input_size = (int(shape[3]), int(shape[2]))  # (w, h) statis
+        else:
+            s = max(64, (int(input_size) // 32) * 32)          # wajib kelipatan 32
+            self.input_size = (s, s)
+        outputs = self.session.get_outputs()
+        self.output_names = [o.name for o in outputs]
+        self.batched = len(outputs[0].shape) == 3
+        n = len(outputs)
+        if n == 6:
+            self.fmc, self.strides, self.num_anchors, self.use_kps = 3, [8, 16, 32], 2, False
+        elif n == 9:
+            self.fmc, self.strides, self.num_anchors, self.use_kps = 3, [8, 16, 32], 2, True
+        else:
+            raise RuntimeError(f"Jumlah output SCRFD tak dikenal: {n} (harap 6 atau 9)")
+        self.backend = "scrfd"
+
+    @staticmethod
+    def _distance2bbox(points, distance):
+        x1 = points[:, 0] - distance[:, 0]
+        y1 = points[:, 1] - distance[:, 1]
+        x2 = points[:, 0] + distance[:, 2]
+        y2 = points[:, 1] + distance[:, 3]
+        return np.stack([x1, y1, x2, y2], axis=-1)
+
+    @staticmethod
+    def _distance2kps(points, distance):
+        preds = []
+        for i in range(0, distance.shape[1], 2):
+            preds.append(points[:, i % 2] + distance[:, i])
+            preds.append(points[:, i % 2 + 1] + distance[:, i + 1])
+        return np.stack(preds, axis=-1)
+
+    def _nms(self, dets):
+        x1, y1, x2, y2, s = dets[:, 0], dets[:, 1], dets[:, 2], dets[:, 3], dets[:, 4]
+        areas = (x2 - x1 + 1) * (y2 - y1 + 1)
+        order = np.argsort(-s, kind="stable")
+        keep = []
+        while order.size > 0:
+            i = order[0]
+            keep.append(i)
+            xx1 = np.maximum(x1[i], x1[order[1:]]); yy1 = np.maximum(y1[i], y1[order[1:]])
+            xx2 = np.minimum(x2[i], x2[order[1:]]); yy2 = np.minimum(y2[i], y2[order[1:]])
+            w = np.maximum(0.0, xx2 - xx1 + 1); h = np.maximum(0.0, yy2 - yy1 + 1)
+            inter = w * h
+            ovr = inter / (areas[i] + areas[order[1:]] - inter)
+            order = order[np.where(ovr <= self.nms_thresh)[0] + 1]
+        return keep
+
+    def detect(self, img_bgr, threshold=None):
+        """Kembalikan list wajah pada koordinat GAMBAR ASLI:
+        [{box:[x,y,w,h], score, kps:[x,y]*5|None}]."""
+        if img_bgr is None or getattr(img_bgr, "size", 0) == 0:
+            return []
+        threshold = self.det_thresh if threshold is None else float(threshold)
+        W, H = self.input_size
+        ih, iw = img_bgr.shape[:2]
+        im_ratio = float(ih) / float(iw)
+        model_ratio = float(H) / float(W)
+        if im_ratio > model_ratio:
+            new_h = H; new_w = max(1, int(new_h / im_ratio))
+        else:
+            new_w = W; new_h = max(1, int(new_w * im_ratio))
+        det_scale = float(new_h) / float(ih)
+        resized = cv2.resize(img_bgr, (new_w, new_h))
+        canvas = np.zeros((H, W, 3), dtype=np.uint8)
+        canvas[:new_h, :new_w, :] = resized
+        blob = cv2.dnn.blobFromImage(
+            canvas, 1.0 / self.input_std, (W, H),
+            (self.input_mean, self.input_mean, self.input_mean), swapRB=True,
+        )
+        net = self.session.run(self.output_names, {self.input_name: blob})
+        fmc = self.fmc
+        scores_list, bboxes_list, kpss_list = [], [], []
+        for idx, stride in enumerate(self.strides):
+            scores = net[idx][0] if self.batched else net[idx]
+            bbox_preds = (net[idx + fmc][0] if self.batched else net[idx + fmc]) * stride
+            scores = np.ravel(np.asarray(scores))
+            bbox_preds = np.asarray(bbox_preds)
+            hh, ww = H // stride, W // stride
+            key = (hh, ww, stride)
+            ac = self.center_cache.get(key)
+            if ac is None:
+                ac = np.stack(np.mgrid[:hh, :ww][::-1], axis=-1).astype(np.float32)
+                ac = (ac * stride).reshape((-1, 2))
+                if self.num_anchors > 1:
+                    ac = np.stack([ac] * self.num_anchors, axis=1).reshape((-1, 2))
+                if len(self.center_cache) < 100:
+                    self.center_cache[key] = ac
+            pos = np.where(scores >= threshold)[0]
+            bboxes = self._distance2bbox(ac, bbox_preds)
+            scores_list.append(scores[pos]); bboxes_list.append(bboxes[pos])
+            if self.use_kps:
+                kps_preds = (net[idx + fmc * 2][0] if self.batched else net[idx + fmc * 2]) * stride
+                kpss = self._distance2kps(ac, np.asarray(kps_preds)).reshape((ac.shape[0], -1, 2))
+                kpss_list.append(kpss[pos])
+        if not scores_list or sum(s.size for s in scores_list) == 0:
+            return []
+        scores = np.hstack(scores_list).ravel()
+        bboxes = np.vstack(bboxes_list) / det_scale
+        order = np.argsort(-scores, kind="stable")
+        scores, bboxes = scores[order], bboxes[order]
+        kpss = (np.vstack(kpss_list) / det_scale)[order] if self.use_kps else None
+        pre = np.hstack((bboxes, scores[:, None])).astype(np.float32)
+        keep = self._nms(pre)
+        out = []
+        for i in keep:
+            x1, y1, x2, y2, sc = pre[i]
+            box = [int(round(x1)), int(round(y1)), int(round(x2 - x1)), int(round(y2 - y1))]
+            lm = kpss[i].ravel().astype(float).tolist() if kpss is not None else None
+            out.append({"box": box, "score": float(sc), "kps": lm})
+        return out
+
+
 class FaceGatekeeper:
     def __init__(self, min_confidence=0.52):
         # min_confidence 0.52 — cukup tinggi agar tidak false-positive pada produk oval/tangan
         self.min_confidence = min_confidence
         self.mp_detector = None
         self.yunet_detector = None
+        self.scrfd = None
         self.backend = "none"
+
+        # GK_FACE_BACKEND: 'scrfd' (DEFAULT baru) pakai SCRFD sebagai PENGGANTI YuNet untuk
+        # menyaring wajah SECARA LOKAL (bukan lagi diserahkan ke Gemini). Set 'yunet' untuk
+        # kembali ke MediaPipe+YuNet. Bila mode scrfd tapi model/onnxruntime tak ada -> fallback.
+        face_backend = os.environ.get("GK_FACE_BACKEND", "scrfd").strip().lower()
+        if face_backend == "scrfd":
+            scrfd_path = os.path.join(MODELS_DIR, "scrfd_2.5g_bnkps.onnx")
+            if HAS_ORT and os.path.exists(scrfd_path):
+                try:
+                    scrfd_inp = int(os.environ.get("GK_SCRFD_INPUT", "480") or 480)
+                    self.scrfd = _ScrfdDetector(scrfd_path, input_size=scrfd_inp)
+                    self.backend = "scrfd"
+                    print(f"  [FaceGatekeeper] \u2705 SCRFD AKTIF (pengganti YuNet) input={self.scrfd.input_size} use_kps={self.scrfd.use_kps}.")
+                    return
+                except Exception as e:
+                    print(f"  [FaceGatekeeper] \u26a0\ufe0f SCRFD init error: {e} \u2192 fallback ke YuNet/MediaPipe.")
+            else:
+                print("  [FaceGatekeeper] \u26a0\ufe0f GK_FACE_BACKEND=scrfd tapi model/onnxruntime tak tersedia \u2192 fallback ke YuNet/MediaPipe.")
 
         # 1. MediaPipe Tasks FaceDetector (BlazeFace short range)
         tflite_path = os.path.join(MODELS_DIR, "blaze_face_short_range.tflite")
@@ -328,7 +484,11 @@ class FaceGatekeeper:
     def classify_face(frame_shape, box, temporal_hits=0):
         """Klasifikasi wajah: 'presenter' (blokir) vs 'content' (boleh untuk slot
         ber-facePolicy presenter_only, misal uji kamera niche smartphone).
-        Urutan aturan sesuai spesifikasi Fase 2; ragukan = presenter (fail-safe)."""
+        HANYA wajah presenter yang diblokir: talking-head dominan di paruh atas
+        ATAU wajah persisten lintas frame (dijejali oleh track temporal).
+        Wajah manusia lain yang sekadar tertangkap kamera (sample foto/portrait
+        hasil uji kamera, pejalan kaki, refleksi layar) = 'content' -> TIDAK diblokir,
+        sesuai spesifikasi niche smartphone (size>6% & upper-half, ATAU temporal)."""
         fh, fw = frame_shape
         bx, by, bw, bh = box
         frame_area = float(max(1, fw * fh))
@@ -341,19 +501,26 @@ class FaceGatekeeper:
         # b. PRESENTER: posisi stabil lintas >= 3 frame berurutan (hits dihitung track temporal)
         if temporal_hits >= 2:
             return "presenter"
-        # c. CONTENT: wajah kecil (pejalan kaki / wajah dalam sample foto hasil kamera)
-        if area_ratio < 0.03:
-            return "content"
-        # d. Region layar perangkat/viewfinder belum terdeteksi di pipeline CPU ini ->
-        # e. FALLBACK konservatif: ragukan = PRESENTER
-        return "presenter"
+        # c. CONTENT: bukan talking-head dominan & bukan wajah persisten -> wajah yang
+        #    hanya tertangkap kamera (sample foto/uji kamera/pejalan kaki) dibiarkan.
+        return "content"
 
     def detect_faces(self, image_bgr, min_score=0.60):
-        """Daftar wajah manusia valid (box + score) untuk policy presenter_only.
-        Mode strict TIDAK memakai method ini — deteksi lokal sengaja nonaktif
-        (keputusan user: wajah disaring Gemini Filter 3), jadi niche lain tak terpengaruh."""
+        """Daftar wajah manusia valid (box + score + kind) untuk policy presenter_only.
+        Dipakai JUGA oleh detect() pada mode strict (wajah disaring LOKAL, bukan Gemini).
+        Backend: SCRFD (default) -> fallback YuNet/MediaPipe sesuai GK_FACE_BACKEND."""
         faces = []
         h, w = image_bgr.shape[:2]
+        # Jalur SCRFD (GK_FACE_BACKEND=scrfd): menggantikan YuNet+MediaPipe sepenuhnya.
+        if getattr(self, "scrfd", None) is not None:
+            try:
+                for d in self.scrfd.detect(image_bgr):
+                    box = d["box"]; score = d["score"]; lm = d.get("kps")
+                    if self._is_valid_human_face(image_bgr, box, score, lm, min_score=min_score)[0]:
+                        faces.append({"box": box, "score": float(score), "kind": self.classify_face((h, w), box)})
+            except Exception as e:
+                print(f"  [FaceGatekeeper] \u26a0\ufe0f SCRFD detect error: {e}")
+            return faces
         if self.mp_detector:
             try:
                 rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
@@ -384,55 +551,18 @@ class FaceGatekeeper:
         return faces
 
     def detect(self, image_bgr, niche="kitchen_tools"):
-        # ATAS PERMINTAAN USER: Matikan deteksi wajah lokal (YuNet/MediaPipe) sepenuhnya.
-        # Biarkan Gemini Filter 3 yang bertugas membuang frame wajah.
-        # CATATAN FASE 2: jalur ini tetap untuk policy 'strict' (semua niche lama).
-        # Policy 'presenter_only' memakai detect_faces() + classify_face() di process_single_frame.
-        return False, 0.0, None, "Local Face Detection Disabled"
-
-        # 1. MediaPipe BlazeFace
-        if self.mp_detector:
-            try:
-                rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-                results = self.mp_detector.detect(mp_image)
-                if results and results.detections:
-                    best_score = 0.0
-                    best_box = None
-                    for det in results.detections:
-                        score = det.categories[0].score if det.categories else 0.0
-                        bbox = det.bounding_box
-                        bx = max(0, int(bbox.origin_x))
-                        by = max(0, int(bbox.origin_y))
-                        bw = int(bbox.width)
-                        bh = int(bbox.height)
-                        is_valid, _ = self._is_valid_human_face(image_bgr, [bx, by, bw, bh], score)
-                        if is_valid and score > best_score:
-                            best_score = score
-                            best_box = [bx, by, bw, bh]
-                    if best_box:
-                        self._save_rejected_face_frame(image_bgr, best_box, float(best_score), "MediaPipe")
-                        return True, float(best_score), best_box, f"Wajah vlogger/presenter terdeteksi (BlazeFace: {best_score * 100:.1f}%)"
-            except Exception:
-                pass
-
-        # 2. OpenCV YuNet (Second-pass detector untuk wajah samping/miring)
-        if self.yunet_detector:
-            try:
-                self.yunet_detector.setInputSize((w, h))
-                _, faces = self.yunet_detector.detect(image_bgr)
-                if faces is not None and len(faces) > 0:
-                    for face in faces:
-                        score = float(face[-1])
-                        bx, by, bw, bh = int(face[0]), int(face[1]), int(face[2]), int(face[3])
-                        landmarks = [float(face[i]) for i in range(4, 14)]
-                        is_valid, reason = self._is_valid_human_face(image_bgr, [bx, by, bw, bh], score, landmarks)
-                        if is_valid:
-                            self._save_rejected_face_frame(image_bgr, [bx, by, bw, bh], score, "YuNet")
-                            return True, score, [bx, by, bw, bh], f"Wajah presenter terdeteksi (YuNet: {score * 100:.1f}%)"
-            except Exception:
-                pass
-
+        # Filter wajah LOKAL untuk policy 'strict' (semua niche lama). ATAS PERMINTAAN USER,
+        # wajah TIDAK lagi diserahkan ke Gemini: setiap wajah manusia valid dibuang di oleh
+        # backend aktif (SCRFD default; fallback YuNet/MediaPipe saat GK_FACE_BACKEND=yunet).
+        # Policy 'presenter_only' tetap memakai detect_faces() + classify_face() di process_single_frame.
+        try:
+            faces = self.detect_faces(image_bgr, min_score=self.min_confidence)
+        except Exception:
+            faces = []
+        if faces:
+            best = max(faces, key=lambda f: f.get("score", 0.0))
+            self._save_rejected_face_frame(image_bgr, best["box"], best.get("score", 0.0), self.backend)
+            return True, float(best.get("score", 0.0)), best["box"], f"Wajah manusia terdeteksi lokal ({self.backend}: {best.get('score', 0.0) * 100:.1f}%)"
         return False, 0.0, None, "Bersih (faceless)"
 
 
@@ -458,7 +588,7 @@ def apply_temporal_presenter_track(single_verdicts, iou_thresh=0.55, min_hits=2)
             v["status"] = "discarded"
             v["stage"] = "face"
             v["decision"] = "REJECT"
-            v["reason"] = "Wajah persisten di posisi sama lintas >= 3 frame (presenter statis, policy presenter_only)"
+            v["reason"] = f"Wajah persisten di posisi sama lintas >= {min_hits + 1} frame (presenter statis, policy presenter_only)"
         elif faces and v.get("status") in ("clean",) and all(f["kind"] == "content" for f in faces):
             v["cameraResultEligible"] = True
     return single_verdicts
@@ -1267,8 +1397,10 @@ class FrameGatekeeper:
 
         # ── 2B. Temporal Presenter Track (khusus policy presenter_only) ──
         # Wajah 'content' yang persisten di posisi sama lintas frame = presenter statis.
+        # min_hits=1 -> kunci presenter sejak FRAME KE-2 (tutup bocor 1-2 frame vlogger
+        # berwajah menengah/di paruh bawah; wajah tetap DIAM 2 frame beruntun = kreator).
         if face_policy == "presenter_only":
-            apply_temporal_presenter_track(single_verdicts)
+            apply_temporal_presenter_track(single_verdicts, min_hits=1)
 
         # ── 3. Temporal Watermark Aggregation (Multi-Frame Persistence Tracker) ──
         # Watermark biasanya berada di sudut yang sama persisten lintas >= 2 frame.

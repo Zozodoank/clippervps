@@ -30,21 +30,22 @@ FRAME = (1920, 1080)
 
 
 def test_classify_face():
-    print("\n[1] classify_face - aturan geometrik a/b/c/e")
+    print("\n[1] classify_face - HANYA presenter (a: besar-di-atas / b: temporal) yang diblokir")
     # a. presenter: wajah besar (500x600 = 14.5% frame) dominan di paruh atas
     check("wajah besar di atas -> presenter",
           FaceGatekeeper.classify_face(FRAME, [290, 150, 500, 600]) == "presenter")
     # c. content: wajah kecil (60x70 = 0.2% frame) pejalan kaki di sample foto
     check("wajah kecil -> content",
           FaceGatekeeper.classify_face(FRAME, [900, 800, 60, 70]) == "content")
-    # e. fallback: ukuran menengah (250x300 = 3.6%) -> presenter (fail-safe)
-    check("menengah ambigu -> presenter (fail-safe)",
-          FaceGatekeeper.classify_face(FRAME, [400, 900, 250, 300]) == "presenter")
-    # b. temporal: wajah kecil tapi persisten >= 3 frame -> presenter mengalahkan aturan c
+    # e. wajah menengah (250x300 = 3.6%) yang BUKAN talking-head atas -> content (wajah tertangkap kamera)
+    check("menengah ambigu -> content (wajah sample kamera tidak diblokir)",
+          FaceGatekeeper.classify_face(FRAME, [400, 900, 250, 300]) == "content")
+    # b. temporal: wajah kecil tapi persisten >= 3 frame -> presenter mengalahkan aturan content
     check("content kecil tapi persisten -> presenter",
           FaceGatekeeper.classify_face(FRAME, [900, 800, 60, 70], temporal_hits=2) == "presenter")
-    check("wajah besar di bawah ambigu -> presenter (fallback e)",
-          FaceGatekeeper.classify_face(FRAME, [290, 1200, 500, 600]) == "presenter")
+    # wajah besar tapi di paruh bawah (face_cy>=0.55) bukan talking-head -> content
+    check("wajah besar di bawah -> content (bukan presenter statis)",
+          FaceGatekeeper.classify_face(FRAME, [290, 1200, 500, 600]) == "content")
 
 
 def test_iou():
@@ -96,6 +97,18 @@ def test_temporal_track():
     check("wajah persisten: frame ke-3 TIDAK dapat flag eligible",
           not still[2].get("cameraResultEligible"))
 
+    # Kasus B2: produksi pakai min_hits=1 -> wajah DIAM sudah dikunci sejak frame KE-2
+    still1 = [
+        _v(0.0, [dict(small, box=[900, 800, 60, 70])]),
+        _v(2.5, [dict(small, box=[905, 802, 60, 70])]),
+        _v(5.0, [dict(small, box=[902, 799, 60, 70])]),
+    ]
+    apply_temporal_presenter_track(still1, min_hits=1)
+    check("min_hits=1: frame ke-1 masih clean (belum ada pembanding)",
+          still1[0]["status"] == "clean")
+    check("min_hits=1: frame ke-2 SUDAH dibuang sebagai presenter (tutup bocor)",
+          still1[1]["status"] == "discarded" and still1[1]["stage"] == "face")
+
     # Kasus C: frame tanpa wajah tidak boleh menerima flag apa pun
     noface = [_v(0.0, []), _v(2.5, [])]
     apply_temporal_presenter_track(noface)
@@ -122,6 +135,7 @@ class _FakeImage:
 def test_strict_path_unchanged():
     print("\n[4] Regresi jalur strict - detect() lama tidak boleh berubah perilaku")
     gate = FaceGatekeeper.__new__(FaceGatekeeper)  # tanpa init model
+    gate.scrfd = None
     gate.mp_detector = None
     gate.yunet_detector = None
     gate.backend = "none"
