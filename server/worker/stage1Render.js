@@ -1703,33 +1703,106 @@ async function _runStage1Pipeline({
 
     // TAHAP 2: AI telah menyetujui video! Backend langsung mengunduh video 1080p Full HD asli dari YouTube untuk rendering
     if (!rawVideoPath) {
-      updateProgress({ step: 'download_hd', message: '✅ Video disetujui AI! Mengunduh kualitas 1080p Full HD langsung dari YouTube...', progress: 55, status: 'running' });
-      try {
-        const hdDl = await downloadYouTubeVideo(currentYoutubeUrl, sessionTempDir, jobId, updateProgress, { quality: '1080p', prefix: 'raw' });
-        if (!hdDl || !hdDl.filePath || !fs.existsSync(hdDl.filePath)) {
-          throw new Error('File video 1080p tidak ditemukan setelah download.');
-        }
+      // ── MODE HEMAT KUOTA UNTUK MANUAL/SINGLE-VIDEO ──
+      // Samai jalur auto: bila RENDER_DOWNLOAD_SECTIONS=1, unduh HANYA segmen klip terpilih
+      // (bukan video penuh). RENDER_NO_FULL_DOWNLOAD=1 melarang keras fallback unduh penuh.
+      const mUseSections = process.env.RENDER_DOWNLOAD_SECTIONS === '1';
+      const mNoFullDl = process.env.RENDER_NO_FULL_DOWNLOAD === '1';
+      const mPad = Number(process.env.RENDER_SECTION_PAD || 2) || 2;
+      const mTailPad = Number(process.env.RENDER_SECTION_TAIL_PAD || 5) || 5;
+      const mGap = Number(process.env.RENDER_SECTION_GAP || 15) || 15;
+      const mDurHint = Number(videoMeta?.duration) || 0;
+      let sectionsDone = false;
 
-        const hdDims = await getVideoDimensions(hdDl.filePath);
-        const isStrict1080p = hdDims && hdDims.is1080pOrHigher;
-        if (!isStrict1080p) {
-          try { fs.unlinkSync(hdDl.filePath); } catch {}
-          throw new Error(`Resolusi video YouTube (${hdDims?.width}x${hdDims?.height}) tidak memenuhi standar minimal 1080p Full HD ke atas.`);
-        }
-
-        console.log(`[Job ${jobId}] ✅ Video 1080p+ Full HD asli berhasil diunduh (${hdDims.width}x${hdDims.height}). Menggantikan preview 360p.`);
-        rawVideoPath = hdDl.filePath;
-
-        // Hapus file preview 360p agar tidak memakan ruang penyimpanan HP dan tidak tertukar
+      if (mUseSections && Array.isArray(highlight?.clips) && highlight.clips.length > 0 && currentYoutubeUrl) {
+        updateProgress({ step: 'download_hd', message: '✂️ Mode manual: unduh HANYA segmen klip terpilih 1080p (hemat kuota)...', progress: 52, status: 'running' });
         try {
-          if (previewVideoPath && fs.existsSync(previewVideoPath) && previewVideoPath !== rawVideoPath) {
-            fs.unlinkSync(previewVideoPath);
+          const clusters = planSectionDownloads(highlight.clips, { padSec: mPad, tailPadSec: mTailPad, gapSec: mGap, videoDuration: mDurHint });
+          let okCount = 0;
+          let firstSeg = null;
+          for (let k = 0; k < clusters.length; k++) {
+            const cluster = clusters[k];
+            try {
+              const secDl = await downloadYouTubeVideo(currentYoutubeUrl, sessionTempDir, jobId, updateProgress, {
+                quality: '1080p',
+                prefix: `raw_sec${k}`,
+                section: { startSec: cluster.startSec, endSec: cluster.endSec },
+              });
+              if (secDl?.filePath && fs.existsSync(secDl.filePath)) {
+                okCount++;
+                if (!firstSeg) firstSeg = secDl.filePath;
+                cluster.refs.forEach(ref => { ref._cluster = { videoPath: secDl.filePath, sourceOffsetSec: cluster.sourceOffsetSec }; });
+                console.log(`[Job ${jobId}] ✂️ Manual: segmen #${k} (${cluster.startSec.toFixed(1)}-${cluster.endSec.toFixed(1)}s) terunduh (hemat kuota).`);
+              }
+            } catch (secErr) {
+              console.warn(`[Job ${jobId}] ⚠️ Manual: gagal unduh segmen #${k}: ${secErr.message}`);
+            }
           }
-        } catch {}
-      } catch (hdErr) {
-        console.error(`[Job ${jobId}] ❌ Gagal mengunduh video 1080p Full HD dari YouTube: ${hdErr.message}`);
-        // Wajib lempar error dan BATALKAN render jika 1080p gagal, TIDAK BOLEH render video 360p!
-        throw new Error(`Gagal mengunduh video kualitas 1080p Full HD langsung dari YouTube untuk rendering: ${hdErr.message}`);
+
+          const segClips = highlight.clips.filter(c => c._cluster);
+          // Pakai mode segmen bila SEMUA cluster sukses, ATAU (strict & ada >=1 segmen sukses).
+          if (segClips.length > 0 && (okCount === clusters.length || mNoFullDl)) {
+            highlight.clips = segClips.map(c => {
+              const { _cluster, ...rest } = c;
+              return { ...rest, videoPath: _cluster.videoPath, sourceOffsetSec: _cluster.sourceOffsetSec };
+            });
+            rawVideoPath = firstSeg;
+            sectionsDone = true;
+            if (okCount < clusters.length) {
+              console.warn(`[Job ${jobId}] ✂️ Manual STRICT: ${highlight.clips.length} klip ber-segmen dipertahankan, klip segmen-gagal dibuang (tanpa unduh penuh).`);
+            } else {
+              console.log(`[Job ${jobId}] ✂️ Manual sections: ${highlight.clips.length} klip dilayani ${clusters.length} segmen (tanpa unduh penuh).`);
+            }
+          } else if (clusters.length === 0) {
+            // Tidak ada cluster -> biarkan fallback normal di bawah.
+          } else if (mNoFullDl) {
+            highlight.clips.forEach(c => { delete c._cluster; });
+            console.warn(`[Job ${jobId}] ⛔ Manual STRICT: semua segmen gagal; tanpa unduh penuh.`);
+          } else {
+            // Sebagian gagal & NON-strict -> unduh penuh utuh (perilaku lama).
+            highlight.clips.forEach(c => { delete c._cluster; });
+            console.warn(`[Job ${jobId}] 🔄 Manual: segmen tidak lengkap; fallback ke unduhan penuh.`);
+          }
+        } catch (secErr) {
+          highlight.clips.forEach(c => { delete c._cluster; });
+          console.warn(`[Job ${jobId}] ⚠️ Manual sections error: ${secErr.message}. ${mNoFullDl ? 'STRICT: tidak unduh penuh.' : 'Fallback unduh penuh.'}`);
+        }
+
+        // STRICT: bila tidak ada satu pun segmen sukses, JANGAN pernah unduh penuh -> gagal jelas.
+        if (!sectionsDone && mNoFullDl) {
+          throw new Error('Mode tegas (RENDER_NO_FULL_DOWNLOAD=1): seluruh segmen klip manual gagal diunduh; tidak melakukan unduhan penuh.');
+        }
+      }
+
+      if (!sectionsDone) {
+        updateProgress({ step: 'download_hd', message: '✅ Video disetujui AI! Mengunduh kualitas 1080p Full HD langsung dari YouTube...', progress: 55, status: 'running' });
+        try {
+          const hdDl = await downloadYouTubeVideo(currentYoutubeUrl, sessionTempDir, jobId, updateProgress, { quality: '1080p', prefix: 'raw' });
+          if (!hdDl || !hdDl.filePath || !fs.existsSync(hdDl.filePath)) {
+            throw new Error('File video 1080p tidak ditemukan setelah download.');
+          }
+
+          const hdDims = await getVideoDimensions(hdDl.filePath);
+          const isStrict1080p = hdDims && hdDims.is1080pOrHigher;
+          if (!isStrict1080p) {
+            try { fs.unlinkSync(hdDl.filePath); } catch {}
+            throw new Error(`Resolusi video YouTube (${hdDims?.width}x${hdDims?.height}) tidak memenuhi standar minimal 1080p Full HD ke atas.`);
+          }
+
+          console.log(`[Job ${jobId}] ✅ Video 1080p+ Full HD asli berhasil diunduh (${hdDims.width}x${hdDims.height}). Menggantikan preview 360p.`);
+          rawVideoPath = hdDl.filePath;
+
+          // Hapus file preview 360p agar tidak memakan ruang penyimpanan HP dan tidak tertukar
+          try {
+            if (previewVideoPath && fs.existsSync(previewVideoPath) && previewVideoPath !== rawVideoPath) {
+              fs.unlinkSync(previewVideoPath);
+            }
+          } catch {}
+        } catch (hdErr) {
+          console.error(`[Job ${jobId}] ❌ Gagal mengunduh video 1080p Full HD dari YouTube: ${hdErr.message}`);
+          // Wajib lempar error dan BATALKAN render jika 1080p gagal, TIDAK BOLEH render video 360p!
+          throw new Error(`Gagal mengunduh video kualitas 1080p Full HD langsung dari YouTube untuk rendering: ${hdErr.message}`);
+        }
       }
 
       const updatedMeta = { ...jobMeta, downloadedVideoPath: rawVideoPath, stage: 'downloaded' };
@@ -1757,6 +1830,8 @@ async function _runStage1Pipeline({
       for (let cIdx = 0; cIdx < highlight.clips.length; cIdx++) {
         const c = highlight.clips[cIdx];
         const clipVid = c.videoPath || rawVideoPath;
+        // Klip dari file segmen (--download-sections): timeline file dimulai di sourceOffsetSec.
+        const cOffset = Number(c.sourceOffsetSec) || 0;
         if (!clipVid || !fs.existsSync(clipVid)) {
           cleanAuditedClips.push(c);
           continue;
@@ -1775,7 +1850,7 @@ async function _runStage1Pipeline({
         if (!sampleOffsets.includes(endOffset)) {
           sampleOffsets.push(endOffset);
         }
-        const sampleTimestamps = sampleOffsets.map(offset => Math.round((c.startSeconds + offset) * 100) / 100);
+        const sampleTimestamps = sampleOffsets.map(offset => Math.max(0, Math.round(((c.startSeconds + offset) - cOffset) * 100) / 100));
 
         const frameExtractTasks = sampleTimestamps.map((ts, sIdx) => {
           const framePath = path.join(auditFramesDir, `clip_${cIdx}_s${sIdx}.jpg`);
