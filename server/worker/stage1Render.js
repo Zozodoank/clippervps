@@ -1486,6 +1486,8 @@ async function _runStage1Pipeline({
 
       // #1 Download per-segmen (hemat kuota). DEFAULT OFF → jalur render identik dengan sebelumnya.
       const useSections = process.env.RENDER_DOWNLOAD_SECTIONS === '1';
+      // Mode TEGAS: JANGAN PERNAH unduh video penuh. Hanya berlaku bersama useSections.
+      const noFullDl = process.env.RENDER_NO_FULL_DOWNLOAD === '1';
       const secPadSec = Number(process.env.RENDER_SECTION_PAD || 2) || 2;
       const secTailPadSec = Number(process.env.RENDER_SECTION_TAIL_PAD || 5) || 5;
       const secGapSec = Number(process.env.RENDER_SECTION_GAP || 15) || 15;
@@ -1532,12 +1534,27 @@ async function _runStage1Pipeline({
                 console.warn(`[Job ${jobId}] ⚠️ Gagal unduh segmen #${k} kandidat #${candIdx + 1}: ${secErr.message}`);
               }
             }
-            if (allClustersOk) continue; // kandidat selesai via per-segmen
-            // Sebagian/gagal total: bersihkan penanda cluster lalu fallback ke unduhan penuh.
+            const okClusters = candClips.filter(c => c._cluster).length;
+            if (allClustersOk) continue; // kandidat selesai via per-segmen (semua cluster sukses)
+
+            // SEBAGIAN cluster gagal. strict (RENDER_NO_FULL_DOWNLOAD=1) -> pakai segmen
+            // yang sukses saja & BUANG klip yang segmennya gagal; TANPA unduh penuh.
+            if (noFullDl) {
+              if (okClusters > 0) {
+                hl.clips = hl.clips.filter(c => (c.candidateIndex ?? 0) !== candIdx || c._cluster);
+                console.warn(`[Job ${jobId}] ✂️ STRICT sections: kandidat #${candIdx + 1} pertahankan ${okClusters} segmen sukses; ${candClips.length - okClusters} klip segmen-gagal dibuang (tanpa unduh penuh).`);
+              } else {
+                console.warn(`[Job ${jobId}] ⛔ STRICT sections: semua segmen kandidat #${candIdx + 1} gagal; kandidat dilewati (tanpa unduh penuh).`);
+              }
+              continue;
+            }
+
+            // Fallback lama (non-strict): bersihkan penanda cluster lalu unduh penuh.
             candClips.forEach(c => { delete c._cluster; });
             console.warn(`[Job ${jobId}] 🔄 Segmen kandidat #${candIdx + 1} tidak lengkap; fallback ke unduhan penuh.`);
           }
 
+          // Hanya tersentuh bila BUKAN strict-sections (jalur strict sudah `continue` di atas).
           const hdDl = await downloadYouTubeVideo(candObj.url, sessionTempDir, jobId, updateProgress, {
             quality: '1080p',
             prefix: `raw_cand_${candIdx}`,
@@ -1555,9 +1572,9 @@ async function _runStage1Pipeline({
         }
       }
 
-      // Jika seluruh kandidat yang dipilih AI gagal diunduh,
-      // coba unduh kandidat cadangan dari candidateResults yang sudah lolos filter visual!
-      if (downloadedCandidatesMap.size === 0) {
+      // Jika seluruh kandidat terpilih gagal, coba kandidat cadangan (HANYA bila bukan strict-sections;
+      // mode strict menolak unduh penuh, jadi kandidat cadangan pun tidak diunduh penuh).
+      if (downloadedCandidatesMap.size === 0 && !(useSections && noFullDl)) {
         console.warn(`[Job ${jobId}] ⚠️ Tidak ada kandidat terpilih yang berhasil diunduh HD. Mencoba kandidat cadangan dari pool yang lolos filter visual...`);
         const fallbackCandidates = candidateResults.filter(c => !neededIndices.includes(c.candidateIndex));
         for (const altCand of fallbackCandidates) {
