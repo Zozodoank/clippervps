@@ -1,14 +1,15 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 # ============================================================================
-# setup-whisper-termux.sh — Bangun whisper.cpp dari SOURCE + unduh model di
-# Termux (nubia V80 Max, Unisoc T7250 ARM, 8GB). Dipakai AUDIO_DRIVEN_SCENES.
+# setup-whisper-termux.sh — Bangun whisper.cpp dari SOURCE + unduh model.
+# TAHAN LINGKUNGAN: jalan di Termux NATIF (pakai 'pkg', user non-root)
+# maupun di dalam proot-distro Ubuntu/Debian (pakai 'apt', root wajar).
 #
-# Cara pakai (di Termux, dari root repo ~/clipperVPS):
-#   bash setup-whisper-termux.sh          # model base (default)
-#   MODEL=tiny bash setup-whisper-termux.sh   # tiny = paling ringan utk ARM
+# Cara pakai (dari root repo ~/clipperVPS):
+#   Termux native : bash setup-whisper-termux.sh
+#   Model ringan   : MODEL=tiny bash setup-whisper-termux.sh
 #
-# Binary besar disimpan di server/bin/whisper/ (sudah .gitignore).
-# Setelah selesai, salin 2 baris WHISPER_* yang dicetak ke server/.env Termux.
+# Binary/model disimpan di server/bin/whisper/ (sudah .gitignore).
+# Setelah selesai, salin baris WHISPER_* yang dicetak ke server/.env.
 # ============================================================================
 set -euo pipefail
 
@@ -17,23 +18,37 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 DEST="$ROOT/server/bin/whisper"
 MODELS="$DEST/models"
 SRC="$DEST/_build/whisper.cpp"
+IS_ROOT="$(id -u)"
 
 mkdir -p "$DEST" "$MODELS" "$DEST/_build"
 
-echo "==> [1/4] Pasang dependensi build (git, cmake, clang, curl)..."
-pkg update -y
-pkg install -y git cmake clang curl cpu-features make
+echo "==> [1/4] Deteksi lingkungan & pasang dependensi build..."
+if command -v pkg >/dev/null 2>&1; then
+  # Termux native: 'pkg' MENOLAK jalan sebagai root.
+  if [ "$IS_ROOT" = "0" ]; then
+    echo "ERROR: sedang JALAN SEBAGAI ROOT di Termux (pkg menolaknya)."
+    echo "Solusi: ketik 'exit' (mungkin 2x) sampai prompt Termux non-root,"
+    echo "        lalu jalankan lagi:  bash setup-whisper-termux.sh"
+    exit 1
+  fi
+  pkg update -y || true
+  pkg install -y git cmake clang make curl cpu-features
+elif command -v apt-get >/dev/null 2>&1; then
+  # proot-distro / Debian-Ubuntu: root itu normal, pakai apt.
+  # build-essential menyediakan gcc/g++/make (pengganti clang di Termux).
+  apt-get update -y
+  apt-get install -y git cmake build-essential curl
+else
+  echo "ERROR: tak menemukan 'pkg' (Termux) maupun 'apt-get' (proot/Linux)."
+  exit 1
+fi
 
 echo "==> [2/4] Clone + build whisper.cpp (ARM, tanpa GPU)..."
 if [ ! -d "$SRC/.git" ]; then
   git clone --depth 1 https://github.com/ggerganov/whisper.cpp "$SRC"
 fi
 cd "$SRC"
-cmake -B build \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DWHISPER_OPENCL=OFF \
-  -DLLAMA_CPU_FEATURES=ON 2>/dev/null || \
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DWHISPER_OPENCL=OFF
+cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release -j"$(nproc)"
 
 # Temukan binary hasil build (whisper-cli terbaru / main lama).
