@@ -6,7 +6,7 @@ import { checkVideoMetadataCompliance } from '../services/videoFilterService.js'
 const meta = (over = {}) => ({
   id: 'vid_x',
   title: 'Review Alat Dapur Praktis',
-  duration: 120,
+  duration: 300,
   description: '',
   tags: [],
   maxWidth: 1280,
@@ -92,5 +92,28 @@ describe('Gerbang Resolusi - probe anonim (tanpa cookies) tidak menolak semua ka
     );
     expect(r.eligible).toBe(false);
     expect(r.reason).not.toMatch(/720p/);
+  });
+});
+
+describe('Gerbang Durasi (checkVideoMetadataCompliance) - minimal 5 menit (default)', () => {
+  const HD = { maxWidth: 1920, maxHeight: 1080 };
+  it('tolak: video pendek 120s (< 300s) ditolak karena durasi', () => {
+    const r = checkVideoMetadataCompliance(meta({ ...HD, duration: 120 }), '', TRUSTED);
+    expect(r.eligible).toBe(false);
+    expect(r.reason).toMatch(/pendek/i);
+    expect(r.reason).not.toMatch(/720p/);
+  });
+  it('lolos: tepat 300s (5 menit)', () => {
+    const r = checkVideoMetadataCompliance(meta({ ...HD, duration: 300 }), '', TRUSTED);
+    expect(r.eligible).toBe(true);
+  });
+  it('tolak: video terlalu panjang 1000s (> 900s)', () => {
+    const r = checkVideoMetadataCompliance(meta({ ...HD, duration: 1000 }), '', TRUSTED);
+    expect(r.eligible).toBe(false);
+    expect(r.reason).toMatch(/panjang/i);
+  });
+  it('fail-open: durasi tidak diketahui (0) tidak ditolak gerbang durasi', () => {
+    const r = checkVideoMetadataCompliance(meta({ ...HD, duration: 0 }), '', TRUSTED);
+    expect(r.eligible).toBe(true);
   });
 });

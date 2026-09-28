@@ -10,6 +10,7 @@ import { extractCoreProductInfo, isTitleMatchingProduct } from './discoveryServi
 import { getSmartProxyArgs } from './downloader.js';
 import { classifyPipelineError } from './networkDiagnosticService.js';
 import { getNichePreset } from '../config/nichePresets.js';
+import { getMinVideoDurationSec, getMaxVideoDurationSec } from '../config/videoLimits.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -268,13 +269,19 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 
   const isGadget = options.niche === 'gadget_smartphone';
 
-  // 1. Durasi Video (Wajib antara 50 detik s/d 15 menit: 50s - 900s, harmonis dengan discovery & downloader)
+  // 1. Durasi Video (DEFAULT minimal 5 menit s/d 15 menit: 300s - 900s).
+  //    Video pendek (Shorts < 5 mnt) sengaja ditolak di AUTO MODE: sedikit frame,
+  //    sumber beresolusi rendah (~270p), dan memicu adegan berulang. Ubah via env
+  //    MIN_VIDEO_DURATION_SEC / MAX_VIDEO_DURATION_SEC. Mode manual OEM melewati
+  //    fungsi ini (skip compliance), jadi URL pendek pilihan user tak terpengaruh.
+  const minDurSec = getMinVideoDurationSec();
+  const maxDurSec = getMaxVideoDurationSec();
   const duration = Number(metadata.duration) || 0;
-  if (duration > 0 && duration < 50) {
-    return { eligible: false, reason: `Durasi video terlalu pendek (${Math.round(duration)} detik). Minimal 50 detik agar footage peragaan produk memadai.` };
+  if (minDurSec > 0 && duration > 0 && duration < minDurSec) {
+    return { eligible: false, reason: `Durasi video terlalu pendek (${Math.round(duration)} detik). Minimal ${Math.round(minDurSec / 60)} menit (${minDurSec} detik) agar footage peragaan produk memadai & sumber beresolusi tinggi.` };
   }
-  if (duration > 900) {
-    return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal 15 menit (900 detik).` };
+  if (duration > maxDurSec) {
+    return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal ${(maxDurSec / 60).toFixed(0)} menit (${maxDurSec} detik).` };
   }
 
   // 1A. Resolusi Maksimal Video (WAJIB tersedia minimal 720p HD; tolak sumber buram 144p/240p/360p/480p).

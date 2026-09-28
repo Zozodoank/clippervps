@@ -6,6 +6,7 @@ import * as cheerio from 'cheerio';
 import https from 'https';
 import { searchYouTubeVideos, extractVideoId, buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from './downloader.js';
 import { getNichePreset, generateCombinatorialGadgetKeywords } from '../config/nichePresets.js';
+import { getMinVideoDurationSec, getMaxVideoDurationSec } from '../config/videoLimits.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2277,8 +2278,8 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
         if (uploaderMatch) channel = uploaderMatch[1].trim();
       }
 
-      // Filter out videos with known duration < 50s or > 15 min (900s)
-      if (durationSec > 0 && (durationSec < 50 || durationSec > 900)) return;
+      // Filter out videos with known duration < min (default 5 mnt) or > max (default 15 mnt)
+      if (durationSec > 0 && (durationSec < getMinVideoDurationSec() || durationSec > getMaxVideoDurationSec())) return;
 
       // Filter out videos with banned / tutorial / DIY / repair keywords
       if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
@@ -3726,8 +3727,8 @@ export function extractShopeeLinkFromText(text = '') {
 
 export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (!candidate.url || !candidate.id) return false;
-  // If duration is known, reject if too short (< 50s) or too long (> 15 min / 900s)
-  if (candidate.duration > 0 && (candidate.duration < 50 || candidate.duration > 900)) return false;
+  // If duration is known, reject if too short (< min, default 5 mnt) or too long (> max, default 15 mnt)
+  if (candidate.duration > 0 && (candidate.duration < getMinVideoDurationSec() || candidate.duration > getMaxVideoDurationSec())) return false;
 
   // Reject vertical Shorts (which already have hardburned music/captions)
   if (candidate.url.includes('/shorts/') || /#shorts\b/i.test(candidate.title || '')) return false;
