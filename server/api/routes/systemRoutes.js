@@ -72,6 +72,7 @@ import {
   discoverYouTubeCandidatesForProduct,
   searchMultiEngineVideos,
   searchBingVideos,
+  searchDuckDuckGoVideos,
   searchShopeeProducts,
   searchVideosByProductImage,
   fetchShopeePageMeta,
@@ -274,8 +275,13 @@ router.post('/find-videos', async (req, res) => {
     if (!title) return res.status(400).json({ success: false, error: 'productTitle wajib diisi.' });
     const cap = Math.max(1, Math.min(20, Number(req.body?.limit) || 10));
     const query = String(req.body?.query || '').trim() || `${title} review`;
-    let vids = [];
-    try { vids = await searchBingVideos(query, { limit: cap, onProgress: () => {} }); } catch { vids = []; }
+    // Gabungkan dua mesin (indeks berbeda) -> recall lebih luas utk ProductFinder;
+    // dedupe tetap dilakukan oleh `seen` di bawah (Bing lebih dulu, lalu DDG).
+    const [bing, ddg] = await Promise.all([
+      searchBingVideos(query, { limit: cap, onProgress: () => {} }).catch(() => []),
+      searchDuckDuckGoVideos(query, { limit: cap, onProgress: () => {} }).catch(() => []),
+    ]);
+    const vids = [...bing, ...ddg];
     const seen = new Set();
     const videos = [];
     for (const v of vids || []) {

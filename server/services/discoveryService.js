@@ -2321,6 +2321,75 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
   }
 }
 
+export async function searchDuckDuckGoVideos(query, { limit = 20, onProgress = () => {} } = {}) {
+  const cleanQuery = buildCleanYouTubeQuery(query);
+  const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
+  // DDG memakai endpoint html = hasil WEB (bukan vertical video, yang butuh token vqd & rawan diblokir).
+  // Strategi: ambil link youtube.com/watch / youtu.be dari hasil web, lalu unwrap redirect DDG.
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`${cleanQuery} youtube`)}`;
+
+  onProgress({
+    step: 'auto_video_search',
+    message: `Mencari video via DuckDuckGo: "${cleanQuery}"...`,
+    progress: 8,
+  });
+
+  try {
+    const res = await fetchWithTlsFallback(url, {
+      timeoutMs: 2500, // setara Bing/Brave; tetap aman berkat fetchWithTlsFallback
+      headers: {
+        'user-agent': USER_AGENT,
+        'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+    });
+
+    if (!res || !res.ok) return [];
+    const html = await res.text();
+    if (html.includes('internetbaik.telkomsel.com') || html.includes('blocked') || html.includes('anomaly')) return [];
+
+    const $ = cheerio.load(html);
+    const candidates = [];
+    const seenIds = new Set();
+
+    const pickId = (u) => {
+      const m = String(u || '').match(/(?:watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+      return m ? m[1] : '';
+    };
+
+    $('.result').each((_, el) => {
+      if (candidates.length >= safeLimit) return false;
+      const $el = $(el);
+      const anchor = $el.find('a.result__a').first();
+      const realUrl = normalizeSearchResultUrl(anchor.attr('href')); // unwrap //duckduckgo.com/l/?uddg=
+      const title = anchor.text().trim();
+      const id = pickId(realUrl);
+      if (!id) return; // hanya YouTube watch/youtu.be; shorts/playlist/@channel gugur otomatis
+
+      // Filter keyword tutorial/DIY/repair yang sama persis dengan searchBingVideos
+      if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
+
+      if (seenIds.has(id)) return;
+      seenIds.add(id);
+      // DDG tidak menyediakan metadata durasi -> terima tanpa filter durasi (duration:0),
+      // konsisten dengan fallback searchBingVideos yang juga mendorong kandidat duration:0.
+      candidates.push({
+        id,
+        title: title || cleanQuery,
+        url: `https://www.youtube.com/watch?v=${id}`,
+        duration: 0,
+        channel: '',
+        source: 'ddg_video',
+      });
+    });
+
+    return candidates;
+  } catch (err) {
+    console.warn(`[Discovery] DuckDuckGo Video search notice: ${err.message}`);
+    return [];
+  }
+}
+
 /**
  * Searches video demonstration candidates across search engines (YouTube & Bing Videos).
  * Deduplicates by video ID, filters out previously used videos, and applies Stage 1 metadata filters.
@@ -2375,6 +2444,22 @@ export async function searchMultiEngineVideos(query, {
     }
   } catch (err) {
     console.warn(`[MultiEngineVideo] Bing Video search error: ${err.message}`);
+  }
+
+  // 2A. Query DuckDuckGo (mesin index berbeda -> tambahan recall; hasil = link YouTube dari web search)
+  try {
+    const ddgResults = await searchDuckDuckGoVideos(query, { limit: safeLimit, onProgress });
+    if (Array.isArray(ddgResults)) {
+      for (const item of ddgResults) {
+        const vid = item.id || extractVideoId(item.url);
+        if (vid && !seenIds.has(vid)) {
+          seenIds.add(vid);
+          allCandidates.push({ ...item, id: vid, source: 'ddg_video' });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn(`[MultiEngineVideo] DuckDuckGo Video search error: ${err.message}`);
   }
   }
 
