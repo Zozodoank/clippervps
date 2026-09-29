@@ -33,6 +33,14 @@ const FLAG_NORMALIZERS = {
   FINAL_AI_QC: (env) => env.FINAL_AI_QC !== 'false',
   // finalizationService: process.env.FINAL_AI_QC_STRICT === 'true'
   FINAL_AI_QC_STRICT: (env) => env.FINAL_AI_QC_STRICT === 'true',
+  // EVIDENCE MODE: aiService.selectHighlightWithAI + stage1Render membaca
+  // GEMINI_INPUT_MODE. Default 'evidence' (frame bersih lokal — hemat token Gemini,
+  // 0 MB kuota tambahan). 'stream' = perilaku lama (Gemini baca video penuh).
+  GEMINI_INPUT_MODE: (env) => (String(env.GEMINI_INPUT_MODE || '').trim().toLowerCase() === 'stream' ? 'stream' : 'evidence'),
+  // visionEvidenceService.shouldPreferEvidence: Math.max(2, Number(process.env.EVIDENCE_MIN_FRAMES) || 6)
+  EVIDENCE_MIN_FRAMES: (env) => Math.max(2, Number(env.EVIDENCE_MIN_FRAMES) || 6),
+  // visionEvidenceService.pickEvidenceFrames: Math.max(4, Number(process.env.EVIDENCE_MAX_FRAMES) || 30)
+  EVIDENCE_MAX_FRAMES: (env) => Math.max(4, Number(env.EVIDENCE_MAX_FRAMES) || 30),
 };
 
 export const SNAPSHOT_FLAG_KEYS = Object.keys(FLAG_NORMALIZERS);
@@ -77,7 +85,20 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.AUDIO_DRIVEN_SCENES === 'boolean') patch.AUDIO_DRIVEN_SCENES = snapshot.AUDIO_DRIVEN_SCENES ? 'true' : 'false';
   if (typeof snapshot.FINAL_AI_QC === 'boolean') patch.FINAL_AI_QC = snapshot.FINAL_AI_QC ? 'true' : 'false';
   if (typeof snapshot.FINAL_AI_QC_STRICT === 'boolean') patch.FINAL_AI_QC_STRICT = snapshot.FINAL_AI_QC_STRICT ? 'true' : 'false';
+  // Selalu ditulis (bukan hanya saat 'aktif') karena default env berbeda default snapshot
+  // tidak boleh terjadi: mode lama job harus terkunci persis saat retry.
+  if (typeof snapshot.GEMINI_INPUT_MODE === 'string') patch.GEMINI_INPUT_MODE = snapshot.GEMINI_INPUT_MODE;
+  if (typeof snapshot.EVIDENCE_MIN_FRAMES === 'number') patch.EVIDENCE_MIN_FRAMES = String(snapshot.EVIDENCE_MIN_FRAMES);
+  if (typeof snapshot.EVIDENCE_MAX_FRAMES === 'number') patch.EVIDENCE_MAX_FRAMES = String(snapshot.EVIDENCE_MAX_FRAMES);
   return patch;
+}
+
+/**
+ * Helper konsumen: apakah evidence mode aktif (frame bersih lokal menggantikan
+ * stream/File API). Baca dari process.env (di-bekukan via configSnapshot saat retry).
+ */
+export function isGeminiEvidenceEnabled(env = process.env) {
+  return String(env.GEMINI_INPUT_MODE || '').trim().toLowerCase() !== 'stream';
 }
 
 /**

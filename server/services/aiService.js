@@ -20,6 +20,8 @@ import { saveToEnglishDictionary } from './dictionaryService.js';
 import { trackBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from './discoveryService.js';
 import { getNichePreset } from '../config/nichePresets.js';
+import { isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
+import { countUsableFrames, shouldPreferEvidence, pickEvidenceFrames, formatCleanWindowsBySource, mapFramesToBudgeted } from './visionEvidenceService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -145,9 +147,7 @@ export async function analyzeYouTubeVideoWithGemini({
     ? `\nCRITICAL BLACKLIST (DETEKSI AI LOKAL: WAJAH, TEKS OVERLAY, PILLARBOX, DOKUMEN MANUAL): Frame visual pada detik [${allViolationTimestamps.join(', ')}s] terdeteksi melanggar aturan kualitas (wajah presenter / teks overlay / unboxing manual / pillarbox). DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
     : '';
 
-  const cleanWindowsDirective = Array.isArray(cleanTimeWindows) && cleanTimeWindows.length > 0
-    ? `\nCRITICAL MANDATE (VERIFIED CLEAN TEMPORAL SEGMENTS): AI Local Gatekeeper telah memverifikasi segmen-segmen waktu bersih berikut: [${cleanTimeWindows.map(w => `${w.start}s-${w.end}s`).join(', ')}]. Anda HANYA BOLEH memilih timestamps di dalam rentang waktu yang terverifikasi bersih ini! DILARANG KERAS memilih timestamps di luar segmen bersih ini.\n`
-    : '';
+  const cleanWindowsDirective = formatCleanWindowsBySource(cleanTimeWindows);
 
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
@@ -644,9 +644,7 @@ export async function analyzeMultipleYouTubeVideosWithGemini({
     ? `\nCRITICAL BLACKLIST (DETEKSI AI LOKAL: WAJAH, TEKS OVERLAY, PILLARBOX, DOKUMEN MANUAL): Frame visual pada detik [${allViolationTimestamps.join(', ')}s] terdeteksi melanggar aturan kualitas. DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
     : '';
 
-  const cleanWindowsDirective = Array.isArray(cleanTimeWindows) && cleanTimeWindows.length > 0
-    ? `\nCRITICAL MANDATE (VERIFIED CLEAN TEMPORAL SEGMENTS): AI Local Gatekeeper telah memverifikasi segmen-segmen waktu bersih berikut: [${cleanTimeWindows.map(w => `${w.start}s-${w.end}s`).join(', ')}]. Anda HANYA BOLEH memilih timestamps di dalam rentang waktu yang terverifikasi bersih ini! DILARANG KERAS memilih timestamps di luar segmen bersih ini.\n`
-    : '';
+  const cleanWindowsDirective = formatCleanWindowsBySource(cleanTimeWindows, youtubeUrls);
 
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
@@ -1359,8 +1357,18 @@ export async function selectHighlightWithAI({
   const isGeminiMode = selectedEngine === 'gemini' || selectedEngine === 'gemini_direct';
   const geminiKey = getDirectGeminiApiKey(apiKey);
 
-  // Pola 1: Gemini File API + Gemini (Jadikan DEFAULT)
-  if (isGeminiMode) {
+  // EVIDENCE MODE (audit GPT 2026 — hemat token Gemini, 0 MB kuota tambahan):
+  // Kirim BUKTI visual berupa frame bersih yang sudah diverifikasi Gatekeeper lokal
+  // dan SUDAH ada di disk — Gemini tidak membaca ulang video penuh via fileUri/File API.
+  // Bila frame kurang dari EVIDENCE_MIN_FRAMES, otomatis jatuh ke jalur stream lama.
+  const usableFrameCount = countUsableFrames(frames);
+  const useEvidence = shouldPreferEvidence({
+    evidenceEnabled: isGeminiEvidenceEnabled() && Boolean(geminiKey),
+    usableFrames: usableFrameCount,
+  });
+
+  // Pola 1: Gemini File API + Gemini (fallback saat evidence tidak mencukupi / mode stream)
+  if (isGeminiMode && !useEvidence) {
     if (geminiKey && youtubeUrl && (youtubeUrl.includes('youtube.com') || youtubeUrl.includes('youtu.be'))) {
       console.log('[AIService Vision] Pola Gemini: Menganalisa via native YouTube Stream URL (0 MB kuota lokal)...');
       return await analyzeYouTubeVideoWithGemini({
@@ -1576,9 +1584,13 @@ CRITICAL MANDATE FOR FRAME AUDIT & REJECTION REPORTING:
 4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage. WAJIB GUNAKAN merk dan tipe produk ("${effectiveTitle}") secara utuh dan akurat, meskipun nama merk berbahasa Inggris. Padukan dengan kata kunci pencarian dalam Bahasa Indonesia (contoh: "${effectiveTitle} cara pakai", "review ${effectiveTitle} indonesia") agar sesuai dengan audiens Shopee lokal.
 5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
 
-  // Bound frames to at most 30 keyframes for Gemini Vision / AI APIs
+  // Batasi keyframes untuk API. Evidence mode: pemilih cluster-aware (tiap kluster
+  // jendela bersih terwakili proporsional + boundary awal/akhir selalu ikut).
   let evalFrames = frames || [];
-  if (evalFrames.length > 30) {
+  if (useEvidence) {
+    evalFrames = pickEvidenceFrames(evalFrames, { max: Math.max(4, Number(process.env.EVIDENCE_MAX_FRAMES) || 30) });
+    console.log(`[AIService Vision] 🧾 EVIDENCE MODE: ${usableFrameCount} frame bersih lokal -> ${evalFrames.length} keyframe bukti (Gemini TIDAK membaca video penuh).`);
+  } else if (evalFrames.length > 30) {
     const step = (evalFrames.length - 1) / 29;
     const sampled = [];
     for (let i = 0; i < 30; i++) {
@@ -1872,6 +1884,11 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       } else if (Array.isArray(parsed.frames)) {
         normalizedAcceptedFrames = [...new Set(parsed.frames.map(f => Number(f?.frameIndex ?? f?.frame ?? f)).filter(f => Number.isFinite(f) && f >= 1 && f <= evalFrames.length))];
       }
+      // Konsumen (stage1Render multi-harvest) memakai acceptedFrames sebagai indeks 1-based
+      // ke array `frames` ASLI (testPool). Saat budget memotong subset, terjemahkan dulu
+      // nomor yang dilihat AI -> posisi di pool mentah, kalau tidak frame yang di-retain
+      // jadi salah (bug indeks yang selama ini tertutup karena stride lama order-preserving).
+      normalizedAcceptedFrames = mapFramesToBudgeted(normalizedAcceptedFrames, evalFrames, frames);
 
       let normalizedMissingSlots = Array.isArray(parsed.missingSlots) ? parsed.missingSlots.map(s => String(s).trim()).filter(Boolean) : [];
       let normalizedSuggestedQueries = Array.isArray(parsed.suggestedSearchQueries) ? parsed.suggestedSearchQueries.map(q => String(q).trim()).filter(Boolean) : [];

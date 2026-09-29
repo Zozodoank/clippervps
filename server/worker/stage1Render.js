@@ -6,7 +6,7 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
   selectHighlightWithAI,
@@ -556,7 +556,12 @@ async function _runStage1Pipeline({
       const isGeminiEngine = reqEngine === 'gemini' || reqEngine === 'gemini_direct' || (process.env.GEMINI_API_KEY && reqEngine !== 'openrouter');
       const hasGeminiKey = Boolean(getDirectGeminiApiKey(apiKey));
 
-      if (isGeminiEngine && hasGeminiKey && (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be'))) {
+      // EVIDENCE MODE (default, flag GEMINI_INPUT_MODE): JALUR 1 stream video-full
+      // DILEWATI — frame bersih hasil Gatekeeper di bawah (JALUR 2) yang dikirim ke
+      // Gemini sebagai bukti. Hemat token Gemini & 0 MB kuota tambahan. Set
+      // GEMINI_INPUT_MODE=stream di .env untuk mengembalikan perilaku lama.
+      const evidenceMode = isGeminiEvidenceEnabled();
+      if (isGeminiEngine && hasGeminiKey && !evidenceMode && (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be'))) {
         const streamMsg = candidateLabel
           ? `[${candidateLabel}] [Gemini Stream] Google Gemini 3.6 Flash menganalisa video langsung dari YouTube (0 MB kuota lokal)...`
           : '[Gemini Stream] Google Gemini 3.6 Flash menganalisa video langsung dari YouTube (0 MB kuota lokal)...';
@@ -1296,8 +1301,12 @@ async function _runStage1Pipeline({
               
               let testHl;
               
-              if (isGemini && hasGemini) {
+              // EVIDENCE MODE: multi-video stream (baca semua video penuh) DILEWATI —
+              // pool frame bersih per kandidat dikirim sebagai bukti (branch else).
+              const evidenceModeMulti = isGeminiEvidenceEnabled();
+              if (isGemini && hasGemini && !evidenceModeMulti) {
                 const validUrls = Array.from(new Set(preferredSoFar.map(c => c.candidate.url).filter(Boolean)));
+                const urlToIdx = new Map(validUrls.map((u, i) => [u, i]));
                 const allDiscardedFace = [];
                 const allDiscardedViolation = [];
                 const allCleanWindows = [];
@@ -1305,7 +1314,10 @@ async function _runStage1Pipeline({
                 for (const c of preferredSoFar) {
                   if (Array.isArray(c.discardedFaceTimestamps)) allDiscardedFace.push(...c.discardedFaceTimestamps);
                   if (Array.isArray(c.discardedViolationTimestamps)) allDiscardedViolation.push(...c.discardedViolationTimestamps);
-                  if (Array.isArray(c.cleanTimeWindows)) allCleanWindows.push(...c.cleanTimeWindows);
+                  // P0 FIX (audit GPT): window WAJIB membawa identitas video sumber
+                  // agar Gemini tak menerapkan batas Video A ke Video B.
+                  const srcIdx = urlToIdx.has(c.candidate.url) ? urlToIdx.get(c.candidate.url) : 0;
+                  if (Array.isArray(c.cleanTimeWindows)) allCleanWindows.push(...c.cleanTimeWindows.map(w => ({ start: w.start, end: w.end, sourceVideoIndex: srcIdx })));
                 }
                 
                 updateProgress({
