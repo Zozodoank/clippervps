@@ -2466,15 +2466,34 @@ CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
 - DILARANG menempelkan judul panjang SEO ke dalam naskah. Gunakan nama pendek produk (2-3 kata).
 - Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai selesai dengan tempo santai.
 
+MANDATORY VISUAL GROUNDING (CRITICAL ANTI-HALLUCINATION RULE):
+- Frame video adalah sumber kebenaran utama. Product Description hanya untuk nama/konteks, BUKAN bukti fitur yang tidak terlihat.
+- Setiap baris voiceover WAJIB mencerminkan bukti fisik yang tampak pada frame yang dilampirkan (${trimmedFrames.length} frames): bodi, layar, hasil kamera, atau antarmuka yang terlihat.
+- DILARANG KERAS mengarang angka spesifikasi (nits, mAh, MP, GB, skor benchmark, "AnTuTu 800 ribu") atau klaim "kamera stabil 4K" jika tidak terlihat pada frame atau tidak disebut eksplisit di deskripsi.
+- DILARANG KERAS menyalin template generik seperti "rasa belasan juta", "baterai badak", atau "chipset dewa" bila visualnya tidak mendukung.
+- JIKA visual hanya menunjukkan box/segmentasi tanpa perangkat nyata, JANGAN membuat narasi seolah-olah fitur sedang diuji.
+
 STRICT RULES FOR VOICE OVER:
 - TONE & NATURALITAS: Hindari gaya bahasa kaku seperti membaca brosur atau berita. Bicaralah dengan gaya santai, luwes, dan kasual layaknya Anda sedang mereview langsung di depan kamera.
 - WAJIB BEREAKSI PADA ADEGAN: Voiceover harus mendeskripsikan secara spesifik apa yang SEDANG DITAMPILKAN di frame tersebut (misal: "Lihat deh desainnya...", "Layar depannya mulus banget kan..."). Jangan mengawang-awang atau bahas spesifikasi yang tidak terlihat.
+- ORIGINALITY & TRANSFORMATION: DILARANG mendeskripsikan video secara datar ("Ini adalah HP..."). Naskah WAJIB menyajikan alur review bernilai tambah: 1) Hook keunggulan yang tampak, 2) Pembuktian fitur fisik di layar/bodi/kamera, 3) Kesan hasil nyata, 4) Soft CTA pancingan diskusi.
 - NEVER mention unboxing cardboard boxes, bubble wrap, or plastic packaging. Focus 100% on phone aesthetics, UI, camera, performance, and battery.
 - Write in natural, engaging conversational Indonesian.
 - DILARANG KERAS menggunakan kata "kece" dan "kangen".
 - HINDARI KATA SLANG "ng" (nggak, ngasih, ngeliat, dll) - gunakan kata baku.
 - DILARANG menyebut nama medsos lain.
 - DILARANG mengatakan "link di bio", "keranjang kuning", "checkout", atau ajakan beli langsung! Ini adalah Soft CTA murni untuk YouTube Shorts review.
+
+'voiceoverScript' (NASKAH VOICEOVER DENGAN PENANDA WAKTU & TAG EMOSI - WAJIB UNTUK TTS GEMINI):
+- Complete Indonesian spoken narration (${minWords} - ${maxWords} words total) across EXACTLY ${sceneCount} lines.
+- Setiap baris WAJIB diawali timestamp yang merata sesuai slot ([00:00], lalu seterusnya sampai penutup), diikuti tag emosi, baru kalimat.
+- Pakai tag dinamika agar suara AI hidup dan TIDAK monoton: [excited] untuk hook & penutup, [emphasis] untuk fitur kunci, [soft] untuk kesan/nuansa, [pause] untuk jeda alami antar kalimat.
+- Contoh format: "[00:00] [excited] Bodi belakangnya mewah, bezel layarnya tipis banget."
+
+'lexicon_to_replace' (PETAKAN ISTILAH TECH INGGRIS KE FONETIK INDONESIA UNTUK TTS):
+- Deteksi SEMUA istilah Inggris/teknis di naskah (mis. 'smartphone', 'AMOLED', 'refresh rate', 'chipset', 'Snapdragon', 'gaming', 'camera', 'battery', 'wireless', 'fast charging', 'giga', 'hertz', 'MP', 'nits').
+- Petakan ke ejaan pelafalan fonetik Indonesia agar dibaca natural (mis. {"smartphone": "smaartfon", "AMOLED": "aamoled", "Snapdragon": "snapdregon", "refresh rate": "riferesh reit", "hertz": "hert", "gaming": "geeming", "battery": "baeteri"}).
+- Format wajib: objek key-value. Jika tidak ada, isi {}. HANYA ubah ejaan pelafalan, JANGAN ubah makna atau tambah klaim.
 
 Output MUST be strictly valid JSON matching the requested schema.`
     : `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
@@ -2618,7 +2637,7 @@ Return strict JSON in this format:
       "adAdvisorNotes": "Tips sutradara (SFX / Text Overlay)"
     }
   ],
-  "voiceoverScript": "${isGadget ? '[00:00] Cari HP spek kencang harga ramah kantong?\\n[00:05] Bodi belakangnya mewah dan bezel layarnya tipis...\\n[00:30] Di kisaran harga dua jutaan, worth it gak? Komen di bawah!' : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
+  "voiceoverScript": "${isGadget ? '[00:00] [excited] Cari HP spek kencang harga ramah kantong?\\n[00:05] [emphasis] Bodi belakangnya mewah dan bezel layarnya tipis...\\n[00:30] [soft] Di kisaran harga dua jutaan, worth it gak? Komen di bawah!' : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
   "aiStudioPrompt": "Scene\\nStudio rekaman energik...\\n\\nSample Context\\nDurasi voice over ${targetDuration} detik...\\n\\nSpeaker 1\\n[00:00] [excited] Hook pembuka...",
   "caption": "${isGadget ? '⚡ Smartphone 2 Jutaan Rasa Belasan Juta?! Layar 120Hz & Kamera Stabil! 📱✨\\n\\nKombinasi spek juara dan harga ramah kantong! Buat kalian yang butuh HP kencang anti lemot buat harian, smartphone ini wajib masuk wishlist 😍\\n\\nKeunggulan Utama:\\n✅ Layar AMOLED 120Hz super mulus\\n✅ Chipset kencang dipadu RAM lega\\n✅ Kamera jernih dengan rekaman stabil\\n✅ Baterai badak seharian + fast charging\\n\\nMenurut kalian di kisaran harga segini worth it gak? Coba tulis pendapat kalian di kolom komentar ya! 👇🔥\\n\\n#reviewhp #smartphoneterbaru #gadgetindonesia #hpmurah #hp2jutaan #rekomendasihp #shorts #techreview' : '🔥 Masih repot pakai cara lama yang bikin boros & berantakan? 🧼✨\\n\\nKenalin solusinya! Produk ini bikin pekerjaan harian kamu jadi 2x lebih cepat, praktis, dan hasilnya jauh lebih rapi maksimal 😍\\n\\nKeunggulan Utama:\\n✅ Desain praktis, inovatif, dan mudah digunakan\\n✅ Kualitas bahan premium, awet, dan tahan lama\\n✅ Hemat waktu, tenaga, dan bikin lebih efisien\\n✅ Bikin ruangan jadi lebih bersih, rapi, dan estetik\\n\\nBuruan checkout sekarang mumpung lagi diskon spesial & gratis ongkir! 🔥\\n\\n🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!\\n\\n#racunshopee #shopeehaul #spillracun #racuntiktok #racunbelanja #reelsviral #affiliateindonesia #barangunik #perabotandapur #dapurminimalis #fyp'}",
   "lexicon_to_replace": {
