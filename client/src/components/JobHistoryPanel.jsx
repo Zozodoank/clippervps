@@ -910,7 +910,7 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
                     <button
                       onClick={(e) => handleDelete(e, job.jobId)}
                       disabled={deletingId === job.jobId || isProcessingThis}
-                      className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
+                      className="p-1.5 rounded-lg text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-colors opacity-100 lg:opacity-0 lg:group-hover:opacity-100"
                     >
                       {deletingId === job.jobId
                         ? <RefreshCw className="w-3 h-3 animate-spin" />
