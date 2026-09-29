@@ -1085,7 +1085,7 @@ async function _runStage1Pipeline({
         const candLabel = `Kandidat #${candidatePoolIndex} (Stream ${streamedCount + 1}/${maxStreamVideos})`;
         updateProgress({
           step: 'stream_sampling',
-          message: `[${candLabel}] Memeriksa metadata: "${(candidate.title || productTitle).slice(0, 32)}..."`,
+          message: `[${candLabel}] Memeriksa metadata: "${(candidate.title || productTitle || candVid || 'Video Kandidat').slice(0, 32)}..."`,
           progress: 18 + Math.round((streamedCount / maxStreamVideos) * 18),
           status: 'running',
         });
@@ -1134,7 +1134,7 @@ async function _runStage1Pipeline({
 
         updateProgress({
           step: 'stream_sampling',
-          message: `[${candLabel}] Streaming & sampling frame (${streamedCount}/${maxStreamVideos}): "${(candMeta.title || candidate.title || productTitle).slice(0, 32)}..."`,
+          message: `[${candLabel}] Streaming & sampling frame (${streamedCount}/${maxStreamVideos}): "${(candMeta.title || candidate.title || productTitle || candVid || 'Video Kandidat').slice(0, 32)}..."`,
           progress: 18 + Math.round((streamedCount / maxStreamVideos) * 18),
           status: 'running',
         });

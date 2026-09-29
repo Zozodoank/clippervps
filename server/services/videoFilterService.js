@@ -951,10 +951,21 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
 export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, onProgress = () => {}, niche = 'kitchen_tools', facePolicy = 'strict' } = {}) {
-  try {
-    const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
-    if (validFrames.length === 0) return null;
+  const validFrames = frames.filter(f => f && f.filePath && fs.existsSync(f.filePath));
+  if (validFrames.length === 0) return null;
 
+  // (#B) RETRY via CHUNKING: satu POST ~200 frame terbukti membuat koneksi ke gatekeeper di
+  // HP (Unisoc 2-core, ThreadingHTTPServer Python) putus ("fetch failed") sementara /health &
+  // batch kecil (30 frame) selalu sukses. Pecah jadi chunk kecil agar gatekeeper SELALU menjawab,
+  // lalu gabungkan hasilnya. GK_CHUNK_SIZE default 40 (pola yang terbukti di tes manual).
+  const GK_CHUNK_SIZE = Math.max(10, Number(process.env.GK_CHUNK_SIZE) || 40);
+  const perFrameSec = Math.max(1, Number(process.env.GK_TIMEOUT_SEC_PER_FRAME) || 4);
+  const chunks = [];
+  for (let i = 0; i < validFrames.length; i += GK_CHUNK_SIZE) {
+    chunks.push(validFrames.slice(i, i + GK_CHUNK_SIZE));
+  }
+
+  const sendChunk = async (chunk) => {
     const payload = JSON.stringify({
       niche,
       facePolicy,
@@ -963,34 +974,79 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
       presenterMinAreaRatio: GATEKEEPER_CONFIG.PRESENTER_MIN_AREA_RATIO,
       presenterUpperHalfY: GATEKEEPER_CONFIG.PRESENTER_UPPER_HALF_Y,
       presenterMinHits: GATEKEEPER_CONFIG.PRESENTER_MIN_HITS,
-      frames: validFrames.map(f => ({
-        filePath: f.filePath,
-        timestamp: f.timestamp || 0
-      }))
+      frames: chunk.map(f => ({ filePath: f.filePath, timestamp: f.timestamp || 0 })),
     });
-
-    const res = await fetch('http://127.0.0.1:5050/filter-frames', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: payload,
-      signal: AbortSignal.timeout(timeoutSec * 1000)
-    });
-
-    if (res.ok) {
-      const parsed = await res.json();
-      if (parsed && parsed.status === 'success') {
-        return parsed;
+    const chunkTimeoutSec = Math.min(timeoutSec, Math.max(120, chunk.length * perFrameSec + 60));
+    try {
+      const res = await fetch('http://127.0.0.1:5050/filter-frames', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        signal: AbortSignal.timeout(chunkTimeoutSec * 1000),
+      });
+      if (!res.ok) {
+        console.warn(`[Gatekeeper] Microservice HTTP ${res.status} (chunk ${chunk.length} frame).`);
+        return null;
       }
-    } else {
-      console.warn(`[Gatekeeper] Microservice HTTP ${res.status}. Falling back to heuristic.`);
+      const parsed = await res.json();
+      return (parsed && parsed.status === 'success') ? parsed : null;
+    } catch (err) {
+      console.warn(`[Gatekeeper] Chunk ${chunk.length} frame gagal (${err.message || 'offline'}).`);
+      return null;
     }
-  } catch (err) {
-    // Graceful fallback to heuristic checks with informative log
-    console.log(`[Gatekeeper] Microservice fallback to heuristic (${err.message || 'offline'}).`);
+  };
+
+  const results = [];
+  for (const chunk of chunks) {
+    const r = await sendChunk(chunk);
+    if (r) results.push(r);
   }
-  return null;
+
+  // Semua chunk gagal = gatekeeper benar-benar tak tersedia -> null. Pemanggil TIDAK boleh
+  // menuduh konten (lihat guard GK_ALLOW_HEURISTIC_FALLBACK di inspectFramesLocally).
+  if (results.length === 0) return null;
+  if (results.length === 1) return results[0];
+
+  // Gabungkan hasil multi-chunk menjadi satu objek kompatibel (dipakai inspectFramesLocally).
+  const merged = {
+    status: 'success',
+    reason: null,
+    niche,
+    facePolicy,
+    totalFrames: 0,
+    cleanFramesCount: 0,
+    cameraResultEligibleCount: 0,
+    discardedFramesCount: 0,
+    allFrames: [],
+    cleanFrames: [],
+    discardedFrames: [],
+    verifiedSegments: [],
+    introCutoffSec: 0,
+    hasOpeningIntro: false,
+    persistentWatermarkCorners: [],
+    benchmarks: { stageMs: {}, stageCounts: {}, rejectsByStage: {}, dbnetCalls: 0, textCheckStride: 0, totalMs: 0 },
+  };
+  for (const r of results) {
+    merged.allFrames.push(...(Array.isArray(r.allFrames) ? r.allFrames : []));
+    merged.cleanFrames.push(...(Array.isArray(r.cleanFrames) ? r.cleanFrames : []));
+    merged.discardedFrames.push(...(Array.isArray(r.discardedFrames) ? r.discardedFrames : []));
+    merged.verifiedSegments.push(...(Array.isArray(r.verifiedSegments) ? r.verifiedSegments : []));
+    merged.totalFrames += Number(r.totalFrames) || 0;
+    merged.cleanFramesCount += Number(r.cleanFramesCount) || 0;
+    merged.cameraResultEligibleCount += Number(r.cameraResultEligibleCount) || 0;
+    merged.discardedFramesCount += Number(r.discardedFramesCount) || 0;
+    merged.hasOpeningIntro = merged.hasOpeningIntro || Boolean(r.hasOpeningIntro);
+    if (typeof r.introCutoffSec === 'number' && r.introCutoffSec > merged.introCutoffSec) merged.introCutoffSec = r.introCutoffSec;
+    if (Array.isArray(r.persistentWatermarkCorners)) merged.persistentWatermarkCorners.push(...r.persistentWatermarkCorners);
+    const b = r.benchmarks || {};
+    if (b.totalMs) merged.benchmarks.totalMs += Number(b.totalMs) || 0;
+    if (b.dbnetCalls) merged.benchmarks.dbnetCalls += Number(b.dbnetCalls) || 0;
+    for (const key of ['stageMs', 'stageCounts', 'rejectsByStage']) {
+      const src = b[key] || {};
+      for (const k of Object.keys(src)) merged.benchmarks[key][k] = (merged.benchmarks[key][k] || 0) + (Number(src[k]) || 0);
+    }
+  }
+  return merged;
 }
 
 /**
@@ -1148,7 +1204,24 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     };
   }
 
-  // ── FALLBACK KE HEURISTIK PIKSEL FFmpeg (Jika Gatekeeper Python offline) ──
+  // (#B) JANGAN diam-diam pakai heuristik piksel "tolak-semua" saat gatekeeper gagal: heuristik
+  // itu menuduh video bersih (review HP berpresenter) sebagai berwajah/ber-watermark sehingga job
+  // gagal PALSU (0/223). Default sekarang: gagal JUJUR (bukan karena konten). Heuristik lama hanya
+  // aktif secara eksplisit via GK_ALLOW_HEURISTIC_FALLBACK=1.
+  if (process.env.GK_ALLOW_HEURISTIC_FALLBACK !== '1') {
+    console.error('[inspectFramesLocally] ⛔ AI Gatekeeper tidak merespons (127.0.0.1:5050, semua chunk gagal). Video TIDAK dinilai — ini masalah infrastruktur, bukan konten. Aktifkan gatekeeper lalu ulangi job. (Fallback heuristik lama: GK_ALLOW_HEURISTIC_FALLBACK=1)');
+    return {
+      eligible: false,
+      cleanFrames: [],
+      cameraResultEligibleFrames: [],
+      discardedFrames: [],
+      verifiedSegments: [],
+      reason: 'AI Gatekeeper tidak tersedia/gagal merespons — video belum dinilai (bukan karena konten). Periksa service gatekeeper :5050 lalu ulangi job.',
+      gatekeeperBackend: 'unavailable',
+    };
+  }
+
+  // ── FALLBACK KE HEURISTIK PIKSEL FFmpeg (HANYA bila GK_ALLOW_HEURISTIC_FALLBACK=1) ──
   const ffmpeg = getFFmpegPath();
   const W = 80;
   const H = 144;
