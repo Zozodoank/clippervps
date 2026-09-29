@@ -45,6 +45,7 @@ import {
   sampleDenseClustersAroundCleanFrames
 } from '../services/videoFilterService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
+import { recordStageEvent } from '../services/observabilityService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
 import { cleanupTempFiles, deleteJobTempDirectory, deleteJobFiles } from '../services/cleaner.js';
 import {
@@ -228,6 +229,7 @@ export async function runProfessionalFinalQcWithRepair({
   if (!fs.existsSync(finalQcFramesDir)) fs.mkdirSync(finalQcFramesDir, { recursive: true });
 
   const evaluate = async () => {
+    const qcStartedAt = Date.now();
     const technical = await runFinalMasterQc({
       videoPath: finalOutputPath,
       expectedDurationSec,
@@ -283,6 +285,24 @@ export async function runProfessionalFinalQcWithRepair({
             };
       }
     }
+
+    // P1 OBSERVABILITY: hasil QC (teknis + visual) dicatat beserta alasan penolakan, sehingga
+    // "video ini ditolak QC karena apa" bisa dibaca dari /api/job-trace/:jobId.
+    recordStageEvent({
+      jobId,
+      stage: 'qc',
+      provider: aiProvider || 'deterministic',
+      durationMs: Date.now() - qcStartedAt,
+      failureReason: (technical.passed && visual.passed)
+        ? ''
+        : [...(technical.issues || []), visual.reason].filter(Boolean).join(' | '),
+      meta: {
+        technicalPassed: Boolean(technical.passed),
+        visualPassed: Boolean(visual.passed),
+        visualSkipped: Boolean(visual.skipped),
+        lockstepPassed: Boolean(lockstep.passed),
+      },
+    });
 
     return {
       passed: technical.passed && visual.passed,

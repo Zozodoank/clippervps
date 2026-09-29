@@ -9,6 +9,7 @@ import multer from 'multer';
 import { exec, spawn, execSync } from 'child_process';
 
 import { checkSystemDependencies, getFFmpegPath } from '../../services/binaryChecker.js';
+import { recordAuditEvent, createRateLimiter } from '../../utils/security.js';
 import { downloadYouTubeVideo, extractVideoId, isLocalPortListening } from '../../services/downloader.js';
 import { extractFrames } from '../../services/frameExtractor.js';
 import {
@@ -142,6 +143,12 @@ const upload = multer({
 
 const router = express.Router();
 
+// P0.5: limiter in-house (satu proses, jadi Map sudah cukup) untuk endpoint yang menyentuh
+// sistem operasi / menulis file / memakan kuota pencarian. Bucket 'verified' dibagi satu,
+// tanpa token tiap IP dapat jatah sendiri.
+const systemActionLimiter = createRateLimiter({ windowMs: 60000, max: 12, name: 'system-actions' });
+const finderLimiter = createRateLimiter({ windowMs: 60000, max: 30, name: 'finder' });
+
 // 1. Health check & dependency verification
 router.get('/health', async (req, res) => {
   const envFiles = reloadEnvironment();
@@ -169,37 +176,50 @@ router.get('/health', async (req, res) => {
 
   const binaryCheck = await checkSystemDependencies();
 
+  // P0.6: /health ada di allowlist publik, jadi sidik jari konfigurasi (engine aktif, nama
+  // model, ada/tidaknya API key, path .env, statistik byte) hanya dikirim ke pemanggil
+  // terverifikasi atau saat aplikasi dipakai lokal (mode 'open').
+  const detailsVisible = req.authMode !== 'public';
+  // Dalam mode publik, sembunyikan path absolut (memuat nama user PC) dan hanya beri tahu
+  // apakah biner tersedia.
+  const publicBinView = (info) => (detailsVisible ? info : { available: Boolean(info && info.available) });
+
   res.json({
     status: 'ok',
     serverTime: new Date().toISOString(),
-    ffmpeg: binaryCheck.ffmpeg,
-    ytdlp: binaryCheck.ytdlp,
+    ffmpeg: publicBinView(binaryCheck.ffmpeg),
+    ytdlp: publicBinView(binaryCheck.ytdlp),
     dependencies: {
-      ffmpeg: binaryCheck.ffmpeg,
-      ytdlp: binaryCheck.ytdlp,
+      ffmpeg: publicBinView(binaryCheck.ffmpeg),
+      ytdlp: publicBinView(binaryCheck.ytdlp),
     },
-    openRouterKeyConfigured: openRouterKeySet,
-    geminiKeyConfigured: geminiKeySet,
-    geminiFallbackConfigured: geminiKeySet,
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
-    geminiFileApiConfigured: geminiKeySet,
-    activeAiEngine,
-    defaultAiProvider: activeAiEngine !== 'none' ? activeAiEngine : 'gemini',
-    tts: {
-      available: true,
-      provider: 'gemini_tts', // Edge-TTS removed; Google Gemini Flash TTS is the sole voiceover engine.
-      model: process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL,
-      fallbackModel: process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
-      voice: process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
-      voices: GEMINI_TTS_VOICES,
-      defaultVoice: 'Despina (Gemini Flash)',
-      voiceName: process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
-      geminiConfigured: geminiKeySet,
-    },
-    envFilesLoaded: envFiles.map((envPath) => path.relative(path.resolve(__dirname, '..'), envPath).replace(/\\/g, '/')),
-    bandwidthStats: getBandwidthStats(),
-    publicIp: await getPublicIpAddress(),
     ready: binaryCheck.ffmpeg.available && binaryCheck.ytdlp.available,
+    ...(detailsVisible ? {
+      openRouterKeyConfigured: openRouterKeySet,
+      geminiKeyConfigured: geminiKeySet,
+      geminiFallbackConfigured: geminiKeySet,
+      geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash',
+      geminiFileApiConfigured: geminiKeySet,
+      activeAiEngine,
+      defaultAiProvider: activeAiEngine !== 'none' ? activeAiEngine : 'gemini',
+      tts: {
+        available: true,
+        provider: 'gemini_tts', // Edge-TTS removed; Google Gemini Flash TTS is the sole voiceover engine.
+        model: process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL,
+        fallbackModel: process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
+        voice: process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
+        voices: GEMINI_TTS_VOICES,
+        defaultVoice: 'Despina (Gemini Flash)',
+        voiceName: process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
+        geminiConfigured: geminiKeySet,
+      },
+      envFilesLoaded: envFiles.map((envPath) => path.relative(path.resolve(__dirname, '..'), envPath).replace(/\\/g, '/')),
+      bandwidthStats: getBandwidthStats(),
+      publicIp: await getPublicIpAddress(),
+    } : {
+      config: 'redacted',
+      note: 'Kirim token API yang valid (x-api-token) untuk melihat detail engine/model/konfigurasi.',
+    }),
   });
 });
 
@@ -233,7 +253,7 @@ router.get('/niches', (req, res) => {
 // 🔎 PRODUCT FINDER (bantu mode manual): telusuri merk + nama produk NYATA dari
 // hasil pencarian marketplace (engine yang sama dipakai auto mode: Bing/Brave/DDG).
 // Tidak ada efek samping (tidak menandai keyword terpakai) supaya bisa diulang "cari lagi".
-router.post('/find-products', async (req, res) => {
+router.post('/find-products', finderLimiter, async (req, res) => {
   try {
     const q = String(req.body?.query || '').trim();
     if (!q) return res.status(400).json({ success: false, error: 'Kata kunci pencarian wajib diisi.' });
@@ -268,7 +288,7 @@ router.post('/find-products', async (req, res) => {
 
 // 🎬 VIDEO FINDER: daftar kandidat video YouTube siap-salin untuk sebuah produk.
 // Memakai indeks video Bing (raw) agar hampir selalu ada hasil untuk ditinjau user.
-router.post('/find-videos', async (req, res) => {
+router.post('/find-videos', finderLimiter, async (req, res) => {
   try {
     const title = String(req.body?.productTitle || '').trim();
     if (!title) return res.status(400).json({ success: false, error: 'productTitle wajib diisi.' });
@@ -322,8 +342,9 @@ router.get('/rejected-frames', (req, res) => {
 });
 
 // 9. Open output folder in native OS file explorer
-router.post('/open-folder', (req, res) => {
+router.post('/open-folder', systemActionLimiter, (req, res) => {
   const { filename } = req.body || {};
+  recordAuditEvent({ req, action: 'open-folder', detail: `filename=${String(filename || '(folder saja)').slice(0, 120)}` });
   let targetFile = null;
 
   if (filename) {
@@ -360,7 +381,8 @@ router.post('/open-folder', (req, res) => {
   });
 });
 
-router.get('/open-folder', (req, res) => {
+router.get('/open-folder', systemActionLimiter, (req, res) => {
+  recordAuditEvent({ req, action: 'open-folder', detail: 'GET (folder output saja)' });
   let command = process.platform === 'win32'
     ? `explorer.exe "${outputDir.replace(/\//g, '\\')}"`
     : process.platform === 'darwin' ? `open "${outputDir}"` : `xdg-open "${outputDir}"`;
@@ -371,8 +393,9 @@ router.get('/open-folder', (req, res) => {
 });
 
 // 10. Restart Server & Execute ./update.sh (Designed for VPS, Termux, Codespace & Local Dev)
-router.post('/restart', async (req, res) => {
+router.post('/restart', systemActionLimiter, async (req, res) => {
   const { runUpdate = true, cleanReset = true } = req.body || {};
+  recordAuditEvent({ req, action: 'restart', detail: `runUpdate=${runUpdate}, cleanReset=${cleanReset}` });
   // __dirname = server/api/routes -> repo root (tempat update.sh berada) = ../../..
   const rootDir = path.resolve(__dirname, '../../..');
   const updateScriptPath = path.join(rootDir, 'update.sh');
@@ -508,8 +531,10 @@ router.get('/cookies-status', (req, res) => {
 });
 
 // POST /api/upload-cookies – receive cookies.txt content and save to server/cookies.txt
-router.post('/upload-cookies', express.text({ type: '*/*', limit: '10mb' }), (req, res) => {
+router.post('/upload-cookies', express.text({ type: '*/*', limit: '10mb' }), systemActionLimiter, (req, res) => {
   const content = req.body;
+  // Catatan: jumlah byte saja yang dicatat, isi cookie tidak pernah masuk log.
+  recordAuditEvent({ req, action: 'upload-cookies', detail: `bytes=${typeof content === 'string' ? content.length : 0}` });
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ success: false, error: 'Request body is empty. Please send cookies.txt content.' });
   }
@@ -532,9 +557,10 @@ router.get('/english-dictionary', (req, res) => {
 });
 
 // POST /api/english-dictionary – add or update phonetic dictionary entries
-router.post('/english-dictionary', (req, res) => {
+router.post('/english-dictionary', systemActionLimiter, (req, res) => {
   try {
     const entries = req.body;
+    recordAuditEvent({ req, action: 'english-dictionary-write', detail: `entries=${Object.keys(entries || {}).length}` });
     if (!entries || typeof entries !== 'object') {
       return res.status(400).json({ success: false, error: 'Request body must be a JSON object mapping English words to Indonesian phonetics.' });
     }

@@ -8,6 +8,7 @@ export const outputDir = path.join(serverRoot, 'output');
 export const tempDir = path.join(serverRoot, 'temp');
 export const uploadsDir = path.join(tempDir, 'uploads');
 export const rejectedYunetDir = path.join(serverRoot, 'rejected_frames', 'yunet');
+export const logsDir = path.join(serverRoot, 'logs');
 export const cookiesPath = path.join(serverRoot, 'cookies.txt');
 export const envCandidates = [
   path.join(serverRoot, '.env'),

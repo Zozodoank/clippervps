@@ -9,6 +9,13 @@ import multer from 'multer';
 import { exec, spawn, execSync } from 'child_process';
 
 import { checkSystemDependencies, getFFmpegPath } from '../../services/binaryChecker.js';
+import { createRateLimiter } from '../../utils/security.js';
+import {
+  getJobTraceSummary,
+  readJobTrace,
+  buildFailureRollup,
+  JOB_TRACE_PATH,
+} from '../../services/observabilityService.js';
 import { downloadYouTubeVideo, extractVideoId, isLocalPortListening } from '../../services/downloader.js';
 import { extractFrames } from '../../services/frameExtractor.js';
 import {
@@ -100,11 +107,12 @@ import {
   choosePreferredCandidateSet
 } from '../../services/professionalPipelineService.js';
 import { runFinalMasterQc } from '../../services/finalMasterQcService.js';
-import { jobsFilePath, activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, publicAutoRetryState, publicAutoRunState, updateAutoRun, getLatestAutoRun } from '../../store/jobStore.js';
+import { jobsFilePath, activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, patchJob, updateJobProgress, publicAutoRetryState, publicAutoRunState, updateAutoRun, getLatestAutoRun } from '../../store/jobStore.js';
 import { loadedEnvFiles, cleanEnvValue, isPlaceholderEnvValue, reloadEnvironment } from '../../utils/envLoader.js';
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../../services/quotaService.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../../services/antiDupService.js';
 import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from '../../utils/jobHelpers.js';
+import { configSnapshotToEnvPatch, describeConfigSnapshot } from '../../config/runtimeFlags.js';
 import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover } from '../../worker/pipelineWorker.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -221,14 +229,22 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
 
   // Delete old outputs and temp files to ensure bad old video/audio is completely replaced
   deleteJobFiles(jobId, outputDir, tempDir);
+  // P4: satu patchJob atomik (baca-gabung-tulis) menggantikan pola lama
+  // `job.x = ..; activeJobs.set(); persistJob()` yang menulis dua kali & rawan lost-update.
+  // force=true karena transisi terminal -> 'running' adalah jalur retry yang sah.
+  patchJob(jobId, (j) => ({
+    ...j,
+    downloadedVideoPath: null,
+    hasDownloadedVideo: false,
+    hasFinalVideo: false,
+    hasSilentVideo: false,
+    stage: 'running',
+  }), { force: true });
   job.downloadedVideoPath = null;
   job.hasDownloadedVideo = false;
   job.hasFinalVideo = false;
   job.hasSilentVideo = false;
   job.stage = 'running';
-  job.updatedAt = new Date().toISOString();
-  activeJobs.set(jobId, job);
-  persistJob(jobId, job);
 
   // Initialize progress state so SSE client immediately sees running status
   updateJobProgress(jobId, {
@@ -241,6 +257,17 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
   // Trigger regeneration asynchronously so SSE progress streams live to the frontend
   (async () => {
     try {
+      // P5.2: TERAPKAN snapshot konfigurasi yang dibekukan saat job dibuat (bukan .env saat ini),
+      // sehingga retry mereproduksi perilaku awal walau operator sudah mengubah flag. Snapshot
+      // job tidak pernah diubah di sini — hanya dibaca & ditulis ulang ke process.env.
+      if (job.configSnapshot) {
+        const envPatch = configSnapshotToEnvPatch(job.configSnapshot);
+        for (const [k, v] of Object.entries(envPatch)) process.env[k] = v;
+        console.log(`[Retry ${jobId}] 🧊 Memakai configSnapshot beku (dibuat ${job.configSnapshot._frozenAt || '?'}): ${describeConfigSnapshot(job.configSnapshot)}`);
+      } else {
+        console.warn(`[Retry ${jobId}] ⚠️ Job lama tanpa configSnapshot — retry memakai process.env saat ini (hasil mungkin tidak identik dengan render awal).`);
+      }
+
       let targetCandidates = [];
       const usedVids = getAllUsedYouTubeVideoIds();
       const oldVid = extractVideoId(job.youtubeUrl);
@@ -298,8 +325,7 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
 
         try {
           job.youtubeUrl = candidate.url;
-          activeJobs.set(jobId, job);
-          persistJob(jobId, job);
+          patchJob(jobId, { youtubeUrl: candidate.url });
 
           const effectiveAiProvider = job.aiProvider || req.body?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter');
           await runStage1Pipeline({
@@ -337,8 +363,7 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
         // Kembalikan URL sumber asli bila semua percobaan gagal (job.youtubeUrl sempat dioverwrite di loop).
         if (originalYoutubeUrl && job.youtubeUrl !== originalYoutubeUrl) {
           job.youtubeUrl = originalYoutubeUrl;
-          activeJobs.set(jobId, job);
-          persistJob(jobId, job);
+          patchJob(jobId, { youtubeUrl: originalYoutubeUrl });
         }
         throw lastRetryErr || new Error('Tidak ada kandidat video YouTube yang dapat diunduh dalam kualitas 1080p Full HD.');
       }
@@ -349,8 +374,11 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
       job.stage = 'error';
       job.lastError = retryErr.message;
       job.errorAt = new Date().toISOString();
-      activeJobs.set(jobId, job);
-      persistJob(jobId, job);
+      patchJob(jobId, {
+        stage: 'error',
+        lastError: retryErr.message,
+        errorAt: job.errorAt,
+      }, { force: true });
       updateJobProgress(jobId, { step: 'error', status: 'error', error: retryErr.message, message: `Gagal generate ulang: ${retryErr.message}` });
     }
   })();
@@ -461,6 +489,45 @@ router.get('/progress/:jobId', (req, res) => {
   }, 500);
 
   req.on('close', cleanupSSE);
+});
+
+// P1.3 OBSERVABILITY: timeline stage per job. Endpoint ini SENGAJA tidak dimasukkan ke allowlist
+// publik tokenAuth, jadi otomatis 401 tanpa token begitu API_ACCESS_TOKEN diisi (mode 'open' saat
+// token kosong tetap bisa dipakai, sama seperti seluruh endpoint lain).
+const traceLimiter = createRateLimiter({ name: 'job-trace', windowMs: 15000, max: 40 });
+
+// 5. Stage trace untuk satu job: jawab "gagal di stage apa, berapa lama, berapa byte".
+router.get('/job-trace/:jobId', traceLimiter, (req, res) => {
+  const { jobId } = req.params;
+  try {
+    const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit, 10) || 500));
+    const events = readJobTrace(jobId, { limit });
+    if (events.length === 0) {
+      return res.status(404).json({
+        success: false,
+        error: `Tidak ada jejak stage untuk job "${jobId}". Trace ditulis ke ${JOB_TRACE_PATH} dan hanya disimpan selama file log belum berotasi.`,
+      });
+    }
+    res.json({
+      success: true,
+      jobId,
+      eventCount: events.length,
+      summary: getJobTraceSummary(jobId, { limit }),
+      events,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 6. Rekap lintas job: stage mana yang paling sering membunuh job + durasi rata-rata per stage.
+router.get('/job-trace-failures', traceLimiter, (req, res) => {
+  try {
+    const maxJobs = Math.min(200, Math.max(1, parseInt(req.query.maxJobs, 10) || 50));
+    res.json({ success: true, ...buildFailureRollup({ maxJobs }) });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 export default router;

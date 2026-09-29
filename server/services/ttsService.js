@@ -28,6 +28,7 @@ export function runFfmpegAsync(args, timeoutMs = 60000) {
 }
 import { applyEnglishLexicon, restoreStandardText } from './dictionaryService.js';
 import { trackBandwidth } from './bandwidthTracker.js';
+import { recordStageEvent } from './observabilityService.js';
 
 // Default Google Gemini Flash TTS Models (Free Tier: 10 RPD)
 export const DEFAULT_GEMINI_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
@@ -626,6 +627,7 @@ export async function generateVoiceoverTTS({
   lexicon = {},
 }) {
   // Google Gemini Flash TTS is the sole voiceover engine (Edge-TTS removed).
+  const ttsStartedAt = Date.now();
   const result = await generateVoiceoverGeminiTTS({
     script,
     outputPath,
@@ -639,12 +641,29 @@ export async function generateVoiceoverTTS({
     lexicon,
   });
 
+  let audioBytes = 0;
   if (result && result.audioPath && fs.existsSync(result.audioPath)) {
     try {
-      const audioBytes = fs.statSync(result.audioPath).size;
+      audioBytes = fs.statSync(result.audioPath).size;
       trackBandwidth('voiceoverTTS', audioBytes, `Audio voiceover (${path.basename(result.audioPath)} - ${(audioBytes / 1024).toFixed(1)} KB)`);
     } catch {}
   }
+
+  // P1 OBSERVABILITY: durasi + model TTS dicatat agar "job macet di TTS" terbaca tanpa buka log.
+  recordStageEvent({
+    jobId,
+    stage: 'tts',
+    provider: 'gemini_tts',
+    model: modelId || DEFAULT_GEMINI_TTS_MODEL,
+    durationMs: Date.now() - ttsStartedAt,
+    failureReason: result && result.audioPath ? '' : 'TTS tidak menghasilkan file audio',
+    meta: {
+      voice: voice || DEFAULT_GEMINI_TTS_VOICE,
+      fallbackModel: fallbackModelId || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
+      audioBytes,
+      audioDurationSec: result?.totalDuration ?? null,
+    },
+  });
 
   return result;
 }

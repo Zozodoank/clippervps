@@ -9,7 +9,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from service import FaceGatekeeper, apply_temporal_presenter_track
+from service import (
+    FaceGatekeeper,
+    apply_temporal_presenter_track,
+    PRESENTER_MIN_AREA_RATIO,
+    PRESENTER_UPPER_HALF_Y,
+    PRESENTER_MIN_HITS,
+)
 
 PASS = 0
 FAIL = 0
@@ -83,27 +89,30 @@ def test_temporal_track():
     check("wajah bergerak: flag cameraResultEligible terpasang",
           all(v.get("cameraResultEligible") for v in moving))
 
-    # Kasus B: wajah content yang DIAM di posisi sama 3 frame berurutan -> presenter
+    # Kasus B: ambang ketat min_hits=2 -> wajah DIAM baru dikunci di frame KE-3.
     still = [
         _v(0.0, [dict(small, box=[900, 800, 60, 70])]),
         _v(2.5, [dict(small, box=[905, 802, 60, 70])]),
         _v(5.0, [dict(small, box=[902, 799, 60, 70])]),
     ]
-    apply_temporal_presenter_track(still)
-    check("wajah persisten: 2 frame pertama masih clean",
+    apply_temporal_presenter_track(still, min_hits=2)
+    check("min_hits=2: 2 frame pertama masih clean",
           still[0]["status"] == "clean" and still[1]["status"] == "clean")
-    check("wajah persisten: frame ke-3 dibuang sebagai presenter",
+    check("min_hits=2: frame ke-3 dibuang sebagai presenter",
           still[2]["status"] == "discarded" and still[2]["stage"] == "face")
-    check("wajah persisten: frame ke-3 TIDAK dapat flag eligible",
+    check("min_hits=2: frame ke-3 TIDAK dapat flag eligible",
           not still[2].get("cameraResultEligible"))
 
-    # Kasus B2: produksi pakai min_hits=1 -> wajah DIAM sudah dikunci sejak frame KE-2
+    # Kasus B2: DEFAULT fungsi kini = PRODUKSI (min_hits=1) -> wajah DIAM sudah dikunci
+    # sejak frame KE-2. Ini menyelaraskan tes dengan nilai yang dipakai process_batch.
     still1 = [
         _v(0.0, [dict(small, box=[900, 800, 60, 70])]),
         _v(2.5, [dict(small, box=[905, 802, 60, 70])]),
         _v(5.0, [dict(small, box=[902, 799, 60, 70])]),
     ]
-    apply_temporal_presenter_track(still1, min_hits=1)
+    apply_temporal_presenter_track(still1)  # tanpa argumen => default = PRESENTER_MIN_HITS
+    check("default == PRESENTER_MIN_HITS (selaras produksi)",
+          PRESENTER_MIN_HITS == 1)
     check("min_hits=1: frame ke-1 masih clean (belum ada pembanding)",
           still1[0]["status"] == "clean")
     check("min_hits=1: frame ke-2 SUDAH dibuang sebagai presenter (tutup bocor)",
@@ -124,6 +133,38 @@ def test_temporal_track():
     apply_temporal_presenter_track(dead)
     check("frame discarded tahap lain: stage asal dipertahankan",
           all(v["stage"] == "text" for v in dead))
+
+
+def test_payload_contract():
+    """P3.2 Kontrak payload gatekeeper: threshold yang dikirim Node (payload) harus dipakai,
+    dan fallback service.py == angka Node (0.06/0.55/1) agar 'satu sumber' tidak drift."""
+    print("\n[5] Kontrak payload threshold presenter (P3.1/P3.2)")
+    # Fallback modul = nilai produksi yang dikirim Node.
+    check("fallback service.py == Node (area 0.06)", abs(PRESENTER_MIN_AREA_RATIO - 0.06) < 1e-9)
+    check("fallback service.py == Node (upper 0.55)", abs(PRESENTER_UPPER_HALF_Y - 0.55) < 1e-9)
+    check("fallback service.py == Node (min_hits 1)", PRESENTER_MIN_HITS == 1)
+
+    # Area ambang dapat digeser payload: wajah 14.5% yang default=presenter jadi content bila
+    # Node mengirim min_area_ratio=0.20.
+    big_upper = [290, 150, 500, 600]
+    check("default: wajah besar atas -> presenter",
+          FaceGatekeeper.classify_face(FRAME, big_upper) == "presenter")
+    check("payload min_area_ratio=0.20: wajah 14.5% -> content",
+          FaceGatekeeper.classify_face(FRAME, big_upper, min_area_ratio=0.20) == "content")
+
+    # Upper-half ambang dapat digeser: wajah cy=1000 presenter pada 0.55, content pada 0.50.
+    mid_face = [290, 700, 500, 600]
+    check("default upper 0.55: cy=1000 -> presenter",
+          FaceGatekeeper.classify_face(FRAME, mid_face) == "presenter")
+    check("payload upper_half_y=0.50: cy=1000 -> content",
+          FaceGatekeeper.classify_face(FRAME, mid_face, upper_half_y=0.50) == "content")
+
+    # Temporal ambang mengikuti presenter_min_hits (satu sumber dgn apply_temporal).
+    small = [900, 800, 60, 70]
+    check("temporal_hits=1 & min_hits=1 -> presenter",
+          FaceGatekeeper.classify_face(FRAME, small, temporal_hits=1, presenter_min_hits=1) == "presenter")
+    check("temporal_hits=1 & min_hits=2 -> content",
+          FaceGatekeeper.classify_face(FRAME, small, temporal_hits=1, presenter_min_hits=2) == "content")
 
 
 class _FakeImage:
@@ -151,6 +192,7 @@ if __name__ == "__main__":
     test_classify_face()
     test_iou()
     test_temporal_track()
+    test_payload_contract()
     test_strict_path_unchanged()
     print("\n" + "=" * 50)
     print("Hasil: %d passed, %d failed" % (PASS, FAIL))

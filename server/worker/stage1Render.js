@@ -6,6 +6,7 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
+import { buildConfigSnapshot } from '../config/runtimeFlags.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
   selectHighlightWithAI,
@@ -50,6 +51,7 @@ import {
 import { analyzeSourceAudioForBeats, isAudioDrivenEnabled } from '../services/audioBeatService.js';
 import { paraphraseBeats, beatsToScript } from '../services/antiPlagiarismService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
+import { trackProgressEvent, recordStageEvent } from '../services/observabilityService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
 import { cleanupTempFiles, deleteJobTempDirectory, deleteJobFiles } from '../services/cleaner.js';
 import {
@@ -168,13 +170,28 @@ async function _runStage1Pipeline({
 
   if (!fs.existsSync(sessionTempDir)) fs.mkdirSync(sessionTempDir, { recursive: true });
 
-  const updateProgress = onProgress || ((data) => {
+  const sinkProgress = onProgress || ((data) => {
     const payload = typeof data === 'string'
       ? { step: 'processing', message: data, progress: 50, jobId }
       : { ...data, jobId };
     jobProgress.set(jobId, payload);
     console.log(`[Job ${jobId}] [${payload.progress || 0}%] ${payload.message}`);
   });
+
+  // P1 OBSERVABILITY: jalur manual sudah ter-tap lewat jobProgress.set (lihat store/jobStore.js),
+  // tapi mode auto mengirim onProgress sendiri dan tidak menyentuh jobProgress sama sekali, sehingga
+  // timeline stage job auto hilang. Tap di sini menutup celah itu khusus untuk mode auto.
+  const updateProgress = (data) => {
+    if (onProgress) {
+      const payload = typeof data === 'string'
+        ? { step: 'processing', message: data, progress: 50, jobId }
+        : { ...data, jobId };
+      try {
+        trackProgressEvent(jobId, payload, { runId: extraJobMeta?.autoRunId });
+      } catch {}
+    }
+    return sinkProgress(data);
+  };
 
   const explicitBrand = (options.brand || extraJobMeta?.brand || '').trim();
   const explicitProductType = (options.productType || extraJobMeta?.productType || '').trim();
@@ -240,6 +257,9 @@ async function _runStage1Pipeline({
     oemUrls: Array.isArray(options.oemUrls) ? options.oemUrls.filter(Boolean) : [],
     singleVideoOnly: options.singleVideoOnly === true,
     sourcePolicy: options.sourcePolicy || '',
+    // P5: bekukan konfigurasi runtime saat create agar retry memakai setelan yang sama,
+    // walau operator sudah mengubah .env. Dibaca ulang (bukan ditulis lagi) oleh jalur retry.
+    configSnapshot: buildConfigSnapshot(process.env, { niche: options.niche, sourcePolicy: options.sourcePolicy }),
     createdAt: new Date().toISOString(),
     isOrphan: false,
     ...extraJobMeta,
@@ -326,6 +346,25 @@ async function _runStage1Pipeline({
       3.0,
       Math.min(3.5, Number.isFinite(requestedSceneDuration) && requestedSceneDuration > 0 ? requestedSceneDuration : 3.5)
     );
+
+    // P1 OBSERVABILITY: satu event konteks per job membuat provider/model/kebijakan yang dipakai
+    // terbaca dari trace, tanpa perlu menempel event di setiap pemanggilan AI (8 titik).
+    recordStageEvent({
+      jobId,
+      runId: extraJobMeta?.autoRunId,
+      stage: 'context',
+      provider: aiProvider,
+      model: aiProvider === 'openrouter'
+        ? (process.env.OPENROUTER_MODEL || '')
+        : (process.env.GEMINI_MODEL || ''),
+      meta: {
+        niche: options.niche || jobMeta.niche || 'kitchen_tools',
+        sceneDuration,
+        singleVideoOnly: options.singleVideoOnly === true,
+        multiVideoHarvesting: options.multiVideoHarvesting === true,
+        sourceCount: Array.isArray(targetCandidates) ? targetCandidates.length : 0,
+      },
+    });
 
     currentYoutubeUrl = youtubeUrl || '';
     highlight = null;
@@ -456,10 +495,24 @@ async function _runStage1Pipeline({
       }
 
       preSampledFrames = sampled;
+      const localCheckStartedAt = Date.now();
       const localCheck = await inspectFramesLocally(sampled, {
         aspectRatio: options.aspectRatio || '9:16',
         onProgress: updateProgress,
         niche: options.niche || jobMeta.niche || 'kitchen_tools'
+      });
+      // P1: jejak gatekeeper (berapa frame masuk vs lolos) agar penolakan bisa dibaca tanpa log.
+      recordStageEvent({
+        jobId,
+        stage: 'gatekeeper',
+        durationMs: Date.now() - localCheckStartedAt,
+        candidateCount: Array.isArray(sampled) ? sampled.length : 0,
+        acceptedCount: Array.isArray(localCheck.cleanFrames) ? localCheck.cleanFrames.length : 0,
+        rejectedCount: Array.isArray(sampled)
+          ? Math.max(0, sampled.length - (Array.isArray(localCheck.cleanFrames) ? localCheck.cleanFrames.length : 0))
+          : 0,
+        failureReason: localCheck.eligible ? '' : localCheck.reason,
+        meta: { origin: 'stream_sampling', niche: options.niche || jobMeta.niche || 'kitchen_tools' },
       });
 
       if (!localCheck.eligible || !Array.isArray(localCheck.cleanFrames) || localCheck.cleanFrames.length < 3) {
@@ -640,9 +693,22 @@ async function _runStage1Pipeline({
         });
 
         // Verifikasi filter lokal pada frame video cache (bebas teks mengambang & bebas wajah)
+        const localCacheCheckStartedAt = Date.now();
         const localCacheCheck = await inspectFramesLocally(rawFrames, {
           aspectRatio: options.aspectRatio || '9:16',
           onProgress: updateProgress,
+        });
+        recordStageEvent({
+          jobId,
+          stage: 'gatekeeper',
+          durationMs: Date.now() - localCacheCheckStartedAt,
+          candidateCount: Array.isArray(rawFrames) ? rawFrames.length : 0,
+          acceptedCount: Array.isArray(localCacheCheck.cleanFrames) ? localCacheCheck.cleanFrames.length : 0,
+          rejectedCount: Array.isArray(rawFrames)
+            ? Math.max(0, rawFrames.length - (Array.isArray(localCacheCheck.cleanFrames) ? localCacheCheck.cleanFrames.length : 0))
+            : 0,
+          failureReason: localCacheCheck.eligible ? '' : localCacheCheck.reason,
+          meta: { origin: 'cached_raw_frames' },
         });
         if (!localCacheCheck.eligible || !Array.isArray(localCacheCheck.cleanFrames) || localCacheCheck.cleanFrames.length < 3) {
           console.warn(`[Job ${jobId}] ⛔ [Cache Ditolak Lokal] ${rawVideoPath}: ${localCacheCheck.reason}`);
@@ -1102,6 +1168,15 @@ async function _runStage1Pipeline({
           candidateIndex: currentCandIdx,
           candidate: { ...candidate, duration: candMeta.duration, title: candMeta.title },
           niche: options.niche || jobMeta.niche || 'kitchen_tools',
+        });
+        recordStageEvent({
+          jobId,
+          stage: 'gatekeeper',
+          candidateCount: Array.isArray(sampleRes.frames) ? sampleRes.frames.length : 0,
+          acceptedCount: Array.isArray(frameFilterRes.cleanFrames) ? frameFilterRes.cleanFrames.length : 0,
+          rejectedCount: Number(frameFilterRes.discardedCount) || 0,
+          failureReason: (frameFilterRes.cleanFrames?.length || 0) < 2 ? 'Frame bersih terlalu sedikit' : '',
+          meta: { origin: 'candidate_frames', candidateIndex: currentCandIdx, candidateTitle: candMeta.title || candidate.title || '' },
         });
 
         console.log(`[Job ${jobId}] [${candLabel}] Hasil filter frame: ${frameFilterRes.cleanFrames.length} frame peragaan tangan disimpan (${frameFilterRes.discardedCount} frame wajah/intro disingkirkan).`);

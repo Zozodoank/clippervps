@@ -96,6 +96,15 @@ MODELS_DIR = os.path.join(CURRENT_DIR, "models")
 # terakhir. Set GK_TEXT_CHECK_STRIDE=1 untuk mengembalikan perilaku lama (DBNet tiap frame).
 TEXT_CHECK_STRIDE = max(1, int(os.environ.get("GK_TEXT_CHECK_STRIDE", "3") or 3))
 
+# P3.1 SATU SUMBER AMBANG PRESENTER (fallback). Node mengirim nilai ini lewat payload
+# /filter-frames (presenterMinAreaRatio/presenterUpperHalfY/presenterMinHits); bila payload
+# tidak menyertainya, service memakai konstanta di bawah. Dulu angka 0.06/0.55/1 di-hardcode
+# tersebar (classify_face + apply_temporal + call site) -> sekarang tunggal. Env override untuk
+# tuning tanpa deploy ulang.
+PRESENTER_MIN_AREA_RATIO = float(os.environ.get("GK_PRESENTER_MIN_AREA_RATIO", "0.06") or 0.06)
+PRESENTER_UPPER_HALF_Y = float(os.environ.get("GK_PRESENTER_UPPER_HALF_Y", "0.55") or 0.55)
+PRESENTER_MIN_HITS = int(os.environ.get("GK_PRESENTER_MIN_HITS", "1") or 1)
+
 
 class _Bench:
     """Akumulasi metrik per-tahap yang AMAN untuk ThreadingHTTPServer.
@@ -481,14 +490,18 @@ class FaceGatekeeper:
         return float(inter) / float(union) if union > 0 else 0.0
 
     @staticmethod
-    def classify_face(frame_shape, box, temporal_hits=0):
+    def classify_face(frame_shape, box, temporal_hits=0,
+                      min_area_ratio=PRESENTER_MIN_AREA_RATIO,
+                      upper_half_y=PRESENTER_UPPER_HALF_Y,
+                      presenter_min_hits=PRESENTER_MIN_HITS):
         """Klasifikasi wajah: 'presenter' (blokir) vs 'content' (boleh untuk slot
         ber-facePolicy presenter_only, misal uji kamera niche smartphone).
         HANYA wajah presenter yang diblokir: talking-head dominan di paruh atas
         ATAU wajah persisten lintas frame (dijejali oleh track temporal).
         Wajah manusia lain yang sekadar tertangkap kamera (sample foto/portrait
         hasil uji kamera, pejalan kaki, refleksi layar) = 'content' -> TIDAK diblokir,
-        sesuai spesifikasi niche smartphone (size>6% & upper-half, ATAU temporal)."""
+        sesuai spesifikasi niche smartphone (size>=min_area_ratio & upper-half, ATAU temporal).
+        Ambang dibaca dari SATU sumber (payload Node > env > konstanta modul) via argumen."""
         fh, fw = frame_shape
         bx, by, bw, bh = box
         frame_area = float(max(1, fw * fh))
@@ -496,16 +509,20 @@ class FaceGatekeeper:
         face_cy = by + bh / 2.0
 
         # a. PRESENTER: wajah besar & dominan di paruh atas frame (talking-head / kreator pegang HP)
-        if area_ratio >= 0.06 and face_cy < 0.55 * fh:
+        if area_ratio >= min_area_ratio and face_cy < upper_half_y * fh:
             return "presenter"
-        # b. PRESENTER: posisi stabil lintas >= 3 frame berurutan (hits dihitung track temporal)
-        if temporal_hits >= 2:
+        # b. PRESENTER: posisi stabil lintas frame (hits dihitung track temporal) - ambang sama
+        #    dengan apply_temporal_presenter_track agar kedua jalur sepakat.
+        if temporal_hits >= presenter_min_hits:
             return "presenter"
         # c. CONTENT: bukan talking-head dominan & bukan wajah persisten -> wajah yang
         #    hanya tertangkap kamera (sample foto/uji kamera/pejalan kaki) dibiarkan.
         return "content"
 
-    def detect_faces(self, image_bgr, min_score=0.60):
+    def detect_faces(self, image_bgr, min_score=0.60,
+                     min_area_ratio=PRESENTER_MIN_AREA_RATIO,
+                     upper_half_y=PRESENTER_UPPER_HALF_Y,
+                     presenter_min_hits=PRESENTER_MIN_HITS):
         """Daftar wajah manusia valid (box + score + kind) untuk policy presenter_only.
         Dipakai JUGA oleh detect() pada mode strict (wajah disaring LOKAL, bukan Gemini).
         Backend: SCRFD (default) -> fallback YuNet/MediaPipe sesuai GK_FACE_BACKEND."""
@@ -517,7 +534,7 @@ class FaceGatekeeper:
                 for d in self.scrfd.detect(image_bgr):
                     box = d["box"]; score = d["score"]; lm = d.get("kps")
                     if self._is_valid_human_face(image_bgr, box, score, lm, min_score=min_score)[0]:
-                        faces.append({"box": box, "score": float(score), "kind": self.classify_face((h, w), box)})
+                        faces.append({"box": box, "score": float(score), "kind": self.classify_face((h, w), box, min_area_ratio=min_area_ratio, upper_half_y=upper_half_y, presenter_min_hits=presenter_min_hits)})
             except Exception as e:
                 print(f"  [FaceGatekeeper] \u26a0\ufe0f SCRFD detect error: {e}")
             return faces
@@ -531,7 +548,7 @@ class FaceGatekeeper:
                     bbox = det.bounding_box
                     box = [max(0, int(bbox.origin_x)), max(0, int(bbox.origin_y)), int(bbox.width), int(bbox.height)]
                     if self._is_valid_human_face(image_bgr, box, score, min_score=min_score)[0]:
-                        faces.append({"box": box, "score": float(score), "kind": self.classify_face((h, w), box)})
+                        faces.append({"box": box, "score": float(score), "kind": self.classify_face((h, w), box, min_area_ratio=min_area_ratio, upper_half_y=upper_half_y, presenter_min_hits=presenter_min_hits)})
             except Exception:
                 pass
         if self.yunet_detector:
@@ -545,7 +562,7 @@ class FaceGatekeeper:
                         landmarks = [float(face[i]) for i in range(4, 14)]
                         if self._is_valid_human_face(image_bgr, box, score, landmarks, min_score=min_score)[0]:
                             if not any(self._iou(box, f["box"]) > 0.4 for f in faces):
-                                faces.append({"box": box, "score": score, "kind": self.classify_face((h, w), box)})
+                                faces.append({"box": box, "score": score, "kind": self.classify_face((h, w), box, min_area_ratio=min_area_ratio, upper_half_y=upper_half_y, presenter_min_hits=presenter_min_hits)})
             except Exception:
                 pass
         return faces
@@ -566,7 +583,7 @@ class FaceGatekeeper:
         return False, 0.0, None, "Bersih (faceless)"
 
 
-def apply_temporal_presenter_track(single_verdicts, iou_thresh=0.55, min_hits=2):
+def apply_temporal_presenter_track(single_verdicts, iou_thresh=0.55, min_hits=PRESENTER_MIN_HITS):
     """Fase 2 (policy presenter_only): wajah 'content' yang bertahan di posisi sama
     (IoU >= 0.55) pada >= min_hits frame kronologis sebelumnya adalah PRESENTER statis
     (kreator di depan kamera), bukan konten sample foto. Frame-nya di-discard.
@@ -1030,7 +1047,10 @@ class FrameGatekeeper:
         return image[:, x_start:x_start + target_w]
 
     def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools", face_policy="strict",
-                             image_bgr=None, run_text_check=True, inherited_text=None, bench=None):
+                             image_bgr=None, run_text_check=True, inherited_text=None, bench=None,
+                             presenter_min_area_ratio=PRESENTER_MIN_AREA_RATIO,
+                             presenter_upper_half_y=PRESENTER_UPPER_HALF_Y,
+                             presenter_min_hits=PRESENTER_MIN_HITS):
         """
         Mengevaluasi satu frame secara independen dan mengembalikan hasil lengkap:
         - status: 'clean' | 'uncertain' | 'discarded'
@@ -1100,7 +1120,7 @@ class FrameGatekeeper:
         # ── TAHAP 1A: Face Detection pada Crop 9:16 ──
         content_faces = []
         if face_policy == "presenter_only":
-            for f in self.face_gate.detect_faces(crop):
+            for f in self.face_gate.detect_faces(crop, min_area_ratio=presenter_min_area_ratio, upper_half_y=presenter_upper_half_y, presenter_min_hits=presenter_min_hits):
                 if f["kind"] == "presenter":
                     return {
                         "filePath": file_path,
@@ -1138,7 +1158,7 @@ class FrameGatekeeper:
         x_end = min(w, x_start + target_w)
 
         if face_policy == "presenter_only":
-            for f in self.face_gate.detect_faces(img):
+            for f in self.face_gate.detect_faces(img, min_area_ratio=presenter_min_area_ratio, upper_half_y=presenter_upper_half_y, presenter_min_hits=presenter_min_hits):
                 bx, by, bw, bh = f["box"]
                 if bx + bw < x_start or bx > x_end:
                     continue  # wajah di luar jendela crop 9:16 -> terpotong otomatis saat render
@@ -1258,7 +1278,10 @@ class FrameGatekeeper:
         }
 
     def process_batch(self, frame_items, niche="kitchen_tools",
-                      min_consecutive_clean=3, min_clean_duration=4.0, face_policy="strict"):
+                      min_consecutive_clean=3, min_clean_duration=4.0, face_policy="strict",
+                      presenter_min_area_ratio=PRESENTER_MIN_AREA_RATIO,
+                      presenter_upper_half_y=PRESENTER_UPPER_HALF_Y,
+                      presenter_min_hits=PRESENTER_MIN_HITS):
         """
         Memproses batch frame dengan logika:
         1. Static frame detection (MAD & edge difference)
@@ -1369,7 +1392,10 @@ class FrameGatekeeper:
                 v = self.process_single_frame(
                     path, ts, niche=niche, face_policy=face_policy,
                     image_bgr=img, run_text_check=run_text_check, inherited_text=last_text_result,
-                    bench=bench
+                    bench=bench,
+                    presenter_min_area_ratio=presenter_min_area_ratio,
+                    presenter_upper_half_y=presenter_upper_half_y,
+                    presenter_min_hits=presenter_min_hits
                 )
 
             if run_text_check and v.get("stage") in ("passed", "text", "graphic_overlay", "scene", "uncertain_scene"):
@@ -1400,7 +1426,7 @@ class FrameGatekeeper:
         # min_hits=1 -> kunci presenter sejak FRAME KE-2 (tutup bocor 1-2 frame vlogger
         # berwajah menengah/di paruh bawah; wajah tetap DIAM 2 frame beruntun = kreator).
         if face_policy == "presenter_only":
-            apply_temporal_presenter_track(single_verdicts, min_hits=1)
+            apply_temporal_presenter_track(single_verdicts, min_hits=presenter_min_hits)
 
         # ── 3. Temporal Watermark Aggregation (Multi-Frame Persistence Tracker) ──
         # Watermark biasanya berada di sudut yang sama persisten lintas >= 2 frame.
@@ -1687,6 +1713,17 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 min_consec = int(payload.get("minConsecutiveClean", 2))
                 min_dur = float(payload.get("minCleanDuration", 1.5))
 
+                # P3.1 Ambang presenter SATU SUMBER: Node mengirim -> pakai; absah -> fallback konstanta modul.
+                def _num(key, fallback):
+                    val = payload.get(key, None)
+                    try:
+                        return float(val) if val is not None else fallback
+                    except (TypeError, ValueError):
+                        return fallback
+                presenter_min_area_ratio = _num("presenterMinAreaRatio", PRESENTER_MIN_AREA_RATIO)
+                presenter_upper_half_y = _num("presenterUpperHalfY", PRESENTER_UPPER_HALF_Y)
+                presenter_min_hits = int(_num("presenterMinHits", PRESENTER_MIN_HITS))
+
                 if not frames:
                     self._send_json(400, {"error": "Array 'frames' kosong atau tidak ditemukan"})
                     return
@@ -1695,7 +1732,10 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                     frames, niche=niche,
                     min_consecutive_clean=min_consec,
                     min_clean_duration=min_dur,
-                    face_policy=face_policy
+                    face_policy=face_policy,
+                    presenter_min_area_ratio=presenter_min_area_ratio,
+                    presenter_upper_half_y=presenter_upper_half_y,
+                    presenter_min_hits=presenter_min_hits
                 )
                 if not self._send_json(200, res):
                     print(f"⚠️  [Gatekeeper] Klien terputus sebelum hasil {len(frames)} frame terkirim (batch dibuang; cek timeout pemanggil).")

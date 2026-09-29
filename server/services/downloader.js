@@ -6,6 +6,7 @@ import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
 export { getYtDlpPath, getFFmpegPath };
 import { getVideoDimensions } from './videoRenderer.js';
 import { trackBandwidth } from './bandwidthTracker.js';
+import { recordStageEvent } from './observabilityService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -705,11 +706,28 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   const isPreview = quality === 'preview' || quality === 'low' || quality === '240p';
   const finalExpectedPath = path.join(outputDir, `${prefix}_${videoId}.mp4`);
 
+  // P1 OBSERVABILITY: argumen ke-3 (`videoId`) dipakai pemanggil pipeline sebagai jobId
+  // (menjadi bagian nama file `raw_<jobId>.mp4`), jadi jejak download bisa dikaitkan ke job yang benar.
+  const traceDownloadFailure = (message) => recordStageEvent({
+    jobId: videoId,
+    stage: 'download',
+    provider: 'yt-dlp',
+    failureReason: message,
+    meta: { quality, prefix, sectioned: Boolean(section) },
+  });
+
   // Tier 1: Try Cobalt API if configured (only for full download)
   if (process.env.COBALT_API_URL && !isPreview) {
     const cobaltRes = await downloadWithCobaltApi(url, finalExpectedPath, onProgress);
     if (cobaltRes) {
       onProgress({ step: 'download', message: 'Video downloaded via Cobalt API.', progress: 35 });
+      recordStageEvent({
+        jobId: videoId,
+        stage: 'download',
+        provider: 'cobalt',
+        downloadBytes: fs.existsSync(cobaltRes.filePath) ? fs.statSync(cobaltRes.filePath).size : 0,
+        meta: { quality, attempts: 1 },
+      });
       return cobaltRes;
     }
   }
@@ -902,6 +920,13 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
               // Video is below 480p (e.g. 240p, 360p). Strictly reject and delete it!
               console.warn(`[Downloader] ❌ Resolusi video (${dims.width}x${dims.height}) di bawah standar 480p. Menolak video...`);
               try { fs.unlinkSync(downloadedFile); } catch {}
+              recordStageEvent({
+                jobId: videoId,
+                stage: 'download',
+                provider: `yt-dlp:${clientType}`,
+                failureReason: `Resolusi ${dims.width}x${dims.height} di bawah 480p`,
+                meta: { quality, attempt: attempt + 1 },
+              });
               lastDownloadError = `Resolusi video (${dims.width}x${dims.height}) di bawah standar 480p. Wajib minimal 480p/720p/1080p ke atas.`;
               continue;
             }
@@ -917,6 +942,22 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
         }
 
         onProgress({ step: 'download', message: `Video download (${qualityLabel}) completed successfully.`, progress: 35 });
+        recordStageEvent({
+          jobId: videoId,
+          stage: 'download',
+          provider: `yt-dlp:${clientType}`,
+          downloadBytes: videoSize,
+          meta: {
+            quality,
+            attempts: attempt + 1,
+            renderMaxHeight: renderMaxH,
+            videoOnly: renderVideoOnly,
+            section: section && Number.isFinite(section.startSec) && Number.isFinite(section.endSec)
+              ? `${section.startSec.toFixed(1)}-${section.endSec.toFixed(1)}s`
+              : undefined,
+            fileName: path.basename(downloadedFile),
+          },
+        });
         return { filePath: downloadedFile, metadata, sectionStart: section && Number.isFinite(section.startSec) ? section.startSec : 0 };
       }
     }
@@ -935,17 +976,22 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     lowerErr.includes('status: 429');
 
   if (isBotOrIpBlock) {
-    throw new Error(
+    const botBlockMsg =
       `YouTube membatasi/memblokir IP Anda sementara (Bot Detection/HTTP 429).\n` +
       `Solusi cepat:\n` +
       `1. Aktifkan Mode Pesawat (Airplane Mode) di HP selama 5 detik lalu matikan lagi untuk mendapatkan IP operator seluler baru.\n` +
-      `2. Atau letakkan file cookies.txt dari browser YouTube ke folder project.`
-    );
+      `2. Atau letakkan file cookies.txt dari browser YouTube ke folder project.`;
+    traceDownloadFailure(`Bot/IP block setelah ${clientProfiles.length} profile: ${lastDownloadError.slice(-160)}`);
+    throw new Error(botBlockMsg);
   }
 
   if (lowerErr.includes('standar hd 720p') || lowerErr.includes('requested format is not available') || lowerErr.includes('only images are available')) {
-    throw new Error(`Video sumber tidak memiliki format HD 720p/1080p yang valid di YouTube (hanya tersedia resolusi rendah).`);
+    const noHdMsg = `Video sumber tidak memiliki format HD 720p/1080p yang valid di YouTube (hanya tersedia resolusi rendah).`;
+    traceDownloadFailure(`Format HD tidak tersedia: ${lastDownloadError.slice(-160)}`);
+    throw new Error(noHdMsg);
   }
 
-  throw new Error(`Download video gagal (${qualityLabel}): ${lastDownloadError.slice(-400)}`);
+  const finalErrMsg = `Download video gagal (${qualityLabel}): ${lastDownloadError.slice(-400)}`;
+  traceDownloadFailure(finalErrMsg.slice(-240));
+  throw new Error(finalErrMsg);
 }

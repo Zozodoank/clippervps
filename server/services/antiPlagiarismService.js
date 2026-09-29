@@ -7,8 +7,13 @@
 // fallback OpenRouter:free) → tiap beat dapat field `reworded` → nanti
 // digabung jadi naskah untuk Gemini TTS.
 //
-// Modul MANDIRI, di-backing flag yang sama (AUDIO_DRIVEN_SCENES). Belum
-// disambungkan ke worker live.
+// Modul ini SUDAH disambungkan ke worker live: `stage1Render.js` memanggil
+// `paraphraseBeats` + `beatsToScript` pada jalur audio-driven, digerbangi
+// `isAudioDrivenEnabled()` (flag AUDIO_DRIVEN_SCENES) - lihat step 'audio_paraphrase'.
+// Dipakai hanya bila voice-over sumber terdeteksi; tanpa VO, worker fallback ke naskah vision.
+//
+// ATURAN PERAWATAN (P3.3): bila wiring berubah (dipasang/dicabut/pindah gerbang), komentar
+// DI ATAS dan §10 RANGKUMAN_CLIPPER.md WAJIB ikut diperbarui pada commit yang sama.
 // ============================================================================
 import { getAiClientConfig } from './ai/aiClient.js';
 

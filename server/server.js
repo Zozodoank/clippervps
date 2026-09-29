@@ -159,17 +159,14 @@ const upload = multer({
   },
 });
 
-app.use(cors());
+app.use(cors(buildCorsOptions()));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Optional Token Authentication for Cloudflare Tunnel / Public Exposure
-const configuredApiToken = (process.env.API_ACCESS_TOKEN || '').trim();
-if (!configuredApiToken) {
-  console.log('[Auth] ℹ️ API_ACCESS_TOKEN is not set. All endpoints are open (backward-compatible).');
-} else {
-  console.log('[Auth] 🔒 API_ACCESS_TOKEN is configured. Sensitive endpoints are protected.');
-}
+// Optional Token Authentication for Cloudflare Tunnel / Public Exposure.
+// The middleware itself lives in api/middleware/tokenAuth.js and is mounted BEFORE the /api
+// routers below (Express runs the stack in registration order). The boot-time posture warning
+// is printed inside app.listen(), after reloadEnvironment() has refreshed process.env.
 
 import jobsRoutes from './api/routes/jobsRoutes.js';
 import autoRoutes from './api/routes/autoRoutes.js';
@@ -178,6 +175,12 @@ import mediaRoutes from './api/routes/mediaRoutes.js';
 import generateRoutes from './api/routes/generateRoutes.js';
 import systemRoutes from './api/routes/systemRoutes.js';
 import draftsRoutes from './api/routes/draftsRoutes.js';
+import { tokenAuthMiddleware, buildCorsOptions, describeAuthPosture } from './api/middleware/tokenAuth.js';
+
+// ⚠️ MUST stay before every app.use('/api', ...) below, otherwise the routers answer the
+// request first and this guard never runs (that ordering bug exposed /restart, /open-folder
+// and /upload-cookies). server/tests/tokenAuth.test.js locks this order in place.
+app.use(tokenAuthMiddleware);
 
 app.use('/api', jobsRoutes);
 app.use('/api', autoRoutes);
@@ -186,65 +189,6 @@ app.use('/api', mediaRoutes);
 app.use('/api', generateRoutes);
 app.use('/api', systemRoutes);
 app.use('/api/drafts', draftsRoutes);
-
-function tokenAuthMiddleware(req, res, next) {
-  const token = (process.env.API_ACCESS_TOKEN || '').trim();
-  if (!token) return next();
-
-  const reqPath = req.path || '';
-
-  // Allow open endpoints: health, daily-limit, niches, and media files
-  if (
-    reqPath === '/api/health' ||
-    reqPath === '/api/daily-limit' ||
-    reqPath === '/api/niches' ||
-    reqPath.startsWith('/api/video/') ||
-    reqPath.startsWith('/api/audio/') ||
-    reqPath.startsWith('/api/download/') ||
-    reqPath.startsWith('/api/video-player-file') ||
-    reqPath.startsWith('/api/rejected-frames')
-  ) {
-    return next();
-  }
-
-  // Only check /api/ routes; allow static frontend files
-  if (!reqPath.startsWith('/api/')) {
-    return next();
-  }
-
-  // Extract token from header or query param
-  let reqToken = req.headers['x-api-token'];
-  if (!reqToken && req.headers['authorization']) {
-    const authHeader = req.headers['authorization'];
-    if (authHeader.startsWith('Bearer ')) {
-      reqToken = authHeader.slice(7).trim();
-    }
-  }
-  if (!reqToken && req.query && req.query.api_token) {
-    reqToken = String(req.query.api_token).trim();
-  }
-
-  if (!reqToken) {
-    return res.status(401).json({
-      success: false,
-      error: 'Unauthorized: Missing API access token. Provide x-api-token header or ?api_token query param.',
-    });
-  }
-
-  // Constant-time token comparison
-  const expectedBuf = Buffer.from(token);
-  const actualBuf = Buffer.from(String(reqToken));
-  if (expectedBuf.length !== actualBuf.length || !crypto.timingSafeEqual(expectedBuf, actualBuf)) {
-    return res.status(401).json({
-      success: false,
-      error: 'Unauthorized: Invalid API access token.',
-    });
-  }
-
-  next();
-}
-
-app.use(tokenAuthMiddleware);
 
 
 
@@ -484,6 +428,14 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, '0.0.0.0', () => {
   reloadEnvironment();
+  const authPosture = describeAuthPosture();
+  if (authPosture.tokenConfigured) {
+    console.log('[Auth] 🔒 API_ACCESS_TOKEN is configured. All /api endpoints except the public allowlist require a token.');
+  } else if (authPosture.isExposedWithoutAuth) {
+    console.log('[Auth] ⚠️⚠️ API_ACCESS_TOKEN kosong TAPI tunnel/publik aktif → seluruh API (termasuk POST /restart, /open-folder, /upload-cookies) bisa diakses siapa pun dari URL publik. Set API_ACCESS_TOKEN di server/.env lalu restart.');
+  } else {
+    console.log('[Auth] ℹ️ API_ACCESS_TOKEN belum diset. API terbuka untuk pemakaian lokal (PC/Termux) saja.');
+  }
   const envActive = (process.env.ACTIVE_AI_ENGINE || '').trim().toLowerCase();
   const openRouterKey = process.env.OPENROUTER_API_KEY ? process.env.OPENROUTER_API_KEY.trim() : '';
   const geminiKey = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();

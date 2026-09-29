@@ -4,6 +4,10 @@ import { defaultGeminiDirectModels, getDirectGeminiApiKey, getDirectGeminiClient
 export { defaultGeminiDirectModels, getDirectGeminiApiKey, getDirectGeminiClientConfig, isQuotaError, isDailyQuotaExhaustedError, resolveImageBufferAndBase64 };
 import { truncateProductDescription, getDynamicProductHookFallback, buildNicheProductCriterion, buildFaceAndMotionCriterion, formatEnrichedCaption, sanitizeScriptVocabulary, build7SlotStoryboardClips } from './ai/promptBuilders.js';
 export { truncateProductDescription, getDynamicProductHookFallback, buildNicheProductCriterion, buildFaceAndMotionCriterion, formatEnrichedCaption, sanitizeScriptVocabulary, build7SlotStoryboardClips };
+// P6.1: lapisan parser/fallback PURE dipindah ke ./ai/aiResponseParsers.js (sudah dikunci
+// characterization test). `repairJson` tetap di-re-export agar permukaan publik aiService tak berubah.
+import { repairJson, buildFallbackScenes, normalizeShortScenes } from './ai/aiResponseParsers.js';
+export { repairJson };
 import OpenAI from 'openai';
 import dotenv from 'dotenv';
 import fs from 'fs';
@@ -2843,51 +2847,8 @@ Return strict JSON in this format:
 // Moved sanitizeScriptVocabulary to ai/promptBuilders.js
 
 // Robust JSON parser with auto-repair for truncated output
-export function repairJson(raw) {
-  if (!raw || typeof raw !== 'string') return {};
-  const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch (initialErr) {
-    try {
-      let str = cleaned;
-      if (str.endsWith('\\')) str = str.slice(0, -1);
-
-      // Check unclosed quote
-      let inString = false;
-      for (let i = 0; i < str.length; i++) {
-        if (str[i] === '"' && (i === 0 || str[i - 1] !== '\\')) {
-          inString = !inString;
-        }
-      }
-      if (inString) str += '"';
-
-      // Balance braces and brackets
-      const stack = [];
-      let inStr = false;
-      for (let i = 0; i < str.length; i++) {
-        const c = str[i];
-        if (c === '"' && (i === 0 || str[i - 1] !== '\\')) {
-          inStr = !inStr;
-        } else if (!inStr) {
-          if (c === '{' || c === '[') stack.push(c);
-          else if (c === '}' && stack[stack.length - 1] === '{') stack.pop();
-          else if (c === ']' && stack[stack.length - 1] === '[') stack.pop();
-        }
-      }
-
-      while (stack.length > 0) {
-        const top = stack.pop();
-        if (top === '{') str += '}';
-        else if (top === '[') str += ']';
-      }
-
-      return JSON.parse(str);
-    } catch {
-      throw initialErr;
-    }
-  }
-}
+// repairJson, buildFallbackScenes, normalizeShortScenes dipindah ke ./ai/aiResponseParsers.js (P6.1).
+// Diimpor di bagian atas file ini; `repairJson` di-re-export dari sana.
 
 
 
@@ -2902,80 +2863,8 @@ export function repairJson(raw) {
 
 
 
-function buildFallbackScenes(productName, segmentDuration, sceneDuration = 3.3) {
-  const totalDuration = Math.max(15, Math.min(45, Math.round(Number(segmentDuration) || 24)));
-  const sceneLength = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
-  const sceneCount = Math.max(4, Math.min(8, Math.round(totalDuration / sceneLength)));
-  const sceneTemplates = [
-    {
-      visualDescription: `Hook aksi: demonstrasi cara lama yang merepotkan vs solusi modern.`,
-      voiceover: getDynamicProductHookFallback(productName),
-      adAdvisorNotes: 'Teks hook kontras tebal, SFX alert, potongan cepat pembuka.'
-    },
-    {
-      visualDescription: `Solusi hero: ${productName} mulai digunakan dengan tangan secara praktis.`,
-      voiceover: `Untung sekarang ada ${productName} ini, sekali pakai langsung beres.`,
-      adAdvisorNotes: 'Transisi snappy, tunjukkan tangan mengoperasikan produk secara mantap.'
-    },
-    {
-      visualDescription: `Aksi peragaan aktif: peragaan fungsi fisik produk bekerja dengan lancar.`,
-      voiceover: `Tinggal operasikan dengan santai, prosesnya cepat dan gak perlu tenaga ekstra.`,
-      adAdvisorNotes: 'Visual satisfying close-up peragaan aksi produk.'
-    },
-    {
-      visualDescription: `Detail fungsi & kepraktisan saat digunakan untuk kebutuhan harian.`,
-      voiceover: `Desainnya ringkas dan presisi, bikin pekerjaan jadi jauh lebih efisien.`,
-      adAdvisorNotes: 'Sorot detail pergerakan alat dan kepraktisan penggunaannya.'
-    },
-    {
-      visualDescription: `Hasil peragaan nyata yang memuaskan dan rapi seketika.`,
-      voiceover: `Lihat hasilnya, benar-benar rapi memuaskan dan gampang banget dibersihkan.`,
-      adAdvisorNotes: 'Tunjukkan hasil kerja produk secara jelas di frame tengah.'
-    },
-    {
-      visualDescription: `Kualitas dan fungsionalitas produk untuk penggunaan jangka panjang.`,
-      voiceover: `Materialnya solid dan awet, cocok banget jadi andalan di rumah.`,
-      adAdvisorNotes: 'Teks keunggulan di layar, SFX coin.'
-    },
-    {
-      visualDescription: `Hero shot penutup dengan animasi panah ke keranjang pojok kiri bawah.`,
-      voiceover: `Yuk buruan cek produk di keranjang pojok kiri bawah sebelum kehabisan!`,
-      adAdvisorNotes: 'Grafis panah berkedip ke pojok kiri bawah, CTA mendesak.'
-    },
-    {
-      visualDescription: `Stiker diskon dan keranjang pojok kiri bawah.`,
-      voiceover: `Langsung checkout di keranjang pojok kiri bawah mumpung masih promo!`,
-      adAdvisorNotes: 'Teks urgensi penutup, SFX click.'
-    },
-  ];
-
-  return Array.from({ length: sceneCount }, (_, index) => {
-    const start = Math.round(index * sceneLength * 10) / 10;
-    const end = Math.min(totalDuration, Math.round((start + sceneLength) * 10) / 10);
-    const template = sceneTemplates[Math.min(index, sceneTemplates.length - 1)];
-
-    return {
-      sceneNumber: index + 1,
-      timeRange: `${formatSeconds(start)} - ${formatSeconds(end)}`,
-      ...template,
-    };
-  });
-}
-
-function normalizeShortScenes(scenes, productName, segmentDuration, sceneDuration = 3.3) {
-  const fallbackScenes = buildFallbackScenes(productName, segmentDuration, sceneDuration);
-  const sourceScenes = Array.isArray(scenes) ? scenes : [];
-
-  return fallbackScenes.map((fallback, index) => {
-    const source = sourceScenes[index] || {};
-    return {
-      ...fallback,
-      visualDescription: source.visualDescription || fallback.visualDescription,
-      voiceover: source.voiceover || fallback.voiceover,
-      adAdvisorNotes: source.adAdvisorNotes || fallback.adAdvisorNotes,
-    };
-  });
-}
+// buildFallbackScenes & normalizeShortScenes dipindah ke ./ai/aiResponseParsers.js (P6.1),
+// diimpor di bagian atas file ini.
 
 /**
  * Stage 2 Helper: Detects English words, brands, and terms in a voiceover script / product title

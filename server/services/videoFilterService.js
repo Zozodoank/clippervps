@@ -27,6 +27,12 @@ export const GATEKEEPER_CONFIG = {
   CLEAN_CONF_THRESHOLD: 0.78,
   UNCERTAIN_CONF_THRESHOLD: 0.62,
   TIMEOUT_SEC: 25,
+  // P3.1 SATU SUMBER AMBANG PRESENTER: nilai ini dikirim ke gatekeeper lewat payload
+  // /filter-frames, sehingga service.py tidak lagi hardcode ganda. Fallback service.py
+  // (env GK_PRESENTER_*) memakai angka yang sama persis.
+  PRESENTER_MIN_AREA_RATIO: 0.06,
+  PRESENTER_UPPER_HALF_Y: 0.55,
+  PRESENTER_MIN_HITS: 1,
 };
 
 /**
@@ -954,6 +960,9 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
       facePolicy,
       minConsecutiveClean: GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES,
       minCleanDuration: GATEKEEPER_CONFIG.MIN_CLEAN_DURATION_SEC,
+      presenterMinAreaRatio: GATEKEEPER_CONFIG.PRESENTER_MIN_AREA_RATIO,
+      presenterUpperHalfY: GATEKEEPER_CONFIG.PRESENTER_UPPER_HALF_Y,
+      presenterMinHits: GATEKEEPER_CONFIG.PRESENTER_MIN_HITS,
       frames: validFrames.map(f => ({
         filePath: f.filePath,
         timestamp: f.timestamp || 0
