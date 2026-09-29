@@ -995,10 +995,14 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
   const chunkDefault = gkCores <= 2 ? 24 : 40;
   const GK_CHUNK_SIZE = Math.max(10, Number(process.env.GK_CHUNK_SIZE) || chunkDefault);
   const perFrameSec = Math.max(1, Number(process.env.GK_TIMEOUT_SEC_PER_FRAME) || (gkCores <= 2 ? 6 : 4));
+  const GK_CHUNK_RETRIES = Math.max(0, Number(process.env.GK_CHUNK_RETRIES) || 1);
   const chunks = [];
   for (let i = 0; i < validFrames.length; i += GK_CHUNK_SIZE) {
     chunks.push(validFrames.slice(i, i + GK_CHUNK_SIZE));
   }
+  // Audit trail: parameter yang DIPILIH untuk job ini, supaya tuning (24/96/6) bisa dinilai dari
+  // data nyata alih-alih asumsi. runtimeCores = core AKTIF online (bukan spek hardware).
+  console.log(`[Gatekeeper] config: runtimeCores=${gkCores} GK_CHUNK_SIZE=${GK_CHUNK_SIZE} chunks=${chunks.length} frames=${validFrames.length} GK_TIMEOUT_SEC_PER_FRAME=${perFrameSec} GK_CHUNK_RETRIES=${GK_CHUNK_RETRIES}`);
 
   const sendChunk = async (chunk) => {
     const payload = JSON.stringify({
@@ -1033,10 +1037,14 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
 
   const results = [];
   for (const chunk of chunks) {
-    // Retry 1x per chunk: koneksi ke ThreadingHTTPServer di HP kadang putus sesaat.
+    // Retry per chunk (GK_CHUNK_RETRIES, default 1): koneksi ke ThreadingHTTPServer di HP kadang
+    // putus sesaat. Setelah retries habis -> chunk dianggap hilang (BUKAN memicu heuristik).
     let r = await sendChunk(chunk);
-    if (!r) r = await sendChunk(chunk);
+    for (let attempt = 0; !r && attempt < GK_CHUNK_RETRIES; attempt++) {
+      r = await sendChunk(chunk);
+    }
     if (r) results.push(r);
+    else console.warn(`[Gatekeeper] ⚠️ chunk ${chunk.length} frame tetap gagal setelah ${GK_CHUNK_RETRIES + 1} percobaan.`);
   }
 
   // Semua chunk gagal = gatekeeper benar-benar tak tersedia -> null. Pemanggil TIDAK boleh
@@ -1145,6 +1153,10 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   // pemangkasan tidak boleh melewati 3.2s: gatekeeper hanya membandingkan pasangan frame
   // berjarak <= 3.5s untuk mendeteksi foto statis - kalau jaraknya diregangkan lebih lebar,
   // dedup statis mati dan AI justru bekerja penuh untuk semua frame.
+  // GK_MAX_BATCH_FRAMES = TOTAL frame maksimum yang dikirim ke gatekeeper PER JOB (pool di-subsample
+  // merata ke angka ini SEBELUM chunking). BUKAN ukuran per-request — itu GK_CHUNK_SIZE. Level beda:
+  //   GK_MAX_BATCH_FRAMES -> seberapa banyak frame_job dianalisa (cap agregat)
+  //   GK_CHUNK_SIZE       -> seberapa banyak frame per satu POST /filter-frames
   const gkBatchDefault = detectDeviceCores() <= 2 ? 96 : 240; // hemat CPU pada perangkat core sedikit
   const MAX_GATEKEEPER_FRAMES = Math.max(20, Number(process.env.GK_MAX_BATCH_FRAMES) || gkBatchDefault);
   const spanSec = Math.max(0, Number(frames[frames.length - 1]?.timestamp || 0) - Number(frames[0]?.timestamp || 0));
