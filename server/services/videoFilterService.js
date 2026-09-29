@@ -947,6 +947,36 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
  * ── TAHAP 2B: ANALISA LOKAL 9:16 (0 TOKEN AI, HEMAT KUOTA GEMINI) ─────────────
  * Per instruksi pengguna: Verifikasi grafis visual (logo channel, watermark, stiker grafis,
 /**
+ * Deteksi jumlah core CPU yang AKTIF terlihat runtime (bukan spesifikasi hardware).
+ * Di Android/proot, efficiency core sering di-offline scheduler sehingga nproc/affinity
+ * bisa = 2 walau SoC octa-core (mis. UNISOC T7250). Prioritas: /sys online ->
+ * os.availableParallelism() -> os.cpus().length. Hasil di-cache per proses.
+ */
+let _deviceCoresCache = null;
+export function detectDeviceCores() {
+  if (_deviceCoresCache != null) return _deviceCoresCache;
+  let n = 0;
+  try {
+    const s = fs.readFileSync('/sys/devices/system/cpu/online', 'utf8').trim();
+    if (s) {
+      for (const part of s.split(',')) {
+        const m = part.split('-');
+        if (m.length === 2) n += (Number(m[1]) - Number(m[0]) + 1);
+        else if (m[0] !== '') n += 1;
+      }
+    }
+  } catch {}
+  if (!(n > 0)) {
+    try {
+      if (typeof os.availableParallelism === 'function') n = os.availableParallelism();
+    } catch {}
+  }
+  if (!(n > 0)) n = os.cpus().length;
+  _deviceCoresCache = Math.max(1, Number(n) || 1);
+  return _deviceCoresCache;
+}
+
+/**
  * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
@@ -955,11 +985,16 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
   if (validFrames.length === 0) return null;
 
   // (#B) RETRY via CHUNKING: satu POST ~200 frame terbukti membuat koneksi ke gatekeeper di
-  // HP (Unisoc 2-core, ThreadingHTTPServer Python) putus ("fetch failed") sementara /health &
-  // batch kecil (30 frame) selalu sukses. Pecah jadi chunk kecil agar gatekeeper SELALU menjawab,
-  // lalu gabungkan hasilnya. GK_CHUNK_SIZE default 40 (pola yang terbukti di tes manual).
-  const GK_CHUNK_SIZE = Math.max(10, Number(process.env.GK_CHUNK_SIZE) || 40);
-  const perFrameSec = Math.max(1, Number(process.env.GK_TIMEOUT_SEC_PER_FRAME) || 4);
+  // HP (UNISOC T7250 octa-core, tapi runtime proot hanya ~2 core online; ThreadingHTTPServer Python)
+  // putus ("fetch failed") sementara /health & batch kecil (30 frame) selalu sukses. Pecah jadi
+  // chunk kecil agar gatekeeper SELALU menjawab, lalu gabungkan hasilnya. GK_CHUNK_SIZE default
+  // 40 (-> 24 saat <=2 core online; pola 30-40 terbukti di tes manual).
+  const gkCores = detectDeviceCores();
+  // Low-core (<=2 core online, umum di Android/proot) -> chunk lebih kecil & timeout per-frame
+  // lebih longgar agar tidak menumpuk beban di sedikit core. Env tetap menang bila diset eksplisit.
+  const chunkDefault = gkCores <= 2 ? 24 : 40;
+  const GK_CHUNK_SIZE = Math.max(10, Number(process.env.GK_CHUNK_SIZE) || chunkDefault);
+  const perFrameSec = Math.max(1, Number(process.env.GK_TIMEOUT_SEC_PER_FRAME) || (gkCores <= 2 ? 6 : 4));
   const chunks = [];
   for (let i = 0; i < validFrames.length; i += GK_CHUNK_SIZE) {
     chunks.push(validFrames.slice(i, i + GK_CHUNK_SIZE));
@@ -998,7 +1033,9 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
 
   const results = [];
   for (const chunk of chunks) {
-    const r = await sendChunk(chunk);
+    // Retry 1x per chunk: koneksi ke ThreadingHTTPServer di HP kadang putus sesaat.
+    let r = await sendChunk(chunk);
+    if (!r) r = await sendChunk(chunk);
     if (r) results.push(r);
   }
 
@@ -1108,7 +1145,8 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   // pemangkasan tidak boleh melewati 3.2s: gatekeeper hanya membandingkan pasangan frame
   // berjarak <= 3.5s untuk mendeteksi foto statis - kalau jaraknya diregangkan lebih lebar,
   // dedup statis mati dan AI justru bekerja penuh untuk semua frame.
-  const MAX_GATEKEEPER_FRAMES = Math.max(20, Number(process.env.GK_MAX_BATCH_FRAMES) || 240);
+  const gkBatchDefault = detectDeviceCores() <= 2 ? 96 : 240; // hemat CPU pada perangkat core sedikit
+  const MAX_GATEKEEPER_FRAMES = Math.max(20, Number(process.env.GK_MAX_BATCH_FRAMES) || gkBatchDefault);
   const spanSec = Math.max(0, Number(frames[frames.length - 1]?.timestamp || 0) - Number(frames[0]?.timestamp || 0));
   const intervalCap = spanSec > 0 ? Math.floor(spanSec / 3.2) + 1 : frames.length;
   const batchCap = Math.max(5, Math.min(MAX_GATEKEEPER_FRAMES, intervalCap));
