@@ -977,6 +977,17 @@ export function detectDeviceCores() {
 }
 
 /**
+ * Runtime hemat-daya / perangkat mobile. T7250 (2xA75+6xA55) walau 8 core online tetap CPU
+ * entry-level yang lambat per-core; di Termux/proot (Android) kita pakai profil konservatif untuk
+ * chunk/timeout gatekeeper agar tiap request singkat & transport aman. Bukan soal jumlah core.
+ */
+export function isLowPowerRuntime() {
+  return process.platform === 'android' ||
+    Boolean(process.env.TERMUX_VERSION) ||
+    (process.platform === 'linux' && !process.env.DISPLAY);
+}
+
+/**
  * Memanggil AI Local Frame Gatekeeper microservice di port 5050 (MediaPipe + DBNet + MobileNetV3).
  * Mengembalikan hasil pra-pemrosesan AI jika service aktif di background (PM2/daemon).
  */
@@ -985,16 +996,18 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
   if (validFrames.length === 0) return null;
 
   // (#B) RETRY via CHUNKING: satu POST ~200 frame terbukti membuat koneksi ke gatekeeper di
-  // HP (UNISOC T7250 octa-core, tapi runtime proot hanya ~2 core online; ThreadingHTTPServer Python)
-  // putus ("fetch failed") sementara /health & batch kecil (30 frame) selalu sukses. Pecah jadi
-  // chunk kecil agar gatekeeper SELALU menjawab, lalu gabungkan hasilnya. GK_CHUNK_SIZE default
-  // 40 (-> 24 saat <=2 core online; pola 30-40 terbukti di tes manual).
+  // HP (UNISOC T7250 octa-core; runtime proot tetap 8 core online, tapi per-core lambat;
+  // ThreadingHTTPServer Python) putus ("fetch failed") sementara /health & batch kecil (30 frame)
+  // selalu sukses. Pecah jadi chunk kecil agar gatekeeper SELALU menjawab, lalu gabungkan hasilnya.
+  // GK_CHUNK_SIZE default 40 (-> 24 saat lowPower: Termux/Android atau <=2 core online).
   const gkCores = detectDeviceCores();
-  // Low-core (<=2 core online, umum di Android/proot) -> chunk lebih kecil & timeout per-frame
-  // lebih longgar agar tidak menumpuk beban di sedikit core. Env tetap menang bila diset eksplisit.
-  const chunkDefault = gkCores <= 2 ? 24 : 40;
+  // Profil perangkat: lowPower = Termux/Android ATAU core online <=2. T7250 (8 core online, tapi
+  // per-core entry-level lambat) -> chunk kecil (24) & timeout longgar (6s/frame) agar tiap POST
+  // singkat (transport aman) dan tak terlalu banyak frame dianalisa sekaligus. Env tetap menang.
+  const lowPower = isLowPowerRuntime() || gkCores <= 2;
+  const chunkDefault = lowPower ? 24 : 40;
   const GK_CHUNK_SIZE = Math.max(10, Number(process.env.GK_CHUNK_SIZE) || chunkDefault);
-  const perFrameSec = Math.max(1, Number(process.env.GK_TIMEOUT_SEC_PER_FRAME) || (gkCores <= 2 ? 6 : 4));
+  const perFrameSec = Math.max(1, Number(process.env.GK_TIMEOUT_SEC_PER_FRAME) || (lowPower ? 6 : 4));
   const GK_CHUNK_RETRIES = Math.max(0, Number(process.env.GK_CHUNK_RETRIES) || 1);
   const chunks = [];
   for (let i = 0; i < validFrames.length; i += GK_CHUNK_SIZE) {
@@ -1157,8 +1170,10 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   // merata ke angka ini SEBELUM chunking). BUKAN ukuran per-request — itu GK_CHUNK_SIZE. Level beda:
   //   GK_MAX_BATCH_FRAMES -> seberapa banyak frame_job dianalisa (cap agregat)
   //   GK_CHUNK_SIZE       -> seberapa banyak frame per satu POST /filter-frames
-  const gkBatchDefault = detectDeviceCores() <= 2 ? 96 : 240; // hemat CPU pada perangkat core sedikit
-  const MAX_GATEKEEPER_FRAMES = Math.max(20, Number(process.env.GK_MAX_BATCH_FRAMES) || gkBatchDefault);
+  // TIDAK diturunkan utk perangkat lambat: batchCap di bawah intervalCap akan meregangkan jarak
+  // frame > 3.2s dan MEMATIKAN dedup foto-statis gatekeeper. Yang di-tune utk lowPower hanya
+  // GK_CHUNK_SIZE & timeout (lihat callAIGatekeeperMicroservice), bukan total frame.
+  const MAX_GATEKEEPER_FRAMES = Math.max(20, Number(process.env.GK_MAX_BATCH_FRAMES) || 240);
   const spanSec = Math.max(0, Number(frames[frames.length - 1]?.timestamp || 0) - Number(frames[0]?.timestamp || 0));
   const intervalCap = spanSec > 0 ? Math.floor(spanSec / 3.2) + 1 : frames.length;
   const batchCap = Math.max(5, Math.min(MAX_GATEKEEPER_FRAMES, intervalCap));
