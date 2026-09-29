@@ -234,6 +234,12 @@ async function _runStage1Pipeline({
     productImage: effectiveProductImage || '',
     youtubeUrl: youtubeUrl || '',
     shopeeLink: shopeeLink || '',
+    // INPUT MANUAL PENTING: persist agar retry/re-generate memakai data yang sama.
+    // Tanpa ini, retry job kehilangan niche (jatuh ke preset kitchen) & OEM urls (berujung pencarian video lain).
+    niche: options.niche || 'kitchen_tools',
+    oemUrls: Array.isArray(options.oemUrls) ? options.oemUrls.filter(Boolean) : [],
+    singleVideoOnly: options.singleVideoOnly === true,
+    sourcePolicy: options.sourcePolicy || '',
     createdAt: new Date().toISOString(),
     isOrphan: false,
     ...extraJobMeta,
@@ -736,7 +742,9 @@ async function _runStage1Pipeline({
       const engineName = aiProvider === 'gemini' ? 'Google Gemini Direct' : 'AI';
       updateProgress({
         step: 'auto_search_fallback',
-        message: preferMultiVideo
+        message: explicitOnly
+          ? `🔒 Mode manual: hanya memakai link yang Anda siapkan (tanpa pencarian di mesin telusur).`
+          : preferMultiVideo
           ? `Menyiapkan streaming 3-4 video untuk target "${coreProductNoun}"...`
           : `⛔ Video awal ditolak AI (${lastRejectionError?.rejectionReason || 'tidak cocok'}). ${engineName} mencari video YouTube baru untuk target "${coreProductNoun}"...`,
         progress: 15,
@@ -744,7 +752,9 @@ async function _runStage1Pipeline({
         coreProductNoun,
       });
 
-      console.log(`[Job ${jobId}] Memulai pencarian/streaming kandidat YouTube (3-5 video) untuk "${productTitle}"...`);
+      console.log(explicitOnly
+        ? `[Job ${jobId}] 🔒 Mode manual (explicit_only): TIDAK ada pencarian web. Hanya link user (youtubeUrl + OEM) yang diproses.`
+        : `[Job ${jobId}] Memulai pencarian/streaming kandidat YouTube (3-5 video) untuk "${productTitle}"...`);
 
       let searchIteration = 0;
       let candidatePool = Array.isArray(targetCandidates) ? [...targetCandidates] : [];

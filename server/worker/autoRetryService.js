@@ -199,6 +199,9 @@ export async function runAutoRetryWorker(jobId, run) {
               aiProvider: effectiveAiProvider,
               autoSearchFallback: false,
               singleVideoOnly: true,
+              // Niche WAJIB diteruskan: tanpa ini auto-retry job smartphone jatuh ke preset kitchen
+              // (prompt naskah & face policy salah).
+              niche: job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools'),
               ttsProvider: run.ttsProvider || job.ttsProvider || process.env.TTS_PROVIDER || 'gemini_tts',
               ttsModel: run.ttsModel || job.ttsModel || process.env.GEMINI_TTS_MODEL || DEFAULT_GEMINI_TTS_MODEL,
               ttsFallbackModel: run.ttsFallbackModel || job.ttsFallbackModel || process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,

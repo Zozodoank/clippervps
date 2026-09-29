@@ -1058,7 +1058,10 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
   // Timeout SKALIK dengan jumlah frame: sampling padat (~200 frame/5mnt) di CPU 2-core Termux
   // bisa melewati batas lama 300s; saat Node abort, gatekeeper menulis ke socket mati ->
   // ConnectionAbortedError & hasil batch terbuang sia-sia. Beri jatah ~4s/frame + buffer, min 300s.
-  const gkTimeoutSec = Math.max(300, gkFrames.length * 4 + 120);
+  // GK_TIMEOUT_SEC_PER_FRAME: naikkan untuk perangkat lambat (Termux/Unisoc ~6-8) agar batch
+  // tidak di-abort sebelum gatekeeper selesai. Default 4 = perilaku lama, PC tidak berubah.
+  const gkPerFrameSec = Math.max(1, Number(process.env.GK_TIMEOUT_SEC_PER_FRAME) || 4);
+  const gkTimeoutSec = Math.max(300, gkFrames.length * gkPerFrameSec + 120);
   const aiResult = await callAIGatekeeperMicroservice(gkFrames, { timeoutSec: gkTimeoutSec, onProgress, niche, facePolicy: activeFacePolicy });
   if (aiResult && aiResult.allFrames && aiResult.allFrames.length > 0) {
     const frameByPath = new Map(frames.map(f => [f.filePath, f]));
