@@ -451,3 +451,58 @@ Prinsip urutan: **aman → terlihat → terbukti → rapi**. Refactor besar tera
 - Mesin state job 8-negara dan penulisan ulang `jobStore` (cukup P4 ringan).
 - RBAC/OAuth/lapisan auth berat — deployment ini pribadi (PC + Termux); token tunggal + origin allowlist + audit log sudah proporsional.
 - Menambah dependensi `helmet`/`express-rate-limit` (pakai pola in-house yang sudah jadi kebiasaan proyek).
+
+---
+
+## 13. Sesi Investigasi "1 Job Nyata" (gerbang P1) + Perbaikan Gatekeeper
+
+> Ditulis untuk kesinambungan lintas sesi. Ringkas: gerbang "1 job render NYATA" P1 dipakai mengaudit pipeline end-to-end, yang menyingkap **2 bug nyata**. Keduanya sudah diperbaiki, di-commit, di-push, dan lolos L3 review (0 temuan). **Verifikasi on-device (render sukses) masih TERBUKA.**
+
+### 13.0 Lingkungan runtime (bukan VPS lagi)
+- Aplikasi hanya jalan di **HP Nubia V80 Max** via **Termux + proot-distro `ubuntu`**. SSH: `u0_a466@10.36.8.67:8022` (key-auth, non-interaktif). Repo di **dalam container**: `/root/clippervps`.
+- Jalankan perintah container: `ssh ... "proot-distro login ubuntu -- bash -s"` dengan skrip LF (buang CR). Backend/gatekeeper bind localhost-di-container → curl/POST harus dari dalam container.
+- **Job background `nohup`/`setsid` MATI saat sesi `proot-distro login` ditutup** → jalankan **foreground** dalam satu sesi SSH persisten (`-o ServerAliveInterval=30`).
+- Saat event loop Node sibuk (sampling sinkron), `GET /api/job-trace` bisa timeout → baca `server/logs/job-trace.jsonl` langsung.
+
+### 13.1 Fakta hardware vs runtime (TERUKUR LANGSUNG)
+- `nproc` = 8, `/sys/devices/system/cpu/online` = `0-7`, `os.availableParallelism()` = 8, `os.cpus().length` = 8 → **runtime proot melihat 8 core online**, BUKAN 2. UNISOC T7250 = octa-core (2×A75+6×A55), entry-level (per-core lambat).
+- Implikasi: kegagalan gatekeeper TIDAK disebabkan jumlah core.
+
+### 13.2 Bug#1 — crash `productTitle` kosong (✅ diperbaiki, `78fb372`)
+- `(candidate.title || productTitle).slice(...)` di `stage1Render.js` L1088 & L1137 → `undefined.slice()` saat `productTitle` tak dikirim. Job mati <60ms.
+- Fix: fallback `|| candVid || 'Video Kandidat'`.
+
+### 13.3 Bug#2 — video bersih ditolak 0/223 (✅ diperbaiki, akar = transport)
+**Rantai kegagalan** (direproduksi dengan fungsi pipeline asli):
+1. `callAIGatekeeperMicroservice` kirim **satu POST `/filter-frames` ~200 frame** ke gatekeeper `:5050`.
+2. Koneksi **putus** → Node `fetch failed` (**bukan** `TimeoutError`).
+3. Kode **diam-diam** jatuh ke **heuristik piksel FFmpeg 80×144** (dulu L1151+).
+4. Heuristik menolak review HP berpresenter: `REJECT_BY_STAGE {face:178,watermark:43,subtitle:2}` → `cleanMain=0` → `"Frame bersih terlalu sedikit (0)"`.
+- **Bukti gatekeeper sehat:** `/health` online; POST 30 frame → **29/30 VERIFIED_CLEAN, eligible=true**. AI tidak pernah menilai; heuristik cadangan yang menuduh konten.
+
+**Perbaikan (berurutan di `videoFilterService.js`):**
+| Commit | Isi |
+|---|---|
+| `78fb372` | Chunking `/filter-frames` + merge hasil; **hapus fallback heuristik penolak-semua** (default: error jujur "gatekeeper tidak tersedia", opt-in `GK_ALLOW_HEURISTIC_FALLBACK=1`); guard Bug#1 |
+| `921ea95` | `detectDeviceCores()` + adaptasi core (chunk 24 / batch 96 / timeout 6 saat ≤2 core) + retry 1×/chunk |
+| `9747d64` | Log `[Gatekeeper] config: runtimeCores/chunk/chunks/frames/timeout/retries`; `GK_CHUNK_RETRIES`; klarifikasi semantik `GK_MAX_BATCH_FRAMES` vs `GK_CHUNK_SIZE` |
+| `8a96fac` | Profil `isLowPowerRuntime()` (Termux/Android, **bukan** cuma core≤2) → chunk 24 / timeout 6; **`GK_MAX_BATCH_FRAMES` ditahan 240** (menurunkannya < `intervalCap` meregangkan jarak frame >3,2s & mematikan dedup foto-statis) |
+
+### 13.4 Knob konfigurasi gatekeeper
+| Env | Default | Arti |
+|---|---|---|
+| `GK_CHUNK_SIZE` | 40 (→24 saat lowPower) | frame per satu POST `/filter-frames` |
+| `GK_MAX_BATCH_FRAMES` | 240 | TOTAL frame per-job ke gatekeeper (cap agregat sebelum chunking; tak boleh < intervalCap) |
+| `GK_TIMEOUT_SEC_PER_FRAME` | 4 (→6 saat lowPower) | jatah timeout per frame |
+| `GK_CHUNK_RETRIES` | 1 | retry per chunk sebelum dianggap hilang |
+| `GK_ALLOW_HEURISTIC_FALLBACK` | (off) | `1` = aktifkan heuristik piksel lama saat gatekeeper mati |
+
+### 13.5 Artefak diagnostik (`scratch/`, gitignored)
+`termux_repro_fg.sh` (replikasi jalur pipeline — alat utama), `termux_firejob.sh`, `termux_core.sh` (ukur core), `termux_gk_dense.sh` (bukti 29/30), `termux_gk_health.sh`, `termux_repro_check.sh`.
+
+### 13.6 STATUS GERBANG P1 & sisa
+- Semua commit di atas **sudah di `origin/main`** (HEAD `8a96fac`), masing-masing **L3 review 0 temuan**.
+- **On-device BELUM diverifikasi.** Langkah saat siap: `cd /root/clippervps && git pull origin main` → restart backend `clipper` → jalankan 1 job nyata → cek log `[Gatekeeper] config: runtimeCores=8 ...` + `cleanFrames≥3` → **render SUKSES**.
+- Angka `24/6` = **default sementara**, perlu di-tune dari trace job nyata (bukan asumsi).
+- Ops: **gatekeeper `service.py` TIDAK dikelola pm2** (`pm2 jlist` kosong; jalan manual) → pertimbangkan pm2-kan agar auto-restart.
+- Status jujur: **"prepared for on-device verification"**, bukan "verified fix". Gerbang resmi P1 (dan P3/P5/P6 yang bergabung padanya) **masih terbuka** sampai trace 1 render asli terlihat sukses.

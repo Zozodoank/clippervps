@@ -451,18 +451,19 @@ export async function runAutoStage1Worker(run) {
       updateAutoRun(run, {
         message: `⚠️ Produk "${searchKeyword}" gagal diproses (sudah diulang dengan merk+type yang sama). Melanjutkan ke pencarian video bersih berikutnya...`,
       });
-      continue;
 
-      // If user stopped auto mode, break immediately after current job finishes!
+      // Stop check: cek apakah user menghentikan auto mode di sela iterasi
       if (run.status === 'stopping' || run.status === 'stopped') {
         break;
       }
 
-      // Graceful jitter delay between product batches to prevent aggressive scraping blocks
+      // Graceful jitter delay antara produk agar tidak scraping agresif
       if ((isUnlimited || currentTargetIndex < run.maxJobs) && (run.status === 'running' || run.status === 'starting')) {
         const delayMs = 3000 + Math.floor(Math.random() * 2000);
         await new Promise((resolve) => setTimeout(resolve, delayMs));
       }
+
+      continue;
     }
 
     if (quotaExhausted) {

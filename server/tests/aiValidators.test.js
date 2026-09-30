@@ -128,18 +128,24 @@ describe('hasSourceIdentityRisk', () => {
 describe('normalizeClipPlan — saringan & kontrak hasil', () => {
   const clean = (startSeconds, candidateIndex = 0) => ({ startSeconds, duration: 3, candidateIndex });
 
-  it('3 klip bersih => dikembalikan apa adanya (>=3 lolos ambang kualitas)', () => {
-    const out = normalizeClipPlan([clean(10), clean(20), clean(30)], 100);
-    expect(out.length).toBe(3);
+  it('4 klip bersih => dikembalikan apa adanya (>=4 lolos ambang kualitas)', () => {
+    const out = normalizeClipPlan([clean(10), clean(20), clean(30), clean(40)], 100);
+    expect(out.length).toBe(4);
     expect(out[0]).toMatchObject({ startSeconds: 10, endSeconds: 13, duration: 3 });
   });
 
-  it('2 klip bersih + allowFallback=true => 2 klip tetap dipertahankan (branch fallback non-dead)', () => {
-    const out = normalizeClipPlan([clean(10), clean(20)], 100, { allowFallback: true });
-    expect(out.length).toBe(2);
+  it('3 klip bersih + allowFallback=true => LEMPAR isAiRejection (karena syarat minimal dinaikkan jadi 4)', () => {
+    let err = null;
+    try {
+      normalizeClipPlan([clean(10), clean(20), clean(30)], 100, { allowFallback: true });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeTruthy();
+    expect(err.isAiRejection).toBe(true);
   });
 
-  it('2 klip bersih + allowFallback=false => LEMPAR isAiRejection (<3 aksi)', () => {
+  it('2 klip bersih + allowFallback=false => LEMPAR isAiRejection (<4 aksi)', () => {
     let err = null;
     try {
       normalizeClipPlan([clean(10), clean(20)], 100, { allowFallback: false });
@@ -164,33 +170,32 @@ describe('normalizeClipPlan — saringan & kontrak hasil', () => {
 
   it('memangkas klip yang intervalnya menimpa frame kotor (hasFace di frameAudit)', () => {
     const frameAudit = [{ timestamp: '0:20', hasFace: true }];
-    const out = normalizeClipPlan([clean(10), clean(20), clean(30)], 100, { frameAudit });
-    expect(out.map((c) => c.startSeconds)).toEqual([10, 30]);
+    const out = normalizeClipPlan([clean(10), clean(20), clean(30), clean(40), clean(50)], 100, { frameAudit });
+    expect(out.map((c) => c.startSeconds)).toEqual([10, 30, 40, 50]);
   });
 
   it('memangkas klip dengan sourceIdentityRisk', () => {
-    const clips = [clean(10), { ...clean(20), sourceIdentityRisk: 'high' }, clean(30)];
+    const clips = [clean(10), { ...clean(20), sourceIdentityRisk: 'high' }, clean(30), clean(40), clean(50)];
     const out = normalizeClipPlan(clips, 100);
-    expect(out.map((c) => c.startSeconds)).toEqual([10, 30]);
+    expect(out.map((c) => c.startSeconds)).toEqual([10, 30, 40, 50]);
   });
 
   it('memangkas klip kemasan kosong (isPackaging / alasan buka kardus)', () => {
-    const clips = [clean(10), { ...clean(20), isPackaging: true }, { ...clean(30), reason: 'buka kardus kosong' }];
+    const clips = [clean(10), { ...clean(20), isPackaging: true }, { ...clean(30), reason: 'buka kardus kosong' }, clean(40), clean(50), clean(60)];
     const out = normalizeClipPlan(clips, 100);
-    expect(out.map((c) => c.startSeconds)).toEqual([10]);
+    expect(out.map((c) => c.startSeconds)).toEqual([10, 40, 50, 60]);
   });
 
   it('memangkas klip yang melampaui totalDuration', () => {
-    const clips = [clean(10), clean(20), clean(98)];
+    const clips = [clean(10), clean(20), clean(30), clean(40), clean(98)];
     const out = normalizeClipPlan(clips, 100);
-    expect(out.map((c) => c.startSeconds)).toEqual([10, 20]);
+    expect(out.map((c) => c.startSeconds)).toEqual([10, 20, 30, 40]);
   });
 
   it('di mode non-storyboard, klip yang mundur ke bawah end klip kandidat sebelumnya dibuang', () => {
-    // candidateIndex sama (0): 10->13, lalu 12 (< prevEnd 13) overlap => dibuang, 30 OK.
-    const clips = [clean(10), clean(12), clean(30)];
+    const clips = [clean(10), clean(12), clean(30), clean(40), clean(50)];
     const out = normalizeClipPlan(clips, 100);
-    expect(out.map((c) => c.startSeconds)).toEqual([10, 30]);
+    expect(out.map((c) => c.startSeconds)).toEqual([10, 30, 40, 50]);
   });
 
   it('maksimal 8 klip (break saat normalized.length === 8)', () => {
@@ -204,24 +209,27 @@ describe('normalizeClipPlan — saringan & kontrak hasil', () => {
       { ...clean(10), candidateIndex: 1 },
       { ...clean(5), candidateIndex: 0 },
       { ...clean(20), candidateIndex: 0 },
+      { ...clean(30), candidateIndex: 0 },
+      { ...clean(40), candidateIndex: 1 },
     ];
     const out = normalizeClipPlan(clips, 100);
-    expect(out.map((c) => [c.candidateIndex, c.startSeconds])).toEqual([[0, 5], [0, 20], [1, 10]]);
+    expect(out.map((c) => [c.candidateIndex, c.startSeconds])).toEqual([[0, 5], [0, 20], [0, 30], [1, 10], [1, 40]]);
   });
 
   it('mode storyboard (ada storyboardSlot) => urut per slot & boleh potong mundur', () => {
     const clips = [
       { startSeconds: 5, duration: 3, candidateIndex: 9, storyboardSlot: 2 },
       { startSeconds: 40, duration: 3, candidateIndex: 8, storyboardSlot: 1 },
+      { startSeconds: 15, duration: 3, candidateIndex: 7, storyboardSlot: 3 },
+      { startSeconds: 25, duration: 3, candidateIndex: 6, storyboardSlot: 4 },
     ];
     const out = normalizeClipPlan(clips, 100);
-    expect(out.map((c) => c.storyboardSlot)).toEqual([1, 2]);
-    // Slot 1 start 40 tetap dipertahankan meski lebih akhir dari slot 2 (5s): tidak dibuang sebagai overlap.
+    expect(out.map((c) => c.storyboardSlot)).toEqual([1, 2, 3, 4]);
     expect(out[0].startSeconds).toBe(40);
   });
 
   it('brand produk memaksa allowHflip=false meski allowHflip global true', () => {
-    const out = normalizeClipPlan([{ startSeconds: 10, duration: 3, hasProductBrand: true }, clean(20), clean(30)], 100);
+    const out = normalizeClipPlan([{ startSeconds: 10, duration: 3, hasProductBrand: true }, clean(20), clean(30), clean(40)], 100);
     expect(out[0].hasProductBrand).toBe(true);
     expect(out[0].allowHflip).toBe(false);
   });

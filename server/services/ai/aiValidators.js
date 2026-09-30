@@ -35,11 +35,12 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       const isLegacySubtitle = !isPhysicalBrand && (audit.hasTextOrSubtitles === true || (legacyText && legacyText !== 'none' && legacyText !== 'null' && legacyText !== 'false'));
       const hasFace = audit.hasFace === true;
       const isPoorlyFramed = audit.isWellFramed === false;
-      // Hanya buang jika murni kardus kosong / bubble wrap tanpa produk
       const isPurePackaging = audit.isPackaging === true ||
         (audit.detectedAction && /(?:kardus\s+kosong|cardboard\s+box|bubble\s*wrap\s+only|resi\s+pengiriman|buka\s+kardus\s+kosong)/i.test(audit.detectedAction));
+      
+      const missingProduct = audit.containsTargetProduct === false;
 
-      if (hasFloatingOverlay || isLegacySubtitle || hasFace || isPoorlyFramed || isPurePackaging) {
+      if (hasFloatingOverlay || isLegacySubtitle || hasFace || isPoorlyFramed || isPurePackaging || missingProduct) {
         const sec = Math.round(parseTimeToSeconds(audit.timestamp ?? audit.frameIndex));
         dirtyTimestamps.push(sec);
       }
@@ -159,18 +160,14 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
     }
   }
 
-  // Standar kualitas: Minimal 3 aksi berbeda agar video tidak monoton atau mengulang 1 gerakan
-  if (dedupedClips.length >= 3) {
+  // Standar kualitas: Minimal 4 aksi berbeda (sekitar 12-14 detik) agar video tidak terlalu singkat
+  if (dedupedClips.length >= 4) {
     return dedupedClips;
   }
 
-  if (dedupedClips.length > 0 && allowFallback) {
-    return dedupedClips;
-  }
-
-  const cleanErr = new Error('AI menolak video ini: cuplikan aksi demonstrasi bersih terlalu sedikit (kurang dari 3 variasi aksi demonstrasi berbeda).');
+  const cleanErr = new Error(`AI menolak video ini: cuplikan aksi demonstrasi bersih terlalu sedikit (hanya ada ${dedupedClips.length} klip valid, minimal butuh 4). Video terlalu kotor atau produk jarang muncul.`);
   cleanErr.isAiRejection = true;
-  cleanErr.rejectionReason = 'Cuplikan aksi demonstrasi bersih terlalu sedikit (kurang dari 3 variasi aksi demonstrasi berbeda).';
+  cleanErr.rejectionReason = `Cuplikan aksi demonstrasi bersih terlalu sedikit (${dedupedClips.length} klip, minimal 4).`;
   throw cleanErr;
 
   // Fallback: build 10 to 12 evenly spaced clips (around 30 to 35 seconds total, exactly defaultClipLength per clip)

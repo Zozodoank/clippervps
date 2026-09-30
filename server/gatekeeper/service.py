@@ -430,8 +430,10 @@ class FaceGatekeeper:
             mask_ycrcb = cv2.inRange(ycrcb, (0, 133, 77), (255, 173, 127))
             skin_mask = cv2.bitwise_and(mask_hsv, mask_ycrcb)
             skin_ratio = float(np.count_nonzero(skin_mask)) / float(crop.shape[0] * crop.shape[1])
-            if skin_ratio < 0.35:
-                return False, f"Bukan warna kulit manusia (skin_ratio: {skin_ratio * 100:.1f}% < 35%)"
+            # Ambang diturunkan ke 15% (dari 35%) untuk mengakomodasi presenter wanita berhijab
+            # di mana kain hijab mendominasi bounding box dan menutupi leher/telinga.
+            if skin_ratio < 0.15:
+                return False, f"Bukan warna kulit manusia (skin_ratio: {skin_ratio * 100:.1f}% < 15%)"
         except Exception:
             pass
 
@@ -443,10 +445,10 @@ class FaceGatekeeper:
             rm_x, rm_y = landmarks[6], landmarks[7]
             lm_x, lm_y = landmarks[8], landmarks[9]
 
-            # Jarak antarmata terhadap lebar wajah (normalnya 20% - 60%)
+            # Jarak antarmata terhadap lebar wajah (normalnya 20% - 75% untuk wajah berhijab ketat)
             eye_dist = np.hypot(re_x - le_x, re_y - le_y)
             eye_ratio = eye_dist / max(bw, 1)
-            if eye_ratio < 0.20 or eye_ratio > 0.60:
+            if eye_ratio < 0.18 or eye_ratio > 0.75:
                 return False, f"Jarak antarmata di luar proporsi natural ({eye_ratio:.2f})"
 
             # Kemiringan mata (wajah presenter wajar kemiringan mata < ~35 derajat)

@@ -312,7 +312,7 @@ async function _runStage1Pipeline({
     })();
 
     const existingJob = activeJobs.get(jobId);
-    const cachedVideoPath = existingVideoInTemp ||
+    let cachedVideoPath = existingVideoInTemp ||
       (existingJob?.downloadedVideoPath && fs.existsSync(existingJob.downloadedVideoPath) && isVideoFilePath(existingJob.downloadedVideoPath)
         ? existingJob.downloadedVideoPath
         : null);
@@ -394,7 +394,9 @@ async function _runStage1Pipeline({
     let pooledFrames = [];
     // Shared across candidate download + post-download audit/recovery.
     // Must live at runStage1Pipeline scope, not only inside the harvesting branch.
-    const downloadedCandidatesMap = new Map();
+    // NOTE: downloadedCandidatesMap diinisialisasi di sini agar ClipAudit pasca-download
+    // (jalur manual & multi-video) bisa mengaksesnya dari scope yang sama.
+    let downloadedCandidatesMap = new Map();
 
     const usedVids = getAllUsedYouTubeVideoIds();
     const initialVid = extractVideoId(currentYoutubeUrl);
@@ -528,7 +530,7 @@ async function _runStage1Pipeline({
             // Ceiling TIDAK lagi di-hardcode 200 di sini; dikontrol sampler via SAMPLE_MAX_FRAMES
             // (default 500). Konsisten dengan jalur kandidat (candDur/3.0) & cache.
             const targetDur = Number(meta.duration) || 300;
-            const targetMaxFrames = Math.max(15, Math.floor(targetDur / 3.0));
+            const targetMaxFrames = Math.max(25, Math.floor(targetDur / 2.0));
             const res = await sampleFramesFromStream(activeStreamUrl, rawFramesDir, {
               duration: meta.duration,
               maxSampleFrames: targetMaxFrames,
@@ -1009,7 +1011,9 @@ async function _runStage1Pipeline({
       let candidatePoolIndex = 0;
       let candidateResults = [];
       let hl = null;
-      let pooledFrames = [];
+      // pooledFrames menggunakan outer variable (scope fungsi) agar ClipAudit pasca-download
+      // dan Rescue Pipeline dapat membaca hasil harvesting. Jangan redeklare dengan `let`.
+      pooledFrames = [];
       const blacklistedFramePaths = new Set();
       const retainedCleanFrames = [];
 
@@ -1747,7 +1751,9 @@ async function _runStage1Pipeline({
       // Track every HD source actually downloaded so multi-video storyboards,
       // post-download audits, and recovery clips can resolve candidateIndex -> file path.
       // This map MUST exist before the progress calculation and download loop below.
-      const downloadedCandidatesMap = new Map();
+      // Menggunakan outer variable (bukan deklarasi ulang) agar ClipAudit pasca-download
+      // mengakses peta yang terisi, bukan Map kosong dari scope luar.
+      downloadedCandidatesMap = new Map();
 
       // #1 Download per-segmen (hemat kuota). DEFAULT OFF → jalur render identik dengan sebelumnya.
       const useSections = process.env.RENDER_DOWNLOAD_SECTIONS === '1';

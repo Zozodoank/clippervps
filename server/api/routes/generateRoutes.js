@@ -232,11 +232,16 @@ router.post('/generate', async (req, res) => {
     deleteJobFiles(clientJobId, outputDir, tempDir);
     const existingJob = activeJobs.get(clientJobId);
     if (existingJob) {
-      existingJob.downloadedVideoPath = null;
-      existingJob.hasDownloadedVideo = false;
-      existingJob.hasFinalVideo = false;
-      existingJob.hasSilentVideo = false;
-      existingJob.stage = 'running';
+      // BUG FIX: activeJobs.get() mengembalikan salinan JSON (proxy SQLite), bukan referensi.
+      // Mutasi langsung pada `existingJob` tidak tersimpan ke DB. Wajib panggil activeJobs.set().
+      activeJobs.set(clientJobId, {
+        ...existingJob,
+        downloadedVideoPath: null,
+        hasDownloadedVideo: false,
+        hasFinalVideo: false,
+        hasSilentVideo: false,
+        stage: 'running',
+      });
     }
   }
 

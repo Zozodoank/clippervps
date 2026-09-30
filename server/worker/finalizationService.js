@@ -139,7 +139,10 @@ export async function conformExistingJobEditToAudio({
     niche: job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools'),
   });
   if (!conformedClips.length) {
-    return { silentDurationSec, audioDurationSec, conformed: false };
+    const err = new Error(`Daftar klip kosong setelah audio conform. Pastikan job.highlight.clips memiliki data sebelum merender ulang/mengedit draft.`);
+    err.isAiRejection = true;
+    err.rejectionReason = 'Visual kosong saat finalisasi (retry/draft).';
+    throw err;
   }
 
   // Fase 6: segment plan Scene<->VO dihitung ulang setiap conform agar lockstep tetap akurat
@@ -410,16 +413,8 @@ export function syncVideoToAndroidStorage(finalOutputPath, finalFileName, projec
 }
 
 async function _processJobVoiceover(jobId, customScript = null, options = {}) {
-  let job = activeJobs.get(jobId);
-  if (!job && fs.existsSync(jobsFilePath)) {
-    try {
-      const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
-      if (existing[jobId]) {
-        job = existing[jobId];
-        activeJobs.set(jobId, job);
-      }
-    } catch {}
-  }
+  // NOTE: jobsFilePath adalah path SQLite .db (bukan JSON). activeJobs.get() membaca langsung dari DB.
+  const job = activeJobs.get(jobId);
 
   const silentPath = job?.silentLocalPath || path.join(outputDir, `silent_clip_${jobId}.mp4`);
 

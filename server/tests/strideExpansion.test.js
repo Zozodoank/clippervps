@@ -25,6 +25,26 @@ describe('Stride Expansion & Reframe Guards', () => {
           videoId: 'v2',
           reason: 'Clean product action in video 2',
           candidate: { duration: 400, title: 'Video 2' }
+        },
+        {
+          startSeconds: 120,
+          startTime: '02:00',
+          candidateIndex: 1,
+          candidateTitle: 'Candidate 2',
+          candidateUrl: 'https://youtube.com/watch?v=2',
+          videoId: 'v2',
+          reason: 'Clean product action in video 2',
+          candidate: { duration: 400, title: 'Video 2' }
+        },
+        {
+          startSeconds: 150,
+          startTime: '02:30',
+          candidateIndex: 1,
+          candidateTitle: 'Candidate 2',
+          candidateUrl: 'https://youtube.com/watch?v=2',
+          videoId: 'v2',
+          reason: 'Clean product action in video 2',
+          candidate: { duration: 400, title: 'Video 2' }
         }
       ];
 
@@ -45,25 +65,22 @@ describe('Stride Expansion & Reframe Guards', () => {
       }
 
       // Assert it didn't crash and returns clips
-      expect(clips.length).toBeGreaterThanOrEqual(2);
+      expect(clips.length).toBeGreaterThanOrEqual(4);
     });
   });
 
   describe('Safety Duration Guard in normalizeRenderClips', () => {
-    it('should guarantee >= 6 clips and >= 18s duration', () => {
+    it('should throw an error if duration is less than 20s instead of slow-mo stretching', () => {
       const shortClips = [
         { startSeconds: 10, duration: 3.3, reframe: { hasProductBrand: false, allowHflip: true } },
         { startSeconds: 20, duration: 3.3, reframe: { hasProductBrand: false, allowHflip: true } },
+        { startSeconds: 30, duration: 3.3, reframe: { hasProductBrand: false, allowHflip: true } },
+        { startSeconds: 40, duration: 3.3, reframe: { hasProductBrand: false, allowHflip: true } },
       ];
-      const guardedClips = normalizeRenderClips(shortClips);
       
-      let guardedDuration = 0;
-      for (const gc of guardedClips) {
-        guardedDuration += gc.duration;
-      }
-
-      expect(guardedClips.length).toBeGreaterThanOrEqual(2);
-      expect(guardedDuration).toBeGreaterThanOrEqual(18);
+      expect(() => {
+        normalizeRenderClips(shortClips);
+      }).toThrow(/terlalu pendek/);
     });
   });
 });

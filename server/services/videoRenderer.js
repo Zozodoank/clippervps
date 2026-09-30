@@ -450,28 +450,25 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
           (existing.candidateIndex !== null && existing.candidateIndex !== undefined && existing.candidateIndex === c.candidateIndex) ||
           (!existing.videoPath && !c.videoPath && existing.candidateIndex === c.candidateIndex);
         const sameMode = existing.reframe?.renderMode === c.reframe?.renderMode;
-        return sameVideo && sameMode && !existing.isConformedLoop && Math.abs(existing.startSeconds - c.startSeconds) < 6.0;
+        return sameVideo && sameMode && !existing.isConformedLoop && Math.abs(existing.startSeconds - c.startSeconds) < 3.5;
       });
       if (!isDuplicate) {
         deduplicated.push(c);
       } else {
-        console.log(`[normalizeRenderClips] ⚠️ Membuang klip duplikat / berjarak terlalu dekat (< 6s) pada timestamp ${c.startSeconds}s.`);
+        console.log(`[normalizeRenderClips] ⚠️ Membuang klip duplikat / berjarak terlalu dekat (< 3.5s) pada timestamp ${c.startSeconds}s.`);
       }
     }
-
-    // Durasi adaptif dan natural (minimal 18.0 detik sesuai mandat pengguna):
-    // Klip hasil kurasi AI diskalakan proporsional agar total video visual mencapai minimal 18.0 detik.
+    // Evaluasi Durasi Minimal (20 Detik)
+    // Sesuai algoritma Reels, video di bawah 20 detik berpotensi dianggap low-effort/spam.
     const currentTotal = deduplicated.reduce((sum, c) => sum + (c.duration || defaultClipLength), 0);
-    const MIN_VIDEO_DURATION_SEC = 18.0;
+    const MIN_VIDEO_DURATION_SEC = 20.0;
     if (currentTotal < MIN_VIDEO_DURATION_SEC && deduplicated.length > 0) {
-      const scale = MIN_VIDEO_DURATION_SEC / currentTotal;
-      for (const c of deduplicated) {
-        c.duration = +(c.duration * scale).toFixed(3);
-      }
-      const newTotal = deduplicated.reduce((sum, c) => sum + (c.duration || defaultClipLength), 0);
-      console.log(`[normalizeRenderClips] ⚡ Total durasi klip (${currentTotal.toFixed(1)}s) di bawah batas minimal 18.0s. Menyesuaikan durasi klip secara proporsional menjadi ${newTotal.toFixed(1)}s.`);
+      const durationErr = new Error(`Durasi final video terlalu pendek (${currentTotal.toFixed(1)} detik, minimal ${MIN_VIDEO_DURATION_SEC} detik). Silakan gunakan video dengan variasi adegan yang lebih banyak.`);
+      durationErr.isAiRejection = true;
+      durationErr.rejectionReason = `Durasi final (${currentTotal.toFixed(1)}s) tidak memenuhi syarat minimal algoritma Reels (${MIN_VIDEO_DURATION_SEC}s).`;
+      throw durationErr;
     } else {
-      console.log(`[normalizeRenderClips] ✅ Total durasi klip terkurasi: ${currentTotal.toFixed(1)}s (${deduplicated.length} klip bersih). Memenuhi syarat minimal 18.0s.`);
+      console.log(`[normalizeRenderClips] ✅ Total durasi klip terkurasi: ${currentTotal.toFixed(1)}s (${deduplicated.length} klip bersih). Memenuhi syarat minimal 20.0s.`);
     }
 
     return deduplicated;

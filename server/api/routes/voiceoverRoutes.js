@@ -326,16 +326,9 @@ router.post('/retry-job-tts', async (req, res) => {
   if (!jobId) return res.status(400).json({ error: 'Job ID is required.' });
 
   loadJobsFromDisk();
-  let job = activeJobs.get(jobId);
-  if (!job && fs.existsSync(jobsFilePath)) {
-    try {
-      const existing = JSON.parse(fs.readFileSync(jobsFilePath, 'utf-8'));
-      if (existing[jobId]) {
-        job = existing[jobId];
-        activeJobs.set(jobId, job);
-      }
-    } catch {}
-  }
+  const job = activeJobs.get(jobId);
+  // NOTE: jobsFilePath adalah path SQLite .db (bukan JSON), jadi fallback JSON parse lama
+  // sudah tidak relevan dan dihapus. activeJobs.get() sudah langsung ke SQLite.
 
   if (!job) {
     return res.status(404).json({ error: `Job ${jobId} tidak ditemukan di riwayat.` });
