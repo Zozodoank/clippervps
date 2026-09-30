@@ -30,25 +30,32 @@ export function shouldPreferEvidence({ evidenceEnabled, usableFrames, minFrames 
 }
 
 /**
- * Pilih budget frame bukti secara CLUSTER-AWARE (bukan stride merata biasa):
- * frame bersih diurutkan kronologis, dipotong per kluster (jarak waktu >
- * clusterGapSec = beda adegan/window), lalu budget dialokasikan proporsional
- * per kluster dengan floor 1 dan dijamin mencakup frame awal+akhir kluster
- * (boundary jendela clean ikut terkirim sebagai bukti).
- *
- * @param {Array<{ timestamp?: number }>} frames frame bersih (sudah lolos Gatekeeper)
- * @param {{ max?: number, clusterGapSec?: number }} [opts]
- * @returns {Array} subset frame kronologis (OBJEK IDENTIK dengan input — dipakai
- *   `indexOf` untuk menerjemahkan indeks), panjang <= max
+ * Kunci identitas VIDEO SUMBER sebuah frame. Dipakai untuk menjamin bukti yang
+ * dikirim ke Gemini mencakup SETIAP sumber, dan untuk memberi label sumber pada
+ * manifest frame (tanpa label, AI tidak bisa menyebar klip lintas sumber).
  */
-export function pickEvidenceFrames(frames = [], opts = {}) {
-  const max = Math.max(4, Number(opts.max ?? process.env.EVIDENCE_MAX_FRAMES) || 30);
-  const clusterGapSec = Number(opts.clusterGapSec) || 8;
-  const list = (frames || [])
-    .filter((f) => f && (f.base64 || f.filePath))
-    .slice()
-    .sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0));
-  if (list.length <= max) return list;
+export function sourceKeyOf(frame) {
+  if (!frame) return 'src:unknown';
+  if (frame.candidateIndex !== undefined && frame.candidateIndex !== null) return `cand:${frame.candidateIndex}`;
+  const id = frame.videoId || frame.candidate?.id || frame.candidateUrl || frame.candidate?.url;
+  return id ? `src:${String(id)}` : 'src:unknown';
+}
+
+/**
+ * Inti pemilihan bukti untuk SATU sumber kronologis: potong per kluster (celah
+ * waktu > clusterGapSec = beda adegan), alokasikan budget proporsional per kluster
+ * (floor 1), dan selalu sertakan frame awal + akhir tiap kluster agar boundary
+ * jendela bersih ikut terkirim.
+ *
+ * @param {Array} chronological frame satu sumber, sudah diurutkan by timestamp
+ * @param {number} budget jumlah maksimum frame yang boleh diambil dari sumber ini
+ * @param {number} clusterGapSec ambang pemisah kluster (detik)
+ * @returns {Array} subset (REFERENSI OBJEK identik dengan input), panjang <= budget
+ */
+function pickWithinSource(chronological, budget, clusterGapSec) {
+  const list = chronological || [];
+  if (!list.length || budget <= 0) return [];
+  if (list.length <= budget) return list;
 
   // 1. Pecah jadi kluster berdasarkan celah waktu antar frame.
   const clusters = [];
@@ -68,8 +75,8 @@ export function pickEvidenceFrames(frames = [], opts = {}) {
   // 2. Alokasi budget proporsional dengan kluster (floor 1, cap isi kluster).
   const weights = clusters.map((c) => c.length);
   const totalWeight = weights.reduce((a, b) => a + b, 0);
-  const budgets = clusters.map((c) => Math.max(1, Math.min(c.length, Math.floor((c.length / totalWeight) * max))));
-  let leftover = max - budgets.reduce((a, b) => a + b, 0);
+  const budgets = clusters.map((c) => Math.max(1, Math.min(c.length, Math.floor((c.length / totalWeight) * budget))));
+  let leftover = budget - budgets.reduce((a, b) => a + b, 0);
   for (let i = 0; i < budgets.length && leftover > 0; i++) {
     if (budgets[i] < clusters[i].length) { budgets[i]++; leftover--; }
   }
@@ -77,31 +84,123 @@ export function pickEvidenceFrames(frames = [], opts = {}) {
   // 3. Dalam kluster: ambil indeks merata DAN selalu sertakan batas awal/akhir.
   const picked = [];
   clusters.forEach((cluster, ci) => {
-    const budget = Math.min(budgets[ci], cluster.length);
-    if (budget >= cluster.length) {
+    const cap = Math.min(budgets[ci], cluster.length);
+    if (cap >= cluster.length) {
       picked.push(...cluster);
       return;
     }
     const idxs = new Set([0, cluster.length - 1]);
-    const step = (cluster.length - 1) / Math.max(1, budget - 1);
-    for (let k = 0; k < budget; k++) idxs.add(Math.round(k * step));
-    [...idxs].sort((a, b) => a - b).slice(0, Math.max(budget, idxs.size > budget ? budget : idxs.size))
+    const step = (cluster.length - 1) / Math.max(1, cap - 1);
+    for (let k = 0; k < cap; k++) idxs.add(Math.round(k * step));
+    [...idxs]
+      .sort((a, b) => a - b)
+      .slice(0, cap)
       .forEach((idx) => picked.push(cluster[idx]));
   });
 
-  // 4. Kronologis & unik (jaga urutan video-sumber untuk penomoran prompt).
-  //    PENTING: elemen hasil adalah REFERENSI OBJEK yang sama dengan input —
-  //    jangan pernah menyalin objek frame agar pemanggil bisa memetakan balik
-  //    indeks subset -> indeks array asli via indexOf (dipakai mapFramesToBudgeted).
+  return picked;
+}
+
+/**
+ * Pilih budget frame bukti secara CLUSTER-AWARE dan SOURCE-AWARE.
+ *
+ * BUG LAPANGAN (kitchen_tools, 30 Sep 2026): versi lama mengurutkan SELURUH pool
+ * by timestamp lalu memotong ke `max` tanpa peduli sumber. Karena tiap video
+ * di-sample mulai detik 0, kluster awal berisi frame dari semua sumber dan
+ * budget habis dikuasai satu video -> Gemini hanya punya bukti 1 sumber ->
+ * seluruh klip Reels berasal dari 1 video (variasi sudut/latar hilang), padahal
+ * prompt memerintahkan minimal 2 sumber berbeda.
+ *
+ * Sekarang: pool dipartisi per video sumber, tiap sumber dapat jatah minimum
+ * (default 2 frame, selama `max` cukup), sisa budget dibagi dengan water-filling
+ * (sumber yang frame bersihnya sedikit diambil SELURUHNYA lebih dulu, bukan
+ * dipangkas oleh sumber melimpah), lalu hasilnya di-interleave round-robin agar
+ * manifest menyebut sumber secara bergantian. Elemen hasil tetap REFERENSI OBJEK
+ * yang sama dengan input supaya mapFramesToBudgeted (indexOf) bekerja.
+ *
+ * @param {Array<{ timestamp?: number, candidateIndex?: number }>} frames frame bersih
+ * @param {{ max?: number, clusterGapSec?: number, minPerSource?: number }} [opts]
+ * @returns {Array} subset <= max, mewakili setiap sumber bila memungkinkan
+ */
+export function pickEvidenceFrames(frames = [], opts = {}) {
+  const max = Math.max(4, Number(opts.max ?? process.env.EVIDENCE_MAX_FRAMES) || 30);
+  const clusterGapSec = Number(opts.clusterGapSec) || 8;
+  const list = (frames || []).filter((f) => f && (f.base64 || f.filePath));
+  if (!list.length) return [];
+
+  // 1. Partisi per sumber, urutan kemunculan pertama dipertahankan.
+  const groups = new Map();
+  for (const f of list) {
+    const key = sourceKeyOf(f);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  }
+  const sources = [...groups.values()].map((g) =>
+    g.slice().sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0))
+  );
+
+  // 2. Satu sumber -> jalur lama (cluster-aware global), tidak ada perubahan perilaku.
+  if (sources.length === 1) {
+    const only = sources[0];
+    return only.length <= max ? only : dedupeFrames(pickWithinSource(only, max, clusterGapSec));
+  }
+
+  // 3. Jatah minimum per sumber, dibatasi agar total tetap <= max.
+  const wantMin = Math.max(1, Number(opts.minPerSource ?? process.env.EVIDENCE_MIN_FRAMES_PER_SOURCE) || 2);
+  const minPerSource = Math.min(wantMin, Math.floor(max / sources.length)) || 1;
+
+  // 4. WATER-FILLING: naikkan level jatah serentak sampai budget habis. Sifatnya
+  //    penting: sumber yang frame bersihnya SEDIKIT (mis. 5 dari 100) akan diambil
+  //    SELURUHNYA lebih dulu, bukan dipangkas proporsional oleh sumber yang melimpah.
+  //    Pembagian proporsional murni pernah memangkas sumber 5 frame jadi 3 frame.
+  const maxLen = Math.max(...sources.map((s) => s.length));
+  let level = minPerSource;
+  let budgets = sources.map((s) => Math.min(s.length, level));
+  while (level < maxLen) {
+    const next = sources.map((s) => Math.min(s.length, level + 1));
+    const total = next.reduce((a, b) => a + b, 0);
+    if (total > max) break;
+    level += 1;
+    budgets = next;
+  }
+
+  // 5. Sisa budget dibagi rata (round-robin) ke sumber yang masih punya frame tersisa.
+  let spare = max - budgets.reduce((a, b) => a + b, 0);
+  while (spare > 0) {
+    const openIdx = budgets
+      .map((b, i) => ({ b, i }))
+      .filter(({ b, i }) => b < sources[i].length)
+      .map(({ i }) => i);
+    if (!openIdx.length) break;
+    for (const i of openIdx) {
+      if (spare <= 0) break;
+      if (budgets[i] < sources[i].length) { budgets[i]++; spare--; }
+    }
+  }
+
+  // 6. Pilih dalam tiap sumber lalu INTERLEAVE round-robin (kronologis intra-sumber).
+  const perSource = budgets.map((b, i) => (b >= sources[i].length ? sources[i] : pickWithinSource(sources[i], b, clusterGapSec)));
+  const maxRounds = Math.max(0, ...perSource.map((p) => p.length));
+  const interleaved = [];
+  for (let round = 0; round < maxRounds; round++) {
+    for (const p of perSource) {
+      if (round < p.length) interleaved.push(p[round]);
+    }
+  }
+
+  // 7. Unik per file (objek identik dipertahankan; jangan pernah menyalin objek).
+  return dedupeFrames(interleaved);
+}
+
+/** Buang duplikat berdasarkan filePath/base64, tanpa menyalin objek frame. */
+function dedupeFrames(list = []) {
   const seen = new Set();
-  return picked
-    .sort((a, b) => (Number(a.timestamp) || 0) - (Number(b.timestamp) || 0))
-    .filter((f) => {
-      const key = f.filePath || f.base64?.slice(0, 48) || JSON.stringify(f).slice(0, 48);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
+  return list.filter((f) => {
+    const key = f.filePath || f.base64?.slice(0, 48) || JSON.stringify(f).slice(0, 48);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**

@@ -22,7 +22,7 @@ import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from './discoveryS
 import { getNichePreset } from '../config/nichePresets.js';
 import { isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
 import { isForbiddenSearchQuery } from '../config/forbiddenTerms.js';
-import { countUsableFrames, shouldPreferEvidence, pickEvidenceFrames, formatCleanWindowsBySource, mapFramesToBudgeted, buildVisionProvenance } from './visionEvidenceService.js';
+import { countUsableFrames, shouldPreferEvidence, pickEvidenceFrames, formatCleanWindowsBySource, mapFramesToBudgeted, buildVisionProvenance, sourceKeyOf } from './visionEvidenceService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1603,6 +1603,26 @@ CRITICAL MANDATE FOR FRAME AUDIT & REJECTION REPORTING:
     evalFrames = sampled;
   }
 
+  // Manifest frame untuk Gemini: WAJIB menyebut VIDEO SUMBER tiap frame. Tanpa
+  // penanda ini, mandat "minimal 2 video sumber berbeda" di prompt bawah mustahil
+  // dituruti: tiap video di-sample mulai detik 0 sehingga timestamp antar sumber
+  // tumpang tindih dan AI hanya melihat daftar nomor tanpa konteks asal frame.
+  const sourceOrdinal = new Map();
+  const sourceTitles = [];
+  const frameManifest = evalFrames.map((f, i) => {
+    const key = sourceKeyOf(f);
+    if (!sourceOrdinal.has(key)) {
+      sourceOrdinal.set(key, sourceOrdinal.size + 1);
+      sourceTitles.push(f.candidateTitle || f.candidate?.title || `sumber ${sourceOrdinal.size}`);
+    }
+    const tag = sourceOrdinal.size > 1 ? ` [Video ${sourceOrdinal.get(key)}]` : '';
+    return `#${i + 1}${tag} (${f.displayLabel || f.timeFormatted || formatSeconds(f.timestamp)})`;
+  }).join(', ');
+  const poolSourceCount = sourceOrdinal.size;
+  const sourceLegend = poolSourceCount > 1
+    ? `\nVIDEO SUMBER YANG TERLIHAT DI ATAS (${poolSourceCount} buah): ${sourceTitles.map((t, i) => `Video ${i + 1} = ${String(t).slice(0, 48)}`).join(' | ')}. Clip HARUS tersebar di antara sumber tersebut, bukan menumpuk di satu video.\n`
+    : '';
+
   const creativeDirection = creativePlan && Array.isArray(creativePlan.shots)
     ? creativePlan.shots.map((shot, i) =>
         `${i + 1}. ${shot.role}: ${shot.purpose} (ideal ${shot.targetSec}s, range ${shot.minSec}-${shot.maxSec}s)`
@@ -1625,11 +1645,14 @@ Carefully compare the candidate video frames directly against the reference prod
 ` : ''}
 Total Duration: ${totalDuration}s
 Sampled Frames:
-${evalFrames.map((f, i) => `#${i + 1} (${f.displayLabel || f.timeFormatted || formatSeconds(f.timestamp)})`).join(', ')}
-
+${frameManifest}
+${sourceLegend}
 ${creativeDirection ? `PROFESSIONAL STORY-FIRST SHOT PLAN:
 ${creativeDirection}
-- Prefer one visually consistent exact-product source when it can satisfy the roles.
+${poolSourceCount > 1
+  ? `- WAJIB mengambil clip dari MINIMAL 2 VIDEO SUMBER BERBEDA (tersedia ${poolSourceCount} sumber di pool ini). DILARANG memonopoli satu video: variasi sudut kamera, pencahayaan, dan latar adalah syarat Reels yang tidak monoton.
+- Setiap sumber yang dipakai harus sudah terbukti produknya sama persis; bila hanya 1 sumber yang valid, tuliskan alasannya di "reason".`
+  : `- Prefer one visually consistent exact-product source when it can satisfy the roles.`}
 - Use additional sources only when they are independently exact-product verified and materially improve missing shot roles.
 - Do not force equal-length scenes. Pick the strongest moment for each role; timing will be conformed to voiceover later.
 ` : ''}

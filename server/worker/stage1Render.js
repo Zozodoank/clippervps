@@ -7,7 +7,7 @@ import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecke
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
 import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot } from '../config/runtimeFlags.js';
-import { shouldAllowRescue, buildVisionProvenance, summarizeVisionRuns } from '../services/visionEvidenceService.js';
+import { shouldAllowRescue, buildVisionProvenance, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
   selectHighlightWithAI,
@@ -1013,6 +1013,18 @@ async function _runStage1Pipeline({
       const blacklistedFramePaths = new Set();
       const retainedCleanFrames = [];
 
+      // BERAPA VIDEO SUMBER BERBEDA YANG WAJIB TERKUMPUL sebelum storyboard dianggap sah.
+      // Preset niche menentukan: kitchen_tools = 2 (variasi sudut & latar), smartphone/gadget
+      // = 1 (sumber terverifikasi langka, jangan kejar sumber ke-2 sampai job gagal).
+      // harvestStreamBudget = berapa percobaan stream yang boleh dihabiskan untuk mencapai
+      // target itu. Dulu dipatok keras Math.min(3, maxStreamVideos): begitu 3 stream habis
+      // dan baru 1 sumber yang lolos, loop berhenti -> Reels 1 sumber, variasi minim.
+      const nichePresetForSource = getNichePreset(options.niche || 'kitchen_tools');
+      const targetMultiSources = options.singleVideoOnly === true
+        ? 1
+        : Math.max(1, Number(nichePresetForSource?.minVerifiedSources) || 2);
+      const harvestStreamBudget = Math.min(maxStreamVideos, Math.max(4, targetMultiSources * 3));
+
       // Helper: Pemanenan adaptif video pengganti di YouTube jika AI menolak frame atau slot kurang
       const harvestAdaptiveReplacementCandidates = async ({
         querySuggestions = [],
@@ -1033,14 +1045,16 @@ async function _runStage1Pipeline({
           customQueries.push(...querySuggestions);
         }
 
-        // Jika slot peragaan/aksi kurang, cari video demo aktif
+        // Jika slot peragaan/aksi kurang, cari video demo aktif.
+        // CATATAN: kata "cara"/"tutorial"/"diy" adalah kata terlarang (server/config/forbiddenTerms.js)
+        // dan hasil yang judulnya memuat kata itu dibuang filter judul -> dulu query ini dibuat
+        // sendiri lalu dibuang sendiri (hasil pencarian 0% terpakai). Pakai padanan yang diizinkan.
         const needsAction = missingSlots.some(s => String(s).includes('action') || String(s).includes('demo') || String(s).includes('result'));
         if (needsAction) {
           customQueries.push(
-            `${combinedBP} cara pakai`,
-            `${combinedBP} demo`,
-            `${combinedBP} tutorial`,
-            `${combinedBP} hands on`
+            `${combinedBP} demo produk`,
+            `${combinedBP} hands on`,
+            `${combinedBP} unboxing review`
           );
         } else {
           customQueries.push(
@@ -1204,8 +1218,13 @@ async function _runStage1Pipeline({
         let sampleRes;
         try {
           const candDur = candMeta.duration || 300;
-          // Hemat (20 titik per menit): interval ~3.0 detik -> 10 menit = 200 frame, 5 menit = 100. Cap 200 di sampler.
-          const candMaxFrames = Math.floor(candDur / 3.0);
+          // Densitas sampling dikembalikan ke desain awal (interval 1.5 detik = ~40 titik/menit):
+          // 5 menit = 200 frame, 10 menit = 400 frame (ceiling SAMPLE_MAX_FRAMES, default 500).
+          // Commit c4cd50f pernah memotongnya jadi dur/3.0 (5 menit = 100 frame) demi hemat; itu
+          // membuat jendela bersih jadi jarang & klip menumpuk di satu sumber. Tuning via
+          // RENDER_SAMPLE_INTERVAL_SEC tanpa perlu mengubah kode.
+          const sampleIntervalSec = Math.max(0.5, Number(process.env.RENDER_SAMPLE_INTERVAL_SEC) || 1.5);
+          const candMaxFrames = Math.floor(candDur / sampleIntervalSec);
           
           sampleRes = await sampleFramesFromStream(candStreamUrl, candFramesDir, {
             duration: candDur,
@@ -1323,15 +1342,13 @@ async function _runStage1Pipeline({
         const hasRemainingPool = candidatePoolIndex < candidatePool.length;
 
         // DYNAMIC MULTI-VIDEO HARVESTING FOR REELS:
-        // Jumlah SUMBER video terverifikasi minimum sebelum boleh langsung diproses.
-        // Default 2 (Kitchen: variasi sudut & latar). Smartphone/gadget preset memakai
-        // minVerifiedSources:1 -> begitu 1 video terverifikasi LANGSUNG diproses, jangan
-        // terus-terusan men-skip kandidat demi mengejar sumber ke-2 yang langka.
-        const nichePresetForSource = getNichePreset(options.niche || 'kitchen_tools');
-        const targetMultiSources = Math.max(1, Number(nichePresetForSource?.minVerifiedSources) || 2);
+        // targetMultiSources & harvestStreamBudget dihitung sekali di atas loop (lihat
+        // komentar di sana). Smartphone/gadget preset memakai minVerifiedSources:1 ->
+        // begitu 1 video terverifikasi LANGSUNG diproses, jangan terus-terusan men-skip
+        // kandidat demi mengejar sumber ke-2 yang langka.
         const shouldKeepHarvesting = verifiedCandidatesCount < targetMultiSources &&
           hasRemainingPool &&
-          streamedCount < Math.min(3, maxStreamVideos);
+          streamedCount < harvestStreamBudget;
 
         if (shouldKeepHarvesting) {
           console.log(`[Job ${jobId}] 🎬 Multi-video harvesting: Sudah dapat ${verifiedCandidatesCount} video terverifikasi. Terus stream kandidat berikutnya untuk mendapatkan variasi sudut kamera & latar belakang...`);
@@ -1599,8 +1616,25 @@ async function _runStage1Pipeline({
         const rescuePool = aiApprovedFrames.length >= 2
           ? aiApprovedFrames
           : ((visionState.aiGaveFrameVerdict || retainedCleanFrames.length > 0) ? retainedCleanFrames : pooledFrames);
-        const allCleanFrames = rescuePool
+        const allCleanFramesRaw = rescuePool
           .filter(f => f && f.filePath && !blacklistedFramePaths.has(f.filePath));
+        // Selang-seling per video sumber SEBELUM dirakit. Rescue pool bisa berasal dari
+        // retainedCleanFrames yang di-append per kandidat (blok panjang satu sumber),
+        // sehingga tanpa interleave 7 klip rescue menumpuk di sumber pertama -> Reels
+        // 1 sumber tanpa variasi (keluhan lapangan 30 Sep 2026).
+        const rescueGroups = new Map();
+        for (const f of allCleanFramesRaw) {
+          const k = sourceKeyOf(f);
+          if (!rescueGroups.has(k)) rescueGroups.set(k, []);
+          rescueGroups.get(k).push(f);
+        }
+        const allCleanFrames = [];
+        const rescueRounds = Math.max(0, ...[...rescueGroups.values()].map((g) => g.length));
+        for (let r = 0; r < rescueRounds; r++) {
+          for (const g of rescueGroups.values()) {
+            if (r < g.length) allCleanFrames.push(g[r]);
+          }
+        }
 
         if (allCleanFrames.length >= 2) {
           const rescueClips = [];
@@ -1673,6 +1707,33 @@ async function _runStage1Pipeline({
           `Semua kandidat video (telah di-stream ${streamedCount} video) belum memiliki cukup cuplikan produk yang memenuhi syarat untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'frame tidak mencukupi / ditolak filter atau AI'}.`
         );
       }
+
+      // Visibilitas variasi sumber. Storyboard 1 sumber pernah terjadi DIAM-DIAM
+      // (job auto_3dd085b354: 7 klip, kandidat=[0,0,0,0,0,0,0]) sehingga operator tidak
+      // bisa membedakan "panen berhenti terlalu cepat" dari "kandidat lain ditolak AI".
+      // Sekarang jumlah sumber terpakai dihitung, ditempel di storyboard, dan dicatat
+      // di trace durabel + log peringatan bila di bawah target niche.
+      const sourceCountUsed = new Set((hl.clips || []).map((c) => c.candidateIndex ?? 0)).size;
+      hl.sourceCount = sourceCountUsed;
+      hl.targetSourceCount = targetMultiSources;
+      if (sourceCountUsed < targetMultiSources) {
+        console.warn(`[Job ${jobId}] ⚠️ Storyboard hanya memakai ${sourceCountUsed} video sumber (target ${targetMultiSources}). Kandidat terverifikasi yang tersedia: ${candidateResults.length} setelah ${streamedCount} stream. Penyebabnya penolakan AI/filter atas kandidat lain, bukan loop panen yang berhenti dini.`);
+      }
+      recordStageEvent({
+        jobId,
+        stage: 'storyboard_sources',
+        candidateCount: candidateResults.length,
+        acceptedCount: (hl.clips || []).length,
+        rejectedCount: 0,
+        failureReason: sourceCountUsed < targetMultiSources ? `Sumber terpakai ${sourceCountUsed} < target ${targetMultiSources}` : '',
+        meta: {
+          sourceCountUsed,
+          targetMultiSources,
+          verifiedSources: candidateResults.length,
+          streamedCount,
+          isRescue: Boolean(hl.isRescueStoryboard),
+        },
+      });
 
       // Targeted Download: Unduh 1080p HANYA untuk kandidat yang klipnya terpilih oleh AI!
       const neededIndices = [...new Set(hl.clips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0))];

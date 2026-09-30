@@ -4,6 +4,7 @@ import {
   countUsableFrames,
   shouldPreferEvidence,
   pickEvidenceFrames,
+  sourceKeyOf,
   formatCleanWindowsBySource,
   mapFramesToBudgeted,
   shouldAllowRescue,
@@ -92,6 +93,93 @@ describe('pickEvidenceFrames — budget cluster-aware', () => {
     const frames = Array.from({ length: 80 }, (_, i) => mk(i * 3));
     const picked = pickEvidenceFrames(frames, { max: 10 });
     expect(picked.every((f) => frames.includes(f))).toBe(true);
+  });
+});
+
+const mkSrc = (candidateIndex, ts, n) => ({
+  timestamp: ts,
+  filePath: `/src${candidateIndex}/f_${n}.jpg`,
+  candidateIndex,
+  candidateTitle: `Video sumber ${candidateIndex + 1}`,
+  videoId: `vid${candidateIndex}`,
+});
+
+describe('pickEvidenceFrames — jaminan variasi SUMBER video (regresi Reels 1 sumber)', () => {
+  const buildPool = (counts) => {
+    const pool = [];
+    counts.forEach((count, ci) => {
+      for (let i = 0; i < count; i++) pool.push(mkSrc(ci, i * 1.5, i));
+    });
+    return pool;
+  };
+
+  it('sumber kecil tetap terwakili walau sumber besar mendominasi pool', () => {
+    // 100 frame vs 5 frame. Versi lama (sort timestamp global -> potong 30) tetap
+    // menyisakan sumber kecil, TAPI kluster awal yang sama-sama mulai detik 0 membuat
+    // alokasi didominasi sumber 0. Sekarang jatah minimum per sumber dijamin.
+    const pool = buildPool([100, 5]);
+    const picked = pickEvidenceFrames(pool, { max: 30 });
+    const perSource = new Map();
+    picked.forEach((f) => perSource.set(f.candidateIndex, (perSource.get(f.candidateIndex) || 0) + 1));
+    expect(picked.length).toBeLessThanOrEqual(30);
+    expect(perSource.get(1)).toBe(5); // sumber kecil diambil SEMUA, tidak dipangkas
+    expect(perSource.get(0)).toBeGreaterThanOrEqual(2);
+  });
+
+  it('tiga sumber semuanya masuk bukti dan hasilnya di-interleave', () => {
+    const pool = buildPool([40, 40, 40]);
+    const picked = pickEvidenceFrames(pool, { max: 30 });
+    const sourcesSeen = new Set(picked.map((f) => f.candidateIndex));
+    expect(sourcesSeen.size).toBe(3);
+    expect(picked.length).toBeLessThanOrEqual(30);
+    // Tiga entri pertama harus dari sumber berbeda (round-robin), bukan blok satu video.
+    expect(new Set(picked.slice(0, 3).map((f) => f.candidateIndex)).size).toBe(3);
+  });
+
+  it('objek hasil identik dengan input agar mapFramesToBudgeted tetap valid', () => {
+    const pool = buildPool([25, 25]);
+    const picked = pickEvidenceFrames(pool, { max: 12 });
+    picked.forEach((f) => expect(pool.indexOf(f)).toBeGreaterThanOrEqual(0));
+  });
+
+  it('satu sumber: perilaku lama dipertahankan (cluster-aware, <= max, kronologis)', () => {
+    const pool = buildPool([60]);
+    const picked = pickEvidenceFrames(pool, { max: 20 });
+    expect(picked.length).toBeLessThanOrEqual(20);
+    for (let i = 1; i < picked.length; i++) {
+      expect(Number(picked[i].timestamp)).toBeGreaterThanOrEqual(Number(picked[i - 1].timestamp));
+    }
+  });
+
+  it('max kecil tidak membuat satu sumber kehilangan seluruh jatah (floor >= 1)', () => {
+    const pool = buildPool([30, 30, 30]);
+    const picked = pickEvidenceFrames(pool, { max: 5 });
+    const sourcesSeen = new Set(picked.map((f) => f.candidateIndex));
+    expect(picked.length).toBeLessThanOrEqual(5);
+    expect(sourcesSeen.size).toBe(3);
+  });
+
+  it('minPerSource dapat dinaikkan lewat opsi/env', () => {
+    const pool = buildPool([40, 40]);
+    const picked = pickEvidenceFrames(pool, { max: 30, minPerSource: 10 });
+    const perSource = new Map();
+    picked.forEach((f) => perSource.set(f.candidateIndex, (perSource.get(f.candidateIndex) || 0) + 1));
+    expect(perSource.get(0)).toBeGreaterThanOrEqual(10);
+    expect(perSource.get(1)).toBeGreaterThanOrEqual(10);
+  });
+});
+
+describe('sourceKeyOf — identifikasi video sumber frame', () => {
+  it('memakai candidateIndex bila ada (indeks kanonik pool)', () => {
+    expect(sourceKeyOf({ candidateIndex: 2, videoId: 'abc' })).toBe('cand:2');
+    expect(sourceKeyOf({ candidateIndex: 0 })).toBe('cand:0');
+  });
+
+  it('fallback ke videoId/URL bila indeks tidak disertakan', () => {
+    expect(sourceKeyOf({ videoId: 'abc' })).toBe('src:abc');
+    expect(sourceKeyOf({ candidate: { url: 'https://youtu.be/xyz' } })).toBe('src:https://youtu.be/xyz');
+    expect(sourceKeyOf(null)).toBe('src:unknown');
+    expect(sourceKeyOf({})).toBe('src:unknown');
   });
 });
 

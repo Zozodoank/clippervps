@@ -49,6 +49,13 @@ const FLAG_NORMALIZERS = {
   EVIDENCE_MIN_FRAMES: (env) => Math.max(2, Number(env.EVIDENCE_MIN_FRAMES) || 6),
   // visionEvidenceService.pickEvidenceFrames: Math.max(4, Number(process.env.EVIDENCE_MAX_FRAMES) || 30)
   EVIDENCE_MAX_FRAMES: (env) => Math.max(4, Number(env.EVIDENCE_MAX_FRAMES) || 30),
+  // visionEvidenceService.pickEvidenceFrames: jatah MINIMAL keyframe per video sumber.
+  // Tanpa ini satu video dominan bisa menghabiskan seluruh bukti -> Reels 1 sumber.
+  EVIDENCE_MIN_FRAMES_PER_SOURCE: (env) => Math.max(1, Number(env.EVIDENCE_MIN_FRAMES_PER_SOURCE) || 2),
+  // stage1Render: jarak antar titik sampling dari stream (detik). 1.5 = ~40 titik/menit
+  // (5 menit = 200 frame). Dulu pernah dipotong ke 3.0 demi hemat -> jendela bersih
+  // jarang dan klip menumpuk di satu sumber.
+  RENDER_SAMPLE_INTERVAL_SEC: (env) => Math.max(0.5, Number(env.RENDER_SAMPLE_INTERVAL_SEC) || 1.5),
 };
 
 export const SNAPSHOT_FLAG_KEYS = Object.keys(FLAG_NORMALIZERS);
