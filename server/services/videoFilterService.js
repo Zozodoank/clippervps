@@ -11,6 +11,7 @@ import { getSmartProxyArgs } from './downloader.js';
 import { classifyPipelineError } from './networkDiagnosticService.js';
 import { getNichePreset } from '../config/nichePresets.js';
 import { getMinVideoDurationSec, getMaxVideoDurationSec } from '../config/videoLimits.js';
+import { hasRepairIntent, hasStrongRepairIntent, hasTutorialIntent } from '../config/forbiddenTerms.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -352,24 +353,23 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
 
   const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|demo|pakai|menggunakan)\b/i.test(titleLower);
 
-  const bannedKeywordRegex = isGadget
-    ? /\b(perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti lcd|ganti baterai|repair|reparasi|bongkar mesin|mati total|matot|bypass|bootloop)\b/i
-    : /\b(perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i;
-
-  if (bannedKeywordRegex.test(titleLower)) {
+  // Daftar kata terlarang tidak lagi ditulis ulang di sini - sumbernya
+  // config/forbiddenTerms.js, daftar yang sama dengan generator query dan filter
+  // judul di discoveryService. Dulu ketiganya berbeda isi, itulah penyebab kata
+  // "servis/matot" tetap muncul di hasil pencarian niche non-gadget.
+  if (hasRepairIntent(titleLower, { includeGadgetJargon: isGadget })) {
     return { eligible: false, reason: `Terdeteksi kata kunci terlarang (${isGadget ? 'perbaikan / servis / mati total / bypass' : 'perbaikan / servis / bongkar'}) pada judul video.` };
   }
 
   // Khusus kata 'cara' atau 'tutorial': hanya dilarang jika BUKAN peragaan alat/produk fisik
-  if (!isToolDemoTitle && /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(titleLower)) {
+  if (!isToolDemoTitle && hasTutorialIntent(titleLower)) {
     return { eligible: false, reason: 'Terdeteksi kata kunci tutorial/cara/DIY umum pada judul video.' };
   }
 
   // 2C. Filter Konten Perbaikan / Servis / Barang Rusak pada Deskripsi
   // Bersihkan URL terlebih dahulu agar link domain seperti service.kompernass.com tidak memicu false positive
   const descNoUrls = descLower.replace(/https?:\/\/[^\s]+/g, '');
-  const repairDescRegex = /\b(perbaikan|penggantian|pergantian|mengganti|rusak|kerusakan|bengkel|jasa\s+servis|tempat\s+servis|reparasi|bongkar\s+mesin|mati\s+total|matot|ganti\s+lcd)\b/i;
-  if (repairDescRegex.test(descNoUrls.slice(0, 500))) {
+  if (hasStrongRepairIntent(descNoUrls.slice(0, 500))) {
     return { eligible: false, reason: 'Terdeteksi indikasi konten perbaikan / servis / penggantian alat rusak pada deskripsi video.' };
   }
 

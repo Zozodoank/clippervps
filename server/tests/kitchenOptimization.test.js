@@ -12,6 +12,24 @@ describe('Kitchen Tools & Video-First Optimization', () => {
       expect(cleanedQuery).toContain('chopper');
       expect(cleanedQuery).not.toContain('-chopper ');
     });
+
+    // Regresi utama 30 Sep 2026 (job auto_3dd085b354): judul listing jasa servis
+    // pernah dipakai apa adanya sebagai kata kunci pencarian video.
+    it('membuang kata servis/matot dari query dan mengecualikannya di mesin telusur', () => {
+      const cleaned = buildCleanYouTubeQuery('servis megicom matot dan tidak bisa masak');
+      // Kata telanjang harus hilang; yang tersisa hanyalah bentuk operator (-servis).
+      const withoutOperators = cleaned.replace(/-\S+/g, ' ');
+      expect(withoutOperators.toLowerCase()).not.toMatch(/\b(servis|matot)\b/);
+      expect(cleaned).toContain('-servis');
+    });
+
+    it('query bermotif review/merk TIDAK LAGI lolos tanpa operator negatif', () => {
+      // Dulu fungsi ini return lebih awal untuk query yang memuat review/unboxing/demo,
+      // sehingga kata servis & cara tidak pernah dikecualikan oleh mesin telusur.
+      const cleaned = buildCleanYouTubeQuery('olike rice cooker review indonesia');
+      expect(cleaned).toContain('-servis');
+      expect(cleaned).toContain('-cara');
+    });
   });
 
   describe('DIRTY_NEGATIVE_OPERATORS', () => {
@@ -33,6 +51,15 @@ describe('Kitchen Tools & Video-First Optimization', () => {
     it('should disqualify bulky or irrelevant agricultural tools', () => {
       expect(isBulkyOrUnsuitableProduct('mesin chopper rumput pakan ternak')).toBe(true);
       expect(isBulkyOrUnsuitableProduct('rak piring besar lemari dapur')).toBe(true);
+    });
+
+    // Larangan servis dulunya hanya hidup di dalam blok niche gadget (dan banyak
+    // pemanggil tidak mengirim opsi niche sama sekali) -> listing jasa lolos.
+    it('menolak listing JASA SERVIS di niche apa pun, termasuk tanpa opsi niche', () => {
+      expect(isBulkyOrUnsuitableProduct('Servis Megicom Matot Tidak Bisa Masak')).toBe(true);
+      expect(isBulkyOrUnsuitableProduct('Servis Megicom Matot', { niche: 'kitchen_tools' })).toBe(true);
+      expect(isBulkyOrUnsuitableProduct('Jasa Reparasi Dispenser Panggilan')).toBe(true);
+      expect(isBulkyOrUnsuitableProduct('DIY tempat tisu dari botol bekas')).toBe(true);
     });
   });
 

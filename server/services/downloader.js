@@ -8,6 +8,7 @@ import { getVideoDimensions } from './videoRenderer.js';
 import { trackBandwidth } from './bandwidthTracker.js';
 import { recordStageEvent } from './observabilityService.js';
 import { isAudioDrivenEnabled } from './audioBeatService.js';
+import { stripForbiddenTerms, coreNegativeOperators } from '../config/forbiddenTerms.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -328,15 +329,24 @@ export function buildCleanYouTubeQuery(baseQuery) {
   const isMoldOrFoodTool = /cetakan|dumpling|pastel|tamagoyaki|baking|kue|bakso|pembuat|maker|chopper|parutan|slicer|peeler|cutter|pemotong|pengupas|pemeras|wajan|panci|dispenser|sealer/i.test(lower);
   const isBrandedOrReview = /review|unboxing|tes|demo|hands on|spesifikasi|hp|smartphone|b-roll/i.test(lower);
 
-  // 1. Bersihkan kata-kata sampah tanpa mematikan unboxing atau review (karena intro/penutup sudah diskip)
+  // 1. Bersihkan kata-kata sampah tanpa mematikan unboxing atau review (karena intro/penutup sudah diskip).
+  // Kata servis/reparasi/tutorial/DIY TIDAK ditulis di sini lagi - sumbernya
+  // config/forbiddenTerms.js yang diterapkan stripForbiddenTerms() di bawah, agar
+  // daftar query dan daftar judul tidak bisa berbeda lagi.
   const stripRegex = isMoldOrFoodTool
-    ? /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|mukbang|bubble\s*wrap|kardus|cardboard|packaging|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
-    : /\b(?:diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|resep|recipe|mukbang|kuliner|bubble\s*wrap|kardus|cardboard|packaging|pabrik|factory|manufacturing|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
+    ? /\b(?:mukbang|bubble\s*wrap|kardus|cardboard|packaging|blackstone|weber|smoker|pabrik|factory|manufacturing|industri|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi
+    : /\b(?:mukbang|kuliner|resep|recipe|bubble\s*wrap|kardus|cardboard|packaging|pabrik|factory|manufacturing|industrial|machinery|mesin\s+industri|alat\s+berat|mesin\s+usaha|mesin\s+pabrik|mesin\s+produksi|mesin\s+packing|mesin\s+pengemas|pakan|ternak|limbah|chopper\s+pakan|chopper\s+rumput|mesin\s+chopper|selep|perontok|pemanen|traktor|set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/gi;
 
   let cleaned = String(baseQuery)
     .replace(stripRegex, '')
     .replace(/\s+/g, ' ')
     .trim();
+
+  // LAPORAN BUG 30 SEP 2026: kata terlarang yang tidak terdaftar di stripRegex
+  // di atas (cara / tutorial / matot / mati total / korslet / skematik) lolos ke
+  // mesin telusur, lalu hasil pencariannya ditolak filter judul -> 0 kandidat.
+  // Daftarnya kini satu sumber dengan filter judul (config/forbiddenTerms.js).
+  cleaned = stripForbiddenTerms(cleaned);
 
   // Truncate overly long combinatorial keywords
   const words = cleaned.split(' ');
@@ -344,25 +354,26 @@ export function buildCleanYouTubeQuery(baseQuery) {
     cleaned = words.slice(0, 7).join(' ');
   }
 
-  // Jika query sudah spesifik berupa review produk/merk, JANGAN tambahkan operator negatif berlebihan
-  // karena operator negatif membingungkan ranking YouTube search dan menyebabkan 0 hasil
-  if (isBrandedOrReview) {
-    return cleaned.trim();
-  }
+  // 2. Operator negatif: kata terlarang dibuang dari query TIDAK CUKUP - mesin
+  // telusur juga harus diperintahkan mengecualikan hasilnya.
+  const sensitiveFoodOperators = new Set(['-cara', '-tutorial', '-resep', '-recipe', '-makanan', '-minuman', '-kuliner', '-jajanan', '-streetfood']);
+  const keepOperator = (op) => !(isMoldOrFoodTool && sensitiveFoodOperators.has(op));
 
-  // 2. Pilih operator negatif yang relevan untuk keyword umum non-merk
-  const sensitiveFoodOperators = ['-cara', '-tutorial', '-resep', '-recipe', '-makanan', '-minuman', '-kuliner', '-jajanan', '-streetfood'];
-  const relevantOperators = DIRTY_NEGATIVE_OPERATORS.filter(op => {
-    if (isMoldOrFoodTool && sensitiveFoodOperators.includes(op)) {
-      return false;
-    }
-    return true;
-  });
+  // Query bermotif merk/review/unboxing dulu return LEBIH AWAL tanpa operator
+  // negatif apa pun. Itulah celah "servis ..." dan "cara pakai ..." tetap
+  // terindex. Kini tetap dibatasi (maks 3) agar ranking YouTube tidak mati,
+  // tapi istilah paling berbahaya selalu dikirim.
+  const priorityOperators = coreNegativeOperators().filter(keepOperator);
+  const broadOperators = DIRTY_NEGATIVE_OPERATORS.filter(keepOperator);
+  const operatorPool = [...new Set(isBrandedOrReview
+    ? [...priorityOperators, ...broadOperators.filter((op) => !priorityOperators.includes(op))]
+    : [...priorityOperators, ...broadOperators])];
+  const maxOperators = isBrandedOrReview ? 3 : 6;
 
   const existingLower = cleaned.toLowerCase();
-  const toAdd = relevantOperators
-    .filter(op => !existingLower.includes(op.toLowerCase()))
-    .slice(0, 4); // Maksimal 4 operator untuk menjaga broad coverage
+  const toAdd = operatorPool
+    .filter(op => !existingLower.includes(op.toLowerCase().replace(/"/g, '')))
+    .slice(0, maxOperators); // Operator berlebihan membuat YouTube/ Bing mengembalikan 0 hasil
 
   if (toAdd.length > 0) {
     cleaned = `${cleaned} ${toAdd.join(' ')}`;

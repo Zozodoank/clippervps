@@ -7,6 +7,20 @@ import https from 'https';
 import { searchYouTubeVideos, extractVideoId, buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from './downloader.js';
 import { getNichePreset, generateCombinatorialGadgetKeywords } from '../config/nichePresets.js';
 import { getMinVideoDurationSec, getMaxVideoDurationSec } from '../config/videoLimits.js';
+import {
+  REPAIR_TERMS,
+  TUTORIAL_TERMS,
+  hasRepairIntent,
+  hasTutorialIntent,
+  isForbiddenSearchQuery,
+  stripForbiddenTerms,
+  forbiddenTitlePattern,
+} from '../config/forbiddenTerms.js';
+
+// Satu regex untuk semua filter judul anti-servis/anti-tutorial. Tidak memakai
+// flag global supaya .test() selalu stateless (regex /g dengan .test melompat
+// index dan menghasilkan hasil yang tampak acak).
+const FORBIDDEN_TITLE_RE = forbiddenTitlePattern();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -569,6 +583,18 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
     return true;
   }
 
+  // 1F. JASA SERVIS / PERBAIKAN / BARANG RUSAK - BERLAKU UNTUK SEMUA NICHE.
+  // Bug lapangan 30 Sep 2026 (job auto_3dd085b354, niche kitchen_tools): produk yang
+  // terpilih adalah "Servis Megicom Matot" - listing JASA REPARASI, bukan produk fisik.
+  // Penyebabnya: pemblokiran servis/reparasi dulu hanya ada di dalam blok `isGadget`,
+  // dan banyak pemanggil gerbang ini TIDAK mengirim opsi niche sama sekali, sehingga
+  // untuk kitchen alat pengecekan itu tidak pernah aktif. Sekarang daftarnya dipakai
+  // bersama dari config/forbiddenTerms.js; jargon reparasi lanjutan (solder, skematik,
+  // bypass, ganti lcd) tetap khusus gadget karena di niche lain bisa jadi nama produk.
+  if (hasRepairIntent(normalized, { includeGadgetJargon: isGadget })) {
+    return true;
+  }
+
   // 1C. Heavy machinery / agricultural machinery (bukan alat rumah tangga praktis)
   if (/\b(?:blackstone|weber|smoker|barbecue|bbq|alat\s+berat|traktor|pakan\s+ternak|selep\s+gabah|perontok\s+padi|pemanen\s+padi|chopper\s+ternak|chopper\s+rumput|cacah\s+rumput|silase|janggel)\b/i.test(normalized)) {
     return true;
@@ -576,8 +602,10 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
 
   if (isGadget) {
     // Smartphone & Gadget specific exclusions:
-    // Exclude repair/service tutorials, broken screens, dead boards, teardown
-    if (/\b(?:servis|service|reparasi|repair|ganti\s+lcd|lcd\s+pecah|mati\s+total|matot|bongkar|disassembly|teardown|skematik|jalur|solder)\b/i.test(normalized)) {
+    // Istilah reparasi umum + jargon lanjutan (skematik, jalur pcb, solder,
+    // bypass, ganti lcd, dll) sudah ditangani gerbang 1F dengan
+    // includeGadgetJargon. Sisanya hanya kode/unlock yang khas gadget.
+    if (/\b(?:flashing|unlock|ic\s+power|fpc|kabel\s+flexible)\b/i.test(normalized)) {
       return true;
     }
     // Exclude bulky non-gadgets: big appliances, vehicles, furniture
@@ -1891,7 +1919,10 @@ export function pickValidIdentitySearchQuery(brand = '', productType = '', model
   if (!brandNorm || !Array.isArray(searchQueries)) return '';
   return searchQueries.find((q) => {
     const nq = normalizeText(q || '');
-    return Boolean(nq) && nq.includes(brandNorm) &&
+    // Query mengandung servis/tutorial/barang rusak bukan sekadar "kurang ideal" -
+    // hasilnya pasti gugur di filter judul. Query semacam ini langsung dilewati.
+    if (!nq || isForbiddenSearchQuery(nq)) return false;
+    return nq.includes(brandNorm) &&
       ((Boolean(typeFirstWord) && nq.includes(typeFirstWord)) || (Boolean(modelNorm) && nq.includes(modelNorm)));
   }) || '';
 }
@@ -1975,9 +2006,11 @@ export async function discoverBrandedShopeeProduct({
 
     // Product identity is discovered from real YouTube search-result titles.
     // Strictly exclude Chinese platforms and Mandarin search results (-douyin -kuaishou -bilibili -chinese -mandarin).
+    // "cara pakai" DHAPUS dari daftar kata: kata itu termasuk terlarang, jadi
+    // hasil pencariannya pasti dibuang filter judul. Pakai "demo" saja.
     const query = isGadget
-      ? `"${brandSeed}" (smartphone OR hp OR "handphone") (review OR unboxing OR tes) -laptop -notebook -macbook -douyin -kuaishou -bilibili -weibo -chinese -mandarin`
-      : `"${brandSeed}" (alat dapur OR masak OR kitchen OR chopper OR blender OR panci OR steamer OR oven OR "air fryer" OR wajan OR teko) (review OR demo OR "cara pakai" OR unboxing OR tes) -mars -adele -lagu -lirik -douyin -kuaishou -bilibili -weibo -chinese -mandarin`;
+      ? `"${brandSeed}" (smartphone OR hp OR "handphone") (review OR unboxing OR tes) -servis -reparasi -"mati total" -laptop -notebook -macbook -douyin -kuaishou -bilibili -weibo -chinese -mandarin`
+      : `"${brandSeed}" (alat dapur OR masak OR kitchen OR chopper OR blender OR panci OR steamer OR oven OR "air fryer" OR wajan OR teko) (review OR demo OR unboxing OR tes) -servis -reparasi -rusak -matot -mars -adele -lagu -lirik -douyin -kuaishou -bilibili -weibo -chinese -mandarin`;
     let results = [];
     try {
       results = await searchYouTubeVideos(query, { limit: 16 });
@@ -2281,8 +2314,11 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
       // Filter out videos with known duration < min (default 5 mnt) or > max (default 15 mnt)
       if (durationSec > 0 && (durationSec < getMinVideoDurationSec() || durationSec > getMaxVideoDurationSec())) return;
 
-      // Filter out videos with banned / tutorial / DIY / repair keywords
-      if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
+      // Filter out videos with banned / tutorial / DIY / repair keywords.
+      // Daftarnya kini SATU SUMBER dengan generator query di bawah - dulu filter
+      // ini menolak "cara" padahal query yang kita kirim sendiri berisi "cara
+      // pakai", sehingga hasil pencarian dibuang 100% dan job tampak "kosong".
+      if (FORBIDDEN_TITLE_RE.test(title)) return;
 
       candidates.push({
         id,
@@ -2368,7 +2404,7 @@ export async function searchDuckDuckGoVideos(query, { limit = 20, onProgress = (
       if (!id) return; // hanya YouTube watch/youtu.be; shorts/playlist/@channel gugur otomatis
 
       // Filter keyword tutorial/DIY/repair yang sama persis dengan searchBingVideos
-      if (/\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|ganti|repair|reparasi|bongkar)\b/i.test(title)) return;
+      if (FORBIDDEN_TITLE_RE.test(title)) return;
 
       if (seenIds.has(id)) return;
       seenIds.add(id);
@@ -2492,7 +2528,14 @@ export async function searchMultiEngineVideos(query, {
   // semantic guardrail for auto-search: a result must still mention the target
   // product family in its title/description unless it came from visual search.
   const queryInfo = extractCoreProductInfo(query);
-  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'cara', 'tutorial', 'diy', 'how', 'unboxing', 'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw', 'review', 'demo', 'test', 'produk']);
+  // Kata non-produk yang diabaikan saat mencocokkan query <-> judul. Istilah
+  // terlarang ikut dibuang dari pencocokan (dari daftar kanonik), supaya produk
+  // "Megicom" tetap dianggap cocok meski judulnya "servis megicom matot" - lalu
+  // kandidat tersebut ditolak GERBANG JUDUL, bukan lolos sebagai salah produk.
+  const forbiddenIgnoredWords = [...REPAIR_TERMS, ...TUTORIAL_TERMS]
+    .flatMap((term) => String(term).split(/\s+/))
+    .filter((w) => w.length >= 3);
+  const ignoredQueryWords = new Set(['watermark', 'lyric', 'subtitle', 'logo', 'intro', 'overlay', 'unboxing', 'roll', 'footage', 'version', 'graphics', 'clean', 'raw', 'review', 'demo', 'test', 'produk', ...forbiddenIgnoredWords]);
   const queryWords = (queryInfo?.coreWords || normalizeText(query).split(' '))
     .map((w) => normalizeText(w))
     .filter((w) => w.length >= 3 && !ignoredQueryWords.has(w));
@@ -2642,7 +2685,7 @@ Tugas:
 1. Identifikasi nama benda/gadget fisik ini dalam bahasa Inggris universal (nama produk OEM/pabrik yang biasa dipakai reviewer global di YouTube/Amazon/AliExpress).
 2. Buat 4 frasa pencarian YouTube paling efektif dalam bahasa Inggris untuk menemukan footage produk yang bersih, jernih, dan sinematik:
    - WAJIB kombinasikan nama produk dengan kata kunci aset mentah: "raw footage", "b-roll", "textless", "clean version", "no graphics".
-   - DILARANG KERAS menggunakan kata kunci: cara, tutorial, diy, how to, perbaikan, penggantian, rusak, service, servis, ganti, repair, haul, vlog, review wajah.
+   - DILARANG KERAS menggunakan kata kunci: ${[...TUTORIAL_TERMS, ...REPAIR_TERMS].join(', ')}, haul, vlog, review wajah.
    - Hindari kata-kata promo belanja seperti: COD, murah, promo, terlaris, diskon.
 
 Keluarkan JSON dengan format persis:
@@ -2676,8 +2719,14 @@ Keluarkan JSON dengan format persis:
         const text = result?.response?.text();
         if (text) {
           const parsed = JSON.parse(text);
+          // Prompt sudah melarang kata terlarang, tapi model bisa saja tetap
+          // mengabulkannya. Query hasil AI kini divalidasi dengan daftar yang
+          // SAMA - tidak ada lagi kata terlarang masuk ke mesin telusur.
           if (Array.isArray(parsed.searchQueries) && parsed.searchQueries.length > 0) {
-            return parsed.searchQueries;
+            const safeQueries = parsed.searchQueries
+              .map((q) => String(q || '').trim())
+              .filter((q) => q && !isForbiddenSearchQuery(q));
+            if (safeQueries.length > 0) return safeQueries;
           }
         }
       } catch (mErr) {
@@ -3669,11 +3718,14 @@ function decodeBingRedirect(value) {
 }
 
 function buildShopeeSearchQueries(keyword) {
-  const cleanKeyword = keyword
-    .replace(/\b(?:set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs)\b/gi, '')
+  const cleanKeyword = stripForbiddenTerms(keyword
+    .replace(/\b(?:set|pack|packs|package|paket|bundle|bundling|kombo|combo|isi\s*\d+|\d+\s*pcs)\b/gi, ''))
     .replace(/\s+/g, ' ')
     .trim();
-  const negativeSetOperators = '-set -pack -paket -bundle';
+  // Listing JASA SERVIS ikut dibuang langsung dari query marketplace. Sebelumnya
+  // hanya set/pack/bundle yang dinegasikan, sehingga "servis megicom matot"
+  // terpilih sebagai produk dan seluruh pipeline setelahnya salah sasaran.
+  const negativeSetOperators = '-set -pack -paket -bundle -servis -reparasi -perbaikan -rusak';
   return [
     `site:shopee.co.id ${cleanKeyword} ${negativeSetOperators} "i."`,
     `site:shopee.co.id/ ${cleanKeyword} ${negativeSetOperators}`,
@@ -3743,11 +3795,14 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
 
   const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|unboxing|demo|pakai|menggunakan)\b/i.test(titleText);
 
-  // Disqualify broken / repair / disassembly / maintenance tutorials / DIY / set / pack / bundle / western retail
-  if (/\b(set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|perbaikan|penggantian|pergantian|mengganti|rusak|service|servis|repair|reparasi|bongkar|membongkar|mati total|amazon|walmart|target|bestbuy|homedepot)\b/i.test(titleText)) return false;
+  // Disqualify set / pack / bundle / western retail (kata servis/perbaikan sudah
+  // ditangani isBulkyOrUnsuitableProduct di atas lewat daftar kanonik - tidak perlu
+  // ditulis ulang di sini agar tidak bisa berbeda isinya).
+  if (/\b(set|pack|paket|bundle|kombo|combo|isi\s*\d+|\d+\s*pcs|amazon|walmart|target|bestbuy|homedepot)\b/i.test(titleText)) return false;
+  if (hasRepairIntent(titleText)) return false;
 
   // Jika bukan peragaan alat fisik, tolak kata cara/tutorial murni (reparasi/diy umum)
-  if (!isToolDemoTitle && /\b(cara|tutorial|diy|how\s+to|do\s+it\s+yourself)\b/i.test(titleText)) return false;
+  if (!isToolDemoTitle && hasTutorialIntent(titleText)) return false;
 
   const excludedTitleWords = [
     // Box opening packaging waste filters (Unboxing/Review produk fisik diperbolehkan karena intro & penutup sudah diskip)
@@ -3779,7 +3834,8 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
     'ai generated', 'ai video', 'generative ai', 'sora', 'runway', 'kling', 'hailuo', 'pika',
     'animation', 'animasi', '3d animation', 'cgi', 'cartoon', 'kartun', 'anime',
     // Filter Perbaikan / Service / Kerusakan / Penggantian (Bukan video demo produk baru)
-    'perbaikan', 'penggantian', 'pergantian', 'mengganti', 'rusak', 'service', 'servis', 'ganti', 'repair', 'reparasi', 'bongkar', 'membongkar', 'mati total',
+    // Sumber: daftar kanonik yang sama dengan gerbang query & judul.
+    ...REPAIR_TERMS,
     // Filter pabrik / proses pembuatan / industrial manufacturing (Bukan peragaan konsumen)
     'pabrik', 'manufacturing', 'factory', 'proses pembuatan', 'industrial', 'produksi masal', 'how it\'s made', 'how its made',
     // Filter pemanggang besar / bulky outdoor grill / Blackstone / smoker
@@ -4455,8 +4511,14 @@ function extractDynamicSearchAttributes(title = '') {
 export function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun = '', brand = '', model = '', identity = '' } = {}) {
   const queries = [];
   const add = (query) => {
-    const clean = String(query || '').replace(/\s+/g, ' ').trim();
-    if (clean && !queries.includes(clean)) queries.push(clean);
+    // Identitas produk bisa saja ikut membawa kata dari listing jasa servis
+    // (mis. tipe produk tersimpulkan "servis megicom"). Kata terlarang dibuang
+    // SEBELUM query disusun, dan query yang tinggal sedikit dibuang - bukan
+    // dikirim lalu berharap filter judul menoleransinya.
+    const stripped = stripForbiddenTerms(String(query || ''));
+    const clean = stripped.replace(/\s+/g, ' ').trim();
+    if (!clean || clean.split(' ').length < 2) return;
+    if (!queries.includes(clean)) queries.push(clean);
   };
 
   // Discovery is intentionally identity-first:
@@ -4500,13 +4562,13 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
     add(`${exactIdentity} unboxing`);
     add(`${exactIdentity} review`);
     add(`review ${exactIdentity}`);
-    add(`${exactIdentity} demo cara pakai`);
+    add(`${exactIdentity} demo produk`);
     add(`unboxing ${exactIdentity}`);
   } else if (fallbackIdentity && !cleanBrand) {
     add(`${fallbackIdentity} review indonesia`);
     add(`${fallbackIdentity} unboxing`);
     add(`${fallbackIdentity} review`);
-    add(`${fallbackIdentity} demo cara pakai`);
+    add(`${fallbackIdentity} demo produk`);
   }
 
   if (cleanBrand && cleanModel && normalizeText(cleanBrand) !== normalizeText(cleanModel)) {
@@ -4520,7 +4582,7 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
     add(`${cleanBrand} ${type} review indonesia`);
     add(`${cleanBrand} ${type} unboxing`);
     add(`review ${cleanBrand} ${type}`);
-    add(`${cleanBrand} ${type} demo cara pakai`);
+    add(`${cleanBrand} ${type} demo produk`);
   }
 
   if (cleanModel && type && normalizeText(cleanModel) !== normalizeText(type)) {

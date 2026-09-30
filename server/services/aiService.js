@@ -21,6 +21,7 @@ import { trackBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from './discoveryService.js';
 import { getNichePreset } from '../config/nichePresets.js';
 import { isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
+import { isForbiddenSearchQuery } from '../config/forbiddenTerms.js';
 import { countUsableFrames, shouldPreferEvidence, pickEvidenceFrames, formatCleanWindowsBySource, mapFramesToBudgeted, buildVisionProvenance } from './visionEvidenceService.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1555,7 +1556,7 @@ Output strictly valid JSON with this exact schema:
   ],
   "acceptedFrames": [1, 3, 5, 7, 8, 10],
   "missingSlots": ["clip3_action_demo", "clip4_action_demo_diff"],
-  "suggestedSearchQueries": ["${effectiveTitle} demo", "${effectiveTitle} cara pakai"],
+  "suggestedSearchQueries": ["${effectiveTitle} demo produk", "${effectiveTitle} unboxing review"],
   "storyboard": {
     "clip1_full_product": 1,
     "clip2_feature": 3,
@@ -1581,7 +1582,7 @@ CRITICAL MANDATE FOR FRAME AUDIT & REJECTION REPORTING:
    Specify "frameIndex" (1-indexed matching frame #1, #2, ...), "timestamp" (approx seconds), and an explicit "reason".
 2. "acceptedFrames": List every clean, faceless, hands-on demonstration frame index.
 3. "missingSlots": If the pool of clean frames cannot fill all 7 diverse storyboard slots without repetition, list the unfilled slot keys (e.g. ["clip3_action_demo", "clip4_action_demo_diff"]).
-4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage. WAJIB GUNAKAN merk dan tipe produk ("${effectiveTitle}") secara utuh dan akurat, meskipun nama merk berbahasa Inggris. Padukan dengan kata kunci pencarian dalam Bahasa Indonesia (contoh: "${effectiveTitle} cara pakai", "review ${effectiveTitle} indonesia") agar sesuai dengan audiens Shopee lokal.
+4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage. WAJIB GUNAKAN merk dan tipe produk ("${effectiveTitle}") secara utuh dan akurat, meskipun nama merk berbahasa Inggris. Padukan dengan kata kunci pencarian dalam Bahasa Indonesia (contoh: "${effectiveTitle} demo produk", "review ${effectiveTitle} indonesia") agar sesuai dengan audiens Shopee lokal. DILARANG memakai kata cara/tutorial/diy/servis/reparasi/rusak/perbaikan - query semacam itu otomatis dibuang backend.
 5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
 
   // Batasi keyframes untuk API. Evidence mode: pemilih cluster-aware (tiap kluster
@@ -1891,7 +1892,15 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       normalizedAcceptedFrames = mapFramesToBudgeted(normalizedAcceptedFrames, evalFrames, frames);
 
       let normalizedMissingSlots = Array.isArray(parsed.missingSlots) ? parsed.missingSlots.map(s => String(s).trim()).filter(Boolean) : [];
-      let normalizedSuggestedQueries = Array.isArray(parsed.suggestedSearchQueries) ? parsed.suggestedSearchQueries.map(q => String(q).trim()).filter(Boolean) : [];
+      // Saran query dari AI ikut divalidasi dengan daftar kanonik yang sama.
+      // Sebelumnya saran ini dipakai mentah, sehingga "cara pakai" hasil bujukan
+      // prompt kembali masuk ke mesin telusur (lingkaran yang sama).
+      let normalizedSuggestedQueries = Array.isArray(parsed.suggestedSearchQueries)
+        ? parsed.suggestedSearchQueries
+          .map(q => String(q).trim())
+          .filter(Boolean)
+          .filter(q => !isForbiddenSearchQuery(q))
+        : [];
 
       // Penanda DURABEL asal-usul analisa visual. Dipakai stage1Render untuk log trace +
       // field `visionProvenance` di record job, supaya bisa diverifikasi tanpa stdout

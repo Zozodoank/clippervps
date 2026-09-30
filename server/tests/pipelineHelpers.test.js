@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { distributeTotal } from '../services/professionalPipelineService.js';
 import { getNichePreset } from '../config/nichePresets.js';
-import { pickValidIdentitySearchQuery } from '../services/discoveryService.js';
+import { pickValidIdentitySearchQuery, buildDynamicProductSearchQueries } from '../services/discoveryService.js';
 
 describe('pickValidIdentitySearchQuery (fix skip permanen niche smartphone)', () => {
   // Data nyata dari log PC: produk "Oukitel WP500" selalu di-skip "query brand + type tidak valid"
@@ -29,6 +29,43 @@ describe('pickValidIdentitySearchQuery (fix skip permanen niche smartphone)', ()
   it('kitchen: perilaku lama tetap lolos via kata tipe produk', () => {
     const kw = pickValidIdentitySearchQuery('Gaabor', 'Air Fryer', '', ['gaabor air fryer demo']);
     expect(kw).toBe('gaabor air fryer demo');
+  });
+
+  // Regresi 30 Sep 2026: query bermuatan kata servis/tutorial dulu diterima lalu
+  // dibuang lagi oleh filter judul - pemborosan kuota pencarian.
+  it('melewati query yang memuat kata terlarang (servis/cara/diy)', () => {
+    const kw = pickValidIdentitySearchQuery('Olike', 'Rice Cooker', 'OC-707', [
+      'olike rice cooker cara pakai',
+      'servis olike rice cooker OC-707',
+      'olike rice cooker OC-707 unboxing review',
+    ]);
+    expect(kw).toBe('olike rice cooker OC-707 unboxing review');
+  });
+
+  it('mengembalikan string kosong bila SEMUA query terlarang', () => {
+    const kw = pickValidIdentitySearchQuery('Olike', 'Rice Cooker', '', ['olike rice cooker servis']);
+    expect(kw).toBe('');
+  });
+});
+
+describe('buildDynamicProductSearchQueries (generator query bersih)', () => {
+  it('tidak pernah menghasilkan query berisi kata terlarang, meski identitasnya ikut tercemar', () => {
+    const queries = buildDynamicProductSearchQueries({
+      brand: 'Olike',
+      noun: 'servis rice cooker',
+      model: 'OC-707',
+      title: 'Servis Megicom Matot Olike OC-707',
+    });
+    expect(queries.length).toBeGreaterThan(0);
+    for (const q of queries) {
+      expect(q.toLowerCase()).not.toMatch(/\b(cara|tutorial|diy|servis|service|reparasi|perbaikan|rusak|ganti|bongkar|matot)\b/);
+    }
+  });
+
+  it("frasa 'demo cara pakai' digantikan 'demo produk'", () => {
+    const queries = buildDynamicProductSearchQueries({ brand: 'Gaabor', noun: 'air fryer', model: '' });
+    expect(queries.some((q) => /demo produk/i.test(q))).toBe(true);
+    expect(queries.some((q) => /cara/i.test(q))).toBe(false);
   });
 });
 
