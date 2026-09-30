@@ -33,6 +33,30 @@ export function isAudioDrivenEnabled(env = process.env) {
   return String(env.AUDIO_DRIVEN_SCENES || '').trim().toLowerCase() === 'true';
 }
 
+// ==========================================================================
+// JENDELA ANALISIS AUDIO (PURE)
+// Timeline `startSeconds`/`endSeconds` klip mengacu ke video YouTube ASLI. Pada
+// mode hemat kuota (RENDER_DOWNLOAD_SECTIONS=1) file yang dibuka adalah SEGMEN
+// hasil --download-sections yang timeline-nya sudah dimulai di sourceOffsetSec,
+// jadi jendela wajib di-rebase (kurangi offset) lalu di-clamp ke durasi file.
+// Tanpa rebase: ffmpeg membaca melewati akhir file -> whisper menghasilkan 0 beat
+// dan fitur audio-driven mati tanpa suara. Nomor "MM:SS" juga dibuang di sini
+// (Number("01:24") = NaN) karena penyebab bug asli adalah string, bukan angka.
+// ==========================================================================
+export function resolveAudioWindow({ clip = null, highlight = null, fileDurationSec = 0 } = {}) {
+  const base = Number(clip?.sourceOffsetSec) || 0;
+  const startRaw = Number(clip?.startSeconds ?? highlight?.startSeconds);
+  const endRaw = Number(highlight?.endSeconds ?? clip?.endSeconds);
+  let start = Number.isFinite(startRaw) && startRaw > base ? startRaw - base : 0;
+  let end = Number.isFinite(endRaw) && endRaw > base ? endRaw - base : 0;
+  const dur = Number(fileDurationSec) || 0;
+  if (dur > 0) {
+    start = Math.min(start, Math.max(0, dur - 1));
+    end = end > start ? Math.min(end, dur) : 0;
+  }
+  return { startSec: Number(start.toFixed(2)), endSec: Number(end.toFixed(2)) };
+}
+
 // Konfigurasi binary whisper.cpp + model. Semua bisa dioverride lewat .env.
 export function resolveWhisperConfig(env = process.env) {
   const bin = (env.WHISPER_CPP_BIN || 'whisper-cli').trim();

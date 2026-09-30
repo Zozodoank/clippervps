@@ -169,3 +169,65 @@ export function formatCleanWindowsBySource(windows = [], sourceLabels = []) {
     });
   return `\nCRITICAL MANDATE (SOURCE-SCOPED VERIFIED CLEAN SEGMENTS): AI Local Gatekeeper memverifikasi segmen bersih BERDASARKAN VIDEO SUMBERNYA MASING-MASING:\n${blocks.join('\n')}\nAturan keras: (1) timestamps HANYA BOLEH dipilih di dalam segmen bersih video SUMBER yang sama; (2) batas waktu 10s-25s pada VIDEO #1 TIDAK BERLAKU untuk VIDEO #2, dst; (3) DILARANG KERAS memilih timestamp di luar daftar segmen sumber yang dipilih, dan wajib mengisi "sourceVideoIndex" sesuai video asalnya.\n`;
 }
+
+/**
+ * GERBANG RESCUE PIPELINE. Bukti lapangan 30 Sep 2026 (Termux, job auto_3dd085b354):
+ * Gemini menolak SELURUH keyframe bukti (30 ditolak, 0 diterima, 0 klip), tetapi
+ * Guaranteed Completion Rescue Pipeline tetap merakit 7 klip dari frame yang tidak
+ * pernah divonis AI -> wajah manusia masuk video final -> QC final menolak -> fail
+ * final dihapus, ~52 MB kuota + 20 menit render + 1 panggilan TTS terbuang, dan job
+ * dicatat "berhasil" tanpa output.
+ *
+ * Aturan: vonis NEGATIF AI itu keputusan, bukan gangguan teknis. Rescue hanya boleh
+ * (a) bila AI tidak memberi vonis (crash/parse error), atau (b) bila AI masih
+ * menyetujui minimal satu frame -> rakit dari frame yang benar-benar bersih menurut
+ * AI. Vonis "0 diterima, >0 ditolak" = JANGAN memaksa.
+ *
+ * @param {{ aiGaveVerdict?: boolean, acceptedCount?: number, rejectedCount?: number }} state
+ * @returns {boolean} true = rescue diizinkan
+ */
+export function shouldAllowRescue({ aiGaveVerdict = false, acceptedCount = 0, rejectedCount = 0 } = {}) {
+  if (!aiGaveVerdict) return true;                       // kegagalan teknis: penyelamatan tetap sah
+  if (Number(acceptedCount) > 0) return true;            // ada frame yang benar-benar disetujui AI
+  return !(Number(rejectedCount) > 0);                   // vonis "semua bukti ditolak" -> jangan memaksa
+}
+
+/**
+ * Ringkasan asal-usul analisa visual, dipakai sebagai penanda DURABEL di record job
+ * dan trace. Tanpa ini operator hanya bisa menduga jalur mana yang dijalankan,
+ * karena stdout dev-runner di Termux masuk ke /dev/pts/0 (tidak pernah tersimpan).
+ * @param {{ mode?: string, usableFrames?: number, framesSent?: number, acceptedCount?: number, rejectedCount?: number, sourceCount?: number }} info
+ */
+export function buildVisionProvenance(info = {}) {
+  const num = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0);
+  const allowedModes = ['evidence', 'frames_stride', 'gemini_stream', 'gemini_stream_multi'];
+  const mode = allowedModes.includes(String(info.mode)) ? String(info.mode) : 'unknown';
+  return {
+    mode,
+    usableFrames: num(info.usableFrames),
+    framesSent: num(info.framesSent),
+    acceptedCount: num(info.acceptedCount),
+    rejectedCount: num(info.rejectedCount),
+    sourceCount: num(info.sourceCount),
+  };
+}
+
+/**
+ * Rangkai seluruh panggilan visual satu job jadi ringkasan kecil (aman untuk DB/JSON).
+ * Dipakai di record job (sukses, awaiting_voiceover, maupun error) supaya riwayat selalu
+ * menyebutkan jalur yang benar-benar dieksekusi.
+ * @param {Array<object>} runs daftar hasil buildVisionProvenance (+ origin)
+ * @returns {{runs:number, modes:string[], acceptedTotal:number, rejectedTotal:number, last:object|null}|null}
+ */
+export function summarizeVisionRuns(runs = []) {
+  const list = Array.isArray(runs) ? runs.filter(Boolean) : [];
+  if (!list.length) return null;
+  const sum = (key) => list.reduce((acc, r) => acc + (Number(r[key]) || 0), 0);
+  return {
+    runs: list.length,
+    modes: [...new Set(list.map((r) => r.mode || 'unknown'))],
+    acceptedTotal: sum('acceptedCount'),
+    rejectedTotal: sum('rejectedCount'),
+    last: list[list.length - 1],
+  };
+}

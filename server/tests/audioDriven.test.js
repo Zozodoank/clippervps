@@ -4,6 +4,7 @@ import {
   buildBeatsFromSegments,
   parseWhisperJson,
   isAudioDrivenEnabled,
+  resolveAudioWindow,
 } from '../services/audioBeatService.js';
 import {
   countWords,
@@ -115,5 +116,56 @@ describe('Flag AUDIO_DRIVEN_SCENES', () => {
   it('default OFF', () => {
     expect(isAudioDrivenEnabled({})).toBe(false);
     expect(isAudioDrivenEnabled({ AUDIO_DRIVEN_SCENES: 'true' })).toBe(true);
+  });
+});
+
+describe('resolveAudioWindow — jendela whisper selaras file yang dibuka', () => {
+  it('video penuh: pakai timeline sumber apa adanya', () => {
+    const w = resolveAudioWindow({
+      clip: { startSeconds: 42.5 },
+      highlight: { startSeconds: 42.5, endSeconds: 68 },
+      fileDurationSec: 300,
+    });
+    expect(w).toEqual({ startSec: 42.5, endSec: 68 });
+  });
+
+  it('mode segmen (--download-sections): jendela di-rebase ke offset file', () => {
+    const w = resolveAudioWindow({
+      clip: { startSeconds: 42.5, sourceOffsetSec: 40 },
+      highlight: { startSeconds: 42.5, endSeconds: 68 },
+      fileDurationSec: 35,
+    });
+    expect(w).toEqual({ startSec: 2.5, endSec: 28 });
+  });
+
+  it('string "MM:SS" tidak lagi membuat window runtuh ke 0-0', () => {
+    // Akar bug lama: caller mengirim startTime/endTime ("01:24") -> Number() = NaN -> 0.
+    const w = resolveAudioWindow({
+      clip: { startSeconds: '01:24', startTime: '01:24' },
+      highlight: { startSeconds: '01:24', endSeconds: '01:50' },
+      fileDurationSec: 200,
+    });
+    expect(w).toEqual({ startSec: 0, endSec: 0 });
+    // ..tetapi versi angka yang benar memberi window utuh:
+    const ok = resolveAudioWindow({
+      clip: { startSeconds: 84 },
+      highlight: { startSeconds: 84, endSeconds: 110 },
+      fileDurationSec: 200,
+    });
+    expect(ok).toEqual({ startSec: 84, endSec: 110 });
+  });
+
+  it('clamp ke durasi file agar ffmpeg tidak membaca melewati akhir', () => {
+    const w = resolveAudioWindow({
+      clip: { startSeconds: 30, sourceOffsetSec: 0 },
+      highlight: { startSeconds: 30, endSeconds: 500 },
+      fileDurationSec: 40,
+    });
+    expect(w.startSec).toBeLessThanOrEqual(39);
+    expect(w.endSec).toBe(40);
+  });
+
+  it('tanpa clip & tanpa durasi file -> window nol (analisis penuh, tidak crash)', () => {
+    expect(resolveAudioWindow({})).toEqual({ startSec: 0, endSec: 0 });
   });
 });

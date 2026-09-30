@@ -6,6 +6,9 @@ import {
   pickEvidenceFrames,
   formatCleanWindowsBySource,
   mapFramesToBudgeted,
+  shouldAllowRescue,
+  buildVisionProvenance,
+  summarizeVisionRuns,
 } from '../services/visionEvidenceService.js';
 import {
   buildConfigSnapshot,
@@ -181,5 +184,63 @@ describe('runtimeFlags — GEMINI_INPUT_MODE & budget beku per-job (retry)', () 
     expect(resnap.EVIDENCE_MAX_FRAMES).toBe(20);
     // snapshot default pun tetap menulis patch explisit (kunci anti-drift)
     expect(configSnapshotToEnvPatch(buildConfigSnapshot({})).GEMINI_INPUT_MODE).toBe('evidence');
+  });
+  it('membekukan flag hemat-kuota render (RENDER_MAX_HEIGHT / RENDER_VIDEO_ONLY) per job', () => {
+    expect(buildConfigSnapshot({}).RENDER_MAX_HEIGHT).toBe(1080);
+    expect(buildConfigSnapshot({ RENDER_MAX_HEIGHT: '720' }).RENDER_MAX_HEIGHT).toBe(720);
+    expect(buildConfigSnapshot({ RENDER_MAX_HEIGHT: 'nonsense' }).RENDER_MAX_HEIGHT).toBe(1080);
+    // default ON (buang audio) persis seperti cara downloader.js membacanya
+    expect(buildConfigSnapshot({}).RENDER_VIDEO_ONLY).toBe(true);
+    expect(buildConfigSnapshot({ RENDER_VIDEO_ONLY: '0' }).RENDER_VIDEO_ONLY).toBe(false);
+    const patch = configSnapshotToEnvPatch(buildConfigSnapshot({ RENDER_VIDEO_ONLY: '0', RENDER_MAX_HEIGHT: '720' }));
+    expect(patch.RENDER_VIDEO_ONLY).toBe('0');
+    expect(patch.RENDER_MAX_HEIGHT).toBe('720');
+  });
+});
+
+describe('shouldAllowRescue — vonis AI menolak seluruh bukti', () => {
+  it('tanpa vonis AI (crash/parse gagal) rescue tetap diizinkan', () => {
+    expect(shouldAllowRescue({ aiGaveVerdict: false, acceptedCount: 0, rejectedCount: 30 })).toBe(true);
+    expect(shouldAllowRescue()).toBe(true);
+  });
+  it('ada frame yang disetujui AI -> boleh merakit dari frame itu saja', () => {
+    expect(shouldAllowRescue({ aiGaveVerdict: true, acceptedCount: 4, rejectedCount: 26 })).toBe(true);
+  });
+  it('vonis "0 diterima, >0 ditolak" (kasus auto_3dd085b354) -> DILARANG memaksa', () => {
+    expect(shouldAllowRescue({ aiGaveVerdict: true, acceptedCount: 0, rejectedCount: 30 })).toBe(false);
+    expect(shouldAllowRescue({ aiGaveVerdict: true, acceptedCount: '0', rejectedCount: '30' })).toBe(false);
+  });
+  it('vonis kosong total (0 dikirim) bukan penolakan -> tidak memblokir', () => {
+    expect(shouldAllowRescue({ aiGaveVerdict: true, acceptedCount: 0, rejectedCount: 0 })).toBe(true);
+  });
+});
+
+describe('buildVisionProvenance + summarizeVisionRuns — penanda durabel jalur visual', () => {
+  it('hanya mode yang dikenal yang lolos (mencegah label palsu di riwayat)', () => {
+    expect(buildVisionProvenance({ mode: 'evidence' }).mode).toBe('evidence');
+    expect(buildVisionProvenance({ mode: 'gemini_stream_multi' }).mode).toBe('gemini_stream_multi');
+    expect(buildVisionProvenance({ mode: 'stream' }).mode).toBe('unknown');
+    expect(buildVisionProvenance({}).mode).toBe('unknown');
+  });
+  it('angka dinegatifkan/di-bulatkan dan nilai sampah jadi 0', () => {
+    const p = buildVisionProvenance({ mode: 'evidence', usableFrames: '12.7', framesSent: -5, acceptedCount: NaN, rejectedCount: null });
+    expect(p).toEqual({ mode: 'evidence', usableFrames: 13, framesSent: 0, acceptedCount: 0, rejectedCount: 0, sourceCount: 0 });
+  });
+  it('ramah input tanpa argumen', () => {
+    expect(buildVisionProvenance().mode).toBe('unknown');
+  });
+  it('ringkasan menjumlahkan seluruh panggilan dan menyimpan panggilan terakhir', () => {
+    expect(summarizeVisionRuns([])).toBe(null);
+    expect(summarizeVisionRuns()).toBe(null);
+    const runs = [
+      buildVisionProvenance({ mode: 'evidence', framesSent: 30, acceptedCount: 0, rejectedCount: 30 }),
+      buildVisionProvenance({ mode: 'gemini_stream', framesSent: 0, acceptedCount: 2, rejectedCount: 1 }),
+    ];
+    const s = summarizeVisionRuns(runs);
+    expect(s.runs).toBe(2);
+    expect(s.modes).toEqual(['evidence', 'gemini_stream']);
+    expect(s.acceptedTotal).toBe(2);
+    expect(s.rejectedTotal).toBe(31);
+    expect(s.last.mode).toBe('gemini_stream');
   });
 });

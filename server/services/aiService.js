@@ -21,7 +21,7 @@ import { trackBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from './discoveryService.js';
 import { getNichePreset } from '../config/nichePresets.js';
 import { isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
-import { countUsableFrames, shouldPreferEvidence, pickEvidenceFrames, formatCleanWindowsBySource, mapFramesToBudgeted } from './visionEvidenceService.js';
+import { countUsableFrames, shouldPreferEvidence, pickEvidenceFrames, formatCleanWindowsBySource, mapFramesToBudgeted, buildVisionProvenance } from './visionEvidenceService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1893,6 +1893,17 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       let normalizedMissingSlots = Array.isArray(parsed.missingSlots) ? parsed.missingSlots.map(s => String(s).trim()).filter(Boolean) : [];
       let normalizedSuggestedQueries = Array.isArray(parsed.suggestedSearchQueries) ? parsed.suggestedSearchQueries.map(q => String(q).trim()).filter(Boolean) : [];
 
+      // Penanda DURABEL asal-usul analisa visual. Dipakai stage1Render untuk log trace +
+      // field `visionProvenance` di record job, supaya bisa diverifikasi tanpa stdout
+      // (di Termux stdout dev-runner berakhir di /dev/pts/0, tidak pernah tersimpan).
+      const visionEvidence = buildVisionProvenance({
+        mode: useEvidence ? 'evidence' : 'frames_stride',
+        usableFrames: usableFrameCount,
+        framesSent: evalFrames.length,
+        acceptedCount: normalizedAcceptedFrames.length,
+        rejectedCount: normalizedRejectedFrames.length,
+      });
+
       console.log(`\n======================================================`);
       console.log(`[AIService Vision] 🔍 LAPORAN AUDIT FRAME OLEH GEMINI (${activeModel}):`);
       console.log(`  - Status Evaluasi : ${rawStatus || 'accept'} (Produk Fisik Cocok: ${!isMatchFalse ? 'YA' : 'TIDAK'})`);
@@ -1934,6 +1945,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         rejectError.rejectedFrames = normalizedRejectedFrames;
         rejectError.missingSlots = normalizedMissingSlots;
         rejectError.suggestedSearchQueries = normalizedSuggestedQueries;
+        rejectError.visionEvidence = visionEvidence;
         throw rejectError;
       }
 
@@ -2058,6 +2070,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
           acceptedFrames: normalizedAcceptedFrames,
           missingSlots: normalizedMissingSlots.length > 0 ? normalizedMissingSlots : ['clip1_full_product', 'clip2_feature', 'clip3_action_demo'],
           suggestedSearchQueries: normalizedSuggestedQueries,
+          visionEvidence,
           reason: reasonText || 'Cuplikan bersih tidak mencukupi untuk storyboard 7-slot'
         };
       }
@@ -2079,6 +2092,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         acceptedFrames: normalizedAcceptedFrames,
         missingSlots: normalizedMissingSlots,
         suggestedSearchQueries: normalizedSuggestedQueries,
+        visionEvidence,
       };
     } catch (err) {
       if (err.isAiRejection || String(err?.message || '').toLowerCase().includes('ditolak oleh ai') || String(err?.message || '').toLowerCase().includes('ai menolak video')) {

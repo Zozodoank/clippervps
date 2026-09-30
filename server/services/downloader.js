@@ -7,6 +7,7 @@ export { getYtDlpPath, getFFmpegPath };
 import { getVideoDimensions } from './videoRenderer.js';
 import { trackBandwidth } from './bandwidthTracker.js';
 import { recordStageEvent } from './observabilityService.js';
+import { isAudioDrivenEnabled } from './audioBeatService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -800,10 +801,15 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
 
     const dlBaseArgs = getDownloadArgs(clientType);
 
-    // Hemat kuota render: audio sumber SELALU dibuang saat render (-an), dan tinggi video dibatasi via env.
+    // Hemat kuota render: audio sumber dibuang saat render, tinggi video dibatasi via env.
     // RENDER_MAX_HEIGHT (default 1080; mis. 720 di Termux) + RENDER_VIDEO_ONLY (default ON; set '0' untuk tetap unduh audio).
+    // KECUALI saat AUDIO_DRIVEN_SCENES aktif: whisper.cpp WAJIB punya track audio sumber.
+    // Sebelum fix ini download render selalu video-only, sehingga analisis audio selalu
+    // balik "video tidak memiliki track audio" -> fitur audio-driven mati DIAM-DIAM dan
+    // naskah jatuh kembali ke pola lama (vision). Biaya tambahannya hanya bitrate audio
+    // (puluhan kbps), dan render silent tetap `-an` sehingga suara sumber tidak bocor.
     const renderMaxH = (() => { const v = parseInt(process.env.RENDER_MAX_HEIGHT, 10); return Number.isFinite(v) && v > 0 ? v : 1080; })();
-    const renderVideoOnly = process.env.RENDER_VIDEO_ONLY !== '0';
+    const renderVideoOnly = process.env.RENDER_VIDEO_ONLY !== '0' && !isAudioDrivenEnabled();
     const renderFormats = renderVideoOnly
       ? [
           `bv[height<=${renderMaxH}][vcodec^=avc1]`, // h264 dulu: decode ringan (Unisoc) + aman untuk kontainer mp4

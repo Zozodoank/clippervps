@@ -6,7 +6,8 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot } from '../config/runtimeFlags.js';
+import { shouldAllowRescue, buildVisionProvenance, summarizeVisionRuns } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
   selectHighlightWithAI,
@@ -48,7 +49,7 @@ import {
   sampleDenseClustersAroundCleanFrames
 } from '../services/videoFilterService.js';
 // AUDIO-DRIVEN SCENE PLANNING (Fase 1 & 2) - percobaan, di-guard flag AUDIO_DRIVEN_SCENES.
-import { analyzeSourceAudioForBeats, isAudioDrivenEnabled } from '../services/audioBeatService.js';
+import { analyzeSourceAudioForBeats, isAudioDrivenEnabled, resolveAudioWindow } from '../services/audioBeatService.js';
 import { paraphraseBeats, beatsToScript } from '../services/antiPlagiarismService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
 import { trackProgressEvent, recordStageEvent } from '../services/observabilityService.js';
@@ -89,7 +90,7 @@ import {
   buildSceneVoSegments
 } from '../services/professionalPipelineService.js';
 import { runFinalMasterQc } from '../services/finalMasterQcService.js';
-import { activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, deletePersistedJob, updateJobProgress, updateAutoRun } from '../store/jobStore.js';
+import { activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, patchJob, deletePersistedJob, updateJobProgress, updateAutoRun } from '../store/jobStore.js';
 import { heavyTaskQueue } from './queueManager.js';
 import { isValidHttpUrl, resolveOutputVideoPath, sanitizeCaptionText, isQuotaErrorMessage } from '../utils/jobHelpers.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../services/antiDupService.js';
@@ -287,6 +288,11 @@ async function _runStage1Pipeline({
   let highlight = null;
   let effectiveShopeeLink = shopeeLink || '';
 
+  // State vonis AI + daftar panggilan visual. Sengaja di SCOPE FUNGSI (bukan di dalam
+  // `try`) supaya blok catch di bawah ikut menuliskannya ke record job yang GAGAL -
+  // riwayat kegagalan justru paling membutuhkan bukti jalur mana yang dijalankan.
+  const visionState = { runs: [], aiGaveFrameVerdict: false, accepted: 0, rejected: 0, lastFramesSent: null };
+
   try {
 
     const existingVideoInTemp = (() => {
@@ -339,6 +345,15 @@ async function _runStage1Pipeline({
       ? 'openrouter'
       : (geminiKeySet ? 'gemini' : (openRouterKeySet ? 'openrouter' : 'gemini'));
     const aiProvider = options.aiProvider || jobMeta.aiProvider || defaultProvider;
+    // SATU sumber kebenaran untuk "boleh pakai Gemini Stream (baca video penuh)":
+    // engine Gemini + API key langsung aktif + EVIDENCE MODE OFF. Sebelumnya syarat ini
+    // ditulis ulang di dua tempat (JALUR 1 kandidat & multi-harvest) dengan variabel lokal
+    // berbeda-beda -> inilah yang membuat satu job bisa memakai dua pola berbeda.
+    const canUseGeminiStream = () => {
+      const eng = (options.aiProvider || aiProvider || process.env.ACTIVE_AI_ENGINE || '').toLowerCase();
+      const isGeminiEngine = eng === 'gemini' || eng === 'gemini_direct' || (process.env.GEMINI_API_KEY && eng !== 'openrouter');
+      return isGeminiEngine && Boolean(getDirectGeminiApiKey(apiKey)) && !isGeminiEvidenceEnabled();
+    };
     // Hard production rule: change the visual scene at least every 3.5s.
     // User-provided values above 3.5s are capped so the renderer cannot hold one scene too long.
     const requestedSceneDuration = Number(options.sceneDuration);
@@ -349,11 +364,14 @@ async function _runStage1Pipeline({
 
     // P1 OBSERVABILITY: satu event konteks per job membuat provider/model/kebijakan yang dipakai
     // terbaca dari trace, tanpa perlu menempel event di setiap pemanggilan AI (8 titik).
+    // `visionMode` + `configLine` menjawab pertanyaan operator paling sering: "job ini jalan
+    // pakai Evidence Mode atau pola lama?" - sebelumnya hanya ada di console (hang di Termux).
     recordStageEvent({
       jobId,
       runId: extraJobMeta?.autoRunId,
       stage: 'context',
       provider: aiProvider,
+      message: `Jalur visual: ${isGeminiEvidenceEnabled() ? 'EVIDENCE MODE (frame bersih lokal, hemat token)' : 'GEMINI STREAM (baca video penuh)'} | audio-driven: ${isAudioDrivenEnabled() ? 'ON' : 'OFF'}`,
       model: aiProvider === 'openrouter'
         ? (process.env.OPENROUTER_MODEL || '')
         : (process.env.GEMINI_MODEL || ''),
@@ -363,6 +381,9 @@ async function _runStage1Pipeline({
         singleVideoOnly: options.singleVideoOnly === true,
         multiVideoHarvesting: options.multiVideoHarvesting === true,
         sourceCount: Array.isArray(targetCandidates) ? targetCandidates.length : 0,
+        visionMode: isGeminiEvidenceEnabled() ? 'evidence' : 'gemini_stream',
+        audioDrivenScenes: isAudioDrivenEnabled(),
+        configLine: describeConfigSnapshot(jobMeta.configSnapshot),
       },
     });
 
@@ -378,6 +399,44 @@ async function _runStage1Pipeline({
     const usedVids = getAllUsedYouTubeVideoIds();
     const initialVid = extractVideoId(currentYoutubeUrl);
     if (initialVid) usedVids.add(initialVid);
+
+    // ── PENANDA DURABEL JALUR ANALISA VISUAL + STATE VONIS AI ──
+    // Bukti lapangan 30 Sep 2026 (Termux): operator melaporkan "pola generate masih pola
+    // lama" dan tidak ada satu pun cara membuktikannya, karena stdout dev-runner masuk ke
+    // /dev/pts/0 (tidak pernah disimpan). Setiap panggilan visual kini dicatat ke trace
+    // (server/logs/job-trace.jsonl) DAN direkap ke field `visionProvenance` pada record job.
+    // Rekap ini juga menjadi sumber state untuk gerbang Rescue Pipeline di bawah.
+    const noteVisionProvenance = (result, ctx = {}) => {
+      if (!result) return null;
+      const prov = result.visionEvidence || buildVisionProvenance({
+        mode: ctx.mode || 'unknown',
+        usableFrames: ctx.usableFrames,
+        framesSent: ctx.framesSent,
+        acceptedCount: (result.acceptedFrames || []).length,
+        rejectedCount: (result.rejectedFrames || []).length,
+        sourceCount: ctx.sourceCount,
+      });
+      visionState.runs.push({ ...prov, origin: ctx.origin || 'unknown' });
+      // Referensi (bukan salinan) array frame yang dikirim ke AI, dipakai Rescue Pipeline
+      // di bawah untuk menerjemahkan `acceptedFrames` (indeks 1-based) kembali ke frame.
+      if (Array.isArray(ctx.framesRef)) visionState.lastFramesSent = ctx.framesRef;
+      // Hanya jalur frame (evidence/stride) yang memberi vonis per-frame. Stream video
+      // penuh tidak mengembalikan daftar frame -> vonis frame dianggap belum terjadi.
+      if (prov.mode === 'evidence' || prov.mode === 'frames_stride') {
+        visionState.aiGaveFrameVerdict = true;
+        visionState.accepted = Math.max(visionState.accepted, prov.acceptedCount);
+        visionState.rejected = Math.max(visionState.rejected, prov.rejectedCount);
+      }
+      recordStageEvent({
+        jobId,
+        kind: 'metric',
+        stage: 'ai_vision',
+        provider: ctx.provider || aiProvider,
+        message: `Jalur visual ${prov.mode}: ${prov.framesSent} frame dikirim, ${prov.acceptedCount} diterima, ${prov.rejectedCount} ditolak`,
+        meta: { ...prov, origin: ctx.origin || 'unknown' },
+      });
+      return prov;
+    };
 
     // Helper untuk mengevaluasi kandidat video menggunakan Funneling 3 Tahap (Hemat kuota & token AI):
     // Tahap 1: Metadata Pre-Filter (0 kuota video, 0 token AI)
@@ -552,16 +611,11 @@ async function _runStage1Pipeline({
       console.log(`[Job ${jobId}] ✅ [Filter 2/3 Lolos] Frame visual valid (${localCheck.cleanFrames.length} frame VERIFIED_CLEAN dalam ${localCheck.verifiedSegments?.length || 1} segmen temporal). Verifikasi grafis visual & storyboard diserahkan ke AI Vision.`);
 
       // ── JALUR 1: GOOGLE GEMINI NATIVE YOUTUBE STREAM (0 MB KUOTA LOKAL, 1.500 REQ/HARI) ──
-      const reqEngine = (options.aiProvider || aiProvider || process.env.ACTIVE_AI_ENGINE || '').toLowerCase();
-      const isGeminiEngine = reqEngine === 'gemini' || reqEngine === 'gemini_direct' || (process.env.GEMINI_API_KEY && reqEngine !== 'openrouter');
-      const hasGeminiKey = Boolean(getDirectGeminiApiKey(apiKey));
-
       // EVIDENCE MODE (default, flag GEMINI_INPUT_MODE): JALUR 1 stream video-full
       // DILEWATI — frame bersih hasil Gatekeeper di bawah (JALUR 2) yang dikirim ke
       // Gemini sebagai bukti. Hemat token Gemini & 0 MB kuota tambahan. Set
       // GEMINI_INPUT_MODE=stream di .env untuk mengembalikan perilaku lama.
-      const evidenceMode = isGeminiEvidenceEnabled();
-      if (isGeminiEngine && hasGeminiKey && !evidenceMode && (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be'))) {
+      if (canUseGeminiStream() && (targetUrl.includes('youtube.com') || targetUrl.includes('youtu.be'))) {
         const streamMsg = candidateLabel
           ? `[${candidateLabel}] [Gemini Stream] Google Gemini 3.6 Flash menganalisa video langsung dari YouTube (0 MB kuota lokal)...`
           : '[Gemini Stream] Google Gemini 3.6 Flash menganalisa video langsung dari YouTube (0 MB kuota lokal)...';
@@ -612,6 +666,7 @@ async function _runStage1Pipeline({
         }
 
         console.log(`[Job ${jobId}] 🎉 [Gemini Stream Lolos] AI menyetujui video langsung dari YouTube! Ditemukan ${hl.clips.length} cuplikan produk bersih.`);
+        noteVisionProvenance(hl, { mode: 'gemini_stream', sourceCount: 1, origin: 'candidate_stream' });
         return { highlight: hl, videoMeta: meta, previewVideoPath: null };
       }
 
@@ -679,6 +734,7 @@ async function _runStage1Pipeline({
       }
 
       console.log(`[Job ${jobId}] 🎉 [Filter 3/3 Lolos] AI menyetujui video! Ditemukan ${hl.clips.length} cuplikan produk bersih.`);
+      noteVisionProvenance(hl, { usableFrames: verifiedCleanFrames.length, framesRef: verifiedCleanFrames, origin: 'candidate_frames' });
       return { highlight: hl, videoMeta: meta, previewVideoPath: null };
     };
 
@@ -747,6 +803,7 @@ async function _runStage1Pipeline({
           throw noClipErr;
         }
         approved = true;
+        noteVisionProvenance(highlight, { usableFrames: localCacheCheck.cleanFrames.length, framesRef: localCacheCheck.cleanFrames, origin: 'cached_raw_frames' });
       } catch (cacheEvalErr) {
         if (cacheEvalErr.isAiRejection || String(cacheEvalErr?.message || '').toLowerCase().includes('ditolak')) {
           console.warn(`[Job ${jobId}] Cached video 1080p ditolak AI: ${cacheEvalErr.message}. Menghapus cache dan mencoba online...`);
@@ -1295,16 +1352,11 @@ async function _runStage1Pipeline({
             });
 
             try {
-              const reqEng = (options.aiProvider || aiProvider || process.env.ACTIVE_AI_ENGINE || '').toLowerCase();
-              const isGemini = reqEng === 'gemini' || reqEng === 'gemini_direct' || (process.env.GEMINI_API_KEY && reqEng !== 'openrouter');
-              const hasGemini = Boolean(getDirectGeminiApiKey(apiKey));
-              
               let testHl;
-              
+
               // EVIDENCE MODE: multi-video stream (baca semua video penuh) DILEWATI —
               // pool frame bersih per kandidat dikirim sebagai bukti (branch else).
-              const evidenceModeMulti = isGeminiEvidenceEnabled();
-              if (isGemini && hasGemini && !evidenceModeMulti) {
+              if (canUseGeminiStream()) {
                 const validUrls = Array.from(new Set(preferredSoFar.map(c => c.candidate.url).filter(Boolean)));
                 const urlToIdx = new Map(validUrls.map((u, i) => [u, i]));
                 const allDiscardedFace = [];
@@ -1368,6 +1420,13 @@ async function _runStage1Pipeline({
                 });
               }
 
+              noteVisionProvenance(testHl, {
+                mode: 'gemini_stream_multi',
+                sourceCount: preferredSoFar.length,
+                usableFrames: testPool.length,
+                origin: 'multi_harvest',
+              });
+
               // 1. TANGANI FRAME YANG DITOLAK OLEH AI VISION:
               if (testHl && Array.isArray(testHl.rejectedFrames) && testHl.rejectedFrames.length > 0) {
                 console.log(`[Job ${jobId}] 🧹 Mengeliminasi ${testHl.rejectedFrames.length} frame yang ditolak AI dari bank footage aktif...`);
@@ -1423,6 +1482,16 @@ async function _runStage1Pipeline({
               }
             } catch (aiErr) {
               console.warn(`[Job ${jobId}] ⚠️ Gemini Vision melaporkan kendala pada footage: ${aiErr.message}.`);
+              // Vonis penolakan juga membawa provenance (lihat aiService: rejectError.visionEvidence).
+              noteVisionProvenance(aiErr.visionEvidence ? {
+                visionEvidence: aiErr.visionEvidence,
+                acceptedFrames: aiErr.acceptedFrames || [],
+                rejectedFrames: aiErr.rejectedFrames || [],
+              } : null, {
+                sourceCount: preferredSoFar.length,
+                usableFrames: Array.isArray(testPool) ? testPool.length : 0,
+                origin: 'multi_harvest_reject',
+              });
               
               if (Array.isArray(aiErr.rejectedFrames)) {
                 for (const rf of aiErr.rejectedFrames) {
@@ -1478,8 +1547,17 @@ async function _runStage1Pipeline({
                 creativePlan,
                 onProgress: updateProgress,
               });
+              noteVisionProvenance(hl, { usableFrames: pooledFrames.length, framesRef: pooledFrames, origin: 'final_pooled' });
             } catch (finalAiErr) {
               console.warn(`[Job ${jobId}] ⛔ AI Storyboard percobaan akhir gagal: ${finalAiErr.message}`);
+              noteVisionProvenance(finalAiErr.visionEvidence ? {
+                visionEvidence: finalAiErr.visionEvidence,
+                acceptedFrames: finalAiErr.acceptedFrames || [],
+                rejectedFrames: finalAiErr.rejectedFrames || [],
+              } : null, {
+                usableFrames: pooledFrames.length,
+                origin: 'final_pooled_reject',
+              });
               lastRejectionError = finalAiErr;
             }
           }
@@ -1490,9 +1568,38 @@ async function _runStage1Pipeline({
       // Jika AI Vision belum menghasilkan hl.clips >= 2, tetapi kita memiliki kumpulan frame bersih
       // dari video yang telah lolos verifikasi produk fisik: JANGAN PERNAH GAGALKAN JOB!
       // Rakit Storyboard Penyelamat (Rescue Storyboard) berkualitas tinggi secara otomatis!
-      if (!hl || !Array.isArray(hl.clips) || hl.clips.length < 2) {
+      //
+      // KECUALI bila AI sudah MEMBERI VONIS dan isinya "semua bukti ditolak". Kasus nyata
+      // 30 Sep 2026 (job auto_3dd085b354): Gemini menolak 30/30 keyframe bukti (0 diterima,
+      // 0 klip), rescue tetap merakit 7 klip dari frame yang tidak pernah disetujui AI,
+      // wajah manusia masuk video final, QC final menolak -> final dihapus, ~52 MB kuota +
+      // 20 menit render + 1 panggilan TTS terbuang, dan job ditandai BERHASIL tanpa output.
+      // Sekarang vonis negatif dihormati: gagal cepat SEBELUM download 1080p.
+      const rescueAllowed = shouldAllowRescue({
+        aiGaveVerdict: visionState.aiGaveFrameVerdict,
+        acceptedCount: visionState.accepted || retainedCleanFrames.length,
+        rejectedCount: visionState.rejected,
+      });
+      if (!rescueAllowed && (!hl || !Array.isArray(hl.clips) || hl.clips.length < 2)) {
+        const blockedMsg = `AI Vision menolak seluruh bukti visual (${visionState.rejected} frame ditolak, 0 diterima) untuk "${productTitle}". Footage kandidat tidak layak dipakai.`;
+        console.warn(`[Job ${jobId}] ⛔ [Rescue DIBLOKIR] ${blockedMsg} Storyboard TIDAK dipaksa dari frame yang divonis kotor — job digagalkan sebelum download 1080p (hemat kuota & waktu).`);
+        lastRejectionError = new Error(blockedMsg);
+        lastRejectionError.isAiRejection = true;
+        lastRejectionError.rejectionReason = blockedMsg;
+      }
+      if (rescueAllowed && (!hl || !Array.isArray(hl.clips) || hl.clips.length < 2)) {
         console.log(`[Job ${jobId}] 🛡️ Mengaktifkan Guaranteed Completion Rescue Pipeline untuk memastikan tidak ada job yang gagal...`);
-        const allCleanFrames = (retainedCleanFrames.length > 0 ? retainedCleanFrames : pooledFrames)
+        // Saat AI sudah memvonis, HANYA frame yang ia setujui yang boleh dirakit. Frame
+        // bersih lokal yang tidak ikut terkirim (pooledFrames) tidak dipakai diam-diam.
+        const approvedIdxList = Array.isArray(hl?.acceptedFrames) ? hl.acceptedFrames : [];
+        const approvedSpace = visionState.lastFramesSent || pooledFrames;
+        const aiApprovedFrames = (visionState.aiGaveFrameVerdict && approvedIdxList.length && approvedSpace.length)
+          ? approvedIdxList.map((i) => approvedSpace[Number(i) - 1]).filter((f) => f && f.filePath)
+          : [];
+        const rescuePool = aiApprovedFrames.length >= 2
+          ? aiApprovedFrames
+          : ((visionState.aiGaveFrameVerdict || retainedCleanFrames.length > 0) ? retainedCleanFrames : pooledFrames);
+        const allCleanFrames = rescuePool
           .filter(f => f && f.filePath && !blacklistedFramePaths.has(f.filePath));
 
         if (allCleanFrames.length >= 2) {
@@ -2254,14 +2361,45 @@ async function _runStage1Pipeline({
     // conformed ke durasi audio final (conformClipsToVoiceover), sehingga potongan
     // adegan mengikuti ritme narasi asli. Gagal-anggun: tetap pakai naskah vision.
     let finalVoiceScript = rawVoiceScript;
+    // Laporan hasil audio-driven, dicatat ke trace + record job. Sebelumnya hasil
+    // whisper hanya muncul di console (hang di /dev/pts/0 di Termux) sehingga tidak ada
+    // cara memverifikasi fitur ini benar-benar bekerja atau diam-diam jatuh ke pola lama.
+    const audioDrivenReport = {
+      enabled: isAudioDrivenEnabled(),
+      used: false,
+      outcome: isAudioDrivenEnabled() ? 'not_attempted' : 'flag_off',
+      beats: 0,
+      reason: '',
+      sourceFile: '',
+      windowSec: null,
+    };
     if (isAudioDrivenEnabled()) {
       updateProgress({ step: 'audio_analysis', message: '🎧 Menganalisis voice-over sumber (whisper beat)...', progress: 81, status: 'running' });
       try {
+        // Sumber audio = file yang benar-benar memuat klip pertama. Pada mode hemat
+        // (RENDER_DOWNLOAD_SECTIONS=1) `rawVideoPath` adalah SEGMEN hasil --download-sections
+        // yang timeline-nya sudah dimulai di sourceOffsetSec -> jendela whisper di-rebase
+        // dan di-clamp lewat resolveAudioWindow (pure, terkunci unit test).
+        const adFirstClip = (Array.isArray(highlight.clips) && highlight.clips[0]) ? highlight.clips[0] : null;
+        const adSourcePath = (adFirstClip?.videoPath && fs.existsSync(adFirstClip.videoPath)) ? adFirstClip.videoPath : rawVideoPath;
+        const adFileDur = (await getMediaDurationSec(adSourcePath)) || 0;
+        const { startSec: adStart, endSec: adEnd } = resolveAudioWindow({
+          clip: adFirstClip,
+          highlight,
+          fileDurationSec: adFileDur,
+        });
+        audioDrivenReport.sourceFile = adSourcePath ? path.basename(adSourcePath) : '';
+        audioDrivenReport.windowSec = [adStart, adEnd];
         const ad = await analyzeSourceAudioForBeats({
-          videoPath: rawVideoPath,
-          startSec: highlight.startTime,
-          endSec: highlight.endTime,
-          totalDurationSec: actualSilentDuration,
+          videoPath: adSourcePath,
+          // PAKAI ANGKA DETIK (startSeconds/endSeconds), BUKAN string "MM:SS" (startTime/
+          // endTime). Number("01:24") = NaN -> 0, sehingga jendela analisis runtuh jadi
+          // 0-0 dan whisper membaca video dari detik awal (offset beat tidak selaras klip).
+          startSec: adStart,
+          endSec: adEnd,
+          // Coverage dihitung terhadap jendela yang benar-benar dianalisis, bukan durasi
+          // hasil render silent (yang sudah menyusut/memanjang setelah conforming).
+          totalDurationSec: adEnd > adStart ? (adEnd - adStart) : actualSilentDuration,
         });
         if (ad.ok && ad.voiceover?.hasVoiceover && Array.isArray(ad.beats) && ad.beats.length) {
           updateProgress({ step: 'audio_paraphrase', message: `🪶 Memparafrase ${ad.beats.length} beat narasi (anti-plagiat)...`, progress: 82, status: 'running' });
@@ -2270,16 +2408,48 @@ async function _runStage1Pipeline({
           if (narration && narration.trim()) {
             finalVoiceScript = narration.trim();
             highlight.audioDrivenBeats = pp.ok ? pp.beats : ad.beats;
+            audioDrivenReport.used = true;
+            audioDrivenReport.outcome = 'narration_from_source';
+            audioDrivenReport.beats = ad.beats.length;
+            audioDrivenReport.reason = `cakupan ${(ad.voiceover.coverage * 100).toFixed(0)}%, parafrase ${pp.ok ? 'OK' : 'dilewati'}`;
             console.log(`[Job ${jobId}] ✅ AUDIO-DRIVEN: naskah diambil dari VO sumber terparafrase (${ad.beats.length} beat, cakupan ${(ad.voiceover.coverage * 100).toFixed(0)}%).`);
+          } else {
+            audioDrivenReport.outcome = 'empty_narration';
+            audioDrivenReport.beats = ad.beats.length;
+            audioDrivenReport.reason = 'beat ada tetapi naskah hasil parafrase kosong';
           }
         } else if (ad.ok && !ad.voiceover?.hasVoiceover) {
-          console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN: ${ad.voiceover?.reason || 'video tanpa voice-over'} — fallback ke naskah vision.`);
-        } else if (!ad.skipped) {
-          console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN: analisis audio gagal (${ad.missingBinary ? 'whisper.cpp belum terpasang' : ad.error}) — fallback ke naskah vision.`);
+          audioDrivenReport.outcome = 'no_voiceover_in_source';
+          audioDrivenReport.reason = ad.voiceover?.reason || 'video tanpa voice-over';
+          console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN: ${audioDrivenReport.reason} — fallback ke naskah vision.`);
+        } else if (ad.skipped) {
+          audioDrivenReport.outcome = 'skipped';
+          audioDrivenReport.reason = ad.reason || 'analisis audio di-skip';
+        } else {
+          audioDrivenReport.outcome = 'analysis_failed';
+          audioDrivenReport.reason = ad.missingBinary ? 'whisper.cpp belum terpasang' : (ad.error || 'analisis audio gagal');
+          console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN: analisis audio gagal (${audioDrivenReport.reason}) — fallback ke naskah vision.`);
         }
       } catch (adErr) {
+        audioDrivenReport.outcome = 'error';
+        audioDrivenReport.reason = adErr.message;
         console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN error: ${adErr.message} — fallback ke naskah vision.`);
       }
+      // Jejak durabel: satu baris trace per job tentang nasib audio-driven (+ file yang dibaca).
+      // Laporan juga ditempel ke `highlight` agar ikut tersimpan di record job (history/DB),
+      // bukan hanya console yang di Termux dibuang ke /dev/pts/0.
+      highlight.audioDriven = { ...audioDrivenReport };
+      recordStageEvent({
+        jobId,
+        kind: 'metric',
+        stage: 'audio',
+        provider: 'whisper.cpp',
+        message: `Audio-driven ${audioDrivenReport.used ? 'AKTIF' : 'TIDAK terpakai'}: ${audioDrivenReport.outcome}`,
+        failureReason: audioDrivenReport.used ? '' : audioDrivenReport.reason,
+        meta: { ...audioDrivenReport },
+      });
+    } else {
+      highlight.audioDriven = { ...audioDrivenReport };
     }
 
     const voiceoverFileName = `voiceover_${jobId}.mp3`;
@@ -2331,6 +2501,9 @@ async function _runStage1Pipeline({
     }
 
     const isAutoModeFallback = Boolean(extraJobMeta?.isAutoGenerated);
+    let autoFinalError = null;
+    // Rekap jalur visual untuk record job (penanda durabel: evidence vs stream vs stride).
+    const visionSummary = summarizeVisionRuns(visionState.runs);
     const shouldProceedToFinal = (ttsSucceeded && fs.existsSync(autoVoiceoverPath)) || isAutoModeFallback;
 
     if (shouldProceedToFinal) {
@@ -2547,6 +2720,11 @@ async function _runStage1Pipeline({
             allowHflip: !isBrandDetected,
             reframe: highlight.reframe,
             clips: highlight.clips,
+            detectedProduct: highlight.detectedProduct || '',
+            // Duplikat penanda di dalam highlight: riwayat manual/panel membaca objek
+            // highlight ini, bukan field top-level job.
+            isRescueStoryboard: Boolean(highlight.isRescueStoryboard),
+            audioDriven: highlight.audioDriven || null,
           },
           hasProductBrand: isBrandDetected,
           detectedBrand: highlight.detectedBrand || 'none',
@@ -2562,31 +2740,75 @@ async function _runStage1Pipeline({
           creativePlan,
           videoTitle: videoMeta.title,
           isOrphan: false,
+          visionProvenance: visionSummary,
+          isRescueStoryboard: Boolean(highlight.isRescueStoryboard),
         };
 
-        activeJobs.set(jobId, completedResult);
-        persistJob(jobId, completedResult);
+        // Merge (bukan REPLACE): persistJob menimpa seluruh baris sehingga niche, oemUrls,
+        // sourcePolicy dan configSnapshot hasil tahap create ikut terhapus. Dibuktikan di
+        // Termux 30 Sep 2026: job auto final tidak punya configSnapshot -> retry jatuh ke
+        // "⚠️ Job lama tanpa configSnapshot" dan memakai .env saat ini (bukan setelan beku).
+        const completedJob = patchJob(jobId, completedResult, { force: true });
 
         updateProgress({
           step: 'completed',
           message: '🎉 Video Final 9:16 + Voiceover Gadis Indonesia & Subtitle Selesai!',
           progress: 100,
           status: 'completed',
-          result: completedResult,
+          result: completedJob,
         });
 
-        return completedResult;
+        return completedJob;
       } catch (mergeErr) {
-        console.warn(`[Job ${jobId}] Auto merge error, falling back to awaiting_voiceover:`, mergeErr.message);
+        if (isAutoModeFallback) {
+          // MODE AUTO: video final adalah satu-satunya output. Kalau tahap final/QC gagal,
+          // JANGAN pernah melabeli job 'completed' dengan pesan hijau - itu persis penyebab
+          // "job berhasil tapi output kosong" (final dihapus saat QC menolak, error ditelan).
+          // Error diteruskan ke blok catch di bawah: aset silent tetap dipertahankan, dan
+          // Auto Mode mencatatnya sebagai GAGAL lalu mencari sumber lain (self-healing).
+          mergeErr.jobId = jobId;
+          // Rekam PENYEBAB kegagalan (termasuk vonis QC final yang menghapus file) sebelum
+          // error dilempar. Tanpa ini riwayat hanya menampilkan "sukses" kosong dan operator
+          // tidak punya jejak untuk membedakan "QC menolak wajah" vs "TTS gagal".
+          try {
+            patchJob(jobId, {
+              lastError: mergeErr.message,
+              finalFailureReason: mergeErr.isFinalQcFailure ? 'FINAL_MASTER_QC_FAILED' : 'FINAL_RENDER_FAILED',
+              finalQc: mergeErr.finalQc || null,
+              hasFinalVideo: false,
+              visionProvenance: visionSummary,
+              isRescueStoryboard: Boolean(highlight?.isRescueStoryboard),
+            }, { force: true });
+          } catch { /* jejak gagal tidak boleh menutupi error utama */ }
+          recordStageEvent({
+            jobId,
+            kind: 'metric',
+            stage: 'completed',
+            provider: 'pipeline',
+            message: `Auto mode GAGAL di tahap final (bukan sukses kosong): ${mergeErr.isFinalQcFailure ? 'QC final menolak video' : 'render final gagal'}`,
+            failureReason: mergeErr.message,
+            meta: { isFinalQcFailure: Boolean(mergeErr.isFinalQcFailure), visionProvenance: visionSummary, isRescueStoryboard: Boolean(highlight?.isRescueStoryboard) },
+          });
+          console.error(`[Job ${jobId}] ⛔ Tahap final AUTO gagal${mergeErr.isFinalQcFailure ? ' (FINAL_MASTER_QC_FAILED: video kotor ditolak QC)' : ''}: ${mergeErr.message}. Video final TIDAK ada - ini BUKAN sukses.`);
+          throw mergeErr;
+        }
+        autoFinalError = mergeErr;
+        console.warn(`[Job ${jobId}] Tahap final gagal, lanjut menunggu voiceover manual:`, mergeErr.message);
       }
     }
 
-    // Fallback: If TTS or auto merge fails, pause at awaiting_voiceover (for manual) or finish silent (for auto)
+    // Fallback (MODE MANUAL SAJA): TTS atau tahap final gagal -> berhenti di awaiting_voiceover
+    // dengan video silent 9:16 siap pakai. Untuk job AUTO blok ini tidak lagi tercapai:
+    // kegagalan final di-throw di atas agar Auto Mode menganggapnya GAGAL (bukan "berhasil"
+    // tanpa output seperti sebelumnya).
     const stage1Result = {
       ...extraJobMeta,
       jobId,
-      stage: isAutoModeFallback ? 'completed' : 'awaiting_voiceover',
-      status: isAutoModeFallback ? 'completed' : 'awaiting_voiceover',
+      stage: 'awaiting_voiceover',
+      status: 'awaiting_voiceover',
+      lastError: autoFinalError ? autoFinalError.message : null,
+      finalFailureReason: autoFinalError && autoFinalError.isFinalQcFailure ? 'FINAL_MASTER_QC_FAILED' : null,
+      finalQc: autoFinalError?.finalQc || null,
       createdAt: jobMeta.createdAt,
       silentFileName,
       silentVideoUrl: `/api/video/${silentFileName}`,
@@ -2606,7 +2828,12 @@ async function _runStage1Pipeline({
         detectedBrand: highlight.detectedBrand || 'none',
         allowHflip: !isBrandDetected,
         reframe: highlight.reframe,
-        clips: highlight.clips
+        clips: highlight.clips,
+        // detectedProduct dulu TIDAK ikut tersimpan -> retry kehilangan identitas produk hasil
+        // vision dan jatuh kembali ke judul mentah Shopee (lihat record auto_3dd085b354).
+        detectedProduct: highlight.detectedProduct || '',
+        isRescueStoryboard: Boolean(highlight.isRescueStoryboard),
+        audioDriven: highlight.audioDriven || null,
       },
       hasProductBrand: isBrandDetected,
       detectedBrand: highlight.detectedBrand || 'none',
@@ -2622,20 +2849,23 @@ async function _runStage1Pipeline({
       creativePlan,
       videoTitle: videoMeta.title,
       isOrphan: false,
+      visionProvenance: visionSummary,
+      isRescueStoryboard: Boolean(highlight.isRescueStoryboard),
     };
 
-    activeJobs.set(jobId, stage1Result);
-    persistJob(jobId, stage1Result);
+    const stage1Job = patchJob(jobId, stage1Result, { force: true });
 
     updateProgress({
-      step: isAutoModeFallback ? 'completed' : 'awaiting_voiceover',
-      message: isAutoModeFallback ? '✅ Auto Mode Selesai Tanpa Suara (TTS Gagal)' : 'Tahap 1 Selesai! Kotak Scene, Naskah, dan Muted 9:16 Video Ready.',
+      step: 'awaiting_voiceover',
+      message: autoFinalError
+        ? `⚠️ Tahap 1 selesai TANPA video final (${autoFinalError.message}). Scene & video silent 9:16 tersimpan - silakan generate Voiceover/Subtitle ulang.`
+        : 'Tahap 1 Selesai! Kotak Scene, Naskah, dan Muted 9:16 Video Ready.',
       progress: 100, 
-      status: isAutoModeFallback ? 'completed' : 'awaiting_voiceover', 
-      result: stage1Result
+      status: 'awaiting_voiceover', 
+      result: stage1Job
     });
 
-    return stage1Result;
+    return stage1Job;
   } catch (error) {
     if (error.isAiRejection) {
       console.warn(`[Job ${jobId}] ℹ️ Video ditolak Filter AI: ${error.rejectionReason || error.message}`);
@@ -2674,6 +2904,10 @@ async function _runStage1Pipeline({
         shopeeLink: effectiveShopeeLink || shopeeLink || '',
         videoTitle: videoMeta?.title,
         highlight,
+        // Bukti jalur yang benar-benar dijalankan, ikut disimpan pada job GAGAL juga:
+        // inilah field yang dipakai operator membedakan "evidence mode" vs "pola lama".
+        visionProvenance: summarizeVisionRuns(visionState.runs),
+        isRescueStoryboard: Boolean(highlight?.isRescueStoryboard),
       };
       activeJobs.set(jobId, preservedJob);
       persistJob(jobId, preservedJob);
@@ -2685,6 +2919,18 @@ async function _runStage1Pipeline({
         status: 'awaiting_voiceover',
         result: preservedJob,
       });
+
+      if (isAuto) {
+        // MODE AUTO: tidak ada video final = BUKAN sukses. Record silent 9:16 tetap
+        // ditinggalkan (bisa di-TTS manual dari panel), tapi error diteruskan ke Auto
+        // Mode supaya job dicatat GAGAL dan worker mencari sumber lain. Sebelumnya jalur
+        // ini `return preservedJob` sehingga stage1Discovery menaikkan `successfulJobs++`
+        // -> laporan "Auto Mode selesai: 1 video berhasil" padahal output kosong.
+        console.error(`[Job ${jobId}] ⛔ Auto mode dinyatakan GAGAL: ${error.message} (video final tidak ada; silent 9:16 dipertahankan di riwayat).`);
+        error.jobId = jobId;
+        error.isQuotaError = isQuotaErrorMessage(error.message);
+        throw error;
+      }
 
       return preservedJob;
     }
@@ -2702,6 +2948,8 @@ async function _runStage1Pipeline({
         stage: 'error',
         lastError: error.message,
         errorAt: new Date().toISOString(),
+        visionProvenance: summarizeVisionRuns(visionState.runs),
+        isRescueStoryboard: Boolean(highlight?.isRescueStoryboard),
       };
       activeJobs.set(jobId, errorJob);
       persistJob(jobId, errorJob);

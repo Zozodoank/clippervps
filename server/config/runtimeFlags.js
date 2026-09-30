@@ -29,6 +29,14 @@ const FLAG_NORMALIZERS = {
   GK_MAX_BATCH_FRAMES: (env) => Math.max(20, Number(env.GK_MAX_BATCH_FRAMES) || 240),
   // audioBeatService.isAudioDrivenEnabled: trim().toLowerCase() === 'true'
   AUDIO_DRIVEN_SCENES: (env) => String(env.AUDIO_DRIVEN_SCENES || '').trim().toLowerCase() === 'true',
+  // downloader.js render path: parseInt(env.RENDER_MAX_HEIGHT,10) valid>0 ? itu : 1080
+  RENDER_MAX_HEIGHT: (env) => {
+    const v = parseInt(env.RENDER_MAX_HEIGHT, 10);
+    return Number.isFinite(v) && v > 0 ? v : 1080;
+  },
+  // downloader.js render path: env RENDER_VIDEO_ONLY !== '0' (default ON buang audio).
+  // Bekukan supaya retry di Termux (720p + audio-on) tidak tiba-tiba berubah format.
+  RENDER_VIDEO_ONLY: (env) => env.RENDER_VIDEO_ONLY !== '0',
   // finalizationService: process.env.FINAL_AI_QC !== 'false'
   FINAL_AI_QC: (env) => env.FINAL_AI_QC !== 'false',
   // finalizationService: process.env.FINAL_AI_QC_STRICT === 'true'
@@ -83,6 +91,10 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.SAMPLE_MAX_FRAMES === 'number') patch.SAMPLE_MAX_FRAMES = String(snapshot.SAMPLE_MAX_FRAMES);
   if (typeof snapshot.GK_MAX_BATCH_FRAMES === 'number') patch.GK_MAX_BATCH_FRAMES = String(snapshot.GK_MAX_BATCH_FRAMES);
   if (typeof snapshot.AUDIO_DRIVEN_SCENES === 'boolean') patch.AUDIO_DRIVEN_SCENES = snapshot.AUDIO_DRIVEN_SCENES ? 'true' : 'false';
+  // RENDER_VIDEO_ONLY dibaca dengan `!== '0'`, jadi 'false' pun berarti ON. Tulis nilai
+  // kanonik '1'/'0' agar pembacaan konsumen identik dengan nilai yang dibekukan.
+  if (typeof snapshot.RENDER_MAX_HEIGHT === 'number') patch.RENDER_MAX_HEIGHT = String(snapshot.RENDER_MAX_HEIGHT);
+  if (typeof snapshot.RENDER_VIDEO_ONLY === 'boolean') patch.RENDER_VIDEO_ONLY = snapshot.RENDER_VIDEO_ONLY ? '1' : '0';
   if (typeof snapshot.FINAL_AI_QC === 'boolean') patch.FINAL_AI_QC = snapshot.FINAL_AI_QC ? 'true' : 'false';
   if (typeof snapshot.FINAL_AI_QC_STRICT === 'boolean') patch.FINAL_AI_QC_STRICT = snapshot.FINAL_AI_QC_STRICT ? 'true' : 'false';
   // Selalu ditulis (bukan hanya saat 'aktif') karena default env berbeda default snapshot
