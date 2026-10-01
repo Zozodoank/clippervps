@@ -20,7 +20,8 @@ import {
   getDynamicProductHookFallback,
   verifyProductCandidateWithAI,
   verifyFinalRenderedFramesWithAI,
-  getDirectGeminiApiKey
+  getDirectGeminiApiKey,
+  preSelectTop2CandidatesWithGemini
 } from '../services/aiService.js';
 import { generateSrtSubtitles } from '../services/subtitleService.js';
 import { loadEnglishDictionary, saveToEnglishDictionary } from '../services/dictionaryService.js';
@@ -46,7 +47,8 @@ import {
   filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
   callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
+  sampleDenseClustersAroundCleanFrames,
+  extractFastSnippetsForPreflight
 } from '../services/videoFilterService.js';
 // AUDIO-DRIVEN SCENE PLANNING (Fase 1 & 2) - percobaan, di-guard flag AUDIO_DRIVEN_SCENES.
 import { analyzeSourceAudioForBeats, isAudioDrivenEnabled, resolveAudioWindow } from '../services/audioBeatService.js';
@@ -79,6 +81,10 @@ import {
   clearUsedKeywords,
   searchMultiEngineVideos
 } from '../services/discoveryService.js';
+import { fetchProductImageFromSearch } from '../services/imageSearchService.js';
+
+let preFlightDoneMap = new Map();
+
 import { getAllNiches, getNichePreset } from '../config/nichePresets.js';
 import {
   buildProductFingerprint,
@@ -1155,6 +1161,40 @@ async function _runStage1Pipeline({
             break;
           }
         }
+        // --- FAST PRE-FLIGHT CHECK ---
+        if (!preFlightDoneMap.has(jobId) && candidatePool.length >= 2) {
+          preFlightDoneMap.set(jobId, true);
+          console.log(`[Job ${jobId}] 🚀 Memulai Fast Pre-Flight Check untuk kandidat awal...`);
+          try {
+            updateProgress({ step: 'pre_flight', message: 'Mencari gambar produk & memotong cuplikan kandidat...', progress: 10 });
+            
+            const altImages = await fetchProductImageFromSearch(productTitle, outputDir);
+            const imageForGemini = (effectiveProductImage && fs.existsSync(effectiveProductImage)) 
+              ? effectiveProductImage 
+              : altImages;
+
+            const snippetUrls = candidatePool.slice(candidatePoolIndex, candidatePoolIndex + 5).map(c => c.url);
+            const snippets = await extractFastSnippetsForPreflight(snippetUrls, outputDir);
+            
+            updateProgress({ step: 'pre_flight', message: 'Memilih 2 video terbaik dengan AI...', progress: 15 });
+            const topIndices = await preSelectTop2CandidatesWithGemini(imageForGemini, snippets, apiKey);
+            
+            if (topIndices && topIndices.length > 0) {
+              const bestCandidates = [];
+              const others = [];
+              for (let i = candidatePoolIndex; i < candidatePool.length; i++) {
+                const relativeIdx = i - candidatePoolIndex;
+                if (topIndices.includes(relativeIdx)) bestCandidates.push(candidatePool[i]);
+                else others.push(candidatePool[i]);
+              }
+              candidatePool.splice(candidatePoolIndex, candidatePool.length - candidatePoolIndex, ...bestCandidates, ...others);
+              console.log(`[Job ${jobId}] 🚀 Pre-Flight selesai! Urutan kandidat terbaik:`, bestCandidates.map(c => c.title || c.url));
+            }
+          } catch (err) {
+            console.warn(`[Job ${jobId}] ⚠️ Pre-Flight Check gagal, melanjutkan secara normal: ${err.message}`);
+          }
+        }
+        // -----------------------------
 
         const candidate = candidatePool[candidatePoolIndex++];
         if (!candidate || !candidate.url) continue;
@@ -1482,7 +1522,9 @@ async function _runStage1Pipeline({
               const minSourcesForSatisfactory = Math.min(2, targetMultiSources);
               const isSatisfactory = currentClips.length >= 5 || (currentClips.length >= 3 && multiCandidateCount >= minSourcesForSatisfactory && !hasMissingSlots);
 
-              if (isSatisfactory) {
+              const forceSecond = preFlightDoneMap.get(jobId) && streamedCount < 2 && candidatePoolIndex < candidatePool.length;
+
+              if (isSatisfactory && !forceSecond) {
                 console.log(`[Job ${jobId}] ✅ AI Vision berhasil memilih ${currentClips.length} cuplikan produk dari ${preferredSoFar.length} video (Multi-sumber: ${multiCandidateCount} video)!`);
                 hl = testHl;
                 pooledFrames = testPool.filter(f => !blacklistedFramePaths.has(f.filePath));

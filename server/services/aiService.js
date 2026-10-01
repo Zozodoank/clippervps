@@ -3087,3 +3087,97 @@ Kembalikan format JSON persis:
   return cleanDetected;
 }
 
+/**
+ * Uploads 10s snippets to Gemini File API and prompts it to select the best TWO videos matching the product.
+ * @param {string|string[]} productImage - Local path(s) or URL(s) to product images.
+ * @param {Array<{url: string, snippetPath: string, index: number}>} candidateSnippets 
+ * @param {string} apiKey - Optional Gemini API Key
+ * @returns {Promise<number[]>} Array of top 2 candidate indices.
+ */
+export async function preSelectTop2CandidatesWithGemini(productImage, candidateSnippets, apiKey) {
+  if (!candidateSnippets || candidateSnippets.length === 0) return [];
+
+  const geminiKey = getDirectGeminiApiKey(apiKey);
+  if (!geminiKey) throw new Error('GEMINI_API_KEY belum disetel untuk Pre-Flight Check.');
+
+  const fileManager = new GoogleAIFileManager(geminiKey);
+  const genAI = new GoogleGenerativeAI(geminiKey);
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", generationConfig: { responseMimeType: "application/json" } });
+
+  const uploadedFiles = [];
+  const contents = [];
+
+  // Helper to upload
+  const uploadToGemini = async (filePath, mimeType) => {
+    try {
+      const uploadResponse = await fileManager.uploadFile(filePath, { mimeType });
+      uploadedFiles.push(uploadResponse.file.name);
+      return uploadResponse.file;
+    } catch (err) {
+      console.warn(`[PreFlight] Failed to upload ${filePath}: ${err.message}`);
+      return null;
+    }
+  };
+
+  try {
+    // 1. Upload Product Image(s)
+    let images = Array.isArray(productImage) ? productImage : [productImage];
+    for (const img of images) {
+      if (img && fs.existsSync(img)) {
+        const file = await uploadToGemini(img, 'image/jpeg');
+        if (file) {
+          contents.push({ fileData: { fileUri: file.uri, mimeType: file.mimeType } });
+        }
+      }
+    }
+
+    // 2. Upload Video Snippets
+    for (const snippet of candidateSnippets) {
+      if (fs.existsSync(snippet.snippetPath)) {
+        const file = await uploadToGemini(snippet.snippetPath, 'video/mp4');
+        if (file) {
+          contents.push({ text: `Ini adalah Kandidat Video dengan index: ${snippet.index}` });
+          contents.push({ fileData: { fileUri: file.uri, mimeType: file.mimeType } });
+        }
+      }
+    }
+
+    if (contents.length < 2) {
+      console.warn('[PreFlight] Not enough valid files uploaded for preflight check.');
+      return candidateSnippets.map(c => c.index).slice(0, 2);
+    }
+
+    // 3. Prompt Gemini
+    contents.push({
+      text: `Analisa dengan cepat: Pilih DUA VIDEO yang paling cocok dengan produk pada gambar, TIDAK memiliki animasi grafis/subtitle mengganggu di area tengah, dan peragaannya paling bagus. Format JSON: { "top2_indices": [index1, index2] }`
+    });
+
+    console.log(`[PreFlight] Memanggil Gemini 1.5 Flash untuk memilih 2 video terbaik dari ${candidateSnippets.length} kandidat...`);
+    const response = await model.generateContent(contents);
+    const text = response.response.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      json = repairJson(text) || {};
+    }
+
+    let top2 = json?.top2_indices;
+    if (Array.isArray(top2) && top2.length > 0) {
+      console.log(`[PreFlight] Gemini memilih kandidat:`, top2);
+      return top2.slice(0, 2).map(Number).filter(n => !isNaN(n));
+    }
+    
+    // Fallback: just return the first 2
+    return candidateSnippets.map(c => c.index).slice(0, 2);
+
+  } catch (error) {
+    console.error(`[PreFlight] AI Error:`, error.message);
+    return candidateSnippets.map(c => c.index).slice(0, 2);
+  } finally {
+    // Cleanup files in Gemini
+    for (const name of uploadedFiles) {
+      try { await fileManager.deleteFile(name); } catch (e) {}
+    }
+  }
+}

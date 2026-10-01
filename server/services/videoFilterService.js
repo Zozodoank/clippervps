@@ -1976,3 +1976,66 @@ export async function sampleDenseClustersAroundCleanFrames(streamUrl, outputDir,
 
   return denseFrames;
 }
+
+/**
+ * Extract 10-second MP4 snippets starting at 5s mark from video URLs for Fast Pre-Flight Check.
+ * @param {string[]} urls - Array of YouTube / OEM video URLs.
+ * @param {string} outputDir - Directory to save snippet MP4s.
+ * @returns {Promise<Array<{url: string, snippetPath: string, index: number}>>}
+ */
+export async function extractFastSnippetsForPreflight(urls, outputDir) {
+  if (!urls || !Array.isArray(urls) || urls.length === 0) return [];
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+
+  const { exec } = await import('child_process');
+  const util = await import('util');
+  const execAsync = util.promisify(exec);
+
+  const ffmpegPath = getFFmpegPath();
+  const ytDlpPath = getYtDlpPath();
+
+  const snippetPromises = urls.map(async (url, index) => {
+    if (!url) return null;
+    try {
+      const snippetPath = path.join(outputDir, `preflight_snippet_${index}_${Date.now()}.mp4`);
+      
+      const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" --print "%(url)s|%(duration)s" -f "best[ext=mp4]/best" "${url}"`);
+      const lines = streamInfoRaw.trim().split('\n').filter(Boolean);
+      // Ensure we get the last line (in case there are warnings in stdout)
+      const lastLine = lines[lines.length - 1];
+      if (!lastLine || !lastLine.includes('|')) throw new Error(`Could not fetch stream URL for ${url}`);
+      
+      const [streamUrl, durationStr] = lastLine.split('|');
+      const durationSec = parseFloat(durationStr) || 0;
+      
+      // Calculate middle of video (or 30% mark if very long), fallback to 5s if unknown/short
+      let startSec = 5;
+      if (durationSec > 30) {
+        startSec = Math.floor(durationSec * 0.4); // 40% mark is usually the core content
+      } else if (durationSec > 15) {
+        startSec = 5;
+      }
+
+      const formattedStart = new Date(startSec * 1000).toISOString().substr(11, 8); // e.g., 00:01:30
+
+      const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+      const ffmpegCmd = `"${ffmpegPath}" -y -user_agent "${browserUserAgent}" -ss ${formattedStart} -i "${streamUrl}" -t 10 -c:v libx264 -preset veryfast -crf 28 -an "${snippetPath}"`;
+      await execAsync(ffmpegCmd);
+
+      if (fs.existsSync(snippetPath) && fs.statSync(snippetPath).size > 0) {
+        return { url, snippetPath, index };
+      }
+      return null;
+    } catch (err) {
+      console.warn(`[FastPreflight] Snippet extraction failed for index ${index} (${url}): ${err.message}`);
+      return null;
+    }
+  });
+
+  const results = await Promise.allSettled(snippetPromises);
+  return results
+    .filter(r => r.status === 'fulfilled' && r.value !== null)
+    .map(r => r.value);
+}
