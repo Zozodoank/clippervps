@@ -1187,6 +1187,19 @@ async function _runStage1Pipeline({
           continue;
         }
 
+        if (bestVerified?.highlight?.pipelineVersion === 'whisper_first_v1') {
+          console.log(`[Job ${jobId}] ⚡ Whisper-First Pipeline: Menggabungkan ${preferredSoFar.length} kandidat lolos! Melewati AI Storyboard fallback...`);
+          hl = {
+            clips: preferredSoFar.map(c => c.highlight.clips[0]),
+            bestWindow: bestVerified.highlight.bestWindow,
+            whisperSegments: bestVerified.highlight.whisperSegments,
+            narration: bestVerified.highlight.narration,
+            pipelineVersion: 'whisper_first_v1',
+            productHook: bestVerified.highlight.productHook
+          };
+          break;
+        }
+
         // Coba jalankan AI Storyboard jika sudah ada cukup frame
         if ((bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) || totalCleanFrames >= 8) {
           const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 500, includeEligible: true })
