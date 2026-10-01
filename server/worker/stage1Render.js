@@ -1118,6 +1118,25 @@ async function _runStage1Pipeline({
 
       console.log(`[Job ${jobId}] Memulai Multi-Video Stream & Harvesting adaptif (maksimal stream ${maxStreamVideos} video, target klip 30-35s) untuk "${productTitle}"...`);
 
+      let masterRetryCount = 0;
+      let finalCompletedJob = null;
+      let forceManualFallback = false;
+
+      while (!finalCompletedJob && masterRetryCount < 3 && !forceManualFallback) {
+        masterRetryCount++;
+        
+        if (masterRetryCount > 1) {
+          console.log(`[Job ${jobId}] 🔄 [Master Loop] Memulai ulang pencarian kandidat video karena penolakan AI (Percobaan ${masterRetryCount}/3)...`);
+          if (hl && hl.clips) {
+             const failedIndices = [...new Set(hl.clips.map(c => c.candidateIndex))];
+             candidateResults = candidateResults.filter(c => !failedIndices.includes(c.candidateIndex));
+          }
+          hl = null;
+          downloadedCandidatesMap.clear();
+          // Tambah jatah stream agar dapat mengambil 1 video kandidat baru dari pool
+          maxStreamVideos += 1;
+        }
+
       while (streamedCount < maxStreamVideos) {
         // 1. Jika antrean candidatePool habis sebelum kuota stream tercapai, cari kandidat pengganti tambahan
         if (candidatePoolIndex >= candidatePool.length) {
@@ -1770,9 +1789,12 @@ async function _runStage1Pipeline({
       }
 
       if (!hl || !Array.isArray(hl.clips) || hl.clips.length === 0) {
-        throw new Error(
-          `Semua kandidat video (telah di-stream ${streamedCount} video) belum memiliki cukup cuplikan produk yang memenuhi syarat untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'frame tidak mencukupi / ditolak filter atau AI'}.`
-        );
+        const fallbackMsg = `Semua kandidat video (telah di-stream ${streamedCount} video) belum memiliki cukup cuplikan produk yang memenuhi syarat untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'frame tidak mencukupi / ditolak filter atau AI'}.`;
+        if (isAutoModeFallback && candidatePoolIndex < candidatePool.length) {
+            console.warn(`[Job ${jobId}] ⚠️ ${fallbackMsg}. Meneruskan ke iterasi Master Loop untuk mencari video lain...`);
+            continue; // Ulangi master loop
+        }
+        throw new Error(fallbackMsg);
       }
 
       // Visibilitas variasi sumber. Storyboard 1 sumber pernah terjadi DIAM-DIAM
@@ -2888,18 +2910,16 @@ async function _runStage1Pipeline({
           result: completedJob,
         });
 
-        return completedJob;
+        finalCompletedJob = completedJob;
+        break; // Berhasil, keluar dari master loop
       } catch (mergeErr) {
         if (isAutoModeFallback) {
-          // MODE AUTO: video final adalah satu-satunya output. Kalau tahap final/QC gagal,
-          // JANGAN pernah melabeli job 'completed' dengan pesan hijau - itu persis penyebab
-          // "job berhasil tapi output kosong" (final dihapus saat QC menolak, error ditelan).
-          // Error diteruskan ke blok catch di bawah: aset silent tetap dipertahankan, dan
-          // Auto Mode mencatatnya sebagai GAGAL lalu mencari sumber lain (self-healing).
+          if (mergeErr.isFinalQcFailure || mergeErr.isAiRejection) {
+            console.warn(`[Job ${jobId}] ⛔ QC Final (Tahap 2) menolak video 1080p: ${mergeErr.message}. Membatalkan sisa tahap ini dan mencari video lain...`);
+            continue; // Kembali ke awal master loop untuk mencoba kandidat berikutnya
+          }
+          
           mergeErr.jobId = jobId;
-          // Rekam PENYEBAB kegagalan (termasuk vonis QC final yang menghapus file) sebelum
-          // error dilempar. Tanpa ini riwayat hanya menampilkan "sukses" kosong dan operator
-          // tidak punya jejak untuk membedakan "QC menolak wajah" vs "TTS gagal".
           try {
             patchJob(jobId, {
               lastError: mergeErr.message,
@@ -2915,16 +2935,23 @@ async function _runStage1Pipeline({
             kind: 'metric',
             stage: 'completed',
             provider: 'pipeline',
-            message: `Auto mode GAGAL di tahap final (bukan sukses kosong): ${mergeErr.isFinalQcFailure ? 'QC final menolak video' : 'render final gagal'}`,
+            message: `Auto mode GAGAL di tahap final: ${mergeErr.message}`,
             failureReason: mergeErr.message,
             meta: { isFinalQcFailure: Boolean(mergeErr.isFinalQcFailure), visionProvenance: visionSummary, isRescueStoryboard: Boolean(highlight?.isRescueStoryboard) },
           });
-          console.error(`[Job ${jobId}] ⛔ Tahap final AUTO gagal${mergeErr.isFinalQcFailure ? ' (FINAL_MASTER_QC_FAILED: video kotor ditolak QC)' : ''}: ${mergeErr.message}. Video final TIDAK ada - ini BUKAN sukses.`);
           throw mergeErr;
         }
         autoFinalError = mergeErr;
+        forceManualFallback = true;
         console.warn(`[Job ${jobId}] Tahap final gagal, lanjut menunggu voiceover manual:`, mergeErr.message);
       }
+    }
+    } // Akhir Master Loop
+
+    if (finalCompletedJob) return finalCompletedJob;
+
+    if (isAutoModeFallback) {
+      throw new Error(`Gagal merender video setelah ${masterRetryCount} kali percobaan (kandidat habis atau selalu ditolak QC).`);
     }
 
     // Fallback (MODE MANUAL SAJA): TTS atau tahap final gagal -> berhenti di awaiting_voiceover
