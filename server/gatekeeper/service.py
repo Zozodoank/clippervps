@@ -621,9 +621,8 @@ class TextGatekeeper:
     Deteksi teks, watermark pojok, subtitle terbakar, dan promo banner.
     Memeriksa 4 sudut frame secara ketat untuk menangkap watermark sekecil 2-5% zona.
     """
-    def __init__(self, max_total_coverage=0.012, max_bottom_coverage=0.013):
-        # Threshold diperketat (2026-09-24): subtitle >= 1.3% area bawah, total teks >= 1.2% frame, sudut >= 1.2%
-        # Lebih agresif untuk menangkap angka/badge kecil mengambang, overlay samar, dan teks semi-transparan
+    def __init__(self, max_total_coverage=0.035, max_bottom_coverage=0.040):
+        # Threshold dilonggarkan kembali karena terlalu sensitif terhadap teks fisik produk
         self.max_total_coverage = max_total_coverage
         self.max_bottom_coverage = max_bottom_coverage
         self.ort_session = None
@@ -745,14 +744,14 @@ class TextGatekeeper:
                             return True, total_cov, bottom_cov, f"Watermark / badge teks terdeteksi di sudut {c_name} ({bw}x{bh}px, area={blob_area}px)", corner_activations
 
                 # ── Ambang Batas Ketat Per-Zona ──
-                # Sudut TL / TR / BL / BR: >= 1.2% zona dianggap watermark digital
-                if tl_cov >= 0.012:
+                # Sudut TL / TR / BL / BR: >= 3.5% zona dianggap watermark digital
+                if tl_cov >= 0.035:
                     return True, total_cov, bottom_cov, f"Watermark di pojok kiri atas / TL (coverage {tl_cov * 100:.1f}%)", corner_activations
-                if tr_cov >= 0.012:
+                if tr_cov >= 0.035:
                     return True, total_cov, bottom_cov, f"Watermark di pojok kanan atas / TR (coverage {tr_cov * 100:.1f}%)", corner_activations
-                if bl_cov >= 0.012:
+                if bl_cov >= 0.035:
                     return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kiri bawah / BL (coverage {bl_cov * 100:.1f}%)", corner_activations
-                if br_cov >= 0.012:
+                if br_cov >= 0.035:
                     return True, total_cov, bottom_cov, f"Watermark / floating badge di pojok kanan bawah / BR (coverage {br_cov * 100:.1f}%)", corner_activations
 
                 if bottom_cov >= self.max_bottom_coverage:
