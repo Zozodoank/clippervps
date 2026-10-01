@@ -1491,7 +1491,7 @@ export const KNOWN_BRANDS = [
   'Maspion', 'Miyako', 'Cosmos', 'Kirin', 'Maxim', 'Oxone', 'BOLDe', 'Mito', 'Mitochiba',
   'Yong Ma', 'Rinnai', 'Sanken', 'Denpoo', 'Sekai', 'Hi-Cook', 'Beko', 'Philips', 'Tefal',
   'LocknLock', 'Signora', 'Bima', 'Kedaung', 'Hakazima', 'Starfrit', 'Finest Cook',
-  'Neochef', 'Sico', 'Perkasa', 'Vitaro', 'Tupperware', 'Thermos', 'Zojirushi',
+  'Neochef', 'Sico', 'Vitaro', 'Tupperware', 'Thermos', 'Zojirushi',
   'Electrolux', 'Sharp', 'Panasonic', 'Toshiba',
   // Brand Smartphone & Gadget (Entry-Level, Mid-Range 2 Jutaan, Flagship, Gaming & Viral):
   'itel', 'Infinix', 'TECNO', 'Poco', 'Redmi', 'Realme',
@@ -1979,7 +1979,7 @@ export async function discoverBrandedShopeeProduct({
         'Maspion', 'Miyako', 'Cosmos', 'Kirin', 'Maxim', 'Oxone', 'BOLDe', 'Mito', 'Mitochiba',
         'Yong Ma', 'Rinnai', 'Sanken', 'Denpoo', 'Sekai', 'Hi-Cook', 'Beko', 'Philips', 'Tefal',
         'LocknLock', 'Signora', 'Bima', 'Kedaung', 'Hakazima', 'Starfrit', 'Finest Cook',
-        'Neochef', 'Sico', 'Perkasa', 'Vitaro', 'Tupperware', 'Thermos', 'Zojirushi',
+        'Neochef', 'Sico', 'Vitaro', 'Tupperware', 'Thermos', 'Zojirushi',
         'Electrolux', 'Sharp', 'Panasonic', 'Toshiba'
       ];
 
