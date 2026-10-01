@@ -3149,10 +3149,10 @@ export async function preSelectTop2CandidatesWithGemini(productImage, candidateS
 
     // 3. Prompt Gemini
     contents.push({
-      text: `Analisa dengan cepat: Pilih DUA VIDEO yang paling cocok dengan produk pada gambar, TIDAK memiliki animasi grafis/subtitle mengganggu di area tengah, dan peragaannya paling bagus. Format JSON: { "top2_indices": [index1, index2] }`
+      text: `Analisa dengan cepat: Pilih MAKSIMAL DUA VIDEO yang paling cocok dengan produk pada gambar (tidak boleh salah model atau beda fungsi). Video TIDAK BOLEH memiliki animasi grafis/subtitle mengganggu di area tengah, dan peragaannya harus bagus. Jika TIDAK ADA SATUPUN yang cocok, WAJIB kembalikan array kosong. Format JSON: { "top2_indices": [index1, index2] }`
     });
 
-    console.log(`[PreFlight] Memanggil Gemini 1.5 Flash untuk memilih 2 video terbaik dari ${candidateSnippets.length} kandidat...`);
+    console.log(`[PreFlight] Mengirim 10 detik cuplikan dari ${candidateSnippets.length} kandidat video dan 1 gambar produk ke Gemini File API...`);
     const response = await model.generateContent(contents);
     const text = response.response.text();
     let json;
