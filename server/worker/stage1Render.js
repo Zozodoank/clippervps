@@ -1162,9 +1162,11 @@ async function _runStage1Pipeline({
           }
         }
         // --- FAST PRE-FLIGHT CHECK ---
-        if (!preFlightDoneMap.has(jobId)) {
-          preFlightDoneMap.set(jobId, true);
-          console.log(`[Job ${jobId}] 🚀 Memulai Fast Pre-Flight Check untuk kandidat awal...`);
+        const currentPoolCandidate = candidatePool[candidatePoolIndex];
+        const isCurrentOem = currentPoolCandidate && (options.oemUrls?.includes(currentPoolCandidate.url) || options.oemUrl1 === currentPoolCandidate.url || options.oemUrl2 === currentPoolCandidate.url);
+        
+        if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem) {
+          console.log(`[Job ${jobId}] 🚀 Memulai Fast Pre-Flight Check untuk kandidat...`);
           try {
             updateProgress({ step: 'pre_flight', message: 'Mencari gambar produk & memotong cuplikan kandidat...', progress: 10 });
             
@@ -1176,6 +1178,13 @@ async function _runStage1Pipeline({
             const snippetUrls = candidatePool.slice(candidatePoolIndex, candidatePoolIndex + 3).map(c => c.url);
             const snippets = await extractFastSnippetsForPreflight(snippetUrls, outputDir);
             
+            // Tandai kandidat yang telah diekstrak agar tidak diuji ulang
+            for (let i = 0; i < snippets.length; i++) {
+              if (candidatePool[candidatePoolIndex + i]) {
+                candidatePool[candidatePoolIndex + i].preFlightChecked = true;
+              }
+            }
+            
             updateProgress({ step: 'pre_flight', message: 'Memilih video terbaik dengan AI...', progress: 15 });
             const topIndices = await preSelectTop2CandidatesWithGemini(imageForGemini, snippets, apiKey);
             
@@ -1185,14 +1194,12 @@ async function _runStage1Pipeline({
               for (let i = candidatePoolIndex; i < candidatePool.length; i++) {
                 const relativeIdx = i - candidatePoolIndex;
                 if (relativeIdx < snippets.length) {
-                  // Kandidat ini ikut diuji oleh Pre-Flight
                   if (topIndices.includes(relativeIdx)) {
                     bestCandidates.push(candidatePool[i]);
                   } else {
                     console.log(`[Job ${jobId}] ⚠️ Membuang kandidat "${candidatePool[i].title || candidatePool[i].url}" karena ditolak oleh Pre-Flight Gemini.`);
                   }
                 } else {
-                  // Kandidat ini belum diuji
                   untested.push(candidatePool[i]);
                 }
               }
@@ -1201,11 +1208,11 @@ async function _runStage1Pipeline({
             } else if (snippets.length > 0) {
               console.log(`[Job ${jobId}] ⚠️ Pre-Flight: Gemini menolak semua ${snippets.length} kandidat awal (tidak cocok/kotor). Melewati kandidat ini...`);
               candidatePoolIndex += snippets.length;
-              preFlightDoneMap.delete(jobId); // Ulangi Pre-Flight untuk batch kandidat berikutnya!
               continue; // Langsung cari kandidat baru tanpa perlu streaming
             }
           } catch (err) {
             console.warn(`[Job ${jobId}] ⚠️ Pre-Flight Check gagal, melanjutkan secara normal: ${err.message}`);
+            if (candidatePool[candidatePoolIndex]) candidatePool[candidatePoolIndex].preFlightChecked = true;
           }
         }
         // -----------------------------
