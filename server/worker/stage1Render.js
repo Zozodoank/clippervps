@@ -884,7 +884,7 @@ async function _runStage1Pipeline({
     let rawVoiceScript = null;
     let autoVoiceoverPath = null;
     let silentDurationSec = 0;
-    ttsSucceeded = false;
+    let ttsSucceeded = false;
     let visionSummary = null;
 
     while (!finalCompletedJob && masterRetryCount < 3 && !forceManualFallback) {
@@ -2631,7 +2631,7 @@ async function _runStage1Pipeline({
       status: 'running',
     });
 
-    let ttsSucceeded = false;
+    ttsSucceeded = false;
     let ttsResult = null;
     for (let ttsAttempt = 0; ttsAttempt < 3; ttsAttempt++) {
       try {
