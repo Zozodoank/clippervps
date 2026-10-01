@@ -775,6 +775,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   // Seek: remote = two-stage (coarse HTTP range + fine decode); local = single input-seek (instant moov).
   const concurrency = networkArgs.length === 0 ? 8 : (isMobile ? 2 : 4);
   const executing = [];
+  let framesProcessed = 0;
   for (const point of samplePoints) {
     // Micro pacing delay (only needed for remote to avoid rate-limit; local skips)
     if (networkArgs.length > 0) await new Promise(r => setTimeout(r, isMobile ? 25 : 15));
@@ -805,6 +806,13 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
       }, networkArgs.length === 0 ? 5000 : 8000);
       proc.on('close', () => { if (!finished) { finished = true; clearTimeout(timer); resolve(); } });
       proc.on('error', () => { if (!finished) { finished = true; clearTimeout(timer); resolve(); } });
+    });
+
+    p.then(() => {
+      framesProcessed++;
+      if (framesProcessed % 10 === 0 || framesProcessed === samplePoints.length) {
+        console.log(`[VideoFilterService] ⏳ Dense sampling progress: ${framesProcessed}/${samplePoints.length} frames...`);
+      }
     });
 
     const e = p.then(() => executing.splice(executing.indexOf(e), 1));
