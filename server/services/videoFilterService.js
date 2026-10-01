@@ -1994,7 +1994,7 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
   const execAsync = util.promisify(exec);
 
   const ffmpegPath = getFFmpegPath();
-  const ytDlpPath = getYtDlpPath();
+  const ytDlpPath = await getYtDlpPath();
 
   const snippetPromises = urls.map(async (url, index) => {
     if (!url) return null;
