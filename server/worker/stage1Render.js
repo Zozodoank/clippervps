@@ -1136,6 +1136,7 @@ async function _runStage1Pipeline({
         // -----------------------------
 
         const candidate = candidatePool[candidatePoolIndex++];
+        const currentCandIdx = candidatePoolIndex - 1;
         if (!candidate || !candidate.url) continue;
 
         const candVid = extractVideoId(candidate.url) || candidate.id;
