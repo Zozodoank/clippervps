@@ -275,11 +275,12 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
 
       if (!isAutoJob) {
         // RETRY MANUAL: bangun ulang kandidat dari link tersimpan (youtubeUrl + OEM). TANPA pencarian web.
-        const primaryUrl = originalYoutubeUrl || savedOemUrls[0] || '';
-        if (!primaryUrl) {
+        const allUrls = [originalYoutubeUrl, ...savedOemUrls].filter(Boolean);
+        if (allUrls.length === 0) {
           throw new Error('Job manual tidak memiliki URL sumber tersimpan untuk di-retry. Kirim ulang link video aslinya.');
         }
-        targetCandidates = [{ url: primaryUrl, title: job.productTitle || 'YouTube Video' }];
+        // Gunakan Set untuk menghindari URL duplikat
+        targetCandidates = Array.from(new Set(allUrls)).map(url => ({ url, title: job.productTitle || 'YouTube Video' }));
         updateJobProgress(jobId, {
           step: 'retry_source',
           message: `🔒 Retry manual: memakai URL sumber lama (tanpa mencari video baru di mesin telusur).`,

@@ -1162,7 +1162,7 @@ async function _runStage1Pipeline({
           }
         }
         // --- FAST PRE-FLIGHT CHECK ---
-        if (!preFlightDoneMap.has(jobId) && candidatePool.length >= 2) {
+        if (!preFlightDoneMap.has(jobId)) {
           preFlightDoneMap.set(jobId, true);
           console.log(`[Job ${jobId}] 🚀 Memulai Fast Pre-Flight Check untuk kandidat awal...`);
           try {
