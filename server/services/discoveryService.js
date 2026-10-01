@@ -4557,7 +4557,9 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
   const fallbackIdentity = String(identity || '').trim();
 
   if (exactIdentity) {
+    add(`${exactIdentity} review jujur`);
     add(`${exactIdentity} review indonesia`);
+    add(`${exactIdentity} voice over`);
     add(`${exactIdentity} unboxing review`);
     add(`${exactIdentity} unboxing`);
     add(`${exactIdentity} review`);
@@ -4565,13 +4567,16 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
     add(`${exactIdentity} demo produk`);
     add(`unboxing ${exactIdentity}`);
   } else if (fallbackIdentity && !cleanBrand) {
+    add(`${fallbackIdentity} review jujur`);
     add(`${fallbackIdentity} review indonesia`);
+    add(`${fallbackIdentity} voice over`);
     add(`${fallbackIdentity} unboxing`);
     add(`${fallbackIdentity} review`);
     add(`${fallbackIdentity} demo produk`);
   }
 
   if (cleanBrand && cleanModel && normalizeText(cleanBrand) !== normalizeText(cleanModel)) {
+    add(`${cleanBrand} ${cleanModel} review jujur`);
     add(`${cleanBrand} ${cleanModel} review indonesia`);
     add(`${cleanBrand} ${cleanModel} unboxing`);
     add(`${cleanBrand} ${cleanModel} review`);
@@ -4579,6 +4584,7 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
   }
 
   if (cleanBrand && type && normalizeText(cleanBrand) !== normalizeText(type)) {
+    add(`${cleanBrand} ${type} review jujur`);
     add(`${cleanBrand} ${type} review indonesia`);
     add(`${cleanBrand} ${type} unboxing`);
     add(`review ${cleanBrand} ${type}`);

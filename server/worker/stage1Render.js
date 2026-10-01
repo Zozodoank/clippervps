@@ -892,12 +892,16 @@ async function _runStage1Pipeline({
         const m = (info.model || options.model || '').trim();
         const p = (info.coreProductNoun || options.productType || '').trim();
         const fallbackQueries = [
+          b && m ? `${b} ${m} review jujur` : '',
           b && m ? `${b} ${m} review indonesia` : '',
           b && m ? `${b} ${m} review` : '',
           b && m ? `unboxing ${b} ${m}` : '',
+          b && p ? `${b} ${p} review jujur` : '',
           b && p ? `${b} ${p} review` : '',
           b && p ? `review ${b} ${p}` : '',
+          b ? `${b} review jujur` : '',
           b ? `${b} review indonesia` : '',
+          p ? `${p} review jujur` : '',
           p ? `${p} review indonesia` : '',
           `${cleanTitle(productTitle)} review`,
           cleanTitle(productTitle),
