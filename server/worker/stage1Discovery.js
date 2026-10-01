@@ -309,6 +309,8 @@ export async function runAutoStage1Worker(run) {
                 progress: Math.min(98, baseProgress + stepFraction),
               });
             }
+            // Add job progress update so individual job UI and PM2 logs match real-time
+            updateJobProgress(autoJobId, p);
           },
         });
 
