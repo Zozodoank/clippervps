@@ -39,20 +39,19 @@ export function getAllUsedBrandProductPairsToday() {
       if (jobDate === todayStr || !job.createdAt) {
         const brand = (job.brand || '').toLowerCase().trim();
         const noun = (job.coreProductNoun || '').toLowerCase().trim();
-        if (brand && noun) {
-          usedPairs.add(`${brand} ${noun}`);
-        } else if (noun) {
-          usedPairs.add(noun);
+        const model = (job.model || '').toLowerCase().trim();
+        if (brand || noun || model) {
+          usedPairs.add([brand, noun, model].filter(Boolean).join(' '));
         }
         const prodTitle = (job.productTitle || job.cleanProductTitle || '').toLowerCase().trim();
         if (prodTitle) {
           const info = extractCoreProductInfo(prodTitle);
           const infoBrand = (info.brand || '').toLowerCase().trim();
           const infoNoun = (info.coreProductNoun || '').toLowerCase().trim();
-          if (infoBrand && infoNoun) {
-            usedPairs.add(`${infoBrand} ${infoNoun}`);
-          } else if (infoNoun) {
-            usedPairs.add(infoNoun);
+          const infoModel = (info.model || '').toLowerCase().trim();
+          
+          if (infoBrand || infoNoun || infoModel) {
+            usedPairs.add([infoBrand, infoNoun, infoModel].filter(Boolean).join(' '));
           }
         }
       }

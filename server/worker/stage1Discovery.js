@@ -201,11 +201,9 @@ export async function runAutoStage1Worker(run) {
       }
 
       // ── DEDUPLIKASI PRODUK HARIAN (BRAND + PRODUCT TYPE) ──
-      // Menggunakan kombinasi brand + type agar merk berbeda untuk tipe produk yang sama
-      // (misal: Gaabor Air Fryer, Simplus Air Fryer, Deerma Vacuum) tetap dapat diproses hari ini.
-      const brandNounCombo = brand && productType
-        ? `${brand.toLowerCase()} ${productType.toLowerCase()}`.trim()
-        : productType.toLowerCase().trim();
+      // Menggunakan kombinasi brand + type + model agar merk berbeda / model berbeda tetap dapat diproses
+      const modelLower = model ? model.toLowerCase().trim() : '';
+      const brandNounCombo = [brand?.toLowerCase()?.trim(), productType?.toLowerCase()?.trim(), modelLower].filter(Boolean).join(' ');
       const usedBrandProducts = getAllUsedBrandProductPairsToday();
       if (brandNounCombo && usedBrandProducts.has(brandNounCombo)) {
         console.log(`[Auto] Skip "${shopeeCandidate.title}": Kombinasi brand + produk sejenis ("${brandNounCombo}") sudah pernah dibuat hari ini.`);
