@@ -150,5 +150,9 @@ export function coreNegativeOperators() {
   // Urutan = prioritas. Tiga teratas wajib ikut bahkan untuk query bermotif
   // review/unboxing (paling sering dipakai) karena itulah kata yang menghasilkan
   // listing servis/tutorial di hasil pencarian.
-  return ['-servis', '-cara', '-tutorial', '-diy', '-reparasi', '-repair', '-perbaikan', '-rusak', '-matot', '-bongkar', '-"mati total"', '-service'];
+  return [
+    '-servis', '-cara', '-tutorial', '-diy', '-reparasi', '-repair', '-perbaikan',
+    '-rusak', '-matot', '-bongkar', '-"mati total"', '-service',
+    '-vlog', '-"mini vlog"', '-wajah', '-host'
+  ];
 }
