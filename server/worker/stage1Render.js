@@ -547,8 +547,8 @@ async function _runStage1Pipeline({
       }
       console.log(`[Job ${jobId}] ✅ [Fast Probe Lolos] 5 frame lokal bersih.`);
 
-      // ── TAHAP 5: CONTEXT PREVIEW (35s) & WHISPER CONTEXT ──
-      const contextDuration = Number(process.env.WHISPER_CONTEXT_DURATION_SEC) || 35;
+      // ── TAHAP 5: CONTEXT PREVIEW (25s) & WHISPER CONTEXT ──
+      const contextDuration = Number(process.env.WHISPER_CONTEXT_DURATION_SEC) || 25;
       updateProgress({ step: 'context_preview', message: `⚡ Download konteks narasi ${contextDuration} detik...`, progress: 30 });
       
       const contextPreview = await downloadQuickPreview(targetUrl, tempDir, jobId + '_ctx', {

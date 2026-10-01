@@ -2223,6 +2223,7 @@ HARD MATCH RULES:
 - Hand-crank/rotary != push-press.
 - Vacuum/suction != non-vacuum.
 - Foldable != rigid when foldability is a defining construction.
+- IMPORTANT: The candidate frames might be padded to 9:16 with heavily blurred top and bottom margins. Completely ignore these blurred margins. Do NOT reject the frames because of the blurred margins.
 - If evidence is ambiguous, REJECT. Never guess true.
 
 Return strict JSON only:

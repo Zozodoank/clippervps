@@ -2080,6 +2080,7 @@ export async function fastProbeLocal(videoFilePath, jobId, {
       '-i', videoFilePath,
       '-vframes', '1',
       '-q:v', '2',
+      '-filter_complex', '[0:v]scale=720:1280:force_original_aspect_ratio=increase,boxblur=luma_radius=15:luma_power=1[bg];[0:v]scale=720:1280:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=format=auto',
       '-y',
       outPath
     ];
