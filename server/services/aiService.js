@@ -2488,6 +2488,7 @@ export async function generateAdAdvisorScriptWithAI({
   productDescription,
   shopeeLink,
   productHook,
+  whisperSegments = [],
   segmentDuration = 33,
   sceneDuration = 3.3,
   niche = 'kitchen_tools',
@@ -2548,6 +2549,7 @@ STRICT RULES FOR VOICE OVER:
 - Write in natural, engaging conversational Indonesian.
 - DILARANG KERAS menggunakan kata "kece" dan "kangen".
 - HINDARI KATA SLANG "ng" (nggak, ngasih, ngeliat, dll) - gunakan kata baku.
+- PENTING: Gunakan transkrip audio asli sebagai inspirasi utama, perbaiki menjadi bahasa Indonesia yang lebih natural dan relevan dengan produk.
 - DILARANG menyebut nama medsos lain.
 - DILARANG mengatakan "link di bio", "keranjang kuning", "checkout", atau ajakan beli langsung! Ini adalah Soft CTA murni untuk YouTube Shorts review.
 
@@ -2632,6 +2634,7 @@ STRICT RULES FOR VOICE OVER:
 - Write in natural, engaging conversational Indonesian.
 - DILARANG KERAS menggunakan kata "kece" dan "kangen".
 - HINDARI KATA SLANG "ng" (nggak, ngasih, ngeliat, dll) - gunakan kata baku.
+- PENTING: Gunakan transkrip audio asli sebagai inspirasi utama, perbaiki menjadi bahasa Indonesia yang lebih natural dan relevan dengan produk.
 - DILARANG menyebut nama medsos lain (TikTok, Instagram, YouTube, Facebook, dll).
 - DILARANG mengatakan "link di bio" - WAJIB gunakan "keranjang pojok kiri bawah" atau "produk di bawah".
 - Ejaan baku tanpa aksen é/è.

@@ -729,7 +729,7 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   });
 
   // Tier 1: Try Cobalt API if configured (only for full download)
-  if (process.env.COBALT_API_URL && !isPreview) {
+  if (process.env.COBALT_API_URL && !isPreview && !section) {
     const cobaltRes = await downloadWithCobaltApi(url, finalExpectedPath, onProgress);
     if (cobaltRes) {
       onProgress({ step: 'download', message: 'Video downloaded via Cobalt API.', progress: 35 });

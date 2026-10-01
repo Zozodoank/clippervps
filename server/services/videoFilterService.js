@@ -2047,3 +2047,71 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
     .filter(r => r.status === 'fulfilled' && r.value !== null)
     .map(r => r.value);
 }
+
+/**
+ * Fast probe: ekstrak 5 frame dari file lokal pada posisi 10%, 25%, 50%, 75%, 90% durasi.
+ */
+export async function fastProbeLocal(videoFilePath, jobId, {
+  onProgress = () => {},
+  niche = 'kitchen_tools',
+  facePolicy = null,
+  durationSec = 10,
+  sourceId = null
+} = {}) {
+  const ffmpegPath = getFFmpegPath();
+  const path = await import('path');
+  const fs = await import('fs');
+  const { spawn } = await import('child_process');
+  
+  const tmpDir = path.join(process.cwd(), 'server/temp', `probe_${jobId}_${Date.now()}`);
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+
+  const timestamps = [0.1, 0.25, 0.5, 0.75, 0.9].map(p => durationSec * p);
+  const frames = [];
+
+  onProgress({ step: 'frame_probe', message: 'Mengekstrak 5 frame lokal dari preview...', progress: 25 });
+
+  for (let i = 0; i < timestamps.length; i++) {
+    const ts = timestamps[i];
+    const outPath = path.join(tmpDir, `frame_${i}.jpg`);
+    
+    const args = [
+      '-ss', ts.toString(),
+      '-i', videoFilePath,
+      '-vframes', '1',
+      '-q:v', '2',
+      '-y',
+      outPath
+    ];
+
+    await new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, args);
+      proc.on('close', resolve);
+      proc.on('error', resolve);
+    });
+
+    if (fs.existsSync(outPath)) {
+      frames.push({
+        candidateUrl: sourceId || 'local_probe',
+        sourceId: sourceId || 'local_probe',
+        filePath: outPath,
+        timestamp: ts,
+        timestampSec: ts
+      });
+    }
+  }
+
+  // Lakukan inspeksi lokal dengan Gatekeeper (memerlukan min 5 frame)
+  onProgress({ step: 'frame_probe', message: 'Mengirim 5 frame ke Gatekeeper...', progress: 28 });
+  const inspection = await inspectFramesLocally(frames, { niche, facePolicy, onProgress });
+  
+  if (!inspection.eligible && inspection.reason && inspection.reason.includes('Gatekeeper unavailable')) {
+    throw new Error('Gatekeeper unavailable');
+  }
+
+  return {
+    ...inspection,
+    frames,
+    tmpDir
+  };
+}

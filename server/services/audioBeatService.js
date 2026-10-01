@@ -83,14 +83,41 @@ export function assessVoiceoverPresence(segments = [], totalDurationSec = 0, opt
   const minCoverage = Number(opts.minCoverage ?? process.env.AUDIO_MIN_SPEECH_COVERAGE) || 0.15;
   const minWords = Number(opts.minWords ?? process.env.AUDIO_MIN_SPEECH_WORDS) || 6;
 
-  let speechSec = 0;
   let wordCount = 0;
+  let validIntervals = [];
+
   for (const s of segments) {
-    const dur = Math.max(0, (Number(s.end) || 0) - (Number(s.start) || 0));
-    speechSec += dur;
     const text = (s.text || '').trim();
-    if (text) wordCount += text.split(/\s+/).filter(Boolean).length;
+    if (!text || text.match(/^\[.*\]$/)) continue; // Abaikan segmen kosong atau murni noise token [Music]
+    wordCount += text.split(/\s+/).filter(Boolean).length;
+    
+    let start = Number(s.start);
+    let end = Number(s.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    
+    // Clamp ke rentang file
+    start = Math.max(0, start);
+    if (totalDurationSec > 0) end = Math.min(end, totalDurationSec);
+    if (end > start) validIntervals.push({ start, end });
   }
+
+  // Gabungkan overlap agar tidak dihitung ganda
+  validIntervals.sort((a, b) => a.start - b.start);
+  let merged = [];
+  for (const iv of validIntervals) {
+    if (merged.length === 0) {
+      merged.push(iv);
+    } else {
+      let last = merged[merged.length - 1];
+      if (iv.start <= last.end) {
+        last.end = Math.max(last.end, iv.end);
+      } else {
+        merged.push(iv);
+      }
+    }
+  }
+
+  let speechSec = merged.reduce((acc, iv) => acc + (iv.end - iv.start), 0);
   const coverage = totalDurationSec > 0 ? Math.min(1, speechSec / totalDurationSec) : 0;
   const hasVoiceover = speechSec >= minSpeechSec && wordCount >= minWords && coverage >= minCoverage;
 
@@ -216,7 +243,7 @@ export async function extractSourceAudio({ videoPath, outWav, startSec = 0, endS
     // Video sumber tanpa track audio (mis. unduhan video-only utk frame) -> bukan
     // kesalahan tools, tapi kondisi sah: kembalikan noAudio agar pemanggil memperlakukan
     // sebagai "tanpa voice-over", bukan error keras.
-    if (blob.includes('does not contain any stream') || blob.includes('invalid argument')) {
+    if (blob.includes('does not contain any stream') || blob.includes('output file is empty')) {
       logger.warn(`[AudioBeat] Video sumber tidak punya track audio untuk diekstrak.`);
       return { ok: false, noAudio: true, error: 'Video sumber tidak memiliki track audio.' };
     }
