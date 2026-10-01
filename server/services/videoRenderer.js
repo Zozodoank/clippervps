@@ -28,7 +28,8 @@ export async function renderSilentAntiDetectionVideo({
   hflip = false,
   speedMultiplier = 1,
   reframe = {},
-  onProgress = () => {}
+  onProgress = () => {},
+  isAutoModeFallback = true
 }) {
   const ffmpegPath = getFFmpegPath();
   const outDir = path.dirname(outputVideo);
@@ -62,7 +63,7 @@ export async function renderSilentAntiDetectionVideo({
 
   return new Promise(async (resolve, reject) => {
     try {
-      const selectedClips = normalizeRenderClips(clips, startTime, endTime, reframe);
+      const selectedClips = normalizeRenderClips(clips, startTime, endTime, reframe, isAutoModeFallback);
 
       // Multi-source render safety: never substitute the first input video when a clip's
       // own source path is missing. That fallback can turn a correct A/B/A/B storyboard
@@ -405,7 +406,7 @@ function buildClipFilter({ inputIndex, outputLabel, reframe = {}, hflip, ptsFact
   ];
 }
 
-export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, fallbackReframe = {}) {
+export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, fallbackReframe = {}, isAutoModeFallback = true) {
   const defaultClipLength = 3.0;
   const sourceClips = Array.isArray(clips) ? clips : [];
   const normalized = [];
@@ -466,7 +467,11 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
       const durationErr = new Error(`Durasi final video terlalu pendek (${currentTotal.toFixed(1)} detik, minimal ${MIN_VIDEO_DURATION_SEC} detik). Silakan gunakan video dengan variasi adegan yang lebih banyak.`);
       durationErr.isAiRejection = true;
       durationErr.rejectionReason = `Durasi final (${currentTotal.toFixed(1)}s) tidak memenuhi syarat minimal algoritma Reels (${MIN_VIDEO_DURATION_SEC}s).`;
-      throw durationErr;
+      if (isAutoModeFallback) {
+        throw durationErr;
+      } else {
+        console.warn(`[normalizeRenderClips] ⚠️ ${durationErr.message} (Melanjutkan render karena mode manual)`);
+      }
     } else {
       console.log(`[normalizeRenderClips] ✅ Total durasi klip terkurasi: ${currentTotal.toFixed(1)}s (${deduplicated.length} klip bersih). Memenuhi syarat minimal 20.0s.`);
     }
