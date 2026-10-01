@@ -12,5 +12,8 @@
     "client": "npm --prefix client run dev",
     "dev": "node dev-runner.js",
     "dev:polling": "cross-env CHOKIDAR_USEPOLLING=1 node dev-runner.js"
+  },
+  "dependencies": {
+    "acorn": "^8.18.0"
   }
 }

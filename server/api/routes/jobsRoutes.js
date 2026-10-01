@@ -279,6 +279,9 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
         if (allUrls.length === 0) {
           throw new Error('Job manual tidak memiliki URL sumber tersimpan untuk di-retry. Kirim ulang link video aslinya.');
         }
+        // [FIX] Force explicitOnly for manual retries
+        if (!job.options) job.options = {};
+        job.options.explicitOnly = true;
         // Gunakan Set untuk menghindari URL duplikat
         targetCandidates = Array.from(new Set(allUrls)).map(url => ({ url, title: job.productTitle || 'YouTube Video' }));
         updateJobProgress(jobId, {

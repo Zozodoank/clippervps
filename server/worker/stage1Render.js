@@ -869,7 +869,25 @@ async function _runStage1Pipeline({
     }
 
     // Jika belum disetujui atau masuk mode Multi-Video Harvesting: Jalankan Stream 3-5 Video & Frame Pooling!
-    if (!approved) {
+    let masterRetryCount = 0;
+    let finalCompletedJob = null;
+    let forceManualFallback = false;
+    let autoFinalError = null;
+    const failedCandidateUrls = new Set();
+    let maxStreamVideos = explicitOnly ? 10 : (preferMultiVideo ? 5 : 3);
+    let streamedCount = 0;
+    let candidateResults = [];
+    let hl = null;
+
+    while (!finalCompletedJob && masterRetryCount < 3 && !forceManualFallback) {
+      masterRetryCount++;
+      if (masterRetryCount > 1) {
+        approved = false; // Paksa re-harvesting
+        console.log(`[Job ${jobId}] 🔄 [Master Loop] Memulai ulang pencarian kandidat video (Percobaan ${masterRetryCount}/3)...`);
+        maxStreamVideos += 1;
+      }
+
+      if (!approved) {
       const allowAutoSearch = !explicitOnly && options.autoSearchFallback !== false && Boolean(productTitle);
       if (!allowAutoSearch && !preferMultiVideo && !explicitOnly) {
         throw lastRejectionError || new Error('Video ditolak oleh AI.');
@@ -894,6 +912,7 @@ async function _runStage1Pipeline({
 
       let searchIteration = 0;
       let candidatePool = Array.isArray(targetCandidates) ? [...targetCandidates] : [];
+      candidatePool = candidatePool.filter(c => !failedCandidateUrls.has(c.url || c));
 
       // Dedup berbasis VIDEO-ID (bukan string URL persis) agar dua URL yang menunjuk video yang sama
       // (mis. youtu.be/ID vs youtube.com/watch?v=ID) tidak di-stream dobel & tidak boros kuota.
@@ -1118,25 +1137,6 @@ async function _runStage1Pipeline({
 
       console.log(`[Job ${jobId}] Memulai Multi-Video Stream & Harvesting adaptif (maksimal stream ${maxStreamVideos} video, target klip 30-35s) untuk "${productTitle}"...`);
 
-      let masterRetryCount = 0;
-      let finalCompletedJob = null;
-      let forceManualFallback = false;
-
-      while (!finalCompletedJob && masterRetryCount < 3 && !forceManualFallback) {
-        masterRetryCount++;
-        
-        if (masterRetryCount > 1) {
-          console.log(`[Job ${jobId}] 🔄 [Master Loop] Memulai ulang pencarian kandidat video karena penolakan AI (Percobaan ${masterRetryCount}/3)...`);
-          if (hl && hl.clips) {
-             const failedIndices = [...new Set(hl.clips.map(c => c.candidateIndex))];
-             candidateResults = candidateResults.filter(c => !failedIndices.includes(c.candidateIndex));
-          }
-          hl = null;
-          downloadedCandidatesMap.clear();
-          // Tambah jatah stream agar dapat mengambil 1 video kandidat baru dari pool
-          maxStreamVideos += 1;
-        }
-
       while (streamedCount < maxStreamVideos) {
         // 1. Jika antrean candidatePool habis sebelum kuota stream tercapai, cari kandidat pengganti tambahan
         if (candidatePoolIndex >= candidatePool.length) {
@@ -1184,7 +1184,7 @@ async function _runStage1Pipeline({
         const currentPoolCandidate = candidatePool[candidatePoolIndex];
         const isCurrentOem = currentPoolCandidate && (options.oemUrls?.includes(currentPoolCandidate.url) || options.oemUrl1 === currentPoolCandidate.url || options.oemUrl2 === currentPoolCandidate.url);
         
-        if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem) {
+        if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem && !explicitOnly) {
           console.log(`[Job ${jobId}] 🚀 Memulai Fast Pre-Flight Check untuk kandidat...`);
           try {
             updateProgress({ step: 'pre_flight', message: 'Mencari gambar produk & memotong cuplikan kandidat...', progress: 10 });
@@ -2911,15 +2911,28 @@ async function _runStage1Pipeline({
         });
 
         finalCompletedJob = completedJob;
-        break; // Berhasil, keluar dari master loop
+        break;
       } catch (mergeErr) {
         if (isAutoModeFallback) {
           if (mergeErr.isFinalQcFailure || mergeErr.isAiRejection) {
             console.warn(`[Job ${jobId}] ⛔ QC Final (Tahap 2) menolak video 1080p: ${mergeErr.message}. Membatalkan sisa tahap ini dan mencari video lain...`);
-            continue; // Kembali ke awal master loop untuk mencoba kandidat berikutnya
+            if (candidateResults) {
+              candidateResults.forEach(c => {
+                if (c.candidate && c.candidate.url) failedCandidateUrls.add(c.candidate.url);
+              });
+              candidateResults = []; // Kosongkan agar mencari baru
+            }
+            continue; // Kembali ke awal master loop
           }
-          
+          // MODE AUTO: video final adalah satu-satunya output. Kalau tahap final/QC gagal,
+          // JANGAN pernah melabeli job 'completed' dengan pesan hijau - itu persis penyebab
+          // "job berhasil tapi output kosong" (final dihapus saat QC menolak, error ditelan).
+          // Error diteruskan ke blok catch di bawah: aset silent tetap dipertahankan, dan
+          // Auto Mode mencatatnya sebagai GAGAL lalu mencari sumber lain (self-healing).
           mergeErr.jobId = jobId;
+          // Rekam PENYEBAB kegagalan (termasuk vonis QC final yang menghapus file) sebelum
+          // error dilempar. Tanpa ini riwayat hanya menampilkan "sukses" kosong dan operator
+          // tidak punya jejak untuk membedakan "QC menolak wajah" vs "TTS gagal".
           try {
             patchJob(jobId, {
               lastError: mergeErr.message,
@@ -2935,10 +2948,11 @@ async function _runStage1Pipeline({
             kind: 'metric',
             stage: 'completed',
             provider: 'pipeline',
-            message: `Auto mode GAGAL di tahap final: ${mergeErr.message}`,
+            message: `Auto mode GAGAL di tahap final (bukan sukses kosong): ${mergeErr.isFinalQcFailure ? 'QC final menolak video' : 'render final gagal'}`,
             failureReason: mergeErr.message,
             meta: { isFinalQcFailure: Boolean(mergeErr.isFinalQcFailure), visionProvenance: visionSummary, isRescueStoryboard: Boolean(highlight?.isRescueStoryboard) },
           });
+          console.error(`[Job ${jobId}] ⛔ Tahap final AUTO gagal${mergeErr.isFinalQcFailure ? ' (FINAL_MASTER_QC_FAILED: video kotor ditolak QC)' : ''}: ${mergeErr.message}. Video final TIDAK ada - ini BUKAN sukses.`);
           throw mergeErr;
         }
         autoFinalError = mergeErr;
