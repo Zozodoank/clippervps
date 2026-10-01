@@ -29,7 +29,7 @@ export async function downloadQuickPreview(url, outputDir, jobId, {
       const { execFile } = await import('child_process');
       const util = await import('util');
       const execFileAsync = util.promisify(execFile);
-      const { stdout } = await execFileAsync(ytDlpPath, ['--print', '%(id)s|%(duration)s', '--no-playlist', url]);
+      const { stdout } = await execFileAsync(ytDlpPath, ['--js-runtimes', 'node', '--print', '%(id)s|%(duration)s', '--no-playlist', url]);
       const lines = stdout.trim().split('\n').filter(Boolean);
       const lastLine = lines[lines.length - 1];
       if (lastLine && lastLine.includes('|')) {
@@ -57,6 +57,7 @@ export async function downloadQuickPreview(url, outputDir, jobId, {
   // We prefer 360p or lower, but must have audio.
   const dlArgs = [
     '--no-playlist',
+    '--js-runtimes', 'node',
     '-f', 'best[height<=360][ext=mp4]/bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
     '--download-sections', `*${startSec}-${endSec}`,
     '--force-keyframes-at-cuts',
@@ -75,7 +76,7 @@ export async function downloadQuickPreview(url, outputDir, jobId, {
         try { proc.kill('SIGKILL'); } catch {}
         reject(new Error('Download preview timeout'));
       }
-    }, 60000);
+    }, 300000);
 
     proc.on('close', (code) => {
       if (finished) return;

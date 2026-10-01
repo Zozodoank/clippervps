@@ -2009,7 +2009,7 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
     try {
       const snippetPath = path.join(outputDir, `preflight_snippet_${index}_${Date.now()}.mp4`);
       
-      const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" --print "%(url)s|%(duration)s" -f "best[ext=mp4]/best" "${url}"`);
+      const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" --js-runtimes node --print "%(url)s|%(duration)s" -f "best[ext=mp4]/best" "${url}"`);
       const lines = streamInfoRaw.trim().split('\n').filter(Boolean);
       // Ensure we get the last line (in case there are warnings in stdout)
       const lastLine = lines[lines.length - 1];
