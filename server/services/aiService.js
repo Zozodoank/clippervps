@@ -70,6 +70,88 @@ const __dirname = path.dirname(__filename);
 // Moved buildFaceAndMotionCriterion to ai/promptBuilders.js
 
 /**
+ * TAHAP 3 (arsitektur Gemini-first + SmolVLM2): DISCOVERY WINDOW SCENE.
+ * Gemini membaca video YouTube penuh via fileUri NATIVE (0 unduhan lokal, 0 FFmpeg),
+ * lalu mengusulkan beberapa WINDOW scene kandidat (bukan vonis akhir). Backend akan
+ * mengunduh klip pendek HANYA untuk window ini, sampled 1fps, lalu memverifikasi tiap
+ * scene secara lokal dengan SmolVLM2. Ini membalik urutan lama (gatekeeper dulu ->
+ * Gemini) menjadi Gemini dulu -> verifikasi lokal ringan.
+ *
+ * @returns {Promise<{windows:Array<{startSec:number,endSec:number,reason:string}>, model:string, status:string}>}
+ */
+export async function discoverSceneWindowsWithGemini({
+  youtubeUrl,
+  productTitle = '',
+  productDescription = '',
+  niche = 'kitchen_tools',
+  clipSec = 4,
+  apiKey,
+  maxWindows = 10,
+  onProgress = () => {},
+} = {}) {
+  if (!youtubeUrl || !/^https?:\/\//.test(youtubeUrl)) {
+    throw new Error('URL YouTube tidak valid untuk scene discovery.');
+  }
+  const geminiKey = getDirectGeminiApiKey(apiKey);
+  if (!geminiKey) throw new Error('GEMINI_API_KEY tidak tersedia untuk scene discovery.');
+
+  const prodInfo = extractCoreProductInfo(productTitle, productDescription);
+  const coreNoun = prodInfo.coreProductNoun || 'Produk';
+  const clip = Math.max(2, Math.min(5, Number(clipSec) || 4));
+
+  onProgress({ step: 'gemini_scene_discovery', message: `🧭 Gemini memindai video untuk kandidat window scene "${coreNoun}"...`, progress: 42 });
+
+  const prompt = `You are a scene hunter for an affiliate clipper. Product target: "${coreNoun}".
+Watch the video and PROPOSE up to ${maxWindows} candidate scene windows where the PHYSICAL product is clearly demonstrated (hands-on, working), preferring DIVERSE angles/actions.
+Skip intros, bumper/title cards, packaging-only shots, and any segment likely to contain faces/subtitles/watermarks/overlays.
+Each window must be about ${clip} seconds long and NON-overlapping.
+Return ONLY compact JSON: {"windows":[{"startSec":<number>,"endSec":<number>,"reason":"<short>"}]}`;
+
+  const genAI = new GoogleGenerativeAI(geminiKey);
+  const candidateModels = [
+    'gemini-2.5-flash',
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+    'gemini-2.5-flash-lite',
+  ];
+  let lastErr = null;
+  for (let i = 0; i < candidateModels.length; i++) {
+    const modelName = candidateModels[i];
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: { responseMimeType: 'application/json', temperature: 0.2, mediaResolution: 'MEDIA_RESOLUTION_LOW' },
+      });
+      trackBandwidth('aiRequests', 2500, `Gemini Scene Discovery (${modelName})`);
+      const result = await model.generateContent([
+        { fileData: { fileUri: youtubeUrl, mimeType: 'video/mp4' }, videoMetadata: { fps: 0.5 } },
+        { text: prompt },
+      ]);
+      const parsed = repairJson(result.response.text());
+      const rawWindows = Array.isArray(parsed?.windows) ? parsed.windows : [];
+      const windows = rawWindows
+        .map((w) => {
+          const s = Number(w.startSec ?? w.start);
+          let e = Number(w.endSec ?? w.end);
+          if (!Number.isFinite(s)) return null;
+          if (!Number.isFinite(e) || e <= s) e = s + clip;
+          return { startSec: Math.max(0, s), endSec: e, reason: String(w.reason || '').slice(0, 120) };
+        })
+        .filter(Boolean);
+      if (windows.length > 0) {
+        console.log(`[Gemini Scene Discovery] ${modelName}: ${windows.length} window kandidat.`);
+        return { windows, model: modelName, status: 'accept' };
+      }
+      lastErr = new Error('Gemini tidak mengembalikan window (kosong).');
+    } catch (err) {
+      lastErr = err;
+      console.warn(`[Gemini Scene Discovery] ${modelName} gagal: ${err?.message}`);
+    }
+  }
+  return { windows: [], model: candidateModels[0], status: 'empty', error: String(lastErr?.message || lastErr || 'no windows') };
+}
+
+/**
  * Stage 1 Jalur 1: Analyzes a public YouTube video directly via Google Gemini API using native video streaming (fileUri).
  * Zero download on local server, zero FFmpeg frame extraction, zero base64 payload.
  */

@@ -49,6 +49,9 @@ server/cookies.txt
 server/gatekeeper/models/*.onnx
 server/gatekeeper/models/*.tflite
 server/gatekeeper/models/*.data
+# Bobot VLM lokal (SmolVLM2 GGUF + projector) - diunduh sekali di PC, push ke Termux via scp.
+server/gatekeeper/models/*.gguf
+server/gatekeeper/models/*mmproj*.gguf
 server/gatekeeper/test_temp/
 server/gatekeeper/dataset/*
 !server/gatekeeper/dataset/*.json

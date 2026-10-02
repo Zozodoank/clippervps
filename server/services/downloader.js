@@ -813,7 +813,7 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     const dlBaseArgs = getDownloadArgs(clientType);
 
     // Hemat kuota render: audio sumber dibuang saat render, tinggi video dibatasi via env.
-    // RENDER_MAX_HEIGHT (default 1080; mis. 720 di Termux) + RENDER_VIDEO_ONLY (default ON; set '0' untuk tetap unduh audio).
+    // RENDER_MAX_HEIGHT (default 1080 di SEMUA mesin, termasuk Termux -> hasil akhir dipaksa 1080p; hanya turunkan manual ke 720 bila bersedia render lebih lambat/panas) + RENDER_VIDEO_ONLY (default ON; set '0' untuk tetap unduh audio).
     // KECUALI saat AUDIO_DRIVEN_SCENES aktif: whisper.cpp WAJIB punya track audio sumber.
     // Sebelum fix ini download render selalu video-only, sehingga analisis audio selalu
     // balik "video tidak memiliki track audio" -> fitur audio-driven mati DIAM-DIAM dan

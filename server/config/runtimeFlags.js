@@ -35,7 +35,7 @@ const FLAG_NORMALIZERS = {
     return Number.isFinite(v) && v > 0 ? v : 1080;
   },
   // downloader.js render path: env RENDER_VIDEO_ONLY !== '0' (default ON buang audio).
-  // Bekukan supaya retry di Termux (720p + audio-on) tidak tiba-tiba berubah format.
+  // Bekukan supaya retry di Termux (mis. 1080p + audio-on) tidak tiba-tiba berubah format.
   RENDER_VIDEO_ONLY: (env) => env.RENDER_VIDEO_ONLY !== '0',
   // finalizationService: process.env.FINAL_AI_QC !== 'false'
   FINAL_AI_QC: (env) => env.FINAL_AI_QC !== 'false',
@@ -61,6 +61,25 @@ const FLAG_NORMALIZERS = {
   // window teks + zigzag + segment-only). Nama kunci BEDA dari PIPELINE_MODE (label
   // whisper-first yang sudah ada & tidak dibaca kode) agar tidak tabrakan semantik.
   ACQUISITION_FLOW: (env) => (String(env.ACQUISITION_FLOW || '').trim().toLowerCase() === 'v2' ? 'v2' : 'legacy'),
+  // ── ARSITEKTUR GEMINI-FIRST + SmolVLM2 (opt-in). Default 'legacy' = jalur gatekeeper
+  // ONNX lama (SCRFD/DBNet/MobileNetV3 + gerbang Whisper) TIDAK berubah.
+  // 'smolvlm' = Gemini stream/File API mengusulkan window scene -> sampling per-kandidat
+  // @1fps -> verifikasi visual oleh SmolVLM2-500M (menggantikan gatekeeper lama), TANPA Whisper.
+  VISION_VERIFY_MODE: (env) => (String(env.VISION_VERIFY_MODE || '').trim().toLowerCase() === 'smolvlm' ? 'smolvlm' : 'legacy'),
+  // GEMINI_SCENE_DISCOVERY: pakai Gemini stream/File API sebagai PENCARI kandidat scene
+  // (mengembalikan daftar window). dibaca default OFF ('0').
+  GEMINI_SCENE_DISCOVERY: (env) => env.GEMINI_SCENE_DISCOVERY === '1' || String(env.GEMINI_SCENE_DISCOVERY || '').trim().toLowerCase() === 'true',
+  // Panjang klip per kandidat scene (detik). Sekaligus menentukan jumlah frame saat 1 fps.
+  // Clamp ke rentang aman 2-5s sesuai percakapan (2 dtk=2 frame, 5 dtk=5 frame).
+  SCENE_CLIP_DURATION_SEC: (env) => {
+    const v = Number(env.SCENE_CLIP_DURATION_SEC);
+    if (!Number.isFinite(v) || v <= 0) return 4;
+    return Math.min(5, Math.max(2, v));
+  },
+  // Rasio sampling frame per detik klip. Default 1 (= jumlah frame mengikuti durasi klip).
+  SCENE_SAMPLE_FPS: (env) => Math.max(0.5, Number(env.SCENE_SAMPLE_FPS) || 1),
+  // Jatah waktu VLM per frame (detik) untuk timeout subprocess llama-mtmd-cli. Default 10.
+  GK_VLM_TIMEOUT_SEC_PER_FRAME: (env) => Math.max(1, Number(env.GK_VLM_TIMEOUT_SEC_PER_FRAME) || 10),
 };
 
 export const SNAPSHOT_FLAG_KEYS = Object.keys(FLAG_NORMALIZERS);
@@ -115,6 +134,12 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.ACQUISITION_FLOW === 'string') patch.ACQUISITION_FLOW = snapshot.ACQUISITION_FLOW;
   if (typeof snapshot.EVIDENCE_MIN_FRAMES === 'number') patch.EVIDENCE_MIN_FRAMES = String(snapshot.EVIDENCE_MIN_FRAMES);
   if (typeof snapshot.EVIDENCE_MAX_FRAMES === 'number') patch.EVIDENCE_MAX_FRAMES = String(snapshot.EVIDENCE_MAX_FRAMES);
+  // Arsitektur Gemini-first + Smolvlm: selalu ditulis agar mode lama vs baru terkunci persis saat retry.
+  if (typeof snapshot.VISION_VERIFY_MODE === 'string') patch.VISION_VERIFY_MODE = snapshot.VISION_VERIFY_MODE;
+  if (typeof snapshot.GEMINI_SCENE_DISCOVERY === 'boolean') patch.GEMINI_SCENE_DISCOVERY = snapshot.GEMINI_SCENE_DISCOVERY ? '1' : '0';
+  if (typeof snapshot.SCENE_CLIP_DURATION_SEC === 'number') patch.SCENE_CLIP_DURATION_SEC = String(snapshot.SCENE_CLIP_DURATION_SEC);
+  if (typeof snapshot.SCENE_SAMPLE_FPS === 'number') patch.SCENE_SAMPLE_FPS = String(snapshot.SCENE_SAMPLE_FPS);
+  if (typeof snapshot.GK_VLM_TIMEOUT_SEC_PER_FRAME === 'number') patch.GK_VLM_TIMEOUT_SEC_PER_FRAME = String(snapshot.GK_VLM_TIMEOUT_SEC_PER_FRAME);
   return patch;
 }
 
@@ -132,6 +157,31 @@ export function isGeminiEvidenceEnabled(env = process.env) {
  */
 export function isNewFlowEnabled(env = process.env) {
   return String(env.ACQUISITION_FLOW || '').trim().toLowerCase() === 'v2';
+}
+
+/**
+ * Helper konsumen: apakah arsitektur verifikator visual baru (SmolVLM2) aktif.
+ * Default OFF -> seluruh pipeline memakai jalur gatekeeper ONNX + Whisper lama.
+ */
+export function isSmolvlmVerifyEnabled(env = process.env) {
+  return String(env.VISION_VERIFY_MODE || '').trim().toLowerCase() === 'smolvlm';
+}
+
+/**
+ * Helper konsumen: apakah Gemini stream/File API dipakai untuk mengusulkan window scene.
+ * Hanya relevan saat mode smolvlm aktif, tetapi dibaca terpisah agar mudah di-A/B.
+ */
+export function isGeminiSceneDiscoveryEnabled(env = process.env) {
+  return env.GEMINI_SCENE_DISCOVERY === '1' || String(env.GEMINI_SCENE_DISCOVERY || '').trim().toLowerCase() === 'true';
+}
+
+/**
+ * Helper konsumen: apakah gerbang/pemilihan-window Whisper harus DILEWATI.
+ * Pada arsitektur smolvlm, timing scene murni dari window Gemini + vonis SmolVLM2,
+ * sehingga Whisper gate & audio-driven tidak dipanggil. Mode legacy selalu False (Whisper tetap jalan).
+ */
+export function shouldBypassWhisperGate(env = process.env) {
+  return isSmolvlmVerifyEnabled(env);
 }
 
 /**

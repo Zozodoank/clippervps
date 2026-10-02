@@ -6,7 +6,7 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled } from '../config/runtimeFlags.js';
 import { shouldAllowRescue, buildVisionProvenance, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
@@ -21,7 +21,8 @@ import {
   verifyProductCandidateWithAI,
   verifyFinalRenderedFramesWithAI,
   getDirectGeminiApiKey,
-  preSelectTop2CandidatesWithGemini
+  preSelectTop2CandidatesWithGemini,
+  discoverSceneWindowsWithGemini
 } from '../services/aiService.js';
 import { generateSrtSubtitles } from '../services/subtitleService.js';
 import { loadEnglishDictionary, saveToEnglishDictionary } from '../services/dictionaryService.js';
@@ -49,8 +50,10 @@ import {
   callAIGatekeeperMicroservice,
   sampleDenseClustersAroundCleanFrames,
   extractFastSnippetsForPreflight,
-  fastProbeLocal
+  fastProbeLocal,
+  sampleFramesForWindows
 } from '../services/videoFilterService.js';
+import { verifyScene as verifySceneWithVlm, isVlmAvailable } from '../services/vlmGateService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
 import { analyzeNarrationAndSelectBestWindow } from '../services/whisperGateService.js';
 // BLUEPRINT ALUR BARU (ACQUISITION_FLOW=v2) — orkestrasi L2->L5 & penyusun zigzag.
@@ -364,8 +367,13 @@ async function _runStage1Pipeline({
 
           if (rawVideoPath) {
             const gatePreviewSec = Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 15;
+            // Pada arsitektur smolvlm, gerbang narasi Whisper DILEWATI (timing dari window
+            // Gemini + vonis SmolVLM2), jadi paritas cache tidak menuntut voice-over.
+            const bypassWhisper = isSmolvlmVerifyEnabled(process.env);
             const cacheDurSec = Number(videoMeta?.duration) || (await getMediaDurationSec(rawVideoPath, getFFmpegPath())) || 0;
-            if (cacheDurSec > 0) {
+            if (bypassWhisper) {
+              console.log(`[Job ${jobId}] ℹ️ [Cache] Mode smolvlm aktif -> gerbang narasi Whisper dilewati (paritas).`);
+            } else if (cacheDurSec > 0) {
               const sliceStart = Math.max(0, Math.floor(cacheDurSec / 2 - gatePreviewSec / 2));
               const narrationSlicePath = path.join(tempDir, `cache_gate_${jobId}_${Date.now()}.mp4`);
               let sliceOk = false;
@@ -585,6 +593,78 @@ async function _runStage1Pipeline({
         throw metaErr;
       }
       console.log(`[Job ${jobId}] ✅ [Filter 1 Lolos] Metadata valid (${meta.title}, ${meta.duration}s).`);
+
+      // ── CABANG BARU (opt-in): GEMINI-FIRST + SmolVLM2, TANPA Whisper/gatekeeper lama ──
+      // Hanya berjalan bila mode smolvlm AKTIF dan biner/model VLM TERSEDIA. Bila VLM
+      // belum ada, kita TETAP lanjut ke jalur legacy (jangan mematahkan produksi).
+      if (isSmolvlmVerifyEnabled(process.env) && isVlmAvailable(process.env)) {
+        const nicheForVlm = options.niche || 'kitchen_tools';
+        const clipSec = Number(process.env.SCENE_CLIP_DURATION_SEC) || 4;
+        const fps = Number(process.env.SCENE_SAMPLE_FPS) || 1;
+
+        // [1] Dapat window kandidat: Gemini discovery (opt-in) atau seragam hemat-intro.
+        let windows = [];
+        if (isGeminiSceneDiscoveryEnabled(process.env)) {
+          try {
+            const disc = await discoverSceneWindowsWithGemini({
+              youtubeUrl: targetUrl, productTitle, productDescription,
+              niche: nicheForVlm, clipSec, apiKey, onProgress: updateProgress,
+            });
+            windows = disc.windows || [];
+          } catch (discErr) {
+            console.warn(`[Job ${jobId}] ⚠️ Gemini discovery gagal (${discErr.message}) -> fallback window seragam.`);
+          }
+        }
+        if (windows.length === 0) {
+          // Fallback: jendela seragam ~1 per clipSec, lewati intro 6s & outro 8s, maks 10 window.
+          const safeStart = Math.min(6, Math.max(0, meta.duration * 0.04));
+          const safeEnd = Math.max(safeStart + clipSec, meta.duration - 8);
+          for (let t = safeStart; t + clipSec <= safeEnd && windows.length < 10; t += clipSec) {
+            windows.push({ startSec: t, endSec: t + clipSec, reason: 'uniform' });
+          }
+        }
+
+        // [2] Sampling per-window @fps (360p) + filter ringan.
+        const scenesOutDir = path.join(tempDir, `scenes_${Date.now()}`);
+        updateProgress({ step: 'scene_sampling', message: `🎬 Sampling ${windows.length} window scene @${fps} fps (360p)...`, progress: 44 });
+        const scenes = await sampleFramesForWindows(streamUrl, windows, { outDir: scenesOutDir, fps, clipDurationSec: clipSec, onProgress: updateProgress });
+
+        // [3] Verifikasi tiap scene dengan SmolVLM2.
+        const approvedClips = [];
+        for (const sc of scenes) {
+          const verdict = await verifySceneWithVlm(sc.frames.map((f) => f.filePath), { niche: nicheForVlm, facePolicy: 'strict' });
+          if (verdict.ok && verdict.safe === false) {
+            console.log(`[Job ${jobId}] ⛔ [VLM REJECT] scene ${sc.window.startSec.toFixed(1)}s (${['face','text','watermark','graphic'].filter((k) => verdict[k]).join(',') || 'dirty'})`);
+            continue;
+          }
+          if (!verdict.ok && !verdict.available) { console.warn(`[Job ${jobId}] ⚠️ VLM tak tersedia saat verifikasi scene -> FAIL-OPEN (dipertahankan, bukan vonis).`); }
+          if (verdict.infraError) console.warn(`[Job ${jobId}] ⚠️ [VLM infra] scene ${sc.window.startSec.toFixed(1)}s (${verdict.error}) -> FAIL-OPEN (dipertahankan).`);
+          approvedClips.push({
+            candidateUrl: targetUrl, sourceId: targetUrl,
+            startSeconds: sc.window.startSec, endSeconds: sc.window.endSec,
+            duration: Math.max(1, sc.window.endSec - sc.window.startSec), isClean: true,
+          });
+        }
+
+        if (approvedClips.length === 0) {
+          const err = new Error('SmolVLM2: tidak ada scene bersih yang lolos verifikasi.');
+          err.isAiRejection = true; err.rejectionReason = 'Frame kotor (VLM)';
+          throw err;
+        }
+        const bw = approvedClips[0];
+        const hl = {
+          clips: approvedClips,
+          bestWindow: { sourceId: targetUrl, startSec: bw.startSeconds, endSec: bw.endSeconds, durationSec: bw.duration },
+          whisperSegments: [],
+          narration: { hasNarration: true, coverage: 1 },
+          pipelineVersion: 'smolvlm_v1',
+          productHook: null,
+        };
+        noteVisionProvenance(hl, { usableFrames: scenes.reduce((a, s) => a + s.frames.length, 0), framesRef: [], origin: 'smolvlm_scenes' });
+        if (!targetUrl || targetUrl === currentYoutubeUrl) gatesPassedThisRun = true;
+        console.log(`[Job ${jobId}] ✅ [SmolVLM2] ${approvedClips.length}/${scenes.length} scene lolos verifikasi (0 panggilan Whisper/gatekeeper).`);
+        return { approved: true, highlight: hl, videoMeta: meta, previewVideoPath: null, probe: { eligible: true, vlm: true } };
+      }
 
       // ── TAHAP 2: QUICK PREVIEW (gerbang awal, default 15s agar lebih jelas) ──
       // P1: dulu 10s -> jendela sampling terlalu sempit (kata "review" pendek mudah sekali

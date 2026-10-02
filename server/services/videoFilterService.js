@@ -2123,3 +2123,134 @@ export async function fastProbeLocal(videoFilePath, jobId, {
     tmpDir
   };
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+//  ARSITEKTUR GEMINI-FIRST + SmolVLM2: sampling PER-KANDIDAT @1fps (360p)
+//  Dipakai saat VISION_VERIFY_MODE=smolvlm. Alih-alih stride seragam ke seluruh
+//  video, kita HANYA mengambil klip pendek (2-5s) untuk window kandidat dari Gemini,
+//  ekstrak 1 frame/detik, lalu filter ringan (blank/statis/blur) sebelum VLM.
+//  Semua fungsi diekspor terpisah agar mudah di-unit-test (I/O vs murni).
+// ══════════════════════════════════════════════════════════════════════════
+
+function normalizeWindows(windows = []) {
+  const out = [];
+  for (const w of windows) {
+    if (!w) continue;
+    const s = Number(w.startSec ?? w.start ?? w.startSeconds);
+    let e = Number(w.endSec ?? w.end ?? w.endSeconds);
+    if (!Number.isFinite(s)) continue;
+    if (!Number.isFinite(e) || e <= s) e = s + 4; // default 4s bila hanya start
+    out.push({ startSec: Math.max(0, s), endSec: e, raw: w });
+  }
+  return out;
+}
+
+/**
+ * Filter ringan per frame (0 token, CPU murah): buang frame BLANK (kontras sangat
+ * rendah) dan BLUR (varian Laplacian sangat rendah) memakai downscaled gray 160x90.
+ * TOLERAN: bila analisis frame gagal, frame DIPERTAHANKAN (jangan buang karena bug).
+ * @param {string[]} framePaths
+ * @returns {string[]} framePaths yang lolos
+ */
+export function lightFilterFrames(framePaths = [], { minGrayStd = 6, minLapVar = 4 } = {}) {
+  const ffmpegPath = getFFmpegPath();
+  const kept = [];
+  for (const fp of framePaths) {
+    if (!fp || !fs.existsSync(fp)) continue;
+    try {
+      const { stdout } = spawnSync(ffmpegPath, [
+        '-y', '-nostdin', '-i', fp,
+        '-vf', 'scale=160:90', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'gray', '-'
+      ], { encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 });
+      const buf = stdout;
+      if (!buf || buf.length < 160 * 90) { kept.push(fp); continue; }
+      const W = 160, H = 90;
+      let sum = 0, sumSq = 0;
+      for (let i = 0; i < W * H; i++) { const v = buf[i]; sum += v; sumSq += v * v; }
+      const mean = sum / (W * H);
+      const variance = sumSq / (W * H) - mean * mean;
+      const std = Math.sqrt(Math.max(0, variance));
+      if (std < minGrayStd) continue; // blank/near-solid -> buang
+      // Laplacian variance kasar (deteksi blur): jumlah selisih tetangga.
+      let lapSum = 0, lapSumSq = 0, n = 0;
+      for (let y = 1; y < H - 1; y++) {
+        for (let x = 1; x < W - 1; x++) {
+          const c = buf[y * W + x];
+          const lap = 4 * c - buf[y * W + x - 1] - buf[y * W + x + 1] - buf[(y - 1) * W + x] - buf[(y + 1) * W + x];
+          lapSum += lap; lapSumSq += lap * lap; n++;
+        }
+      }
+      const lapVar = n ? (lapSumSq / n - (lapSum / n) ** 2) : 999;
+      if (lapVar < minLapVar) continue; // terlalu halus/blur -> buang
+      kept.push(fp);
+    } catch {
+      kept.push(fp); // error analisis -> pertahankan (fail-open)
+    }
+  }
+  return kept;
+}
+
+/**
+ * Untuk setiap window kandidat Gemini: unduh klip pendek 360p dari stream, ekstrak
+ * frame pada `fps` (default 1 = jumlah frame mengikuti durasi klip), lalu filter ringan.
+ * @param {string} streamUrl - URL stream langsung (dari fetchVideoMetadataAndStream) ATAU path file lokal.
+ * @param {Array<{startSec,endSec}>} windows
+ * @param {{outDir:string, fps?:number, clipDurationSec?:number, onProgress?:Function}} opts
+ * @returns {Promise<Array<{window:{startSec,endSec}, frames:Array<{filePath,timestamp}>}>>}
+ */
+export async function sampleFramesForWindows(streamUrl, windows, { outDir, fps = 1, clipDurationSec = 4, onProgress = () => {} } = {}) {
+  if (!streamUrl) throw new Error('sampleFramesForWindows: streamUrl kosong');
+  if (!outDir) throw new Error('sampleFramesForWindows: outDir wajib');
+  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+  const ffmpegPath = getFFmpegPath();
+  const norm = normalizeWindows(windows);
+  const scenes = [];
+  let wi = 0;
+  for (const w of norm) {
+    wi++;
+    const dur = Math.max(2, Math.min(clipDurationSec, w.endSec - w.startSec));
+    onProgress({ step: 'scene_clip', message: `Mengunduh klip scene ${wi}/${norm.length} @${w.startSec.toFixed(1)}s (${dur}s, 360p)...` });
+    const tag = `scene${String(wi).padStart(2, '0')}`;
+    const clipPath = path.join(outDir, `${tag}.mp4`);
+    // [1] unduh + re-encode 360p segmen pendek (seek cepat sebelum -i).
+    const clipOk = await new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, [
+        '-y', '-nostdin',
+        '-ss', w.startSec.toFixed(2), '-i', streamUrl, '-t', String(dur),
+        '-an', '-sn', '-dn',
+        '-vf', 'scale=-2:360', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30',
+        clipPath,
+      ]);
+      let done = false;
+      const timer = setTimeout(() => { if (!done) { done = true; try { proc.kill('SIGKILL'); } catch {} resolve(false); } }, 30000);
+      proc.on('close', (code) => { if (!done) { done = true; clearTimeout(timer); resolve(code === 0 && fs.existsSync(clipPath) && fs.statSync(clipPath).size > 1024); } });
+      proc.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolve(false); } });
+    });
+    if (!clipOk) { try { fs.unlinkSync(clipPath); } catch {} continue; }
+
+    // [2] ekstrak 1 frame per detik dari klip lokal (fps filter).
+    const framesDir = path.join(outDir, `${tag}_frames`);
+    if (!fs.existsSync(framesDir)) fs.mkdirSync(framesDir, { recursive: true });
+    await new Promise((resolve) => {
+      const proc = spawn(ffmpegPath, [
+        '-y', '-nostdin', '-i', clipPath,
+        '-vf', `fps=${fps}`, '-q:v', '3', path.join(framesDir, 'f_%03d.jpg'),
+      ]);
+      let done = false;
+      const timer = setTimeout(() => { if (!done) { done = true; try { proc.kill('SIGKILL'); } catch {} resolve(); } }, 20000);
+      proc.on('close', () => { if (!done) { done = true; clearTimeout(timer); resolve(); } });
+      proc.on('error', () => { if (!done) { done = true; clearTimeout(timer); resolve(); } });
+    });
+    let rawFrames = fs.readdirSync(framesDir).filter((f) => f.endsWith('.jpg')).sort()
+      .map((f, idx) => ({ filePath: path.join(framesDir, f), timestamp: w.startSec + idx / (fps || 1) }));
+
+    // [3] filter ringan (blank/blur) sebelum VLM.
+    const keptPaths = lightFilterFrames(rawFrames.map((r) => r.filePath));
+    const keptSet = new Set(keptPaths);
+    const frames = rawFrames.filter((r) => keptSet.has(r.filePath));
+    try { fs.unlinkSync(clipPath); } catch {} // klip sementara dibuang, frame disimpan utk VLM
+    if (frames.length > 0) scenes.push({ window: { startSec: w.startSec, endSec: w.endSec }, frames });
+  }
+  return scenes;
+}
+

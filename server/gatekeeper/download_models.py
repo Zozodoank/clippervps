@@ -23,6 +23,7 @@ MODELS = [
         "name": "Google MediaPipe BlazeFace",
         "filename": "blaze_face_short_range.tflite",
         "min_size": 200_000,
+        "legacy": True,
         "urls": [
             "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite"
         ]
@@ -31,6 +32,7 @@ MODELS = [
         "name": "OpenCV YuNet Face Detection",
         "filename": "face_detection_yunet_2023mar.onnx",
         "min_size": 200_000,
+        "legacy": True,
         "urls": [
             "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
         ]
@@ -39,6 +41,7 @@ MODELS = [
         "name": "SCRFD 2.5G Face Detection (bkps, pengganti YuNet)",
         "filename": "scrfd_2.5g_bnkps.onnx",
         "min_size": 3_000_000,
+        "legacy": True,
         "urls": [
             "https://huggingface.co/RuteNL/SCRFD-face-detection-ONNX/resolve/main/2.5g_bnkps.onnx"
         ]
@@ -47,6 +50,7 @@ MODELS = [
         "name": "DBNet Text Detection (PP-OCRv4)",
         "filename": "ch_PP-OCRv4_det.onnx",
         "min_size": 4_000_000,
+        "legacy": True,
         "urls": [
             "https://huggingface.co/OleehyO/paddleocrv4.onnx/resolve/main/ch_PP-OCRv4_det.onnx"
         ]
@@ -55,10 +59,35 @@ MODELS = [
         "name": "MobileNetV3 Small (Scene Classifier)",
         "filename": "mobilenetv3_small.onnx",
         "min_size": 9_000_000,
+        "legacy": True,
         "urls": [
             "https://huggingface.co/onnx-community/mobilenetv3_small_100.lamb_in1k/resolve/main/onnx/model.onnx"
         ]
     }
+]
+
+# ── VLM LOKAL (SmolVLM2-500M GGUF) ─────────────────────────────────────────
+# HANYA diunduh bila dipanggil eksplisit (unduh_vlm_models()). Distribusi utama
+# ke Termux adalah MENYALIN file hasil unduhan PC via scp (lihat sync-to-termux.ps1),
+# BUKAN download di perangkat; karena itu unduh di sini opsional. URL & nama file
+# WAJIB diverifikasi terhadap repo HF sebelum dipakai (bisa berubah).
+VLM_MODELS = [
+    {
+        "name": "SmolVLM2-500M GGUF (Q4_K_M)",
+        "filename": "smolvlm2-500m.Q4_K_M.gguf",
+        "min_size": 300_000_000,
+        "urls": [
+            "https://huggingface.co/jc-builds/smolvlm2-500m-gguf/resolve/main/smolvlm2-500m.Q4_K_M.gguf"
+        ]
+    },
+    {
+        "name": "SmolVLM2-500M mmproj (vision projector)",
+        "filename": "smolvlm2-500m-mmproj.gguf",
+        "min_size": 50_000_000,
+        "urls": [
+            "https://huggingface.co/jc-builds/smolvlm2-500m-gguf/resolve/main/smolvlm2-500m-mmproj.gguf"
+        ]
+    },
 ]
 
 def download_file(url, dest_path):
@@ -74,11 +103,10 @@ def download_file(url, dest_path):
                 break
             out_file.write(chunk)
 
-def check_and_download_models():
-    print(f"📦 [Gatekeeper Downloader] Memeriksa model ONNX di: {MODELS_DIR}")
+def _download_items(items):
+    """Unduh daftar model yang belum ada (dicek existence + min_size). Return True bila semua siap."""
     all_ok = True
-
-    for item in MODELS:
+    for item in items:
         filepath = os.path.join(MODELS_DIR, item["filename"])
         if os.path.exists(filepath) and os.path.getsize(filepath) >= item["min_size"]:
             print(f"  ✅ {item['name']} ({os.path.basename(filepath)}) sudah tersedia ({os.path.getsize(filepath) // 1024} KB).")
@@ -106,13 +134,36 @@ def check_and_download_models():
                         pass
 
         if not downloaded:
-            print(f"  ❌ Gagal mengunduh {item['name']}. Gatekeeper akan menggunakan mode hybrid/fallback.")
+            print(f"  ❌ Gagal mengunduh {item['name']}.")
             all_ok = False
+    return all_ok
 
+def check_and_download_models():
+    print(f"📦 [Gatekeeper Downloader] Memeriksa model ONNX di: {MODELS_DIR}")
+    all_ok = _download_items(MODELS)
     if all_ok:
         print("🎉 [Gatekeeper Downloader] Seluruh model AI lokal siap digunakan!")
     else:
         print("ℹ️ [Gatekeeper Downloader] Mode hybrid fallback aktif untuk model yang belum terunduh.")
 
+def unduh_vlm_models():
+    """Opsional: unduh GGUF SmolVLM2 ke MODELS_DIR. Dipanggil hanya via --download-vlm.
+    Pada Termux cukup salin file hasil unduhan PC (sync-to-termux.ps1), jadi jalur ini
+    terutama untuk menyiapkan PC sebagai sumber master."""
+    print(f"🧠 [Gatekeeper VLM Downloader] Memeriksa GGUF VLM di: {MODELS_DIR}")
+    all_ok = _download_items(VLM_MODELS)
+    if all_ok:
+        print("🎉 [Gatekeeper VLM Downloader] GGUF SmolVLM2 siap. Set GK_VLM_MODEL/GK_VLM_MMPROJ di server/.env.")
+    else:
+        print("ℹ️ [Gatekeeper VLM Downloader] Sebagian GGUF gagal - verifikasi URL/nama file pada repo HF.")
+    return all_ok
+
 if __name__ == "__main__":
-    check_and_download_models()
+    import argparse
+    parser = argparse.ArgumentParser(description="Gatekeeper model downloader")
+    parser.add_argument("--download-vlm", action="store_true", help="Unduh GGUF SmolVLM2 (opsional)")
+    args = parser.parse_args()
+    if args.download_vlm:
+        unduh_vlm_models()
+    else:
+        check_and_download_models()

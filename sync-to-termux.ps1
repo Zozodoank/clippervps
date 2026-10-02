@@ -55,7 +55,7 @@ Write-Host "======================================================" -ForegroundC
 
 try {
   # [1/5] Checkpoint WAL jobs.db agar file db self-contained & aman disalin (protokol keamanan DB).
-  Write-Host "`n[1/5] Meng-flush WAL jobs.db (PRAGMA wal_checkpoint TRUNCATE)..." -ForegroundColor Yellow
+  Write-Host "`n[1/6] Meng-flush WAL jobs.db (PRAGMA wal_checkpoint TRUNCATE)..." -ForegroundColor Yellow
   Push-Location (Join-Path $RepoRoot 'server')
   try {
     & node -e "const D=require('better-sqlite3');const db=new D('./jobs.db');db.pragma('journal_mode = WAL');db.pragma('wal_checkpoint(TRUNCATE)');db.close();console.log('   checkpoint OK');"
@@ -63,7 +63,7 @@ try {
   } finally { Pop-Location }
 
   # [2/5] Stop server ClipperVPS lokal (dev-runner/server.js) supaya tidak ada write baru saat menyalin.
-  Write-Host "[2/5] Menghentikan server lokal (node dev-runner/server.js)..." -ForegroundColor Yellow
+  Write-Host "[2/6] Menghentikan server lokal (node dev-runner/server.js)..." -ForegroundColor Yellow
   $nodeProcs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue | Where-Object {
     $_.CommandLine -match 'dev-runner\.js' -or $_.CommandLine -match 'server[\\/]+server\.js'
   }
@@ -78,11 +78,11 @@ try {
   }
 
   # [3/5] Pastikan pm2 Termux distop (jaga-jaga bila syn.sh belum dijalankan).
-  Write-Host "[3/5] Memastikan service Termux distop (pm2 stop clipper gatekeeper)..." -ForegroundColor Yellow
+  Write-Host "[3/6] Memastikan service Termux distop (pm2 stop clipper gatekeeper)..." -ForegroundColor Yellow
   & ssh @sshArgs $dest "bash -lc 'command -v pm2 >/dev/null && pm2 stop clipper gatekeeper || true'"
 
   # [4/5] Salin jobs.db + folder output (video hasil) ke Termux.
-  Write-Host "[4/5] Menyalin jobs.db + video output ke Termux..." -ForegroundColor Yellow
+  Write-Host "[4/6] Menyalin jobs.db + video output ke Termux..." -ForegroundColor Yellow
   $jobsDb = Join-Path $RepoRoot 'server\jobs.db'
   if (-not (Test-Path $jobsDb)) { throw "jobs.db tidak ditemukan di $jobsDb" }
   & scp @scpArgs $jobsDb "${dest}:${rel}/jobs.db"
@@ -102,8 +102,27 @@ try {
     }
   }
 
-  # [5/5] Restart pm2 Termux agar riwayat & video langsung tampil.
-  Write-Host "[5/5] Merestart service Termux (pm2 restart clipper gatekeeper)..." -ForegroundColor Yellow
+  # [5/6] Salin bobot VLM (GGUF SmolVLM2) ke Termux agar TIDAK perlu download ulang di perangkat.
+  # Sumber: server/gatekeeper/models/ di PC (diunduh sekali). Hanya dikirim file .gguf agar hemat.
+  Write-Host "[5/6] Menyalin bobot VLM (*.gguf) ke Termux..." -ForegroundColor Yellow
+  $gkModels = Join-Path $RepoRoot 'server\gatekeeper\models'
+  if (Test-Path $gkModels) {
+    $ggufs = @(Get-ChildItem $gkModels -Filter *.gguf -File -ErrorAction SilentlyContinue)
+    if ($ggufs.Count -gt 0) {
+      Write-Host "   mengirim $($ggufs.Count) file .gguf ($([math]::Round((($ggufs | Measure-Object -Property Length -Sum).Sum / 1MB), 1)) MB)..." -ForegroundColor DarkGray
+      & ssh @sshArgs $dest "mkdir -p '${rel}/gatekeeper/models'"
+      & scp @scpArgs (Join-Path $gkModels '*.gguf') "${dest}:${rel}/gatekeeper/models/"
+      if ($LASTEXITCODE -ne 0) { throw "scp model VLM gagal." }
+      Write-Host "   ✅ bobot VLM terkirim" -ForegroundColor DarkGray
+    } else {
+      Write-Host "   (tidak ada .gguf di server/gatekeeper/models - dilewati; unduh dulu di PC)" -ForegroundColor DarkGray
+    }
+  } else {
+    Write-Host "   (folder server/gatekeeper/models tidak ada - dilewati)" -ForegroundColor DarkGray
+  }
+
+  # [6/6] Restart pm2 Termux agar riwayat & video langsung tampil.
+  Write-Host "[6/6] Merestart service Termux (pm2 restart clipper gatekeeper)..." -ForegroundColor Yellow
   & ssh @sshArgs $dest "bash -lc 'command -v pm2 >/dev/null && pm2 restart clipper gatekeeper || true; command -v pm2 >/dev/null && pm2 save || true'"
 
   Write-Host "`n======================================================" -ForegroundColor Green
