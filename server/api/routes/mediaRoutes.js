@@ -118,25 +118,9 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 if (!fs.existsSync(rejectedYunetDir)) fs.mkdirSync(rejectedYunetDir, { recursive: true });
 
-// Multer storage for uploaded voiceover audio
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.mp3';
-    cb(null, `voiceover_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`);
-  },
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 50 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    const allowedExts = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus']);
-    const mime = String(file.mimetype || '').toLowerCase();
-    if (allowedExts.has(ext) || mime.startsWith('audio/')) return cb(null, true);
-    cb(new Error('File voiceover harus berupa audio (.mp3, .wav, .m4a, .aac, .ogg, .opus).'));
-  },
-});
+// Upload Multer untuk voiceover dikonfigurasi SEKALI di voiceoverRoutes.js (satu-satunya
+// rute yang memakai upload.single). Tidak diduplikasi di sini agar batas ukuran & filter
+// audio punya satu sumber kebenaran.
 
 const router = express.Router();
 

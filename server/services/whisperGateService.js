@@ -18,7 +18,8 @@ export async function analyzeNarrationAndSelectBestWindow(videoPath, {
     if (extracted.noAudio) {
       return { hasNarration: false, reason: 'Video sumber tidak memiliki track audio.' };
     }
-    throw new Error(`Gagal mengekstrak audio: ${extracted.error}`);
+    // FFmpeg gagal menjalankan ekstraksi = masalah infrastruktur lokal, bukan vonis konten.
+    throw Object.assign(new Error(`Gagal mengekstrak audio: ${extracted.error}`), { isInfraError: true });
   }
 
   let transcribed;
@@ -31,7 +32,9 @@ export async function analyzeNarrationAndSelectBestWindow(videoPath, {
   }
 
   if (!transcribed.ok) {
-    throw new Error(`Gagal transkripsi audio: ${transcribed.error}`);
+    // P1-5: whisper.cpp biner hilang/crash/timeout = transien infrastruktur. Flag memisahkan
+    // ini dari vonis AI supaya master loop tidak mem-blacklist kandidat baik karena server sibuk.
+    throw Object.assign(new Error(`Gagal transkripsi audio: ${transcribed.error}`), { isInfraError: true });
   }
 
   // Hitung durasi berdasar rentang file

@@ -118,25 +118,9 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 if (!fs.existsSync(rejectedYunetDir)) fs.mkdirSync(rejectedYunetDir, { recursive: true });
 
-// Multer storage for uploaded voiceover audio
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.mp3';
-    cb(null, `voiceover_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`);
-  },
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 50 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    const allowedExts = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus']);
-    const mime = String(file.mimetype || '').toLowerCase();
-    if (allowedExts.has(ext) || mime.startsWith('audio/')) return cb(null, true);
-    cb(new Error('File voiceover harus berupa audio (.mp3, .wav, .m4a, .aac, .ogg, .opus).'));
-  },
-});
+// Upload Multer untuk voiceover dikonfigurasi SEKALI di voiceoverRoutes.js (satu-satunya
+// rute yang memakai upload.single). Tidak diduplikasi di sini agar batas ukuran & filter
+// audio punya satu sumber kebenaran.
 
 const router = express.Router();
 
@@ -183,20 +167,37 @@ router.post('/auto/start', (req, res) => {
     });
   }
 
-  const { maxJobs = 1, options = {}, niche = 'kitchen_tools' } = req.body || {};
-  const isUnlimited = false;
+  // #2: HORMATI maxJobs dari klien (sebelumnya di-hardcode 1 sehingga target 'unlimited'
+  // atau multi-job tak pernah dipakai worker). Worker sudah mendukung run.maxJobs berupa
+  // angka ATAU string 'unlimited' (lihat stage1Discovery.js runAutoStage1Worker).
+  const requestedMax = req.body?.maxJobs;
+  const isUnlimited = requestedMax === 'unlimited' || requestedMax === Infinity || !requestedMax;
+  const parsedMax = Number.parseInt(requestedMax, 10);
+  const maxJobs = isUnlimited ? 'unlimited' : (Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 1);
+
+  // #5: Validasi niche SAMA seperti mode manual — alias ('smartphone'/'hp') di-resolve ke
+  // preset, nilai tak dikenal tetap jatuh ke preset default alih-alih lolos mentah ke worker.
+  const availableNicheIds = getAllNiches().map((n) => n.id);
+  const requestedNiche = String(req.body?.niche || 'kitchen_tools').trim().toLowerCase();
+  const resolvedNiche = availableNicheIds.includes(requestedNiche)
+    ? requestedNiche
+    : getNichePreset(requestedNiche).id;
+
+  const options = req.body?.options || {};
   const runId = `autorun_${crypto.randomBytes(4).toString('hex')}`;
   const run = {
     runId,
     status: 'starting',
-    maxJobs: 1,
+    maxJobs,
     successfulJobs: 0,
     failedJobs: 0,
     skippedProducts: 0,
-    niche,
+    niche: resolvedNiche,
     currentJobId: null,
     currentProductTitle: null,
-    message: 'Memulai pipeline Auto Mode (1 Job Aman)...',
+    message: isUnlimited
+      ? 'Memulai pipeline Auto Mode (Unlimited)...'
+      : `Memulai pipeline Auto Mode (target ${maxJobs} job)...`,
     progress: 0,
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -205,7 +206,17 @@ router.post('/auto/start', (req, res) => {
   };
 
   autoRuns.set(runId, run);
-  runAutoStage1Worker(run);
+  // #4: Fire-and-forget TANPA await (worker loop panjang). Tambah .catch sebagai jaring
+  // pengaman agar kegagalan tak tertangani tidak membuat run membeku di 'starting'
+  // (phantom "memulai"). Worker punya try/catch internal, ini hanya last-resort.
+  runAutoStage1Worker(run).catch((err) => {
+    console.error(`[Auto ${runId}] Worker crash tak tertangani:`, err?.message || err);
+    updateAutoRun(run, {
+      status: 'error',
+      message: `Auto Mode berhenti karena error: ${err?.message || err}`,
+      finishedAt: new Date().toISOString(),
+    });
+  });
   res.json({ run: publicAutoRunState(run) });
 });
 
@@ -227,6 +238,14 @@ router.get('/auto/progress/:runId', (req, res) => {
 
   const sendProgress = () => {
     const run = autoRuns.get(runId);
+    // #6: runId tak dikenal (salah ketik / run belum pernah dibuat) -> tutup stream,
+    // jangan biarkan interval 800ms menggantung selamanya tanpa kondisi terminal.
+    if (!run) {
+      res.write(`data: ${JSON.stringify({ error: 'run-not-found', runId, status: 'error' })}\n\n`);
+      clearInterval(interval);
+      res.end();
+      return;
+    }
     res.write(`data: ${JSON.stringify({ run: publicAutoRunState(run) })}\n\n`);
     if (run && ['completed', 'stopped', 'error'].includes(run.status)) {
       clearInterval(interval);

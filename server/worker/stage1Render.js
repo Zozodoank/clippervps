@@ -6,7 +6,7 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled } from '../config/runtimeFlags.js';
 import { shouldAllowRescue, buildVisionProvenance, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
@@ -53,6 +53,9 @@ import {
 } from '../services/videoFilterService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
 import { analyzeNarrationAndSelectBestWindow } from '../services/whisperGateService.js';
+// BLUEPRINT ALUR BARU (ACQUISITION_FLOW=v2) — orkestrasi L2->L5 & penyusun zigzag.
+import { runSourceAcquisitionV2, buildLegacyStructuresFromV2 } from './sourceAcquisitionV2.js';
+import { interleaveBySource } from '../utils/clipOrdering.js';
 // AUDIO-DRIVEN SCENE PLANNING (Fase 1 & 2) - percobaan, di-guard flag AUDIO_DRIVEN_SCENES.
 import { analyzeSourceAudioForBeats, isAudioDrivenEnabled, resolveAudioWindow } from '../services/audioBeatService.js';
 import { paraphraseBeats, beatsToScript } from '../services/antiPlagiarismService.js';
@@ -332,12 +335,86 @@ async function _runStage1Pipeline({
       const cachedDims = await getVideoDimensions(cachedVideoPath);
       if (cachedDims && cachedDims.is1080pOrHigher) {
         rawVideoPath = cachedVideoPath;
+
+        // ── P1-4: PARITAS GERBANG UNTUK JALUR CACHE ──
+        // Dulu file cache 1080p langsung diloloskan ke analisa frame TANPA Filter 1 (metadata)
+        // dan tanpa gerbang narasi Whisper — padahal funnel online menilai keduanya. Akibatnya
+        // vonis tidak konsisten: URL yang sama gugur via funnel online tapi lolos diam-diam
+        // pada run berikutnya karena file cache masih ada (mis. tersisa dari unduhan parsial
+        // yang gagal sebelum gerbang selesai). Lempeng yang sama kini diberlakukan:
+        // - Metadata: hanya untuk URL sumber yang dikenal (cache anonim di sessionTempDir
+        //   tidak punya keharusan judul -> metadata online tidak bisa divonis offline).
+        // - Narasi: slice tengah 15s DIEKSTRAK LOKAL dari file cache (0 kuota, 1x whisper).
+        if (!gatesPassedThisRun) {
+          const cacheSourceUrl = currentYoutubeUrl;
+
+          if (cacheSourceUrl && videoMeta && !options.isManualOem) {
+            const cacheCompliance = checkVideoMetadataCompliance(videoMeta, productTitle, {
+              ...options,
+              isVisualSearch: Boolean(effectiveProductImage || options.isVisualSearch),
+              productImage: effectiveProductImage,
+              imageUrl: effectiveProductImage,
+            });
+            if (!cacheCompliance.eligible) {
+              console.warn(`[Job ${jobId}] ⛔ [Cache] Filter 1 metadata gagal paritas: ${cacheCompliance.reason}. Cache dibuang, evaluasi ulang online.`);
+              try { fs.unlinkSync(rawVideoPath); } catch {}
+              rawVideoPath = null;
+            }
+          }
+
+          if (rawVideoPath) {
+            const gatePreviewSec = Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 15;
+            const cacheDurSec = Number(videoMeta?.duration) || (await getMediaDurationSec(rawVideoPath, getFFmpegPath())) || 0;
+            if (cacheDurSec > 0) {
+              const sliceStart = Math.max(0, Math.floor(cacheDurSec / 2 - gatePreviewSec / 2));
+              const narrationSlicePath = path.join(tempDir, `cache_gate_${jobId}_${Date.now()}.mp4`);
+              let sliceOk = false;
+              try {
+                await new Promise((res) => {
+                  const p = spawn(getFFmpegPath(), ['-y', '-ss', String(sliceStart), '-t', String(gatePreviewSec), '-i', rawVideoPath, '-c', 'copy', '-avoid_negative_ts', 'make_zero', narrationSlicePath]);
+                  p.on('close', (code) => { sliceOk = code === 0 && fs.existsSync(narrationSlicePath) && fs.statSync(narrationSlicePath).size > 1024; res(); });
+                  p.on('error', () => res());
+                });
+                if (sliceOk) {
+                  const cacheGate = await analyzeNarrationAndSelectBestWindow(narrationSlicePath, {
+                    minCoverage: Number(process.env.WHISPER_NARRATION_MIN_COVERAGE) || 0.3,
+                    targetDurationSec: gatePreviewSec,
+                    totalVideoDurationSec: gatePreviewSec,
+                    previewStartSec: sliceStart,
+                  });
+                  if (!cacheGate.hasNarration) {
+                    console.warn(`[Job ${jobId}] ⛔ [Cache] Gerbang narasi gagal paritas (slice ${sliceStart}s-${sliceStart + gatePreviewSec}s: ${cacheGate.reason}). Cache dibuang, evaluasi ulang online.`);
+                    try { fs.unlinkSync(rawVideoPath); } catch {}
+                    rawVideoPath = null;
+                  } else {
+                    console.log(`[Job ${jobId}] ✅ [Cache] Paritas gerbang lolos: narasi ada pada slice tengah ${gatePreviewSec}s.`);
+                  }
+                } else {
+                  console.warn(`[Job ${jobId}] ⚠️ [Cache] Gagal membuat slice narasi - gerbang narasi dilewati (film tetap diaudit frame).`);
+                }
+              } catch (gateErr) {
+                if (gateErr?.isInfraError) {
+                  // P1-5: whisper/gatekeeper tumbang BUKAN vonis konten - jangan hapus cache
+                  // (menghapus = menghukum unduhan 1080p yang mahal), lanjutkan audit frame.
+                  console.warn(`[Job ${jobId}] ⚠️ [Cache][Infra] Gerbang narasi tak selesai (${gateErr.message}) - lanjut ke audit frame.`);
+                } else {
+                  throw gateErr;
+                }
+              } finally {
+                try { if (fs.existsSync(narrationSlicePath)) fs.unlinkSync(narrationSlicePath); } catch {}
+              }
+            }
+          }
+        }
+
+        if (rawVideoPath) {
         updateProgress({
           step: 'download',
           message: `Video 1080p sudah ada (${(fs.statSync(rawVideoPath).size / 1024 / 1024).toFixed(1)} MB). Skip download, langsung proses.`,
           progress: 30,
           status: 'running'
         });
+        }
       } else {
         // Hapus cache video lama jika di bawah 1080p agar tidak tercampur
         try { fs.unlinkSync(cachedVideoPath); } catch {}
@@ -399,6 +476,9 @@ async function _runStage1Pipeline({
     currentYoutubeUrl = youtubeUrl || '';
     highlight = null;
     let approved = false;
+    // P1-4: penanda bahwa URL utama SUDAH divonis gerbang funnel di run ini. Jalur cache
+    // di bawah memakai penanda ini agar tidak mengulang gerbang yang baru saja lulus.
+    let gatesPassedThisRun = false;
     let lastRejectionError = null;
     let pooledFrames = [];
     // Shared across candidate download + post-download audit/recovery.
@@ -506,30 +586,34 @@ async function _runStage1Pipeline({
       }
       console.log(`[Job ${jobId}] ✅ [Filter 1 Lolos] Metadata valid (${meta.title}, ${meta.duration}s).`);
 
-      // ── TAHAP 2: QUICK PREVIEW (10s) ──
-      updateProgress({ step: 'quick_preview', message: `⚡ Download preview 10 detik dari ${candidateLabel || 'kandidat'}...`, progress: 15 });
+      // ── TAHAP 2: QUICK PREVIEW (gerbang awal, default 15s agar lebih jelas) ──
+      // P1: dulu 10s -> jendela sampling terlalu sempit (kata "review" pendek mudah sekali
+      // lolos/tidak lolos berdasar 1 titik tengah video). 15s = default baru; masih bisa
+      // dioverride via QUICK_PREVIEW_DURATION_SEC.
+      const gatePreviewSec = Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 15;
+      updateProgress({ step: 'quick_preview', message: `⚡ Download preview ${gatePreviewSec} detik dari ${candidateLabel || 'kandidat'}...`, progress: 15 });
       const preview10s = await downloadQuickPreview(targetUrl, tempDir, jobId, {
         onProgress: updateProgress,
-        durationSec: Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 10,
+        durationSec: gatePreviewSec,
         sourceDurationSec: meta.duration
       });
-      if (!preview10s?.filePath) throw Object.assign(new Error('Gagal download preview 10s'), { isAiRejection: true });
+      if (!preview10s?.filePath) throw Object.assign(new Error(`Gagal download preview ${gatePreviewSec}s`), { isAiRejection: true });
 
       // ── TAHAP 3: WHISPER GATE (EARLY SPEECH CHECK) ──
       updateProgress({ step: 'whisper_gate', message: '🎧 Whisper mengecek keberadaan narasi...', progress: 20 });
       const gateCheck = await analyzeNarrationAndSelectBestWindow(preview10s.filePath, {
         minCoverage: Number(process.env.WHISPER_NARRATION_MIN_COVERAGE) || 0.3,
-        targetDurationSec: 10, // Not really used for window selection here since preview is 10s
+        targetDurationSec: gatePreviewSec, // Preview sepuas gerbang -> window = seluruh preview
         totalVideoDurationSec: preview10s.actualDurationSec,
         previewStartSec: preview10s.sourceStartSec,
       });
       if (!gateCheck.hasNarration) {
-        const err = new Error(`Video tidak memiliki narasi yang cukup (gate 10s: ${gateCheck.reason}).`);
+        const err = new Error(`Video tidak memiliki narasi yang cukup (gate ${gatePreviewSec}s: ${gateCheck.reason}).`);
         err.isAiRejection = true;
         err.rejectionReason = 'Tidak ada narasi voice-over';
         throw err;
       }
-      console.log(`[Job ${jobId}] ✅ [Whisper Gate Lolos] Ada narasi pada preview 10s.`);
+      console.log(`[Job ${jobId}] ✅ [Whisper Gate Lolos] Ada narasi pada preview ${gatePreviewSec}s.`);
 
       // ── TAHAP 4: FAST PROBE LOKAL (5 FRAME) ──
       updateProgress({ step: 'frame_probe', message: '🔎 Pemeriksaan visual cepat (5 frame)...', progress: 25 });
@@ -625,6 +709,7 @@ async function _runStage1Pipeline({
       };
 
       noteVisionProvenance(hl, { usableFrames: verifiedCleanFrames.length, framesRef: verifiedCleanFrames, origin: 'candidate_frames' });
+      if (!targetUrl || targetUrl === currentYoutubeUrl) gatesPassedThisRun = true;
       return { 
         approved: true,
         highlight: hl, 
@@ -635,8 +720,8 @@ async function _runStage1Pipeline({
     };
 
 
-    // Evaluasi video dari cache jika tersedia
-    if (rawVideoPath) {
+    // Evaluasi video dari cache jika tersedia (DILEWATI di alur V2 — tidak ada full-download).
+    if (rawVideoPath && !isNewFlowEnabled()) {
       try {
         const rawDur = Number(videoMeta?.duration) || 300;
         // Hemat (20 titik per menit): interval 3.0 detik -> 10 menit = 200 frame, 5 menit = 100, dst.
@@ -722,7 +807,7 @@ async function _runStage1Pipeline({
     // Opt-in murni: default OFF, perilaku semua pemanggil lama tidak berubah.
     const explicitOnly = options.sourcePolicy === 'explicit_only';
     
-    if (!approved && currentYoutubeUrl && !preferMultiVideo) {
+    if (!approved && currentYoutubeUrl && !preferMultiVideo && !isNewFlowEnabled()) {
       try {
         const initialRes = await evaluateCandidate(currentYoutubeUrl, '', {
           isVisualSearch: Boolean(effectiveProductImage),
@@ -746,7 +831,13 @@ async function _runStage1Pipeline({
           });
         }
       } catch (initErr) {
-        if (initErr.isAiRejection || String(initErr?.message || '').toLowerCase().includes('ditolak')) {
+        if (initErr.isInfraError) {
+          // P1-5: timeout yt-dlp / whisper.cpp crash / Gatekeeper mati adalah transien
+          // INFRASTRUKTUR. Vonis "video buruk" (-> blacklist) harus tetap milik isAiRejection;
+          // sebelumnya error infra di sini meleleh ke outer catch dan membatal-kan seluruh job.
+          console.warn(`[Job ${jobId}] ⚠️ [Infra] Gangguan sementara saat menilai video awal (${initErr.message}). Tidak mem-blacklist; lanjut ke jalur kandidat.`);
+          lastRejectionError = initErr;
+        } else if (initErr.isAiRejection || String(initErr?.message || '').toLowerCase().includes('ditolak')) {
           console.warn(`[Job ${jobId}] ⛔ Video awal (${currentYoutubeUrl}) ditolak AI: ${initErr.message}`);
           lastRejectionError = initErr;
           try { if (previewVideoPath && fs.existsSync(previewVideoPath)) fs.unlinkSync(previewVideoPath); } catch {}
@@ -763,11 +854,22 @@ async function _runStage1Pipeline({
     let forceManualFallback = false;
     let autoFinalError = null;
     const failedCandidateUrls = new Set();
+    // P1-5: URL kandidat yang pernah kena error infrastruktur (timeout yt-dlp, whisper crash,
+    // Gatekeeper mati). Masing-masing dapat 1 percobaan ULANG sebelum dianggap gugur, supaya
+    // jaringan sesaat tidak lagi membuang kandidat baik secara permanen di run ini.
+    const infraRetriedUrls = new Set();
     let maxStreamVideos = explicitOnly ? 10 : (preferMultiVideo ? 5 : 3);
     let streamedCount = 0;
     let candidateResults = [];
     let hl = null;
     const isAutoModeFallback = Boolean(extraJobMeta?.isAutoGenerated);
+
+    // [RENDER-ON-APPROVAL] Saklar perilaku (keputusan user 2 Okt 2026, PERMANEN untuk SEMUA job
+    // AUTO & manual): setelah Gemini menyatakan kandidat "layak + produk cocok", backend HANYA
+    // mengunduh window bagus lalu render - TANPA Master Loop 3x, TANPA Rescue storyboard, dan
+    // TANPA Final QC pasca-render yang bisa menolak/menghapus hasil. Penyaringan frame level
+    // gatekeeper (wajah / subtitle terbakar) SEBELUM approval TETAP berjalan (tidak diubah).
+    const RENDER_ON_APPROVAL = true;
     
     let isBrandDetected = false;
     let scriptData = null;
@@ -777,7 +879,7 @@ async function _runStage1Pipeline({
     let ttsSucceeded = false;
     let visionSummary = null;
 
-    while (!finalCompletedJob && masterRetryCount < 3 && !forceManualFallback) {
+    while (!finalCompletedJob && masterRetryCount < (RENDER_ON_APPROVAL ? 1 : 3) && !forceManualFallback) {
       try {
       masterRetryCount++;
       if (masterRetryCount > 1) {
@@ -1040,6 +1142,46 @@ async function _runStage1Pipeline({
 
       console.log(`[Job ${jobId}] Memulai Multi-Video Stream & Harvesting adaptif (maksimal stream ${maxStreamVideos} video, target klip 30-35s) untuk "${productTitle}"...`);
 
+      // ── ALUR BARU V2 (ACQUISITION_FLOW=v2): ganti funnel + loop panen lama ──
+      // Men-set `hl` + `candidateResults` lalu menaikkan streamedCount sehingga loop `while`
+      // legacy di bawah TIDAK berjalan; aliran jatuh ke blok unduh-per-segmen (L4) & render
+      // (L6) yang SUDAH ADA dan membaca hl.clips[].candidateIndex. Default legacy = tak tersentuh.
+      if (isNewFlowEnabled() && !hl) {
+        const poolForV2 = [
+          ...(currentYoutubeUrl ? [{ url: currentYoutubeUrl, title: productTitle }] : []),
+          ...candidatePool.filter((c) => c && (c.url || typeof c === 'string')).map((c) => (typeof c === 'string' ? { url: c } : c)),
+        ];
+        updateProgress({ step: 'acquisition_v2_start', message: `🧩 [V2] Akuisisi alur baru atas ${poolForV2.length} kandidat (vonis batch + transkrip penuh + zigzag)...`, progress: 14 });
+        const v2 = await runSourceAcquisitionV2({
+          candidatePool: poolForV2,
+          productTitle, productDescription,
+          productImage: effectiveProductImage, productFingerprint,
+          niche: options.niche || 'kitchen_tools',
+          apiKey, aiProvider, options, tempDir, jobId,
+          updateProgress, interleave: interleaveBySource,
+          requireSources: (options.niche || 'kitchen_tools') === 'gadget_smartphone' ? 1 : 2,
+          targetClipDurationSec: 30,
+        });
+        recordStageEvent({
+          jobId, stage: 'acquisition_v2', candidateCount: poolForV2.length,
+          acceptedCount: v2.sources.length,
+          failureReason: v2.sources.length ? '' : 'Tidak ada kandidat lolos V2',
+          meta: v2.diagnostics,
+        });
+        if (!v2.sources.length || !v2.orderedWindows.length) {
+          const v2Err = new Error('[V2] Tidak ada kandidat memenuhi vonis batch + narasi cukup.');
+          v2Err.isAiRejection = true;
+          v2Err.rejectionReason = 'V2: tidak ada sumber layak';
+          throw v2Err; // Master Loop akan mencari kandidat lain (retry).
+        }
+        const mapped = buildLegacyStructuresFromV2(v2.sources, v2.orderedWindows);
+        hl = mapped.hl;
+        candidateResults = mapped.candidateResults;
+        rawVoiceScript = v2.scriptDraft || null;
+        streamedCount = maxStreamVideos; // Lewati loop panen legacy.
+        console.log(`[Job ${jobId}] ✅ [V2] ${hl.clips.length} window zigzag dari ${v2.sources.length} sumber siap -> lanjut unduh segmen 1080p.`);
+      }
+
       while (streamedCount < maxStreamVideos) {
         // 1. Jika antrean candidatePool habis sebelum kuota stream tercapai, cari kandidat pengganti tambahan
         if (candidatePoolIndex >= candidatePool.length) {
@@ -1166,6 +1308,15 @@ async function _runStage1Pipeline({
           streamedCount++;
         } catch (err) {
           lastRejectionError = err;
+          // P1-5: error infrastruktur BUKAN vonis konten -> beri 1 retry untuk kandidat yang
+          // sama (indeks mundur, tanpa menambah streamedCount). Vonis AI tetap lanjut ke
+          // kandidat berikutnya seperti sebelumnya.
+          if (err.isInfraError && !infraRetriedUrls.has(candidate.url)) {
+            infraRetriedUrls.add(candidate.url);
+            console.warn(`[Job ${jobId}] ⚠️ [Infra] ${candLabel}: ${err.message} — retry 1x tanpa ganti kandidat.`);
+            candidatePoolIndex--;
+            continue;
+          }
           streamedCount++; // Tetap hitung stream count
           continue;
         }
@@ -1455,7 +1606,7 @@ async function _runStage1Pipeline({
         lastRejectionError.isAiRejection = true;
         lastRejectionError.rejectionReason = blockedMsg;
       }
-      if (rescueAllowed && (!hl || !Array.isArray(hl.clips) || hl.clips.length < 2)) {
+      if (!RENDER_ON_APPROVAL && rescueAllowed && (!hl || !Array.isArray(hl.clips) || hl.clips.length < 2)) {
         console.log(`[Job ${jobId}] 🛡️ Mengaktifkan Guaranteed Completion Rescue Pipeline untuk memastikan tidak ada job yang gagal...`);
         // Saat AI sudah memvonis, HANYA frame yang ia setujui yang boleh dirakit. Frame
         // bersih lokal yang tidak ikut terkirim (pooledFrames) tidak dipakai diam-diam.
@@ -2562,40 +2713,55 @@ async function _runStage1Pipeline({
           onProgress: updateProgress,
         });
 
-        const finalQc = await runProfessionalFinalQcWithRepair({
-          jobId,
-          finalOutputPath,
-          silentVideoPath: silentOutputPath,
-          voiceoverAudioPath: autoVoiceoverPath,
-          srtPath,
-          expectedDurationSec: finalSilentDurationSec,
-          productTitle: highlight.detectedProduct || productTitle || videoMeta.title,
-          productFingerprint,
-          aiProvider,
-          apiKey,
-          niche: options.niche || 'kitchen_tools',
-          renderSourcePath: rawVideoPath,
-          clips: highlight.clips,
-          hflip: effectiveHflip,
-          reframe: effectiveReframe,
-          backgroundMusicPath,
-          musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
-          sfxEvents,
-          sceneVoSegments: jobMeta.sceneVoSegments || null,
-          sceneVoAlignment: jobMeta.sceneVoAlignment || null,
-          onProgress: updateProgress,
-        });
+        // [RENDER-ON-APPROVAL] Final QC pasca-render + auto-repair DIMATIKAN untuk semua job:
+        // hasil render langsung diterima - tidak ada gerbang yang menghapus video / memicu restart.
+        let finalQc;
+        if (RENDER_ON_APPROVAL) {
+          finalQc = {
+            passed: true,
+            skipped: true,
+            disabled: true,
+            reason: 'Final QC pasca-render dinonaktifkan (render-on-approval).',
+            technical: { passed: true, skipped: true, issues: [] },
+            visual: { passed: true, skipped: true, reason: 'Final AI QC disabled (render-on-approval).' },
+          };
+          console.log(`[Job ${jobId}] ✅ [Render-on-Approval] Final QC dilewati - video hasil render langsung diterima.`);
+        } else {
+          finalQc = await runProfessionalFinalQcWithRepair({
+            jobId,
+            finalOutputPath,
+            silentVideoPath: silentOutputPath,
+            voiceoverAudioPath: autoVoiceoverPath,
+            srtPath,
+            expectedDurationSec: finalSilentDurationSec,
+            productTitle: highlight.detectedProduct || productTitle || videoMeta.title,
+            productFingerprint,
+            aiProvider,
+            apiKey,
+            niche: options.niche || 'kitchen_tools',
+            renderSourcePath: rawVideoPath,
+            clips: highlight.clips,
+            hflip: effectiveHflip,
+            reframe: effectiveReframe,
+            backgroundMusicPath,
+            musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
+            sfxEvents,
+            sceneVoSegments: jobMeta.sceneVoSegments || null,
+            sceneVoAlignment: jobMeta.sceneVoAlignment || null,
+            onProgress: updateProgress,
+          });
 
-        if (!finalQc.passed) {
-          try { fs.unlinkSync(finalOutputPath); } catch {}
-          const issues = [
-            ...(finalQc.technical?.issues || []),
-            ...(finalQc.visual?.reason ? [finalQc.visual.reason] : []),
-          ];
-          const qcError = new Error(`FINAL_MASTER_QC_FAILED: ${issues.join(', ')}`);
-          qcError.isFinalQcFailure = true;
-          qcError.finalQc = finalQc;
-          throw qcError;
+          if (!finalQc.passed) {
+            try { fs.unlinkSync(finalOutputPath); } catch {}
+            const issues = [
+              ...(finalQc.technical?.issues || []),
+              ...(finalQc.visual?.reason ? [finalQc.visual.reason] : []),
+            ];
+            const qcError = new Error(`FINAL_MASTER_QC_FAILED: ${issues.join(', ')}`);
+            qcError.isFinalQcFailure = true;
+            qcError.finalQc = finalQc;
+            throw qcError;
+          }
         }
 
         cleanupTempFiles([srtPath]);

@@ -241,16 +241,27 @@ export function loadJobsFromDisk() {
   // activeJobs.entries() memakai better-sqlite3 .iterate(); memanggil activeJobs.set()
   // (INSERT/REPLACE) sementara cursor iterate() masih terbuka pada koneksi yang sama
   // melempar "This database connection is busy executing a query" dan menjatuhkan boot.
+  // #7: sebelumnya HANYA 'running' yang di-reset, sehingga job yang tertinggal di stage
+  // non-terminal lain ('retrying' dari autoRetry, 'starting'/'processing' dari jalur lama)
+  // muncul sebagai "phantom running" di UI setelah restart. Kita pakai daftar eksplisit
+  // (BUKAN negasi TERMINAL_STAGES) agar 'awaiting_voiceover' — resting state sah dengan
+  // silent 9:16 — tidak ikut diubah.
+  const NON_TERMINAL_JOB_STAGES = new Set(['running', 'retrying', 'starting', 'processing', 'pending']);
   const stuckJobs = [];
   for (const [jobId, jobData] of activeJobs.entries()) {
-    if (jobData.stage === 'running') {
+    if (NON_TERMINAL_JOB_STAGES.has(jobData.stage)) {
       stuckJobs.push([jobId, jobData]);
     }
   }
   for (const [jobId, jobData] of stuckJobs) {
     jobData.stage = 'stopped';
+    jobData.status = 'stopped';
+    jobData.lastError = jobData.lastError || 'Dihentikan karena server di-restart di tengah proses.';
     jobData.message = 'Proses dihentikan karena server di-restart.';
     activeJobs.set(jobId, jobData);
+  }
+  if (stuckJobs.length) {
+    console.log(`[Jobs] Rekonsiliasi ${stuckJobs.length} job yatim non-terminal -> stopped.`);
   }
 
   // Reset autoRuns/autoRetryRuns non-terminal yang YATIM. Setelah proses restart, TIDAK ADA

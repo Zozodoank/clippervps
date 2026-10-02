@@ -5,6 +5,7 @@ import fs from 'fs';
 import os from 'os';
 import { fileURLToPath } from 'url';
 import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
+import { tempDir } from '../utils/paths.js';
 import { trackBandwidth, trackSavedBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isTitleMatchingProduct } from './discoveryService.js';
 import { getSmartProxyArgs } from './downloader.js';
@@ -2063,7 +2064,12 @@ export async function fastProbeLocal(videoFilePath, jobId, {
   const fs = await import('fs');
   const { spawn } = await import('child_process');
   
-  const tmpDir = path.join(process.cwd(), 'server/temp', `probe_${jobId}_${Date.now()}`);
+  // P1-6: dulu memakai process.cwd()/server/temp (melanggar konvensi path terpusat dan
+  // rawan salah lokasi saat CWD beda di PM2/Termux) serta folder probe_* tidak pernah
+  // dihapus (bocor ke disk). Kini ditaruh di dalam direktori session job (tempDir/job_<id>/)
+  // sehingga ikut terhapus oleh deleteJobTempDirectory saat job selesai/gagal.
+  const jobSessionDir = path.join(tempDir, `job_${jobId}`);
+  const tmpDir = path.join(jobSessionDir, `probe_${Date.now()}`);
   if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
 
   const timestamps = [0.1, 0.25, 0.5, 0.75, 0.9].map(p => durationSec * p);
@@ -2107,7 +2113,8 @@ export async function fastProbeLocal(videoFilePath, jobId, {
   const inspection = await inspectFramesLocally(frames, { niche, facePolicy, onProgress });
   
   if (!inspection.eligible && inspection.reason && inspection.reason.includes('Gatekeeper unavailable')) {
-    throw new Error('Gatekeeper unavailable');
+    // P1-5: microservice Gatekeeper mati/busuk = infrastruktur, bukan vonis konten.
+    throw Object.assign(new Error('Gatekeeper unavailable'), { isInfraError: true });
   }
 
   return {

@@ -19,7 +19,7 @@ const IS_LINUX = process.platform === 'linux';
 /**
  * Scan all common directory locations and filename variations for cookies.txt
  */
-function findCookiesFile() {
+export function findCookiesFile() {
   if (process.env.DISABLE_COOKIES === 'true' || process.env.NO_COOKIES === 'true') {
     return null;
   }

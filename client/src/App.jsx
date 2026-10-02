@@ -269,27 +269,33 @@ export default function App() {
         );
       }
 
-      if (!response.ok || !data.jobId) throw new Error(data.error || 'Gagal memproses Tahap 1.');
+      // Backend kini membalas 202 { accepted: true } seketika (model async). Bila
+      // !accepted, itu error sinkron (validasi/kuota): job TIDAK memulai di background.
+      if (!response.ok || !data.accepted) {
+        throw new Error(data.error || 'Gagal memulai Tahap 1.');
+      }
 
-      setResult(data);
-      setProgressState((prev) => ({
-        ...prev, step: 'awaiting_voiceover',
-        message: 'Tahap 1 Selesai! Upload voiceover dari AI Studio untuk finalisasi.',
-        progress: 100, status: 'awaiting_voiceover', error: null, canRetry: false,
-      }));
+      // Diterima: pipeline jalan di latar belakang. JANGAN set result, JANGAN tutup SSE,
+      // dan JANGAN matikan loading di sini — /api/progress/:jobId yang dibuka di atas
+      // adalah satu-satunya sumber progres sekaligus hasil akhir (completed /
+      // awaiting_voiceover / error) yang akan menutup SSE sendiri lewat onmessage.
     } catch (err) {
-      const isQuotaError = ['saldo', 'insufficient', 'balance', 'quota', 'credit'].some(k =>
-        err.message.toLowerCase().includes(k)
+      // Error sinkron saja (validasi, kuota harian, backend mati). Tutup SSE karena tidak
+      // ada job background yang perlu dipantau.
+      const isQuotaError = ['saldo', 'insufficient', 'balance', 'quota', 'credit', 'kuota'].some(k =>
+        String(err.message || '').toLowerCase().includes(k)
       );
+      setIsLoading(false);
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
       setProgressState((prev) => ({
         ...prev, step: 'error', message: err.message || 'Proses gagal.',
         progress: prev.progress, status: 'error', error: err.message, isQuotaError, canRetry: true,
       }));
       // Jika error pada tahap request awal, lanjut ke antrean draft jika aktif
       setTimeout(() => processNextDraftQueue(), 1000);
-    } finally {
-      setIsLoading(false);
-      if (eventSourceRef.current) eventSourceRef.current.close();
     }
   };
 

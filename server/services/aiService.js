@@ -2317,6 +2317,240 @@ Verify ONLY product identity. Do not accept a candidate merely because it is vis
   throw new Error(`Verifikasi produk kandidat gagal: ${lastError?.message || 'semua model AI gagal'}`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// BLUEPRINT ALUR BARU — L2 (vonis batch) & L3 (pemilihan window teks).
+// Keduanya ADITIF: tidak mengubah fungsi lama. Parser murni diekspor terpisah
+// agar bisa diuji tanpa panggilan jaringan (lihat tests/).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function frameToDataUri(frame) {
+  if (!frame) return null;
+  if (typeof frame.base64 === 'string' && (frame.base64.startsWith('data:image/') || frame.base64.startsWith('http'))) {
+    return frame.base64;
+  }
+  if (frame.filePath && fs.existsSync(frame.filePath)) {
+    try {
+      const mime = frame.filePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      return `data:${mime};base64,${fs.readFileSync(frame.filePath).toString('base64')}`;
+    } catch { return null; }
+  }
+  return null;
+}
+
+function sampleFramesForPrompt(frames, max = 8) {
+  if (!Array.isArray(frames)) return [];
+  if (frames.length <= max) return frames;
+  return Array.from({ length: max }, (_, i) => frames[Math.round(i * (frames.length - 1) / (max - 1))]);
+}
+
+/**
+ * PARSER MURNI L2 — normalisasi vonis batch dari JSON mentah Gemini agar kebal
+ * terhadap boolean string/angka dan field hilang. `eligible` dihitung ulang secara
+ * defensif (productMatch && bersih wajah/watermark/overlay/subtitle), BUKAN dipercaya
+ * mentah dari model. Kandidat tanpa vonis eksplisit dianggap TIDAK layak (gagal aman).
+ * @param {object} parsed JSON hasil parse (shape: { verdicts:[{index,...}] })
+ * @param {Array} candidates daftar kandidat input (index selaras)
+ */
+export function parseBatchVerdict(parsed, candidates) {
+  const list = Array.isArray(parsed?.verdicts) ? parsed.verdicts : [];
+  const byIndex = new Map();
+  for (const v of list) {
+    const idx = Number(v?.index);
+    if (Number.isFinite(idx)) byIndex.set(idx, v);
+  }
+  const truthy = (x) => x === true || x === 'true' || x === 1 || x === '1';
+  return candidates.map((cand, i) => {
+    const v = byIndex.get(i);
+    if (!v) {
+      return { index: i, sourceId: cand?.sourceId || null, productMatch: false, faces: false, watermark: false, overlay: false, subtitle: false, eligible: false, reason: 'Kandidat tidak dinilai oleh AI (fallback gagal aman).' };
+    }
+    const productMatch = truthy(v.productMatch);
+    const faces = truthy(v.faces);
+    const watermark = truthy(v.watermark);
+    const overlay = truthy(v.overlay);
+    const subtitle = truthy(v.subtitle);
+    const eligible = productMatch && !faces && !watermark && !overlay && !subtitle;
+    return {
+      index: i,
+      sourceId: cand?.sourceId || null,
+      productMatch, faces, watermark, overlay, subtitle, eligible,
+      reason: String(v.reason || (eligible ? 'Produk sesuai, video bersih.' : 'Ditolak vonis batch.')),
+    };
+  });
+}
+
+/**
+ * L2 — VONIS GEMINI BATCH: satu panggilan menilai SEMUA kandidat sekaligus terhadap
+ * gambar produk + kebersihan visual (wajah/watermark/overlay/subtitle). Dipanggil SESUDAH
+ * Gatekeeper lokal menyaring frame (keputusan 1c), jadi frame yang dikirim sudah bersih
+ * secara lokal; Gemini mengonfirmasi identitas produk & kebersihan akhir.
+ * @returns {Promise<{ verdicts: Array, provider: string, model: string }>}
+ */
+export async function verdictCandidatesWithGemini({
+  apiKey,
+  aiProvider,
+  productImage = '',
+  productTitle = '',
+  productDescription = '',
+  productFingerprint = null,
+  niche = 'kitchen_tools',
+  candidates = [],
+  onProgress = () => {},
+} = {}) {
+  if (!Array.isArray(candidates) || candidates.length === 0) return { verdicts: [], provider: null, model: null };
+
+  const selectedEngine = (aiProvider || process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
+  const { client, models, provider } = getAiClientConfig({ apiKeyOverride: apiKey, aiProvider: selectedEngine });
+  const prodInfo = extractCoreProductInfo(productTitle, productDescription);
+  const coreNoun = prodInfo.coreProductNoun || productTitle || 'Produk';
+  const fingerprintText = productFingerprint ? JSON.stringify(productFingerprint) : JSON.stringify({ productType: coreNoun, brand: prodInfo.brand || '', model: prodInfo.model || '' });
+
+  let resolvedRefImage = null;
+  if (productImage) {
+    try { resolvedRefImage = await resolveImageBufferAndBase64(productImage); } catch (err) {
+      console.warn(`[BatchVerdict] Gambar referensi gagal dimuat: ${err.message}`);
+    }
+  }
+
+  const userContent = [{
+    type: 'text',
+    text: `Anda memverifikasi ${candidates.length} kandidat video affiliate HANYA untuk produk: "${prodInfo.cleanTitle || productTitle || coreNoun}". Fingerprint: ${fingerprintText}. Niche: ${niche}.
+${resolvedRefImage ? 'Gambar pertama adalah REFERENSI PRODUK resmi.' : 'Tidak ada gambar referensi; gunakan teks fingerprint secara konservatif.'}
+Setiap kandidat ditandai dengan header teks "KANDIDAT #<index>" sebelum frame-nya. Untuk SETIAP kandidat kembalikan penilaian kebersihan + kecocokan produk.
+Aturan produk: tipe, mekanisme, dan konstruksi khas harus cocok; bila meragukan -> productMatch=false.
+Return STRICT JSON: { "verdicts": [ { "index": <int>, "productMatch": <bool>, "faces": <bool>, "watermark": <bool>, "overlay": <bool>, "subtitle": <bool>, "eligible": <bool>, "reason": "<string>" } ] }`,
+  }];
+  if (resolvedRefImage) userContent.push({ type: 'image_url', image_url: { url: resolvedRefImage.dataUri, detail: 'low' } });
+
+  candidates.forEach((cand, i) => {
+    userContent.push({ type: 'text', text: `KANDIDAT #${i} (sourceId=${cand?.sourceId || '?'})` });
+    for (const frame of sampleFramesForPrompt(cand.frames, 8)) {
+      const uri = frameToDataUri(frame);
+      if (uri) userContent.push({ type: 'image_url', image_url: { url: uri, detail: 'low' } });
+    }
+  });
+
+  let lastError = null;
+  for (const model of models) {
+    try {
+      onProgress({ step: 'product_verify', message: `🤖 Gemini memvonis ${candidates.length} kandidat sekaligus (${model})...`, progress: 40, status: 'running' });
+      const response = await client.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: 'Anda verifier ketat untuk sourcing video affiliate. Balas HANYA JSON valid.' },
+          { role: 'user', content: userContent },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.05,
+        max_tokens: 1400,
+      }, { timeout: 60000, maxRetries: 0 });
+
+      const msg = response.choices?.[0]?.message;
+      const raw = (msg?.content && msg.content.trim()) ? msg.content : (msg?.reasoning || '{}');
+      const parsed = repairJson(raw) || {};
+      return { verdicts: parseBatchVerdict(parsed, candidates), provider, model };
+    } catch (err) {
+      lastError = err;
+      const status = err?.status || err?.statusCode;
+      if (status === 401 || status === 402) break;
+    }
+  }
+  // Kegagalan SEMUA model = gangguan infrastruktur AI, bukan vonis konten (P1-5).
+  const infraErr = new Error(`Vonis batch gagal: ${lastError?.message || 'semua model AI gagal'}`);
+  infraErr.isInfraError = true;
+  throw infraErr;
+}
+
+/**
+ * PARSER MURNI L3 — validasi window hasil AI teks terhadap batas segmen transkrip.
+ * Window dibuang bila: bukan angka, kosong, start>=end, atau seluruhnya di luar rentang
+ * segmen yang tersedia. `endSec` diklarifikasi agar tak melampaui segmen terakhir.
+ * @param {object} parsed { windows:[{startSec,endSec,scriptDraft}] }
+ * @param {Array<{startSec,endSec}>} segments
+ * @param {number} maxTotalSec plafon durasi gabungan window (0 = tanpa batas)
+ */
+export function parseWindowSelection(parsed, segments, maxTotalSec = 0) {
+  const lo = segments.length ? Math.min(...segments.map((s) => Number(s.startSec) || 0)) : 0;
+  const hi = segments.length ? Math.max(...segments.map((s) => Number(s.endSec) || 0)) : 0;
+  const raw = Array.isArray(parsed?.windows) ? parsed.windows : [];
+  let windows = raw
+    .map((w) => {
+      const startSec = Math.max(lo, Number(w?.startSec));
+      const endSec = Math.min(hi, Number(w?.endSec));
+      return { startSec, endSec, durationSec: endSec - startSec, scriptDraft: String(w?.scriptDraft || w?.script || '').trim() };
+    })
+    .filter((w) => Number.isFinite(w.startSec) && Number.isFinite(w.endSec) && w.endSec > w.startSec);
+  // Susunchrono naik agar mudah dipotong ke plafon.
+  windows.sort((a, b) => a.startSec - b.startSec);
+  if (maxTotalSec > 0) {
+    let acc = 0;
+    windows = windows.filter((w) => { acc += w.durationSec; return acc <= maxTotalSec; });
+  }
+  return windows;
+}
+
+/**
+ * L3 — Model TEKS cloud memilih window narasi PALING MENARIK untuk affiliate dari
+ * transkrip whisper (segment + timestamp), lalu merangkai draf naskah dari KATA ASLI
+ * (bukan mengarang). Dipanggil setelah transkrip penuh kandidat 5-15 menit.
+ * @returns {Promise<{ windows: Array, provider: string, model: string }>}
+ */
+export async function selectAffiliateWindowsWithAIText({
+  apiKey,
+  aiProvider,
+  segments = [],
+  targetDurationSec = 30,
+  productTitle = '',
+  niche = 'kitchen_tools',
+  sourceId = null,
+  onProgress = () => {},
+} = {}) {
+  if (!Array.isArray(segments) || segments.length === 0) return { windows: [], provider: null, model: null };
+
+  const selectedEngine = (aiProvider || process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
+  const { client, models, provider } = getAiClientConfig({ apiKeyOverride: apiKey, aiProvider: selectedEngine });
+
+  const transcriptBlock = segments
+    .map((s) => `[${(Number(s.startSec) || 0).toFixed(1)}s-${(Number(s.endSec) || 0).toFixed(1)}s] ${String(s.text || '').trim()}`)
+    .join('\n');
+
+  const userText = `Transkrip voice-over video produk "${productTitle}" (niche ${niche}) dengan timestamp:
+${transcriptBlock}
+
+Tugas: pilih bagian NARASI paling menarik untuk klip affiliate dengan TOTAL durasi mendekati ${targetDurationSec} detik. WAJIB pakai timestamp dari transkrip di atas. Rangkai draf naskah HANYA dari kata-kata asli pada window terpilih (boleh pangkas, JANGAN tambah klaim baru).
+Return STRICT JSON: { "windows": [ { "startSec": <float>, "endSec": <float>, "scriptDraft": "<string>" } ] }`;
+
+  let lastError = null;
+  for (const model of models) {
+    try {
+      onProgress({ step: 'text_window_select', message: `🧠 AI teks memilih window menarik (${model})...`, progress: 35, status: 'running' });
+      const response = await client.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: 'Anda penyusun klip affiliate dari transkrip. Balas HANYA JSON valid.' },
+          { role: 'user', content: userText },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0.2,
+        max_tokens: 1200,
+      }, { timeout: 45000, maxRetries: 0 });
+
+      const msg = response.choices?.[0]?.message;
+      const raw = (msg?.content && msg.content.trim()) ? msg.content : (msg?.reasoning || '{}');
+      const parsed = repairJson(raw) || {};
+      const windows = parseWindowSelection(parsed, segments, targetDurationSec * 1.5).map((w) => ({ ...w, sourceId }));
+      return { windows, provider, model };
+    } catch (err) {
+      lastError = err;
+      const status = err?.status || err?.statusCode;
+      if (status === 401 || status === 402) break;
+    }
+  }
+  const infraErr = new Error(`Pemilihan window teks gagal: ${lastError?.message || 'semua model AI gagal'}`);
+  infraErr.isInfraError = true;
+  throw infraErr;
+}
+
 /**
  * Final rendered-frame QC. Unlike source QC, burned affiliate subtitles are expected here.
  * This verifies that the final crop still presents the target product professionally.

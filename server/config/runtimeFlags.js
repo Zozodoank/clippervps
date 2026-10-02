@@ -56,6 +56,11 @@ const FLAG_NORMALIZERS = {
   // (5 menit = 200 frame). Dulu pernah dipotong ke 3.0 demi hemat -> jendela bersih
   // jarang dan klip menumpuk di satu sumber.
   RENDER_SAMPLE_INTERVAL_SEC: (env) => Math.max(0.5, Number(env.RENDER_SAMPLE_INTERVAL_SEC) || 1.5),
+  // BLUEPRINT ALUR BARU (6 langkah). Opt-in: default 'legacy' = jalur Fase 1-4 lama (aman).
+  // 'v2' mengaktifkan runSourceAcquisitionV2 (vonis batch Gemini + transkrip penuh +
+  // window teks + zigzag + segment-only). Nama kunci BEDA dari PIPELINE_MODE (label
+  // whisper-first yang sudah ada & tidak dibaca kode) agar tidak tabrakan semantik.
+  ACQUISITION_FLOW: (env) => (String(env.ACQUISITION_FLOW || '').trim().toLowerCase() === 'v2' ? 'v2' : 'legacy'),
 };
 
 export const SNAPSHOT_FLAG_KEYS = Object.keys(FLAG_NORMALIZERS);
@@ -107,6 +112,7 @@ export function configSnapshotToEnvPatch(snapshot) {
   // Selalu ditulis (bukan hanya saat 'aktif') karena default env berbeda default snapshot
   // tidak boleh terjadi: mode lama job harus terkunci persis saat retry.
   if (typeof snapshot.GEMINI_INPUT_MODE === 'string') patch.GEMINI_INPUT_MODE = snapshot.GEMINI_INPUT_MODE;
+  if (typeof snapshot.ACQUISITION_FLOW === 'string') patch.ACQUISITION_FLOW = snapshot.ACQUISITION_FLOW;
   if (typeof snapshot.EVIDENCE_MIN_FRAMES === 'number') patch.EVIDENCE_MIN_FRAMES = String(snapshot.EVIDENCE_MIN_FRAMES);
   if (typeof snapshot.EVIDENCE_MAX_FRAMES === 'number') patch.EVIDENCE_MAX_FRAMES = String(snapshot.EVIDENCE_MAX_FRAMES);
   return patch;
@@ -118,6 +124,14 @@ export function configSnapshotToEnvPatch(snapshot) {
  */
 export function isGeminiEvidenceEnabled(env = process.env) {
   return String(env.GEMINI_INPUT_MODE || '').trim().toLowerCase() !== 'stream';
+}
+
+/**
+ * Helper konsumen: apakah ALUR BARU 6-langkah aktif. Default OFF ('legacy') supaya
+ * perilaku semua pemanggil lama tidak berubah sampai jalur baru terbukti hijau.
+ */
+export function isNewFlowEnabled(env = process.env) {
+  return String(env.ACQUISITION_FLOW || '').trim().toLowerCase() === 'v2';
 }
 
 /**

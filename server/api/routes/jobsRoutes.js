@@ -126,25 +126,9 @@ if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 if (!fs.existsSync(rejectedYunetDir)) fs.mkdirSync(rejectedYunetDir, { recursive: true });
 
-// Multer storage for uploaded voiceover audio
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.mp3';
-    cb(null, `voiceover_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`);
-  },
-});
-const upload = multer({
-  storage,
-  limits: { fileSize: 50 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    const allowedExts = new Set(['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.opus']);
-    const mime = String(file.mimetype || '').toLowerCase();
-    if (allowedExts.has(ext) || mime.startsWith('audio/')) return cb(null, true);
-    cb(new Error('File voiceover harus berupa audio (.mp3, .wav, .m4a, .aac, .ogg, .opus).'));
-  },
-});
+// Upload Multer untuk voiceover dikonfigurasi SEKALI di voiceoverRoutes.js (satu-satunya
+// rute yang memakai upload.single). Tidak diduplikasi di sini agar batas ukuran & filter
+// audio punya satu sumber kebenaran.
 
 const router = express.Router();
 
@@ -340,7 +324,16 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
             productDescription: job.productDescription,
             apiKey: undefined,
             options: isAutoJob
-              ? { aiProvider: effectiveAiProvider, autoSearchFallback: false, niche: jobNiche }
+              // Retry AUTO punya dua semantic berbeda (user meminta keduanya bisa dipilih via forceNewCandidate):
+              //  - forceNewCandidate:true  -> memang MAU kandidat baru; biarkan pipeline auto-search/harvest.
+              //  - forceNewCandidate:false -> "retry tanpa mencari" (targetCandidates sudah = youtubeUrl terkunci,
+              //    lihat L293). Pipeline WAJIB pakai ulang SATU sumber itu saja, DILARANG menelusuri/memanen
+              //    video lain — sama ketatnya dengan retry manual (explicit_only). Dulu cabang ini lolos ke
+              //    Multi-Video Harvesting karena tidak men-set sourcePolicy/singleVideoOnly -> retry auto diam-diam
+              //    mencari video baru. Itulah bug yang diperbaiki di sini.
+              ? (forceNewCandidate
+                  ? { aiProvider: effectiveAiProvider, autoSearchFallback: false, niche: jobNiche }
+                  : { aiProvider: effectiveAiProvider, autoSearchFallback: false, sourcePolicy: 'explicit_only', singleVideoOnly: true, niche: jobNiche })
               : {
                 aiProvider: effectiveAiProvider,
                 autoSearchFallback: false,
