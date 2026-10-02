@@ -4,6 +4,15 @@ import fs from 'fs';
 import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
 import { findCookiesFile } from './downloader.js';
 
+// ♻️ Cache preview per-direktori-kerja. evaluateCandidate bisa memanggil kandidat yang SAMA
+// lebih dari sekali (retry infra 1x via candidatePoolIndex--, atau pemilihan ulang Pre-Flight).
+// Sebelumnya tiap pemanggilan MEN-SPAWN yt-dlp dan mengunduh ulang window identik karena nama
+// file selalu memakai Date.now() (tidak pernah bentrok) dan videoId default = jobId (bukan id
+// YouTube) sehingga tidak ada reuse. Key mencakup direktori output (per job), URL sumber,
+// durasi, dan mode crop -> window yang sama dipakai ulang selama filenya masih ada di disk.
+const previewCache = new Map();
+const PREVIEW_CACHE_MAX = 64;
+
 // Ukur durasi sebenarnya (detik) sebuah file media via ffprobe. ffprobe diturunkan dari
 // path ffmpeg (umumnya tersedia satu direktori). Kembalikan null bila gagal agar pemanggil
 // memakai fallback. (P1-7: --force-keyframes-at-cuts membuat panjang potongan riil berbeda
@@ -62,6 +71,15 @@ export async function downloadQuickPreview(url, outputDir, jobId, {
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
+
+  // ♻️ Lookup cache: reuse preview yang sudah pernah diunduh utk (direktori, url, durasi, crop).
+  const cacheKey = `${outputDir}::${url}::${durationSec}::${cropTo9_16 ? '916' : 'raw'}`;
+  const cachedPreview = previewCache.get(cacheKey);
+  if (cachedPreview && fs.existsSync(cachedPreview.filePath)) {
+    onProgress({ step: 'quick_preview', message: `♻️ Memakai ulang preview yang sudah terunduh (${cachedPreview.sourceStartSec}s - ${cachedPreview.sourceEndSec}s)...`, progress: 12 });
+    return cachedPreview;
+  }
+  if (cachedPreview) previewCache.delete(cacheKey); // file sudah dibersihkan -> buang entri basi
 
   const ytDlpPath = await getYtDlpPath();
   const ffmpegPath = getFFmpegPath();
@@ -151,7 +169,7 @@ export async function downloadQuickPreview(url, outputDir, jobId, {
         // P1-7: ukur durasi sebenarnya via ffprobe (keyframe snapping membuat potongan
         // lebih pendek/panjang dari targetLength). Fallback ke targetLength bila ffprobe tak ada.
         const measuredSec = probeMediaDurationSec(finalPath);
-        resolve({
+        const previewResult = {
           filePath: finalPath,
           sourceId: videoId,
           sourceStartSec: startSec,
@@ -160,7 +178,14 @@ export async function downloadQuickPreview(url, outputDir, jobId, {
           sourceDurationSec: videoDuration,
           croppedTo9_16: finalPath !== outPath,
           hasAudio: true // We assume true for now, audioBeatService will confirm
-        });
+        };
+        // Simpan ke cache (batasi ukuran; evicted entri terlama) agar evaluasi ulang reuse.
+        if (previewCache.size >= PREVIEW_CACHE_MAX) {
+          const oldestKey = previewCache.keys().next().value;
+          if (oldestKey) previewCache.delete(oldestKey);
+        }
+        previewCache.set(cacheKey, previewResult);
+        resolve(previewResult);
       } else {
         try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
         // P1-5: kegagalan yt-dlp di fase preview umumnya jaringan/rate-limit sementara.

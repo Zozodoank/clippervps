@@ -1929,13 +1929,34 @@ async function _runStage1Pipeline({
 
       // NEVER manufacture extra scenes by copying an existing clip.
       // Minimum 3 adegan unik fisik produk untuk menghasilkan reel/short affiliate berkualitas tinggi (13-25 detik).
-      if (hl.clips.length < 3) {
+      //
+      // [RENDER-ON-APPROVAL] Gerbang ">=3 klip" ini adalah PENYARING PASCA-APPROVAL terakhir yang
+      // masih menggagalkan job meski Gemini sudah menyatakan kandidat layak dan segmen bagus sudah
+      // terunduh. Whisper-First Pipeline sengaja merakit SATU window terbaik yang divalidasi Gemini
+      // (clips.length === 1), sehingga gerbang lama selalu melempar "AI Vision hanya menghasilkan 1
+      // adegan unik (<3)" -> "Gagal merender setelah 1 kali percobaan". Sesuai mandat user
+      // (2 Okt 2026): setelah Gemini menyatakan layak, unduh window bagus lalu RENDER, tidak usah
+      // ada filter lagi. Selama mode ini aktif, 1-2 klip yang sudah disetujui WAJIB di-render apa
+      // adanya (pacing di bawah mempertahankan durasi window alaminya, bukan memotong ke 6s).
+      if (!RENDER_ON_APPROVAL && hl.clips.length < 3) {
         const clipErr = new Error(
           `AI Vision hanya menghasilkan ${hl.clips.length} adegan unik (<3). Tidak akan menggandakan adegan untuk mengejar durasi.`
         );
         clipErr.isAiRejection = true;
         clipErr.rejectionReason = 'Adegan unik produk kurang dari 3 klip fisik bersih.';
         throw clipErr;
+      }
+
+      // Guard minimum universal: tetap butuh SATU klip sumber bersih agar ada yang bisa di-render.
+      if (hl.clips.length < 1) {
+        const noClipErr = new Error('Tidak ada klip sumber bersih yang tersedia untuk di-render.');
+        noClipErr.isAiRejection = true;
+        noClipErr.rejectionReason = 'Nol klip lolos approval.';
+        throw noClipErr;
+      }
+
+      if (RENDER_ON_APPROVAL && hl.clips.length < 3) {
+        console.log(`[Job ${jobId}] ✅ [Render-on-Approval] ${hl.clips.length} window disetujui Gemini (dulu dituntut >=3) - langsung render tanpa mengejar klip tambahan.`);
       }
 
       // Pacing adaptif: minimal durasi video adalah 18.0 detik sesuai mandat pengguna
