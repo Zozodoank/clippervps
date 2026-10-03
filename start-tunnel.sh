@@ -188,6 +188,20 @@ start_cloudflared() {
   publish_url "$url" "cloudflared quick tunnel (URL berubah tiap restart)"
 }
 
+# Baris status PM2 yang TIDAK PERNAH kosong. Versi pertama skrip ini mencetak pipeline
+# `pm2 list | grep ... | tr -s ' '` di dalam $( ): tr berakhir sukses walau grep tidak
+# menemukan apa pun, sehingga `|| echo '(kosong)'` tidak pernah menyala dan operator melihat
+# baris kosong persis saat tidak ada app terdaftar - keadaan yang justru paling perlu ditandai.
+pm2_status_line() {
+  local out=""
+  out="$(pm2 list 2>/dev/null | grep -E 'tunnel|clipper|gatekeeper' | tr -s ' ')"
+  if [ -z "$out" ]; then
+    echo "(daemon PM2 jalan tapi tidak ada app clipper/gatekeeper/tunnel terdaftar - jalankan menu [6])"
+  else
+    printf '%s\n' "$out"
+  fi
+}
+
 show_status() {
   local url resolved="(NGROK_URL/NGROK_DOMAIN belum diisi)" p=""
   url="$(read_env CLOUDFLARE_TUNNEL_URL)"
@@ -200,7 +214,7 @@ show_status() {
   # membuat operator salah menyimpulkan "clipper hilang"). Status tidak boleh punya efek
   # samping itu - cek socket RPC dulu.
   if have pm2 && [ -S "${HOME}/.pm2/rpc.sock" ]; then
-    echo "Status PM2    : $(pm2 list 2>/dev/null | grep -E 'tunnel|clipper|gatekeeper' | tr -s ' ' || echo '(daemon kosong / belum ada aplikasi terdaftar)')"
+    echo "Status PM2    : $(pm2_status_line)"
   else
     echo "Status PM2    : (daemon PM2 tidak berjalan - jalankan menu [6] untuk mendaftarkannya)"
   fi
