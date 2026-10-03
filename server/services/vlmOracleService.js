@@ -4,9 +4,10 @@
 // Kenapa ada file ini: perangkat user (Unisoc T7250 / CPU PC) tidak sanggup
 // menjalankan VLM sebagai gerbang per-scene. Terukur di Termux (llama-mtmd-cli
 // b11362 + SmolVLM2-500M Q4_K_M): 36-52 DETIK PER FRAME, dan biayanya per-gambar
-// (4 frame sekali panggil = 162 dtk), bukan per-proses. Solusi: bobot besar
-// (Qwen2.5-VL-7B-Instruct-AWQ) jalan di GPU Kaggle; perangkat lokal hanya
-// mengantre batch frame dan menunggu vonis.
+// (4 frame sekali panggil = 162 dtk), bukan per-proses. Solusi: bobot
+// Vision-Language (default Qwen2.5-VL-3B-Instruct fp16; override lewat ORACLE_MODEL_ID di
+// sisi notebook, dan TIDAK ada fallback antar-bobot lagi di sana) jalan di GPU Kaggle;
+// perangkat lokal hanya mengantre batch frame dan menunggu vonis.
 //
 // ARAH PANGGILAN DIPAKSA OLEH FISIKA JARINGAN: notebook Kaggle tidak punya
 // inbound, jadi notebook-lah yang menjadi KLIEN (claim -> unduh frame -> vonis ->
@@ -14,7 +15,8 @@
 // antrean SQLite dan membaca hasilnya. Konsekuensi bagus: notebook boleh mati
 // kapan saja tanpa merusak job.
 //
-// KEBIJAKAN FALLBACK (yang ini penting, jangan diubah tanpa alasan):
+// KEBIJAKAN FALLBACK (yang ini penting, jangan diubah tanpa alasan). "Fallback" di sini =
+// perilaku saat oracle TIDAK menjawab, BUKAN fallback antar-bobot model:
 //   oracle menjawab  -> frame divonis KOTOR masuk daftar blacklist (veto).
 //   oracle diam/timeout/validasi gagal -> TIDAK ADA VONIS = tidak memveto apa pun,
 //   dan keputusan gatekeeper legacy + Gemini tetap berlaku. Ini BUKAN fail-open

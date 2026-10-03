@@ -2,11 +2,11 @@
 # VLM ORACLE WORKER - sisi KAGGLE (model besar), sisi HTTP saja.
 #
 # PERAN: notebook ini TIDAK menjalankan pipeline. Ia hanya menjadi KLIEN dari
-# API ClipperVPS Anda: claim batch frame -> unduh JPEG -> vonis dengan
-# Qwen2.5-VL-7B-Instruct-AWQ -> kirim verdict -> ulangi. Arah koneksi dipaksa
+# API ClipperVPS Anda: claim batch frame -> unduh JPEG -> vonis dengan bobot yang
+# dikonfigurasi (default Qwen2.5-VL-3B-Instruct) -> kirim verdict -> ulangi. Arah koneksi dipaksa
 # oleh kenyataan bahwa Kaggle tidak punya inbound; HP/PC Anda tidak pernah
 # "menelepon" ke Kaggle. Kalau notebook ini mati, job lokal hanya kehilangan
-# lapisan veto (fallback ke gatekeeper legacy) - tidak ada yang rusak.
+# lapisan veto (gatekeeper legacy tetap bekerja) - tidak ada yang rusak.
 #
 # CARA PAKAI (ringkas, detail di README):
 #   1. Beri tahu notebook dari mana ia harus memanggil API lokal ANDA. Ada dua
@@ -44,7 +44,7 @@ def _load_json_if_config(path):
             data = json.load(fh)
     except Exception:
         return None
-    if isinstance(data, dict) and any(k in data for k in ("base_url", "baseUrl", "api_access_token", "token", "ORACLE_NO_MODEL")):
+    if isinstance(data, dict) and any(k in data for k in ("base_url", "baseUrl", "api_access_token", "token", "ORACLE_NO_MODEL", "ORACLE_MODEL_ID", "ORACLE_MAX_MINUTES")):
         return data
     return None
 
@@ -111,10 +111,18 @@ def _cfg(*names, **kw):
 # ------------------------------------------------------------------ KONFIG ---
 BASE_URL = (_cfg("VLM_ORACLE_BASE_URL", "ORACLE_BASE_URL", "base_url", "baseUrl") or "").rstrip("/")
 TOKEN = _cfg("API_ACCESS_TOKEN", "VLM_ORACLE_API_TOKEN", "api_access_token", "token")
-MODEL_ID = _cfg("ORACLE_MODEL_ID", default="qwen/Qwen2.5-VL-7B-Instruct-AWQ")
-# Bila AWQ tidak bisa dimuat (lihat load_model), turun ke bobot fp16 3B yang muat di T4
-# 16 GB dan tidak butuh quantizer apa pun.
-FALLBACK_MODEL_ID = _cfg("ORACLE_FALLBACK_MODEL_ID", default="qwen/Qwen2.5-VL-3B-Instruct")
+# Model default Qwen2.5-VL-3B-Instruct (fp16), BUKAN 7B-AWQ. Alasannya terukur,
+# bukan perkiraan: round trip 7B = 3,5-5,7 s per frame, LEBIH LAMBAT dari gatekeeper
+# lokal di HP (2,34 s/frame), dan bobot AWQ butuh `gptqmodel` yang gagal dimuat di image
+# Kaggle terbaru. 3B fp16 ~6 GB, nyaman di T4 16 GB, tanpa quantizer apa pun.
+MODEL_ID = _cfg("ORACLE_MODEL_ID", default="qwen/Qwen2.5-VL-3B-Instruct")
+# RANTAI FALLBACK ANTAR-BOTOT DIHAPUS, dan itu sengaja. Dulu 7B -> 3B, akibatnya `model`
+# yang tercatat di vonis bisa berbeda dari bobot yang Anda kalibrasi, dan kegagalan muat
+# berubah menjadi "sukses diam-diam memakai bobot lain". Yang tersisa hanya retry untuk
+# bobot yang SAMA (memasang quantizer yang kurang). Kalau tetap gagal, sesi mati dengan
+# pesan jelas - pipeline lokal aman karena oracle memang fail-open: tanpa vonis tidak ada
+# veto, dan gatekeeper lokal tetap menyaring.
+LEGACY_FALLBACK = _cfg("ORACLE_FALLBACK_MODEL_ID")
 POLL_SEC = float(_cfg("ORACLE_POLL_SEC", default="5") or 5)
 IDLE_SLEEP_MAX = float(_cfg("ORACLE_IDLE_SLEEP_MAX", default="30") or 30)
 MAX_MINUTES = float(_cfg("ORACLE_MAX_MINUTES", default="690") or 690)   # < 12 jam Kaggle
@@ -206,16 +214,16 @@ def _build(model_id):
 
 
 def load_model():
-    """Muat Qwen2.5-VL sekali per proses, dengan rantai fallback.
+    """Muat SATU bobot: MODEL_ID. Tidak ada fallback ke bobot lain (lihat KONFIG).
 
-    Kenapa perlu: image Kaggle sudah punya transformers terbaru, dan sejak versi itu
-    bobot AWQ dimuat lewat gptqmodel (bukan autoawq) -> ImportError saat load. ensure_deps
-    sengaja TIDAK menurunkan transformers sistem (bisa merusak notebook lain di image),
-    jadi kita coba: (1) model pilihan, (2) pasang gptqmodel lalu coba lagi, (3) model
-    non-kuantisasi yang tidak butuh quantizer apa pun. Yang tercatat di vonis adalah model
-    yang BENAR-BENAR termuat, jadi Anda tahu angka kalibrasi datang dari bobot mana.
+    Satu-satunya retry yang diizinkan memperbaiki DEPENDENSI untuk bobot yang sama:
+    transformers bawaan image Kaggle memuat AWQ lewat `gptqmodel`, jadi kalau ImportError
+    menyebut quantizer itu, pasang lalu coba bobot yang sama sekali lagi. Gagal lagi =
+    raise; sesi berhenti dan log menunjukkan penyebabnya apa adanya, bukan tertutup oleh
+    vonis dari bobot yang tidak Anda pilih.
     """
-    global MODEL_ID
+    if LEGACY_FALLBACK:
+        log("CATATAN: ORACLE_FALLBACK_MODEL_ID=%s DIABAIKAN - fallback antar-bobot sudah dihapus." % LEGACY_FALLBACK)
     try:
         return _build(MODEL_ID)
     except ImportError as err:
@@ -224,17 +232,8 @@ def load_model():
         if AUTO_INSTALL and "gptqmodel" in msg.lower():
             log("Menginstal gptqmodel (perlu untuk AWQ di transformers sistem Kaggle)...")
             pip_install("gptqmodel")
-            try:
-                return _build(MODEL_ID)
-            except Exception as err2:
-                log("Masih gagal setelah gptqmodel: %s" % str(err2)[:200])
-        elif not AUTO_INSTALL:
-            raise
-    # Fallback: bobot fp16 kecil yang jalan di T4 tanpa quantizer.
-    log("Fallback ke %s (tanpa kuantisasi, tidak butuh quantizer)." % FALLBACK_MODEL_ID)
-    model, processor, torch = _build(FALLBACK_MODEL_ID)
-    MODEL_ID = FALLBACK_MODEL_ID
-    return model, processor, torch
+            return _build(MODEL_ID)   # masih gagal -> biarkan exception naik, tanpa diam-diam ganti bobot
+        raise
 
 
 def prep_image(src_path, dst_dir, idx):
@@ -411,8 +410,9 @@ def main():
             "API_ACCESS_TOKEN kosong. Isi di oracle_config.json (key api_access_token) lewat "
             "kaggle/deploy.ps1 -TunnelUrl ... -WithToken, atau env var API_ACCESS_TOKEN di Kaggle."
         )
-    log("Base URL siap. Token: %d karakter (tidak ditampilkan). NO_MODEL=%s|max=%.0f menit"
-        % (len(token), NO_MODEL, MAX_MINUTES))
+    log("Base URL siap. Token: %d karakter (tidak ditampilkan). Model: %s (SATU bobot, tanpa fallback). "
+        "NO_MODEL=%s|max=%.0f menit"
+        % (len(token), MODEL_ID.split("/")[-1], NO_MODEL, MAX_MINUTES))
 
     model = processor = torch = None
     if not NO_MODEL:
