@@ -98,10 +98,11 @@ export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict') {
  * @returns {string[]}
  */
 export function buildArgs(cfg, framePaths, prompt) {
-  const args = ['-m', cfg.model, '--mmproj', cfg.mmproj, '--temp', '0', '--no-stream', '-c', '2048'];
-  // Beberapa build menerima daftar gambar dengan '-i a.jpg,b.jpg'; yang lain '-i' berulang.
-  // Kita pakai '-i' berulang (lebih umum didukung mtmd-cli multi-image).
-  for (const fp of framePaths) args.push('-i', fp);
+  // Catatan compatibilitas llama-mtmd-cli pra-build (terverifikasi di b11362 Termux):
+  //  '-i' dan '--no-stream' TIDAK dikenali (invalid argument) -> jangan dipakai.
+  //  Flag gambar yang benar adalah '--image' (bisa berulang untuk multi-frame).
+  const args = ['-m', cfg.model, '--mmproj', cfg.mmproj, '--temp', '0', '-c', '2048'];
+  for (const fp of framePaths) args.push('--image', fp);
   args.push('-p', prompt);
   return args;
 }

@@ -73,19 +73,21 @@ MODELS = [
 # WAJIB diverifikasi terhadap repo HF sebelum dipakai (bisa berubah).
 VLM_MODELS = [
     {
-        "name": "SmolVLM2-500M GGUF (Q4_K_M)",
+        "name": "SmolVLM2-500M GGUF (Q4_K_M, auto-quant mradermacher)",
         "filename": "smolvlm2-500m.Q4_K_M.gguf",
-        "min_size": 300_000_000,
+        "min_size": 250_000_000,
         "urls": [
-            "https://huggingface.co/jc-builds/smolvlm2-500m-gguf/resolve/main/smolvlm2-500m.Q4_K_M.gguf"
+            "https://huggingface.co/mradermacher/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/SmolVLM2-500M-Video-Instruct.Q4_K_M.gguf"
         ]
     },
     {
-        "name": "SmolVLM2-500M mmproj (vision projector)",
+        # mmproj HANYA tersedia di repo resmi ggml-org (Q8_0 & f16). Q8_0 dipilih
+        # agar hemat RAM/kuota Termux; encoder vision kurang sensitif kuantisasi.
+        "name": "SmolVLM2-500M mmproj (vision projector, Q8_0 resmi ggml-org)",
         "filename": "smolvlm2-500m-mmproj.gguf",
-        "min_size": 50_000_000,
+        "min_size": 90_000_000,
         "urls": [
-            "https://huggingface.co/jc-builds/smolvlm2-500m-gguf/resolve/main/smolvlm2-500m-mmproj.gguf"
+            "https://huggingface.co/ggml-org/SmolVLM2-500M-Video-Instruct-GGUF/resolve/main/mmproj-SmolVLM2-500M-Video-Instruct-Q8_0.gguf"
         ]
     },
 ]

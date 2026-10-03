@@ -55,14 +55,17 @@ describe('vlmGateService - fungsi murni', () => {
     expect(buildVlmPrompt('gadget_smartphone', 'presenter_only')).toMatch(/demo\/activity are acceptable/);
   });
 
-  it('buildArgs memakai -m/--mmproj/-i (berulang)/--temp 0', () => {
+  it('buildArgs memakai -m/--mmproj/--image (berulang)/--temp 0 (tanpa -i/--no-stream)', () => {
     const cfg = { model: 'M.gguf', mmproj: 'P.gguf' };
     const args = buildArgs(cfg, ['a.jpg', 'b.jpg'], 'PROMPT');
     expect(args).toContain('-m');
     expect(args).toContain('M.gguf');
     expect(args).toContain('--mmproj');
     expect(args).toContain('P.gguf');
-    expect(args.filter((a) => a === '-i')).toHaveLength(2);
+    // Flag lama yang TIDAK diterima llama-mtmd-cli pra-build harus hilang.
+    expect(args).not.toContain('-i');
+    expect(args).not.toContain('--no-stream');
+    expect(args.filter((a) => a === '--image')).toHaveLength(2);
     expect(args).toContain('--temp');
     expect(args).toContain('0');
   });
