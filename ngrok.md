@@ -31,15 +31,37 @@ cd "c:\Users\SEMOGA AWET\Documents\clipperVPS"
 powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -FromTermux -RunTimeoutSec 420
 ```
 
-## 1. Pasang agent ngrok (di proot Ubuntu, sama seperti cloudflared)
+## 1. Pasang agent ngrok (WAJIB di proot Ubuntu, bukan Termux native)
 
-`cloudflared` di perangkat ini ada di `/usr/local/bin/cloudflared` dalam proot, dan `ngrok`
-belum terpasang di mana pun (Termux native maupun proot). Pasang di tempat yang sama:
+**Kesalahan yang paling sering terjadi (terjadi juga pada user ini, 2026-10-03):** perintah
+di halaman ini dijalankan di dalam proot Ubuntu. Dari prompt Termux (`~ $`) semuanya akan gagal
+dengan wajah bingung:
+`tar: /usr/local/bin: Cannot open: No such file or directory`, lalu
+`curl: (23) Failure writing output` (itu hanya efek samping SIGPIPE karena tar mati - bukan
+masalah jaringan), lalu `cd: /root/clippervps: No such file or directory`.
+
+Bukti kenapa bukan cuma soal direktori (terukur 2026-10-03 pada perangkat ini):
+Termux native memakai libc **bionic** (`PREFIX=/data/data/com.termux/files/usr`, dan
+`/lib/ld-linux-aarch64.so.1` TIDAK ADA), sedangkan ngrok `linux-arm64` adalah ELF **glibc**.
+Jadi menaruhnya di `$PREFIX/bin` pun akan menghasilkan `CANNOT LINK EXECUTABLE`. proot Ubuntu
+memang tempatnya: `aarch64`, `ldd (Ubuntu GLIBC 2.43-2ubuntu2.4)`, `/usr/local/bin` ada,
+`curl`/`tar`/`gzip` ada - dan di situlah `cloudflared` Anda tinggal selama ini.
+
+Cara paling aman: jalankan dari prompt Termux TANPA perlu login interaktif (satu baris,
+tinggal tempel):
 
 ```bash
-# masuk ke proot dari Termux
-proot-distro login ubuntu
+proot-distro run ubuntu -- bash -c 'curl -sSL -o /tmp/ngrok.tgz https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz && tar xzf /tmp/ngrok.tgz -C /usr/local/bin && ngrok version'
+```
 
+(URL di atas terverifikasi mengembalikan `HTTP/1.1 200 OK`, panjang 10.994.396 byte.
+Kalau berubah, ambil tautan terbaru dari https://ngrok.com/download dengan platform
+**Linux / arm64** - jangan tebak angka versinya.)
+
+Atau masuk dulu, baru jalankan langkah satu per satu:
+
+```bash
+proot-distro login ubuntu        # prompt berubah menjadi root@localhost:...:/root#
 cd /tmp
 curl -sSL -o ngrok.tgz https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-linux-arm64.tgz
 tar xzf ngrok.tgz
@@ -47,10 +69,9 @@ mv -f ngrok /usr/local/bin/ngrok
 ngrok version
 ```
 
-> Berkas `...-linux-arm64.tgz` memakai collection CDN yang sama dengan tautan unduhan resmi
-> (`bin.ngrok.com/c/bNyj1mQVY4c/...`). Kalau URL ini menolak (`404`), ambil tautan terbaru dari
-> https://ngrok.com/download dengan memilih platform **Linux / arm64** — jangan tebak angka
-> versinya.
+Konvensi placeholder di dokumen ini: `TOKEN_ANDA` ditulis apa adanya untuk diganti, sedangkan
+`<...>` **jangan sampai ikut tertempel** - `<` adalah operator redirect di bash, sehingga
+`ngrok config add-authtoken <TEMPEL>` menghasilkan `syntax error near unexpected token newline`.
 
 Alternatif lewat repo resmi ngrok (satu kali, lalu dapat update lewat `apt`):
 
@@ -65,7 +86,7 @@ apt update && apt install -y ngrok
 Ambil dari dashboard ngrok (**Your Authtoken**), lalu:
 
 ```bash
-ngrok config add-authtoken <TOKEN_ANDA>
+ngrok config add-authtoken TOKEN_ANDA
 ```
 
 Perintah ini menulis ke berkas konfigurasi agent (`/root/.config/ngrok/ngrok.yml` di proot),
@@ -86,13 +107,13 @@ berakhiran `.app` di halaman ini jangan ditelan mentah-mentah.
 ## 4. Jalankan tunnel (uji manual dulu)
 
 ```bash
-ngrok http 5000 --url https://<domain-anda>
+ngrok http 5000 --url https://DOMAIN_ANDA
 ```
 
 Yang harus Anda lihat di baris **Forwarding**:
 
 ```
-Forwarding   https://<domain-anda> -> http://localhost:5000
+Forwarding   https://DOMAIN_ANDA -> http://localhost:5000
 ```
 
 Kalau ngrok menolak `--url` (mis. domain belum siap/typo), jalankan `ngrok http 5000` tanpa
@@ -104,7 +125,7 @@ kembali langkah 3.
 ## 5. Uji dari PC (ini bagian yang menentukan)
 
 ```powershell
-$ng = "https://<domain-anda>"
+$ng = "https://DOMAIN_ANDA"
 curl.exe -s "$ng/api/health"
 # harapan: {"status":"ok","service":"clipper-api",...}
 
@@ -149,7 +170,7 @@ tanpa pesan error, seperti yang terjadi pada `auto_f6bc7736ef`.
 Setara manual (inilah perintah yang dijalankan skrip):
 
 ```bash
-pm2 start ngrok --name tunnel -- http 5000 --url https://<domain-anda>
+pm2 start ngrok --name tunnel -- http 5000 --url https://DOMAIN_ANDA
 pm2 save
 pm2 logs tunnel --lines 20
 ```
@@ -163,7 +184,7 @@ Cukup satu baris - boleh di **root `.env`** (file ini memang dibaca `envLoader`)
 `server/.env`:
 
 ```bash
-NGROK_URL=https://<domain-anda>
+NGROK_URL=https://DOMAIN_ANDA
 ```
 
 `start-tunnel.sh` juga menerima `NGROK_DOMAIN=xxx.ngrok-free.dev` (domain polos); `NGROK_URL`
@@ -176,7 +197,7 @@ Yang masih Anda nyalakan sendiri:
 
 ```bash
 VISION_VERIFY_MODE=oracle
-API_ACCESS_TOKEN=<token>   # wajib; tanpa ini /vlm-oracle/* menjawab 503 dengan sengaja
+API_ACCESS_TOKEN=TOKEN_ANDA   # wajib; tanpa ini /vlm-oracle/* menjawab 503 dengan sengaja
 ```
 
 Jebakan konfigurasi (terbaca dari kode, bukan dugaan): `server/utils/paths.js` menyusun
@@ -209,7 +230,7 @@ powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -FromTermux -RunTimeo
 
 # (b) atau sebut manual (dipakai kalau SSH sedang tidak bisa dipakai)
 powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 `
-  -TunnelUrl https://<domain-anda> -WithToken -RunTimeoutSec 420
+  -TunnelUrl https://DOMAIN_ANDA -WithToken -RunTimeoutSec 420
 ```
 
 Karena URL ngrok tetap, **langkah ini hanya perlu sekali** — tidak seperti quick tunnel yang
