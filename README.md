@@ -183,3 +183,37 @@ Sistem **tidak** mengunduh video penuh untuk menganalisa kandidat. Penghematan t
 
 ### Sampling frame bisa diperlonggar bila kuota sangat mepet
 Jumlah frame analisa dihitung `durasi / 1.5s` (cap 500). Menurunkan rasio/cap memangkas kuota sampling **dan** CPU Gatekeeper, tapi mengurangi resolusi temporal (risiko blind-spot adegan singkat).
+
+---
+
+## 🛰️ VLM Oracle — vonis frame oleh model besar di Kaggle (opsional)
+
+**Kenapa fitur ini ada.** SmolVLM2 yang dijalankan langsung di perangkat (llama.cpp `llama-mtmd-cli` di Termux/proot-distro) **terukur terlalu lambat untuk jadi gerbang per-scene**: pada Unisoc T7250 (7 core, 8 GB RAM) biaya muat model hanya ±2 detik tetapi **biaya per frame 36–52 detik** — bukan per proses (2 frame sekali panggil = 90 dtk, 4 frame = 162 dtk). Menurunkan resolusi (640/320 px) dan mengatur jumlah thread tidak menolong. Yang lebih fatal: pada 4 frame yang sudah ditolak SCRFD karena wajah, model menjawab **"SAFE" 4/4**. Artinya mengaktifkan VLM di HP justru **melonggarkan** filter. Karena itu `VISION_VERIFY_MODE` di Termux dibiarkan `legacy`.
+
+**Desain Oracle.** Bobot besar (default **Qwen2.5-VL-7B-Instruct-AWQ**) dijalankan di **GPU Kaggle**, dan Kaggle **hanya** dipakai untuk analisa frame — seluruh sisanya (yt-dlp, Gatekeeper ONNX, Whisper, render) tetap di PC/Termux. Arah koneksi dipaksa oleh fakta bahwa notebook Kaggle tidak punya inbound: **notebook yang menjadi klien** (`claim` → unduh frame → vonis → `result`). Pipeline lokal tidak pernah menelepon Kaggle; ia menulis batch ke antrean SQLite `vlm_oracle_batches` dan menunggu vonis. Notebook boleh mati kapan saja.
+
+**Kebijakan fallback (bukan fail-open).** Oracle menjawab → frame yang divonis KOTOR masuk `blacklistedFramePaths` yang sudah dipakai storyboard Gemini, sehingga otomatis dikecualikan. Oracle diam / timeout / vonis tidak sah / notebook mati → **tidak ada frame yang diveto**, dan keputusan Gatekeeper legacy + Gemini tetap berlaku penuh. Jalur legacy **tidak pernah** dilewati — berbeda dengan mode `smolvlm` yang me-`return` lebih awal dan karena itu melompati Whisper + Gatekeeper.
+
+| Flag (`server/.env`) | Default | Fungsi |
+|---|---|---|
+| `VISION_VERIFY_MODE` | `legacy` | Set `oracle` untuk mengaktifkan lapisan veto model besar. |
+| `VLM_ORACLE_MAX_FRAMES` | `120` | Plafon **total** frame per job yang dikirim ke GPU (dipilih merata sepanjang garis waktu). `0` = tidak ada yang divisit. |
+| `VLM_ORACLE_BATCH_SIZE` | `8` | Frame per batch (dijepit 1–16). |
+| `VLM_ORACLE_TIMEOUT_SEC` | `180` | Tunggu maksimal per batch. Lewat → lanjut, tidak memveto. |
+| `VLM_ORACLE_TOTAL_TIMEOUT_SEC` | `600` | Anggaran waktu seluruh tahap oracle dalam satu job. |
+| `VLM_ORACLE_POLL_MS` | `2000` | Interval worker memeriksa vonis. |
+| `VLM_ORACLE_STALE_SEC` / `_MAX_ATTEMPTS` | `300` / `2` | Batch `claimed` yang lebih tua dari ini dianggap notebook mati dan dikembalikan ke `pending`; setelah `MAX_ATTEMPTS` ditandai `expired` agar GPU tidak dibuang untuk kerjaan yatim. |
+
+### Runbook sisi lokal
+1. **Wajib:** isi `API_ACCESS_TOKEN` di `server/.env`, restart server. Endpoint oracle sengaja menjawab **503** selama token kosong, karena pihak yang mengambil data adalah mesin di luar jaringan Anda dan yang diserahkan adalah bingkai video Anda. (Catatan: saat ini `CLOUDFLARE_TUNNEL_URL` terisi di Termux sedangkan token kosong — itu eksposur publik yang harus ditutup sebelum mode apa pun dipakai.)
+2. Pastikan tunnel publik aktif (`cloudflared tunnel --url http://localhost:5000`) dan catat URL-nya — quick tunnel **ganti URL setiap restart**, jadi nilai ini harus diperbarui di Kaggle Secrets tiap kali.
+3. Cek antrean: `GET /api/vlm-oracle/status` (butuh token). Endpoint `/vlm-oracle/*` **tidak boleh** dimasukkan ke allowlist publik `tokenAuth`.
+4. Set `VISION_VERIFY_MODE=oracle` lalu jalankan job seperti biasa. Log menampilkan `[Oracle] ⛔ N/M frame diveto model besar...`.
+
+### Runbook sisi Kaggle
+1. Notebook baru → **GPU T4 x2** → attach dataset/repo GitHub `Zozodoank/clippervps` → buka `kaggle/vlm_oracle_qwen.py`.
+2. **Kaggle > Settings > Environment variables**, tambahkan `VLM_ORACLE_BASE_URL` (contoh `https://xxx.trycloudflare.com`, tanpa `/` di akhir) dan `API_ACCESS_TOKEN` (nilai yang **sama** dengan `server/.env`). Jangan hard-code token di notebook — log notebook bisa ter-share.
+3. Validasi sambungan dulu **tanpa membakar kuota GPU**: set `ORACLE_NO_MODEL=1` dan jalankan. Kalau log menampilkan `claim ...` dan vonis `dry-run` diterima server, tunnel + token sudah benar. Matikan flag itu untuk menjalankan model sungguhan.
+4. Notebook looping dan berhenti sendiri setelah `ORACLE_MAX_MINUTES` (default 690 menit) agar tidak dipotong paksa di jam ke-12. Kuota GPU Kaggle ±30 jam/minggu — jangan biarkan looping kosong menyala semalaman; hentikan manual bila tidak ada job.
+
+> **`kaggle.json`** (kredensial API Kaggle: username + key) **tidak boleh di-commit** — sudah masuk `.gitignore`. Kalau file itu pernah ada di folder repo yang ter-share, revoke key-nya di Kaggle > Account > Create New API Token.

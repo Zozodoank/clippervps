@@ -30,6 +30,23 @@ db.exec(`
     id TEXT PRIMARY KEY,
     data TEXT NOT NULL
   );
+  -- ORACLE KAGGLE (VISION_VERIFY_MODE=oracle): antrean batch frame yang menunggu vonis
+  -- model besar di luar perangkat. Notebook adalah KLIEN (Kaggle tidak punya inbound),
+  -- jadi dia yang mengklaim & melaporkan hasil. Status: pending -> claimed -> done,
+  -- atau -> expired (worker menyerah / percobaan habis).
+  -- CATATAN: komentar di dalam db.exec WAJIB '--' (bukan '//') karena ini SQL, bukan JS.
+  CREATE TABLE IF NOT EXISTS vlm_oracle_batches (
+    id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL,
+    scene_idx INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    claimed_at INTEGER,
+    completed_at INTEGER,
+    data TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_vlm_oracle_status ON vlm_oracle_batches(status, created_at);
 `);
 
 export function sanitizeJobForDisk(job) {
@@ -356,4 +373,162 @@ export function updateAutoRun(run, patch) {
 export function getLatestAutoRun() {
   const all = Array.from(autoRuns.values()).sort((a, b) => new Date(b.startedAt) - new Date(a.startedAt));
   return all[0] || null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ORACLE QUEUE (VISION_VERIFY_MODE=oracle) — antrean vonis frame oleh model besar
+// di notebook Kaggle. Sisi lokal = PRODUSEN (enqueue + menunggu), sisi Kaggle =
+// KLIEN (claim + submit). Semua operasi berbasis statement SET (bukan iterate()+
+// write) karena koneksi yang sama tidak boleh dipakai menulis sambil cursor terbuka
+// (pernah menjatuhkan boot — lihat komentar loadJobsFromDisk).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const oracleSelect = db.prepare('SELECT * FROM vlm_oracle_batches WHERE id = ?');
+const oracleInsert = db.prepare(`INSERT OR REPLACE INTO vlm_oracle_batches
+  (id, job_id, scene_idx, status, attempts, created_at, claimed_at, completed_at, data)
+  VALUES (@id, @jobId, @sceneIdx, @status, @attempts, @createdAt, @claimedAt, @completedAt, @data)`);
+
+function toOracleBatch(row) {
+  if (!row) return null;
+  let payload = {};
+  try { payload = JSON.parse(row.data) || {}; } catch { payload = {}; }
+  return {
+    id: row.id,
+    jobId: row.job_id,
+    sceneIdx: row.scene_idx,
+    status: row.status,
+    attempts: row.attempts,
+    createdAt: row.created_at,
+    claimedAt: row.claimed_at,
+    completedAt: row.completed_at,
+    frames: payload.frames || [],
+    niche: payload.niche || '',
+    facePolicy: payload.facePolicy || '',
+    prompt: payload.prompt || '',
+    worker: payload.worker || '',
+    verdict: payload.verdict || null,
+    lastError: payload.lastError || '',
+  };
+}
+
+function saveOracleBatch(b, { now = Date.now() } = {}) {
+  oracleInsert.run({
+    id: b.id,
+    jobId: b.jobId || '',
+    sceneIdx: Number(b.sceneIdx) || 0,
+    status: b.status || 'pending',
+    attempts: Number(b.attempts) || 0,
+    createdAt: Number(b.createdAt) || now,
+    claimedAt: b.claimedAt ?? null,
+    completedAt: b.completedAt ?? null,
+    data: JSON.stringify({
+      frames: b.frames || [], niche: b.niche || '', facePolicy: b.facePolicy || '',
+      prompt: b.prompt || '', worker: b.worker || '', verdict: b.verdict ?? null,
+      lastError: b.lastError || '',
+    }),
+  });
+  return toOracleBatch(oracleSelect.get(b.id));
+}
+
+/** Daftar frame baru ke antrean oracle. Idempoten terhadap id (retry job memakai id sama). */
+export function enqueueOracleBatch({ id, jobId, sceneIdx = 0, frames = [], niche = '', facePolicy = 'strict', prompt = '', now = Date.now() }) {
+  if (!id) throw new Error('enqueueOracleBatch: id wajib ada');
+  return saveOracleBatch({
+    id, jobId, sceneIdx, status: 'pending', attempts: 0, createdAt: now,
+    claimedAt: null, completedAt: null, frames, niche, facePolicy, prompt,
+  }, { now });
+}
+
+export function getOracleBatch(id) {
+  return toOracleBatch(oracleSelect.get(id));
+}
+
+/**
+ * Klaim satu batch paling tua. Notebook yang mati di tengah jalan tidak membuat
+ * batch hilang: 'claimed' yang melewati `staleMs` dikembalikan ke 'pending' sampai
+ * `maxAttempts`, lalu ditandai 'expired' agar GPU tidak dibuang untuk batch yatim.
+ */
+export function claimOracleBatch({ workerId = '', staleMs = 300_000, maxAttempts = 2, now = Date.now() } = {}) {
+  const cutoff = now - staleMs;
+  db.prepare(`UPDATE vlm_oracle_batches SET status='expired'
+    WHERE status='claimed' AND claimed_at < ? AND attempts >= ?`).run(cutoff, maxAttempts);
+  db.prepare(`UPDATE vlm_oracle_batches SET status='pending', claimed_at=NULL
+    WHERE status='claimed' AND claimed_at < ? AND attempts < ?`).run(cutoff, maxAttempts);
+
+  const takeOne = db.transaction(() => {
+    const row = db.prepare(`SELECT id FROM vlm_oracle_batches WHERE status='pending'
+      ORDER BY created_at ASC LIMIT 1`).get();
+    if (!row) return null;
+    const changed = db.prepare(`UPDATE vlm_oracle_batches SET status='claimed', claimed_at=?, attempts=attempts+1
+      WHERE id=? AND status='pending'`).run(now, row.id).changes;
+    if (!changed) return null;
+    if (workerId) {
+      const b = toOracleBatch(oracleSelect.get(row.id));
+      if (b) saveOracleBatch({ ...b, worker: String(workerId).slice(0, 120) }, { now });
+    }
+    return toOracleBatch(oracleSelect.get(row.id));
+  });
+  return takeOne();
+}
+
+/**
+ * Notebook melaporkan vonis. Hanya menerima untuk batch 'claimed'/'pending' — hasil
+ * yang datang setelah worker menyerah ('expired') sengaja DITOLAK agar worker yang
+ * sudah lanjut tidak tiba-tiba punya vonis menggantung.
+ */
+export function submitOracleResult({ batchId, verdict, lastError = '', now = Date.now() } = {}) {
+  const b = getOracleBatch(batchId);
+  if (!b) return { ok: false, status: 'unknown' };
+  if (b.status === 'done') return { ok: true, status: 'done', batch: b, duplicate: true };
+  if (b.status === 'expired') return { ok: false, status: 'expired' };
+  const updated = saveOracleBatch({
+    ...b, status: 'done', completedAt: now, verdict: verdict ?? null,
+    lastError: String(lastError || '').slice(0, 400),
+  }, { now });
+  return { ok: true, status: 'done', batch: updated };
+}
+
+/** Worker menyerah (timeout) -> batch tidak boleh diklaim lagi. 'done' tidak pernah ditimpa. */
+export function expireOracleBatch(id, reason = '', { now = Date.now() } = {}) {
+  const b = getOracleBatch(id);
+  if (!b || b.status === 'done') return b;
+  return saveOracleBatch({ ...b, status: 'expired', lastError: String(reason || '').slice(0, 400) }, { now });
+}
+
+const sleepDefault = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Tunggu vonis satu batch. SELALU mengembalikan status akhir, tidak pernah melempar:
+ * 'done' (verdict ada), 'expired' (worker/notebook menyerah), 'timeout' (deadline
+ * lewat — caller memperlakukannya sebagai TIDAK ADA VONIS, bukan vonis bersih).
+ */
+export async function waitForOracleVerdict(id, { timeoutMs = 180_000, pollMs = 2_000, sleep = sleepDefault, now = () => Date.now() } = {}) {
+  const deadline = now() + Math.max(0, Number(timeoutMs) || 0);
+  for (;;) {
+    const b = getOracleBatch(id);
+    if (!b) return { status: 'unknown', batch: null };
+    if (b.status === 'done') return { status: 'done', batch: b, verdict: b.verdict };
+    if (b.status === 'expired') return { status: 'expired', batch: b };
+    if (now() >= deadline) return { status: 'timeout', batch: b };
+    await sleep(Math.min(pollMs, Math.max(50, deadline - now())));
+  }
+}
+
+export function oracleQueueStats({ now = Date.now() } = {}) {
+  const rows = db.prepare('SELECT status, COUNT(*) AS n, MIN(created_at) AS oldest FROM vlm_oracle_batches GROUP BY status').all();
+  const counts = { pending: 0, claimed: 0, done: 0, expired: 0 };
+  const oldest = {};
+  for (const r of rows) { counts[r.status] = r.n; oldest[r.status] = r.oldest; }
+  return {
+    counts,
+    oldestPendingAgeMs: oldest.pending ? Math.max(0, now - oldest.pending) : null,
+    total: Object.values(counts).reduce((a, b) => a + b, 0),
+  };
+}
+
+/** Bersihkan jejak batch lama (dipanggil dari endpoint status/CRON lokal; anti DB membengkak). */
+export function pruneOracleBatches({ keepMs = 24 * 3600_000, now = Date.now() } = {}) {
+  const res = db.prepare('DELETE FROM vlm_oracle_batches WHERE status IN (\'done\',\'expired\') AND COALESCE(completed_at, created_at) < ?')
+    .run(now - keepMs);
+  return res.changes;
 }

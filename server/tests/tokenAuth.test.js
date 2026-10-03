@@ -165,6 +165,17 @@ describe('tokenAuthMiddleware behaviour', () => {
     expect(isPublicApiPath('/api/health')).toBe(true);
     expect(isPublicApiPath('/api/jobs')).toBe(false);
     expect(isPublicApiPath('/api/restart')).toBe(false);
+    // Oracle Kaggle: jalur ini menyerahkan bingkai video ke mesin di luar LAN dan
+    // menerima vonis dari luar. MEMBUKANYA = tunnel publik jadi bocor frame / bisa
+    // disuntik vonis palsu. vlmOracleRoutes juga menolak layanan (503) tanpa token.
+    for (const p of [
+      '/api/vlm-oracle/claim',
+      '/api/vlm-oracle/result',
+      '/api/vlm-oracle/status',
+      '/api/vlm-oracle/frames/orc_abc/0',
+    ]) {
+      expect(isPublicApiPath(p), `${p} harus tetap tertutup token`).toBe(false);
+    }
   });
 });
 

@@ -65,7 +65,36 @@ const FLAG_NORMALIZERS = {
   // ONNX lama (SCRFD/DBNet/MobileNetV3 + gerbang Whisper) TIDAK berubah.
   // 'smolvlm' = Gemini stream/File API mengusulkan window scene -> sampling per-kandidat
   // @1fps -> verifikasi visual oleh SmolVLM2-500M (menggantikan gatekeeper lama), TANPA Whisper.
-  VISION_VERIFY_MODE: (env) => (String(env.VISION_VERIFY_MODE || '').trim().toLowerCase() === 'smolvlm' ? 'smolvlm' : 'legacy'),
+  // 'oracle'  = pipeline LEGACY utuh (Whisper + gatekeeper ONNX tetap jalan), ditambah satu
+  // lapis sanitasi frame oleh model besar di luar perangkat (notebook Kaggle menarik batch
+  // frame dari API lokal, memvonis, lalu mengirim balik). Frame yang divonis KOTOR masuk
+  // `blacklistedFramePaths` yang sudah ada. Oracle diam/timeout = perilaku hari ini persis.
+  VISION_VERIFY_MODE: (env) => {
+    const v = String(env.VISION_VERIFY_MODE || '').trim().toLowerCase();
+    return (v === 'smolvlm' || v === 'oracle') ? v : 'legacy';
+  },
+  // Plafon TOTAL frame per job yang dikirim ke oracle (biaya GPU Kaggle ±30 jam/minggu).
+  // Pool bisa berisi ratusan frame; subset dipilih merata sepanjang garis waktu (lihat
+  // pickEvenlySpaced) agar cakupan temporal tetap ada walau jumlahnya dibatasi.
+  VLM_ORACLE_MAX_FRAMES: (env) => Math.max(0, Number(env.VLM_ORACLE_MAX_FRAMES) || 120),
+  // Jumlah frame per batch (satu panggilan klaim notebook). 8 = satu kali muat bobot untuk
+  // beberapa frame tanpa prompt yang kepanjangan.
+  VLM_ORACLE_BATCH_SIZE: (env) => Math.min(16, Math.max(1, Number(env.VLM_ORACLE_BATCH_SIZE) || 8)),
+  // Waktu tunggu MAKSIMAL per batch (detik) sebelum worker menyerah dan lanjut dengan
+  // keputusan legacy. Bukan vonis: tidak menjawab = tidak memveto.
+  VLM_ORACLE_TIMEOUT_SEC: (env) => Math.max(5, Number(env.VLM_ORACLE_TIMEOUT_SEC) || 180),
+  // Anggaran waktu seluruh tahap sanitasi oracle dalam satu job (detik). Mencegah satu job
+  // menahan antrean berjam-jam saat notebook mati/manusia belum menekan Run.
+  VLM_ORACLE_TOTAL_TIMEOUT_SEC: (env) => Math.max(10, Number(env.VLM_ORACLE_TOTAL_TIMEOUT_SEC) || 600),
+  // Interval polling worker saat menunggu vonis (milidetik).
+  VLM_ORACLE_POLL_MS: (env) => Math.max(250, Number(env.VLM_ORACLE_POLL_MS) || 2000),
+  // Batch 'claimed' lebih tua dari ini (detik) dianggap worker mati -> dikembalikan ke
+  // 'pending' (atau 'expired' bila percobaan habis). Notebook Kaggle boleh mati kapan saja.
+  VLM_ORACLE_STALE_SEC: (env) => Math.max(30, Number(env.VLM_ORACLE_STALE_SEC) || 300),
+  VLM_ORACLE_MAX_ATTEMPTS: (env) => Math.max(1, Number(env.VLM_ORACLE_MAX_ATTEMPTS) || 2),
+  // URL publik lokal (tunnel) tempat notebook memanggil API. Server hanya menyimpan/melaporkan
+  // untuk kenyamanan log; yang memakai nilai ini adalah notebook di sisi Kaggle.
+  VLM_ORACLE_BASE_URL: (env) => String(env.VLM_ORACLE_BASE_URL || '').trim(),
   // GEMINI_SCENE_DISCOVERY: pakai Gemini stream/File API sebagai PENCARI kandidat scene
   // (mengembalikan daftar window). dibaca default OFF ('0').
   GEMINI_SCENE_DISCOVERY: (env) => env.GEMINI_SCENE_DISCOVERY === '1' || String(env.GEMINI_SCENE_DISCOVERY || '').trim().toLowerCase() === 'true',
@@ -136,6 +165,16 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.EVIDENCE_MAX_FRAMES === 'number') patch.EVIDENCE_MAX_FRAMES = String(snapshot.EVIDENCE_MAX_FRAMES);
   // Arsitektur Gemini-first + Smolvlm: selalu ditulis agar mode lama vs baru terkunci persis saat retry.
   if (typeof snapshot.VISION_VERIFY_MODE === 'string') patch.VISION_VERIFY_MODE = snapshot.VISION_VERIFY_MODE;
+  // Oracle Kaggle: selalu ditulis (string/number) agar retry memakai anggaran waktu & plafon
+  // frame yang sama persis dengan saat job pertama kali jalan.
+  if (typeof snapshot.VLM_ORACLE_MAX_FRAMES === 'number') patch.VLM_ORACLE_MAX_FRAMES = String(snapshot.VLM_ORACLE_MAX_FRAMES);
+  if (typeof snapshot.VLM_ORACLE_BATCH_SIZE === 'number') patch.VLM_ORACLE_BATCH_SIZE = String(snapshot.VLM_ORACLE_BATCH_SIZE);
+  if (typeof snapshot.VLM_ORACLE_TIMEOUT_SEC === 'number') patch.VLM_ORACLE_TIMEOUT_SEC = String(snapshot.VLM_ORACLE_TIMEOUT_SEC);
+  if (typeof snapshot.VLM_ORACLE_TOTAL_TIMEOUT_SEC === 'number') patch.VLM_ORACLE_TOTAL_TIMEOUT_SEC = String(snapshot.VLM_ORACLE_TOTAL_TIMEOUT_SEC);
+  if (typeof snapshot.VLM_ORACLE_POLL_MS === 'number') patch.VLM_ORACLE_POLL_MS = String(snapshot.VLM_ORACLE_POLL_MS);
+  if (typeof snapshot.VLM_ORACLE_STALE_SEC === 'number') patch.VLM_ORACLE_STALE_SEC = String(snapshot.VLM_ORACLE_STALE_SEC);
+  if (typeof snapshot.VLM_ORACLE_MAX_ATTEMPTS === 'number') patch.VLM_ORACLE_MAX_ATTEMPTS = String(snapshot.VLM_ORACLE_MAX_ATTEMPTS);
+  if (typeof snapshot.VLM_ORACLE_BASE_URL === 'string') patch.VLM_ORACLE_BASE_URL = snapshot.VLM_ORACLE_BASE_URL;
   if (typeof snapshot.GEMINI_SCENE_DISCOVERY === 'boolean') patch.GEMINI_SCENE_DISCOVERY = snapshot.GEMINI_SCENE_DISCOVERY ? '1' : '0';
   if (typeof snapshot.SCENE_CLIP_DURATION_SEC === 'number') patch.SCENE_CLIP_DURATION_SEC = String(snapshot.SCENE_CLIP_DURATION_SEC);
   if (typeof snapshot.SCENE_SAMPLE_FPS === 'number') patch.SCENE_SAMPLE_FPS = String(snapshot.SCENE_SAMPLE_FPS);
@@ -173,6 +212,15 @@ export function isSmolvlmVerifyEnabled(env = process.env) {
  */
 export function isGeminiSceneDiscoveryEnabled(env = process.env) {
   return env.GEMINI_SCENE_DISCOVERY === '1' || String(env.GEMINI_SCENE_DISCOVERY || '').trim().toLowerCase() === 'true';
+}
+
+/**
+ * Helper konsumen: apakah SANITASI ORACLE aktif (vonis frame oleh model besar di
+ * notebook Kaggle). Mode ini TIDAK mengganti gatekeeper ONNX/Whisper — hanya menambah
+ * veto sebelum storyboard Gemini, sehingga fallback saat oracle diam = jalur lama.
+ */
+export function isVlmOracleEnabled(env = process.env) {
+  return String(env.VISION_VERIFY_MODE || '').trim().toLowerCase() === 'oracle';
 }
 
 /**

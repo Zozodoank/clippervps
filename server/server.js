@@ -159,6 +159,7 @@ import mediaRoutes from './api/routes/mediaRoutes.js';
 import generateRoutes from './api/routes/generateRoutes.js';
 import systemRoutes from './api/routes/systemRoutes.js';
 import draftsRoutes from './api/routes/draftsRoutes.js';
+import vlmOracleRoutes from './api/routes/vlmOracleRoutes.js';
 import { tokenAuthMiddleware, buildCorsOptions, describeAuthPosture } from './api/middleware/tokenAuth.js';
 
 // ⚠️ MUST stay before every app.use('/api', ...) below, otherwise the routers answer the
@@ -172,6 +173,9 @@ app.use('/api', voiceoverRoutes);
 app.use('/api', mediaRoutes);
 app.use('/api', generateRoutes);
 app.use('/api', systemRoutes);
+// Oracle Kaggle (vonis frame oleh model besar). SAMA SEKALI tidak boleh masuk allowlist
+// publik tokenAuth: endpoint ini menyerahkan bingkai video ke mesin cloud di luar LAN.
+app.use('/api', vlmOracleRoutes);
 app.use('/api/drafts', draftsRoutes);
 
 

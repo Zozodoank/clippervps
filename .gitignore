@@ -44,6 +44,10 @@ copy/
 # Authentication and session cookies
 *cookies*.txt
 server/cookies.txt
+# Kaggle API credentials (username + key) - JANGAN PERNAH commit, dan revoke bila
+# pernah tersentuh folder yang di-share. Lihat kaggle/vlm_oracle_qwen.py.
+kaggle.json
+.kaggle/
 
 # AI Gatekeeper Model weights & test cache
 server/gatekeeper/models/*.onnx

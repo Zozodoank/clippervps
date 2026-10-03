@@ -31,6 +31,8 @@ import {
   fastProbeLocal,
 } from '../services/videoFilterService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
+import { isVlmOracleEnabled } from '../config/runtimeFlags.js';
+import { applyOracleVeto } from '../services/vlmOracleService.js';
 import { extractSourceAudio, transcribeAudio } from '../services/audioBeatService.js';
 import {
   verdictCandidatesWithGemini,
@@ -220,7 +222,7 @@ export async function runSourceAcquisitionV2(p) {
     gatePreviewSec = Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 15,
   } = p;
 
-  const diagnostics = { screened: 0, gated: 0, verdictEligible: 0, transcribed: 0 };
+  const diagnostics = { screened: 0, gated: 0, verdictEligible: 0, transcribed: 0, oracleVetoed: 0 };
   if (!candidatePool.length) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
@@ -275,6 +277,48 @@ export async function runSourceAcquisitionV2(p) {
   }
   if (!gatedCandidates.length) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
+  }
+
+  // (L2b) ORACLE KAGGLE (opt-in, VISION_VERIFY_MODE=oracle) — veto model besar SEBELUM
+  // vonis Gemini. Tanpa blok ini, ACQUISITION_FLOW=v2 lolos sepenuhnya dari filter model
+  // besar karena jalur lama (stage1Render storyboard) tidak dilewati.
+  // Kebijakan sama dengan stage1Render: oracle diam/timeout/error = TIDAK memveto apa pun,
+  // keputusan gatekeeper lokal (L2a) + Gemini tetap berlaku. Bukan fail-open terhadap
+  // konten karena lapisan lokal di sekitar titik ini tetap berjalan penuh.
+  if (isVlmOracleEnabled(process.env)) {
+    updateProgress({ step: 'vlm_oracle', message: '🛰️ [V2] Oracle Kaggle memvonis frame kandidat...', progress: 19 });
+    const vetoed = [];
+    for (const cand of gatedCandidates) {
+      const res = await applyOracleVeto(cand.cleanFrames, {
+        jobId,
+        niche,
+        onProgress: updateProgress,
+        logger: console,
+      });
+      if (res.rejected > 0) {
+        diagnostics.oracleVetoed = (diagnostics.oracleVetoed || 0) + res.rejected;
+        vetoed.push({
+          sourceId: cand.sourceId,
+          rejected: res.rejected,
+          checked: res.checked,
+          reason: res.blacklisted.length ? 'frame diveto model besar' : '',
+        });
+      }
+      cand.cleanFrames = res.frames;
+    }
+    // Ambang 3 frame sama dengan gate lokal di atas: kandidat yang tinggal sedikit
+    // frame bersihnya setelah veto tidak layak dikirim ke vonis batch.
+    const survivors = gatedCandidates.filter((c) => c.cleanFrames.length >= 3);
+    const dropped = gatedCandidates.length - survivors.length;
+    if (dropped > 0) {
+      console.warn(`[Job ${jobId}] [Oracle][V2] ${dropped} kandidat dibuang setelah veto (sisa frame < 3).`);
+      gatedCandidates.length = 0;
+      gatedCandidates.push(...survivors);
+    }
+    if (vetoed.length) console.log(`[Job ${jobId}] ⛔ [Oracle][V2] ${diagnostics.oracleVetoed} frame diveto model besar dari ${vetoed.length} kandidat.`);
+    if (!gatedCandidates.length) {
+      return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
+    }
   }
 
   // (L2c) VONIS BATCH Gemini — satu panggilan utk semua kandidat yang lolos gate.

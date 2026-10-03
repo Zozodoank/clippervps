@@ -6,7 +6,8 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled } from '../config/runtimeFlags.js';
+import { applyOracleVeto } from '../services/vlmOracleService.js';
 import { shouldAllowRescue, buildVisionProvenance, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
@@ -1437,8 +1438,24 @@ async function _runStage1Pipeline({
 
         // Coba jalankan AI Storyboard jika sudah ada cukup frame
         if ((bestVerified && (bestVerified.cleanFrames?.length || 0) >= 8) || totalCleanFrames >= 8) {
-          const testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 500, includeEligible: true })
+          let testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 500, includeEligible: true })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
+
+          // ORACLE KAGGLE (opt-in, VISION_VERIFY_MODE=oracle): lapisan veto SEBELUM storyboard.
+          // Model besar memvonis frame yang akan dipakai; yang KOTOR masuk blacklistedFramePaths
+          // yang SUDAH ada -> Gemini, retainedFrames, dan rescue pool otomatis mengecalikannya.
+          // Oracle diam/timeout/error = tidak memveto apa pun, keputusan gatekeeper legacy +
+          // Gemini tetap berlaku. INI BUKAN fail-open: jalur legacy di sekitar titik ini tidak
+          // pernah dilewati (bandingkan branch 'smolvlm' yang me-return lebih awal).
+          if (isVlmOracleEnabled(process.env)) {
+            const veto = await applyOracleVeto(testPool, {
+              jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
+            });
+            testPool = veto.frames;
+            if (veto.rejected > 0) {
+              console.log(`[Job ${jobId}] ⛔ [Oracle] ${veto.rejected}/${veto.checked} frame diveto model besar dan dikeluarkan dari bank footage.`);
+            }
+          }
 
           if (testPool.length >= 2) {
             updateProgress({
@@ -1617,6 +1634,19 @@ async function _runStage1Pipeline({
         if (candidateResults.length > 0) {
           pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 500, includeEligible: true })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
+
+          // Titik storyboard KE-DUA (setelah loop stream selesai tapi hl belum terbentuk).
+          // Veto oracle diterapkan di sini juga, kalau tidak, jalur cadangan ini lolos dari
+          // filter model besar sepenuhnya.
+          if (isVlmOracleEnabled(process.env)) {
+            const veto = await applyOracleVeto(pooledFrames, {
+              jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
+            });
+            pooledFrames = veto.frames;
+            if (veto.rejected > 0) {
+              console.log(`[Job ${jobId}] ⛔ [Oracle] ${veto.rejected}/${veto.checked} frame diveto (jalur storyboard cadangan).`);
+            }
+          }
 
           if (pooledFrames.length >= 2) {
             updateProgress({
