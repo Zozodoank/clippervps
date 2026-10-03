@@ -19,12 +19,15 @@
 #              VLM_ORACLE_BASE_URL  = https://<xxx>.trycloudflare.com (tanpa slash akhir)
 #              API_ACCESS_TOKEN     = <nilai yang SAMA dengan server/.env>
 #      Env var mengalahkan dataset, supaya Anda bisa menimpa cepat dari UI.
-#   2. Accelerator: GPU T4 x2 (atau P100). Metadata kernel sudah men-set ini.
+#   2. Accelerator: GPU T4 x2 (atau P100). Metadata kernel sudah men-set ini, dan worker
+#      MENOLAK jalan tanpa CUDA (ORACLE_REQUIRE_GPU=1) - lihat catatan dtype/perangkat di
+#      KONFIG: lapisan ini ada justru karena GPU, bukan untuk inferensi CPU pelan.
 #   3. Jalankan. Notebook ini looping; hentikan manual atau ia exit sendiri
 #      setelah ORACLE_MAX_MINUTES supaya tidak dipotong Kaggle di jam ke-12.
 #
 # Token NIKKIR (tidak pernah dicetak ke log) karena log notebook bisa ter-share.
 # ============================================================================
+import glob
 import json
 import os
 import re
@@ -44,7 +47,10 @@ def _load_json_if_config(path):
             data = json.load(fh)
     except Exception:
         return None
-    if isinstance(data, dict) and any(k in data for k in ("base_url", "baseUrl", "api_access_token", "token", "ORACLE_NO_MODEL", "ORACLE_MODEL_ID", "ORACLE_MAX_MINUTES")):
+    if isinstance(data, dict) and any(k in data for k in (
+            "base_url", "baseUrl", "api_access_token", "token", "ORACLE_NO_MODEL",
+            "ORACLE_MODEL_ID", "ORACLE_MAX_MINUTES", "ORACLE_MODEL_MOUNT",
+            "HF_TOKEN", "hf_token")):
         return data
     return None
 
@@ -123,6 +129,26 @@ MODEL_ID = _cfg("ORACLE_MODEL_ID", default="qwen/Qwen2.5-VL-3B-Instruct")
 # pesan jelas - pipeline lokal aman karena oracle memang fail-open: tanpa vonis tidak ada
 # veto, dan gatekeeper lokal tetap menyaring.
 LEGACY_FALLBACK = _cfg("ORACLE_FALLBACK_MODEL_ID")
+# GPU adalah alasan lapisan ini ada. Kuota GPU mingguan itu terbatas (README bagian "Kuota"
+# mencatat dua angka Kaggle yang saling bertentangan: 6 jam dari SDK penegas sesi, 30 jam dari
+# tabel CLI). Kalau sesi ternyata TIDAK melihat CUDA, meneruskan = inferensi CPU yang belasan
+# kali lebih lambat SAMBIL membakar kuota. Jadi defaultnya berhenti, bukan jalan pelan.
+# Matikan hanya untuk debug: ORACLE_REQUIRE_GPU=0.
+REQUIRE_GPU = _cfg("ORACLE_REQUIRE_GPU", default="1") != "0"
+# float16, BUKAN "auto". `torch_dtype="auto"` mengambil nilai dari config bobot = bfloat16,
+# dan T4 (Turing) tidak punya jalur bf16 - bobot tetap 6 GB tapi tiap op jatuh ke emulasi.
+# fp16 adalah format native T4. ORACLE_TORCH_DTYPE=auto kalau Anda pindah ke GPU Ampere+.
+TORCH_DTYPE = (_cfg("ORACLE_TORCH_DTYPE", default="float16") or "float16").lower()
+# Bobot yang SUDAH ada di dalam sesi (Kaggle Model lewat model_sources, atau dataset berisi
+# snapshot HF) di-mount di bawah /kaggle/input. Memakainya memangkas biaya yang terukur tadi:
+# dari 86,7 s "siap" (22 s pip + 21 s unduh HF + 47 s muat) tinggal waktu baca disk. Path
+# eksplisit boleh dipaksa; kalau kosong, find_mounted_model() mengenali dari ISI direktori.
+MODEL_MOUNT = _cfg("ORACLE_MODEL_MOUNT", "model_mount")
+# Token HF hanya untuk unduhan (rate limit/429 di jaringan Kaggle); bukan syarat bisa jalan.
+HF_TOKEN = _cfg("HF_TOKEN", "hugging_face_token", "hf_token")
+if HF_TOKEN:
+    # WAJIB di-set sebelum transformers di-import; setelah itu HF_HUB sudah membaca env.
+    os.environ.setdefault("HF_TOKEN", HF_TOKEN)
 POLL_SEC = float(_cfg("ORACLE_POLL_SEC", default="5") or 5)
 IDLE_SLEEP_MAX = float(_cfg("ORACLE_IDLE_SLEEP_MAX", default="30") or 30)
 MAX_MINUTES = float(_cfg("ORACLE_MAX_MINUTES", default="690") or 690)   # < 12 jam Kaggle
@@ -144,6 +170,11 @@ REQUIRED_PIP = (
 
 START = time.time()
 TMP_ROOT = tempfile.mkdtemp(prefix="oracle_frames_")
+# Nama yang dicatat di SETIAP verdict. Kalau bobot datang dari mount lokal (bukan HF id),
+# ini ikut diganti ke nama mount tersebut supaya vonis tetap bisa diatribusikan.
+MODEL_LABEL = MODEL_ID.split("/")[-1]
+# Diisi saat muat; ikut dikirim di verdict supaya log lokal menunjukkan DI MANA vonis lahir.
+DEVICE_INFO = {"cuda": False, "name": "belum dimuat", "device": "", "dtype": ""}
 
 
 def log(msg):
@@ -195,26 +226,208 @@ def pip_install(*packages):
     )
 
 
-def _build(model_id):
+def _pick_dtype(torch):
+    """float16 di GPU. Di CPU, fp16/bf16 tidak didukung merata -> float32 (dan itu berarti
+    sesi Anda salah perangkat: gerbang GPU di load_model sudah menghentikannya lebih dulu,
+    kecuali ORACLE_REQUIRE_GPU=0 untuk debug)."""
+    want = TORCH_DTYPE
+    if want in ("auto", ""):
+        return "auto"
+    table = {"float16": torch.float16, "fp16": torch.float16, "half": torch.float16,
+             "bfloat16": torch.bfloat16, "bf16": torch.bfloat16,
+             "float32": torch.float32, "fp32": torch.float32}
+    if want not in table:
+        log("ORACLE_TORCH_DTYPE=%s tidak dikenal; pakai float16." % want)
+        return torch.float16
+    if not torch.cuda.is_available() and table[want] in (torch.float16, torch.bfloat16):
+        log("CUDA tidak terlihat -> float32 (fp16/bf16 tidak dipakai di CPU).")
+        return torch.float32
+    return table[want]
+
+
+def describe_device(torch, model):
+    cuda = bool(torch.cuda.is_available())
+    info = {"cuda": cuda, "name": "", "device": "", "dtype": ""}
+    if cuda:
+        info["name"] = torch.cuda.get_device_name(0)
+        try:
+            free_b, total_b = torch.cuda.mem_get_info()
+            info["name"] += " (%.1f/%.1f GB terpakai)" % ((total_b - free_b) / 2 ** 30, total_b / 2 ** 30)
+        except Exception:
+            pass
+    else:
+        info["name"] = "CPU"
+    try:
+        info["device"] = str(next(model.parameters()).device)
+    except Exception:
+        info["device"] = "(tidak terbaca)"
+    return info
+
+
+def _has_weights(dir_path):
+    """Snapshot bobot sungguhan: safetensors tunggal ATAU index + shard. Folder berisi
+    README saja tidak boleh lolos - itu memberi error muat yang membingungkan."""
+    if glob.glob(os.path.join(dir_path, "*.safetensors")):
+        return True
+    if os.path.isfile(os.path.join(dir_path, "model.safetensors.index.json")):
+        return True
+    return bool(glob.glob(os.path.join(dir_path, "*.bin")))
+
+
+def _processor_status(dir_path):
+    """Ringkasan diagnostik: apakah snapshot mount bisa dipakai untuk AutoProcessor.
+    Hanya membaca, tidak pernah mengubah sumber bobot. Yang dibutuhkan transformers
+    adalah `image_processor_type` yang dikenal di preprocessor_config.json."""
+    p = os.path.join(dir_path, "preprocessor_config.json")
+    if not os.path.isfile(p):
+        return "tanpa preprocessor_config.json"
+    try:
+        with open(p, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return "preprocessor_config.json tidak terbaca"
+    t = data.get("image_processor_type")
+    if isinstance(t, (list, tuple)):
+        t = t[0] if t else None
+    return "image_processor_type=%s" % t if t else "tanpa image_processor_type"
+
+
+def _is_qwen_vl_dir(dir_path):
+    cfgp = os.path.join(dir_path, "config.json")
+    if not os.path.isfile(cfgp) or not _has_weights(dir_path):
+        return False
+    try:
+        with open(cfgp, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except Exception:
+        return False
+    arch = (" ".join(cfg.get("architectures") or []) + " " + str(cfg.get("model_type", ""))).lower()
+    return "qwen2_5_vl" in arch or "qwen2.5-vl" in arch
+
+
+def find_mounted_model(root="/kaggle/input"):
+    """Kembalikan path bobot yang SUDAH ter-mount di sesi, atau None.
+
+    Kaggle menaruh model_sources di /kaggle/input/models/<owner>/<model>/<framework>/<
+    instance>/<versi>/ dan tiap segmen nama ditentukan pembuat modelnya (qwen-lm vs qwen,
+    transformers vs pytorch), jadi menebak satu path adalah cara tercepat untuk bug. Yang
+    dipakai di sini: kenali dari ISI direktori (config.json arsitektur Qwen2_5_VL + bobot
+    sungguhan), lalu prioritaskan yang namanya paling mirip MODEL_ID. Isi file tidak pernah
+    dicetak - yang muncul hanya nama folder. Param `root` ada supaya fungsi ini teruji di
+    mesin tanpa /kaggle/input (korpus tiruan di temp), BUKAN untuk diubah pemanggil.
+    """
+    if MODEL_MOUNT:
+        if _is_qwen_vl_dir(MODEL_MOUNT):
+            log("ORACLE_MODEL_MOUNT diterima: %s" % MODEL_MOUNT)
+            return MODEL_MOUNT
+        log("ORACLE_MODEL_MOUNT=%s bukan snapshot Qwen2.5-VL yang sah; cari otomatis." % MODEL_MOUNT)
+    if not os.path.isdir(root):
+        return None
+    tokens = [t for t in re.split(r"[^a-z0-9]+", MODEL_LABEL.lower()) if t]
+    best, best_score, found = None, -1, []
+    stack = [(root, 0)]
+    while stack:
+        cur, depth = stack.pop()
+        if os.path.normpath(cur) != os.path.normpath(root) and _is_qwen_vl_dir(cur):
+            low = cur.lower()
+            score = sum(1 for t in tokens if t in low)
+            found.append(cur)
+            if score > best_score or (score == best_score and best and len(cur) < len(best)):
+                best, best_score = cur, score
+        if depth >= 6:
+            continue
+        try:
+            names = sorted(os.listdir(cur))
+        except Exception:
+            continue
+        for name in names:
+            full = os.path.join(cur, name)
+            if os.path.isdir(full):
+                stack.append((full, depth + 1))
+    if found:
+        # Baris ini yang membedakan "mount tidak jalan" dari "mount jalan tapi processor
+        # mirror tidak bisa dipakai" - terukur di kernel v11, keduanya terjadi sekaligus.
+        log("Mount bobot terdeteksi: %d kandidat, dipilih %s | processor di mount: %s" % (
+            len(found), best, _processor_status(best) if best else "-"))
+    return best
+
+
+def model_label_for(ref):
+    """Nama bobot yang dicatat di verdict. Mount Kaggle berakhir dengan NOMOR VERSI
+    (/kaggle/input/models/qwen-lm/qwen2.5-vl/transformers/3b-instruct/2), jadi basename
+    mentah akan menulis "2" - tidak berguna saat Anda membaca tabel kalibrasi. Yang disimpan
+    adalah dua segmen nama terakhir yang berarti (di sini: qwen2.5-vl-3b-instruct)."""
+    if ref == MODEL_ID:
+        return MODEL_ID.split("/")[-1]
+    noise = {"kaggle", "input", "models", "model", "datasets", "data", "transformers",
+             "pytorch", "tensorflow", "tfhub", "jax", "default", "main", "1", "2", "3"}
+    parts = [p for p in str(ref).replace("\\", "/").split("/") if p]
+    named = [p for p in parts if p.lower() not in noise and not p.isdigit()]
+    return "-".join(named[-2:]) or (parts[-1] if parts else str(ref))
+
+
+PROC_MIN_PIXELS = 256 * 28 * 28
+PROC_MAX_PIXELS = 1280 * 28 * 28
+
+
+def load_processor(AutoProcessor, model_ref):
+    """Ambil processor (pembagi image + tokenizer) dan laporkan dari mana ia datang.
+
+    Kenapa fungsi ini ada: terukur pada kernel versi 10 dan 11 (2026-10-03), bobot dari
+    mount Kaggle dimuat SUKSES (824/824 tensor) tetapi `AutoProcessor.from_pretrained(mount)`
+    mati dengan "Unrecognized image processor" - mirror Kaggle Models punya
+    `preprocessor_config.json` yang tidak cukup untuk transformers (kelas image processor
+    Qwen2.5-VL terdaftar lewat key `image_processor_type` di file itu, dan nilai yang
+    tersimpan tidak dikenali).
+
+    Fall-backnya HANYA processor, diunduh dari HF id: itu file kecil - terukur 3,6 s di
+    kernel v11 - bukan bobot 7 GB, jadi hemat waktu yang dikejar opsi ini tetap
+    didapat. BOBOT tidak pernah berpindah sumber di sini; kalau
+    sumbernya sudah HF id dan processor tetap gagal, kesalahan dilempar apa adanya.
+    """
+    try:
+        return AutoProcessor.from_pretrained(
+            model_ref, min_pixels=PROC_MIN_PIXELS, max_pixels=PROC_MAX_PIXELS), model_ref
+    except Exception as err:
+        if model_ref == MODEL_ID:
+            raise
+        log("Processor tidak dikenali di mount (%s: %s) -> ambil processor dari %s"
+            % (type(err).__name__, str(err)[:120], MODEL_ID))
+        return AutoProcessor.from_pretrained(
+            MODEL_ID, min_pixels=PROC_MIN_PIXELS, max_pixels=PROC_MAX_PIXELS), MODEL_ID
+
+
+def _build(model_ref):
     import torch
     from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+    dtype = _pick_dtype(torch)
     t0 = time.time()
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        model_id,
-        torch_dtype="auto",
+        model_ref,
+        torch_dtype=dtype,
         device_map="auto",
         # sdpa menghindari kebutuhan flash-attention yang sering gagal build di Kaggle.
         attn_implementation="sdpa",
     )
     model.eval()
-    processor = AutoProcessor.from_pretrained(
-        model_id, min_pixels=256 * 28 * 28, max_pixels=1280 * 28 * 28)
-    log("Model %s siap dalam %.0fs." % (model_id.split("/")[-1], time.time() - t0))
+    processor, proc_src = load_processor(AutoProcessor, model_ref)
+    global DEVICE_INFO
+    DEVICE_INFO = describe_device(torch, model)
+    DEVICE_INFO["dtype"] = "auto" if dtype == "auto" else str(dtype).replace("torch.", "")
+    DEVICE_INFO["processor"] = proc_src
+    log("Model %s siap dalam %.0fs | torch=%s cuda=%s | %s | bobot di %s | dtype=%s | processor dari %s" % (
+        MODEL_LABEL, time.time() - t0, torch.__version__, DEVICE_INFO["cuda"],
+        DEVICE_INFO["name"], DEVICE_INFO["device"], DEVICE_INFO["dtype"],
+        "HF id" if proc_src == MODEL_ID else "mount"))
     return model, processor, torch
 
 
 def load_model():
-    """Muat SATU bobot: MODEL_ID. Tidak ada fallback ke bobot lain (lihat KONFIG).
+    """Muat SATU bobot. Tidak ada fallback ke bobot lain (lihat KONFIG).
+
+    Urutan sumber: ORACLE_MODEL_MOUNT -> mount Kaggle yang dikenali otomatis -> unduh HF.
+    Yang pertama selalu dipilih, karena yang terakhir adalah biaya yang terukur hari ini:
+    22 s pip + 21 s unduh HF + 47 s muat = 86,7 s sebelum vonis pertama bisa keluar.
 
     Satu-satunya retry yang diizinkan memperbaiki DEPENDENSI untuk bobot yang sama:
     transformers bawaan image Kaggle memuat AWQ lewat `gptqmodel`, jadi kalau ImportError
@@ -224,15 +437,26 @@ def load_model():
     """
     if LEGACY_FALLBACK:
         log("CATATAN: ORACLE_FALLBACK_MODEL_ID=%s DIABAIKAN - fallback antar-bobot sudah dihapus." % LEGACY_FALLBACK)
+    import torch  # lebih awal: gerbang GPU harus memutuskan SEBELUM sesi bayar unduhan
+    if REQUIRE_GPU and not torch.cuda.is_available():
+        raise SystemExit(
+            "CUDA tidak terlihat di sesi ini, jadi bobot akan jalan di CPU - belasan kali lebih "
+            "lambat SAMBIL tetap memotong kuota GPU. Set Accelerator notebook ke GPU T4 "
+            "(machine_shape NvidiaTeslaT4) lalu jalankan ulang. Debug sengaja tanpa GPU: "
+            "ORACLE_REQUIRE_GPU=0.")
+    ref = find_mounted_model() or MODEL_ID
+    log("Sumber bobot: %s" % ("mount lokal (tanpa unduh HF)" if ref != MODEL_ID else "unduh HF %s" % MODEL_ID))
+    global MODEL_LABEL
+    MODEL_LABEL = model_label_for(ref)
     try:
-        return _build(MODEL_ID)
+        return _build(ref)
     except ImportError as err:
         msg = str(err)
-        log("Muat %s gagal: %s" % (MODEL_ID, msg[:200]))
+        log("Muat %s gagal: %s" % (ref, msg[:200]))
         if AUTO_INSTALL and "gptqmodel" in msg.lower():
             log("Menginstal gptqmodel (perlu untuk AWQ di transformers sistem Kaggle)...")
             pip_install("gptqmodel")
-            return _build(MODEL_ID)   # masih gagal -> biarkan exception naik, tanpa diam-diam ganti bobot
+            return _build(ref)   # masih gagal -> biarkan exception naik, tanpa diam-diam ganti bobot
         raise
 
 
@@ -338,7 +562,12 @@ def verdict_batch(payload, model, processor, torch):
     out = {k: bool(obj.get(k, False)) for k in VERDICT_KEYS}
     out["safe"] = bool(obj.get("safe", True))
     out["reason"] = str(obj.get("reason", ""))[:280]
-    out["model"] = MODEL_ID.split("/")[-1]
+    # `model` = label bobot yang benar-benar dimuat (bukan MODEL_ID mentah): kalau bobot
+    # datang dari mount lokal, namanya ikut tercatat di sini. `device`/`dtype` ditambahkan
+    # supaya angka recall/false-reject bisa ditelusuri ke PERANGKAT yang memproduksinya -
+    # vonis dari CPU dan dari T4 tidak boleh menyatu di satu tabel tanpa jejak.
+    out["model"] = MODEL_LABEL
+    out["device"] = "%s|%s" % (DEVICE_INFO.get("name", ""), DEVICE_INFO.get("dtype", ""))
     out["elapsedMs"] = int(dt * 1000)
 
     # Refine per-frame bila ada TANDA kotor apa pun, bukan hanya saat safe:false.
@@ -411,8 +640,8 @@ def main():
             "kaggle/deploy.ps1 -TunnelUrl ... -WithToken, atau env var API_ACCESS_TOKEN di Kaggle."
         )
     log("Base URL siap. Token: %d karakter (tidak ditampilkan). Model: %s (SATU bobot, tanpa fallback). "
-        "NO_MODEL=%s|max=%.0f menit"
-        % (len(token), MODEL_ID.split("/")[-1], NO_MODEL, MAX_MINUTES))
+        "GPU wajib=%s|NO_MODEL=%s|max=%.0f menit"
+        % (len(token), MODEL_ID.split("/")[-1], REQUIRE_GPU, NO_MODEL, MAX_MINUTES))
 
     model = processor = torch = None
     if not NO_MODEL:

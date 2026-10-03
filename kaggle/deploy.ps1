@@ -25,6 +25,10 @@
 #   # VALIDASI SAMBUNGAN TANPA MEMBAKAR KUOTA MODEL (dry-run + sesi dipotong 5 menit):
 #   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -FromTermux -NoModel -RunTimeoutSec 300 -Logs
 #
+#   # JALANKAN DARI BOBOT YANG SUDAH ADA DI KAGGLE (tanpa unduh Hugging Face tiap sesi):
+#   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -FromTermux -RunTimeoutSec 900 `
+#     -ModelSource qwen-lm/qwen2.5-vl/transformers/3b-instruct/2
+#
 #   # hanya menarik log sesi Kaggle yang terakhir:
 #   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -Logs -NoPush
 #
@@ -41,8 +45,11 @@ param(
     [switch]$WithToken,
     [switch]$FromTermux,
     [switch]$NoModel,
+    [switch]$AllowCpu,
     [int]$RunTimeoutSec = 0,
     [string]$TunnelUrl = '',
+    [string]$ModelSource = '',
+    [string]$ModelMount = '',
     [string]$KernelSlug = 'clippervps-vlm-oracle',
     [string]$ConfigSlug = 'clippervps-oracle-config',
     [string]$LogDir = 'scratch/kaggle_out'
@@ -57,12 +64,25 @@ $scriptFile = Join-Path $PSScriptRoot 'vlm_oracle_qwen.py'
 $metaTemplate = Join-Path $PSScriptRoot 'kernel-metadata.example.json'
 $credFile = Join-Path $repoRoot 'kaggle.json'
 $dotenv = Join-Path $repoRoot 'server\.env'
+$srcMarker = Join-Path $PSScriptRoot '.deploy\.model-source'   # agar -ModelSource cukup diisi sekali
 
 function Read-EnvValue([string]$Path, [string]$Key) {
     if (-not (Test-Path $Path)) { return '' }
     $line = Select-String -Path $Path -Pattern ("^{0}=(.+)$" -f $Key) | Select-Object -First 1
     if (-not $line) { return '' }
     return $line.Matches[0].Groups[1].Value.Trim()
+}
+
+function Split-ModelSource([string]$s) {
+    # Bentuk resmi Kaggle: <owner>/<model>/<framework>/<instance>[/<versi>], sama dengan
+    # URL model di situs Kaggle. Versi default 1; menyebutkan angka eksplisit lebih baik
+    # karena "versi terbaru" membuat bobot yang divonis bisa berubah tanpa Anda sadari.
+    $parts = @($s.Trim('/').Split('/') | Where-Object { $_ -ne '' })
+    if ($parts.Count -lt 4) {
+        throw "ModelSource harus '<owner>/<model>/<framework>/<instance>[/<versi>]', contoh: qwen-lm/qwen2.5-vl/transformers/3b-instruct/2"
+    }
+    $rev = if ($parts.Count -ge 5) { $parts[4] } else { '1' }
+    return [pscustomobject]@{ model = "$($parts[0])/$($parts[1])"; framework = $parts[2]; instance = $parts[3]; revision = $rev }
 }
 
 # --- 1. Kredensial Kaggle ----------------------------------------------------
@@ -229,6 +249,25 @@ if ($TunnelUrl) {
         $cfgObj['ORACLE_MAX_MINUTES'] = [string]$maxMinutes
         Write-Host "Batas diri worker: ORACLE_MAX_MINUTES=$maxMinutes (berhenti sebelum Kaggle memotong)."
     }
+    # Path bobot lokal di dalam sesi (mount model/dataset). Worker juga mengenali mount
+    # otomatis, jadi ini hanya untuk kasus path-nya tidak biasa.
+    if ($ModelMount) {
+        $cfgObj['ORACLE_MODEL_MOUNT'] = $ModelMount
+        Write-Host "ORACLE_MODEL_MOUNT=$ModelMount (bobot dibaca dari disk sesi, tanpa unduh HF)."
+    }
+    if ($AllowCpu) {
+        # Buka-bukaan: default worker MENOLAK jalan tanpa CUDA. Ini menyalakannya untuk debug.
+        $cfgObj['ORACLE_REQUIRE_GPU'] = '0'
+        Write-Warning 'ORACLE_REQUIRE_GPU=0: sesi boleh berjalan di CPU. Itu belasan kali lebih lambat dan tetap memotong kuota GPU - jangan dibiarkan menyala.'
+    }
+    # HF_TOKEN hanya mempercepat unduhan (beberapa sesi kena rate limit/429 dari jaringan
+    # Kaggle). Diambil dari server/.env, ikut ke dataset PRIVAT yang sama dengan token API,
+    # dan tidak pernah dicetak.
+    $hfToken = Read-EnvValue $dotenv 'HF_TOKEN'
+    if ($hfToken) {
+        $cfgObj['HF_TOKEN'] = $hfToken
+        Write-Host "HF_TOKEN disertakan ke konfigurasi (panjang $($hfToken.Length), nilai tidak ditampilkan)."
+    }
     ($cfgObj | ConvertTo-Json -Depth 4) | Set-Content -Path (Join-Path $cfgDir 'oracle_config.json') -Encoding ascii
     Write-Host "base_url   : $($cfgObj.base_url)"
 
@@ -281,12 +320,37 @@ if ($configRef) {
 } else {
     $meta.dataset_sources = @()
 }
+# model_sources: bobot yang sudah di-host Kaggle di-mount read-only ke sesi. Ini yang
+# memangkas biaya terukur 2026-10-03 (22 s pip + 21 s unduh HF + 47 s muat = 86,7 s) jadi
+# hampir nol. Disimpan di marker supaya push berikutnya tidak kembali ke jalur unduh HF.
+if (-not $ModelSource -and (Test-Path $srcMarker)) {
+    $ModelSource = (Get-Content $srcMarker -Raw).Trim()
+    Write-Host "ModelSource dari push terakhir dipakai: $ModelSource"
+}
+if ($ModelSource) {
+    $ms = Split-ModelSource $ModelSource
+    # Kaggle CLI v2 menolak objek di sini: validate_model_instance_version_string() expecting
+    # STRING dengan tepat 4 slash, yaitu <owner>/<model>/<framework>/<instance>/<versi>.
+    # Bentuk dict ({'model':..,'instance':..}) hanya dipakai di UI - mengirimnya ke CLI memberi
+    # AttributeError 'dict' object has no attribute 'count', bukan pesan yang bisa dibaca.
+    $srcString = "$($ms.model)/$($ms.framework)/$($ms.instance)/$($ms.revision)"
+    $meta.model_sources = @($srcString)
+    Write-Host "Model source: $srcString"
+} elseif (@($meta.model_sources).Count -gt 0) {
+    Write-Host "Model source dari template: $(($meta.model_sources | ForEach-Object { $_ }) -join ', ')"
+} else {
+    Write-Host 'Model source: tidak ada -> bobot diunduh dari Hugging Face tiap sesi baru.'
+}
 ($meta | ConvertTo-Json -Depth 6) | Set-Content -Path (Join-Path $stageDir 'kernel-metadata.json') -Encoding ascii
 Write-Host "Kernel      : $($meta.id) | GPU=$($meta.enable_gpu) shape=$($meta.machine_shape) internet=$($meta.enable_internet)"
 Write-Host "Staging     : $stageDir"
 
 if ($Logs) { Save-KaggleLog $meta.id $LogDir }
 if ($NoPush) { Write-Host 'NoPush: staging selesai, kernel tidak dikirim (tidak ada sesi GPU baru).'; return }
+if ($ModelSource) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $srcMarker) | Out-Null
+    Set-Content -Path $srcMarker -Value $ModelSource -Encoding ascii
+}
 
 # --- 5. Push (Kaggle langsung menjalankan versi baru) ------------------------
 # Catatan: `kernels push` TIDAK menerima -q (unrecognized arguments -> exit 2), tidak
