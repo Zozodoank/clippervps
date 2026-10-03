@@ -77,6 +77,17 @@ const FLAG_NORMALIZERS = {
   // Pool bisa berisi ratusan frame; subset dipilih merata sepanjang garis waktu (lihat
   // pickEvenlySpaced) agar cakupan temporal tetap ada walau jumlahnya dibatasi.
   VLM_ORACLE_MAX_FRAMES: (env) => Math.max(0, Number(env.VLM_ORACLE_MAX_FRAMES) || 120),
+  // Tinggi (px) JPEG yang DIKIRIM ke notebook. Download section tetap 1080p; frame hasil
+  // ekstraksi dikecilkan dulu di perangkat (FFmpeg scale=-2:<height>) karena dua alasan:
+  // byte yang naik lewat tunnel turun ~7x, dan jumlah vision-token GPU turun. 0 = kirim
+  // mentah (dipakai kalibrasi 360p vs 720p). Terlalu kecil => watermark/subtitle tipis
+  // bisa tak terbaca model, makanya nilainya terkurung 240..720.
+  VLM_ORACLE_FRAME_HEIGHT: (env) => {
+    const h = Math.round(Number(env.VLM_ORACLE_FRAME_HEIGHT));
+    if (h === 0) return 0;
+    if (!Number.isFinite(h) || Number.isNaN(h)) return 360;
+    return Math.min(720, Math.max(240, h));
+  },
   // Jumlah frame per batch (satu panggilan klaim notebook). 8 = satu kali muat bobot untuk
   // beberapa frame tanpa prompt yang kepanjangan.
   VLM_ORACLE_BATCH_SIZE: (env) => Math.min(16, Math.max(1, Number(env.VLM_ORACLE_BATCH_SIZE) || 8)),
@@ -86,6 +97,16 @@ const FLAG_NORMALIZERS = {
   // Anggaran waktu seluruh tahap sanitasi oracle dalam satu job (detik). Mencegah satu job
   // menahan antrean berjam-jam saat notebook mati/manusia belum menekan Run.
   VLM_ORACLE_TOTAL_TIMEOUT_SEC: (env) => Math.max(10, Number(env.VLM_ORACLE_TOTAL_TIMEOUT_SEC) || 600),
+  // Plafon frame tahap AUDIT KLIP FINAL (clip_audit pasca-download, cadence 2,5 fps yang
+  // sudah ada). Terpisah dari VLM_ORACLE_MAX_FRAMES (pass pool) supaya keduanya bisa
+  // diatur sendiri: audit klip jauh lebih mahal per job karena memakan seluruh klip.
+  // 0 = nonaktifkan pass audit klip (hanya pass pool yang jalan).
+  VLM_ORACLE_AUDIT_MAX_FRAMES: (env) => {
+    const n = Number(env.VLM_ORACLE_AUDIT_MAX_FRAMES);
+    if (n === 0) return 0;
+    if (!Number.isFinite(n)) return 90;
+    return Math.min(240, Math.max(8, Math.round(n)));
+  },
   // Interval polling worker saat menunggu vonis (milidetik).
   VLM_ORACLE_POLL_MS: (env) => Math.max(250, Number(env.VLM_ORACLE_POLL_MS) || 2000),
   // Batch 'claimed' lebih tua dari ini (detik) dianggap worker mati -> dikembalikan ke
@@ -169,6 +190,8 @@ export function configSnapshotToEnvPatch(snapshot) {
   // frame yang sama persis dengan saat job pertama kali jalan.
   if (typeof snapshot.VLM_ORACLE_MAX_FRAMES === 'number') patch.VLM_ORACLE_MAX_FRAMES = String(snapshot.VLM_ORACLE_MAX_FRAMES);
   if (typeof snapshot.VLM_ORACLE_BATCH_SIZE === 'number') patch.VLM_ORACLE_BATCH_SIZE = String(snapshot.VLM_ORACLE_BATCH_SIZE);
+  if (typeof snapshot.VLM_ORACLE_FRAME_HEIGHT === 'number') patch.VLM_ORACLE_FRAME_HEIGHT = String(snapshot.VLM_ORACLE_FRAME_HEIGHT);
+  if (typeof snapshot.VLM_ORACLE_AUDIT_MAX_FRAMES === 'number') patch.VLM_ORACLE_AUDIT_MAX_FRAMES = String(snapshot.VLM_ORACLE_AUDIT_MAX_FRAMES);
   if (typeof snapshot.VLM_ORACLE_TIMEOUT_SEC === 'number') patch.VLM_ORACLE_TIMEOUT_SEC = String(snapshot.VLM_ORACLE_TIMEOUT_SEC);
   if (typeof snapshot.VLM_ORACLE_TOTAL_TIMEOUT_SEC === 'number') patch.VLM_ORACLE_TOTAL_TIMEOUT_SEC = String(snapshot.VLM_ORACLE_TOTAL_TIMEOUT_SEC);
   if (typeof snapshot.VLM_ORACLE_POLL_MS === 'number') patch.VLM_ORACLE_POLL_MS = String(snapshot.VLM_ORACLE_POLL_MS);

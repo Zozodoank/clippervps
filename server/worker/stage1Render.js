@@ -7,7 +7,7 @@ import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecke
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
 import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled } from '../config/runtimeFlags.js';
-import { applyOracleVeto } from '../services/vlmOracleService.js';
+import { applyOracleVeto, auditClipsWithOracle } from '../services/vlmOracleService.js';
 import { shouldAllowRescue, buildVisionProvenance, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
@@ -2229,6 +2229,12 @@ async function _runStage1Pipeline({
 
       const cleanAuditedClips = [];
       const discardedDirtyClips = [];
+      // Kantong untuk pass oracle: klip yang lolos gerbang motion beserta frame 2,5 fps
+      // yang SUDAH diekstrak di bawah. oracleClipSlots[i] = posisi klip ke-i di
+      // cleanAuditedClips, supaya vonis model besar bisa memetakan balik ke indeksnya.
+      const oracleClips = [];
+      const oracleFrameGroups = [];
+      const oracleClipSlots = [];
 
       for (let cIdx = 0; cIdx < highlight.clips.length; cIdx++) {
         const c = highlight.clips[cIdx];
@@ -2277,12 +2283,51 @@ async function _runStage1Pipeline({
           continue;
         }
 
-        // ─── CLIP AUDIT: HANYA CEGAH FOTO STATIS / KEN BURNS ───
-        // Pengecekan teks overlay & wajah sudah dilakukan oleh Gemini di tahap Source QC.
-        // ClipAudit pasca-download TIDAK BOLEH menolak klip karena teks/wajah.
-        // Hal ini menyebabkan kuota internet terbuang percuma setelah download selesai.
-        // Satu-satunya pemblokiran yang diizinkan di sini adalah klip FOTO DIAM (sudah ditangani oleh motionAudit di atas).
+        // ─── CLIP AUDIT: GERBANG LOKAL HANYA MENOLAK FOTO STATIS / KEN BURNS ───
+        // Deteksi teks overlay & wajah TIDAK dilakukan oleh kode lokal di sini: dulu
+        // pemblokiran itu pernah dipasang dan hasilnya buruk (model lokal tidak layak,
+        // kuota sudah terlanjur terpakai setelah download). Yang menolak klip karena
+        // teks/wajah di tahap ini HANYA vonis oracle Kaggle (model besar di GPU) di
+        // blok [[ORACLE CLIP AUDIT]] di bawah — itu lapisan yang diizinkan. Selain itu
+        // satu-satunya pemblokiran lokal di sini tetap klip FOTO DIAM (motionAudit).
         cleanAuditedClips.push(c);
+        oracleClips.push(c);
+        oracleFrameGroups.push(testFrames);
+        oracleClipSlots.push(cleanAuditedClips.length - 1);
+      }
+
+      // [[ORACLE CLIP AUDIT]] — veto klip final oleh model besar (VISION_VERIFY_MODE=oracle).
+      // Frame-nya gratis: sudah diekstrak pada sampleStepSec 0.40 s di atas dari file
+      // section 1080p yang baru diunduh. Yang dikirim ke notebook versi 360p
+      // (VLM_ORACLE_FRAME_HEIGHT). Klip yang divonis kotor masuk discardedDirtyClips
+      // dan mesin recovery di bawah yang menangani sisanya (Slot 1 + pooledFrames).
+      // Oracle diam/timeout = TIDAK ada vonis = klip tetap dipakai (legacy berlaku).
+      if (isVlmOracleEnabled(process.env) && oracleClips.length > 0) {
+        updateProgress({
+          step: 'vlm_oracle',
+          message: '🛰️ Oracle Kaggle memvonis klip final (frame 2,5 fps dari file 1080p terunduh)...',
+          progress: 61,
+          status: 'running'
+        });
+        try {
+          const audit = await auditClipsWithOracle(oracleClips, oracleFrameGroups, {
+            jobId, niche: options.niche || 'kitchen_tools', onProgress: updateProgress,
+          });
+          const dirtySlots = [];
+          for (const [i, v] of audit.verdicts) {
+            if (v && v.dirty && Number.isInteger(oracleClipSlots[i])) dirtySlots.push(oracleClipSlots[i]);
+          }
+          // Potong dari indeks terbesar agar posisi sisanya tidak bergeser.
+          dirtySlots.sort((a, b) => b - a).forEach((slot) => {
+            const [removed] = cleanAuditedClips.splice(slot, 1);
+            if (removed) discardedDirtyClips.push({ clip: removed, reason: 'ORACLE_DIRTY' });
+          });
+          console.log(`[Job ${jobId}] 🛰️ [Oracle audit klip] ${audit.checked} frame divisit, ${dirtySlots.length} klip ditolak model besar, ${audit.timedOut} frame tak dijawab (dalam ${Math.round(audit.elapsedMs / 1000)}s).`);
+        } catch (oracleErr) {
+          // Jaga-jaga murni: auditClipsWithOracle tidak pernah melempar. Kalau ini
+          // terjadi, klip tetap dipakai — keputusan legacy + Gemini yang berlaku.
+          console.warn(`[Job ${jobId}] ⚠️ [Oracle audit klip] dilewati (${oracleErr.message}) -> semua klip hasil audit lokal tetap dipakai.`);
+        }
       }
 
       if (discardedDirtyClips.length > 0) {

@@ -1,0 +1,16 @@
+{
+  "id": "USERNAME_KAGGLE_ANDA/clippervps-vlm-oracle",
+  "title": "ClipperVPS VLM Oracle",
+  "kernel_type": "script",
+  "language": "python",
+  "code_file": "vlm_oracle_qwen.py",
+  "file_name": "vlm_oracle_qwen.py",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "machine_shape": "NvidiaTeslaT4",
+  "dataset_sources": ["USERNAME_KAGGLE_ANDA/clippervps-oracle-config"],
+  "kernel_sources": [],
+  "competition_sources": [],
+  "model_sources": []
+}

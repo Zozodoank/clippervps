@@ -194,10 +194,16 @@ Jumlah frame analisa dihitung `durasi / 1.5s` (cap 500). Menurunkan rasio/cap me
 
 **Kebijakan fallback (bukan fail-open).** Oracle menjawab → frame yang divonis KOTOR masuk `blacklistedFramePaths` yang sudah dipakai storyboard Gemini, sehingga otomatis dikecualikan. Oracle diam / timeout / vonis tidak sah / notebook mati → **tidak ada frame yang diveto**, dan keputusan Gatekeeper legacy + Gemini tetap berlaku penuh. Jalur legacy **tidak pernah** dilewati — berbeda dengan mode `smolvlm` yang me-`return` lebih awal dan karena itu melompati Whisper + Gatekeeper.
 
+**Dua titik veto.** (1) **Pool pass** — sebelum storyboard, frame pool divisit dan yang kotor jadi `blacklistedFramePaths` (plafon `VLM_ORACLE_MAX_FRAMES`). (2) **Clip pass** di tahap `clip_audit` — sesudah klip final terbentuk dari file section hasil `--download-sections`, frame yang **sudah** diekstrak pada `sampleStepSec = 0.40` (2,5 fps) divisit **per klip**; klip yang kotor masuk `discardedDirtyClips` dengan reason `ORACLE_DIRTY` dan dipulihkan oleh mesin recovery yang sudah ada (Slot 1 restore + `pooledFrames`). Tidak ada ekstraksi FFmpeg tambahan, dan vonis hanya jatuh bila oracle benar-benar menjawab. Urutan dalam loop tidak berubah: gerbang motion (SSIM) tetap lebih dulu karena murah, oracle sesudahnya karena mahal. Yang memveto di sini adalah model besar di GPU — bukan ClipAudit lokal, yang memang dilarang menolak klip karena teks/wajah.
+
+**Frame dikirim 360p, bukan 1080p.** Section tetap diunduh 1080p (`RENDER_DOWNLOAD_SECTIONS`/`RENDER_MAX_HEIGHT` tidak berubah — kualitas sumber jaga), tetapi JPEG yang diserahkan ke notebook di-kecilkan lebih dulu di perangkat (`scale=-2:<h> -q:v 4`, lebar otomatis genap sehingga rasio terjaga). Alasannya byte: terukur **298 KB → 32 KB** pada frame 1080p (±9x lebih kecil), dan visi model juga membayar lebih sedikit vision-token. Salinan hanya ditulis di `server/temp/oracle_frames/<jobId>_h<height>/` (dalam allowlist `isAllowedFramePath`, dibersihkan sapuan usia 6 jam), file asli tidak pernah disentuh, dan **vonis selalu dipetakan balik ke path asli** supaya `blacklistedFramePaths` tetap cocok. File ≤ 200 KB tidak dikecilkan (tidak layak), dan konversi gagal/timeout 20 s → pakai file asli; job tidak pernah dijatuhkan karena urusan ini.
+
 | Flag (`server/.env`) | Default | Fungsi |
 |---|---|---|
 | `VISION_VERIFY_MODE` | `legacy` | Set `oracle` untuk mengaktifkan lapisan veto model besar. |
-| `VLM_ORACLE_MAX_FRAMES` | `120` | Plafon **total** frame per job yang dikirim ke GPU (dipilih merata sepanjang garis waktu). `0` = tidak ada yang divisit. |
+| `VLM_ORACLE_MAX_FRAMES` | `120` | Plafon **total** frame per job pada **pool pass** yang dikirim ke GPU (dipilih merata sepanjang garis waktu). `0` = tidak ada yang divisit. |
+| `VLM_ORACLE_FRAME_HEIGHT` | `360` | Tinggi (px) JPEG yang **dikirim ke Kaggle**. Section tetap 1080p; frame dikecilkan lokal sebelum upload. Dijepit 240–720; `0` = kirim mentah (untuk kalibrasi). Naikkan ke `480`/`720` tanpa perubahan kode bila watermark/subtitle tipis tak terbaca. |
+| `VLM_ORACLE_AUDIT_MAX_FRAMES` | `90` | Plafon frame untuk **clip pass** (`clip_audit`, dibagi rata antar klip, minimal 2 per klip). Dijepit 8–240; `0` = clip pass dimatikan, pool pass tetap jalan. |
 | `VLM_ORACLE_BATCH_SIZE` | `8` | Frame per batch (dijepit 1–16). |
 | `VLM_ORACLE_TIMEOUT_SEC` | `180` | Tunggu maksimal per batch. Lewat → lanjut, tidak memveto. |
 | `VLM_ORACLE_TOTAL_TIMEOUT_SEC` | `600` | Anggaran waktu seluruh tahap oracle dalam satu job. |
@@ -205,15 +211,58 @@ Jumlah frame analisa dihitung `durasi / 1.5s` (cap 500). Menurunkan rasio/cap me
 | `VLM_ORACLE_STALE_SEC` / `_MAX_ATTEMPTS` | `300` / `2` | Batch `claimed` yang lebih tua dari ini dianggap notebook mati dan dikembalikan ke `pending`; setelah `MAX_ATTEMPTS` ditandai `expired` agar GPU tidak dibuang untuk kerjaan yatim. |
 
 ### Runbook sisi lokal
-1. **Wajib:** isi `API_ACCESS_TOKEN` di `server/.env`, restart server. Endpoint oracle sengaja menjawab **503** selama token kosong, karena pihak yang mengambil data adalah mesin di luar jaringan Anda dan yang diserahkan adalah bingkai video Anda. (Catatan: saat ini `CLOUDFLARE_TUNNEL_URL` terisi di Termux sedangkan token kosong — itu eksposur publik yang harus ditutup sebelum mode apa pun dipakai.)
-2. Pastikan tunnel publik aktif (`cloudflared tunnel --url http://localhost:5000`) dan catat URL-nya — quick tunnel **ganti URL setiap restart**, jadi nilai ini harus diperbarui di Kaggle Secrets tiap kali.
-3. Cek antrean: `GET /api/vlm-oracle/status` (butuh token). Endpoint `/vlm-oracle/*` **tidak boleh** dimasukkan ke allowlist publik `tokenAuth`.
-4. Set `VISION_VERIFY_MODE=oracle` lalu jalankan job seperti biasa. Log menampilkan `[Oracle] ⛔ N/M frame diveto model besar...`.
+1. **Wajib:** isi `API_ACCESS_TOKEN` di `server/.env` (perangkat yang menjalankan server — saat ini Termux), restart server. Endpoint oracle sengaja menjawab **503** selama token kosong, karena pihak yang mengambil data adalah mesin di luar jaringan Anda dan yang diserahkan adalah bingkai video Anda. Token juga satu-satunya gerbang `/api/vlm-oracle/*`; tidak ada sistem secret terpisah.
+2. Pastikan tunnel publik aktif (`cloudflared tunnel --url http://localhost:5000`) dan catat URL-nya — quick tunnel **ganti URL setiap restart**, jadi nilai ini harus dikirim ulang ke Kaggle tiap kali (lewat `deploy.ps1`, tanpa membuka UI; lihat Runbook Kaggle).
+3. Cek antrean: `GET /api/vlm-oracle/status` (butuh token header `x-api-token`). Endpoint `/vlm-oracle/*` **tidak boleh** dimasukkan ke allowlist publik `tokenAuth` (sudah ada test yang mengunci hal ini).
+4. Set `VISION_VERIFY_MODE=oracle` lalu jalankan job seperti biasa. Log menampilkan `[Oracle] ⛔ N/M frame diveto model besar...` untuk pool pass dan `🛰️ Oracle Kaggle memvonis klip final` + reason `ORACLE_DIRTY` untuk clip pass.
 
-### Runbook sisi Kaggle
-1. Notebook baru → **GPU T4 x2** → attach dataset/repo GitHub `Zozodoank/clippervps` → buka `kaggle/vlm_oracle_qwen.py`.
-2. **Kaggle > Settings > Environment variables**, tambahkan `VLM_ORACLE_BASE_URL` (contoh `https://xxx.trycloudflare.com`, tanpa `/` di akhir) dan `API_ACCESS_TOKEN` (nilai yang **sama** dengan `server/.env`). Jangan hard-code token di notebook — log notebook bisa ter-share.
-3. Validasi sambungan dulu **tanpa membakar kuota GPU**: set `ORACLE_NO_MODEL=1` dan jalankan. Kalau log menampilkan `claim ...` dan vonis `dry-run` diterima server, tunnel + token sudah benar. Matikan flag itu untuk menjalankan model sungguhan.
-4. Notebook looping dan berhenti sendiri setelah `ORACLE_MAX_MINUTES` (default 690 menit) agar tidak dipotong paksa di jam ke-12. Kuota GPU Kaggle ±30 jam/minggu — jangan biarkan looping kosong menyala semalaman; hentikan manual bila tidak ada job.
+### Runbook sisi Kaggle (CLI — jalur termudah, tanpa UI)
+
+Kenapa CLI dan bukan copy-paste di UI atau "attach GitHub + Run manual": `kaggle kernels push` membuat Kaggle **langsung menjalankan versi baru**, bisa diulang tiap `kaggle/vlm_oracle_qwen.py` berubah, dan log eksekusi bisa ditarik ke PC. Attach GitHub tidak auto-run per commit dan tidak bisa mengirim argumen.
+
+Satu hal yang harus diakali: **metadata kernel Kaggle tidak bisa memuat env var**, padahal URL quick-tunnel berganti tiap server restart — kalau harus lewat UI, oracle mati tiap hari. Karena itu URL + token dikirim sebagai **dataset privat kecil** (`<user>/clippervps-oracle-config` berisi `oracle_config.json`) yang di-attach ke kernel. Urutan baca worker: **env var Kaggle > `oracle_config.json` > default**, jadi menimpa cepat dari UI tetap mungkin.
+
+```powershell
+# 0. Sekali saja: pasang CLI (butuh Python).
+python -m pip install --user --upgrade kaggle
+
+# 1. Cek kredensial + staging tanpa mengirim apa pun (tidak ada sesi GPU baru).
+#    Kredensial dibaca dari KAGGLE_API_TOKEN di server/.env, fallback kaggle.json.
+powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -NoPush
+
+# 2. Hari-H: upload URL tunnel (+ token) lalu push kernel. Tambahkan -Logs untuk
+#    menarik log sesi ke scratch/kaggle_out/.
+powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -TunnelUrl https://abc-123.trycloudflare.com -WithToken -Logs
+
+# 2b. Versi paling aman: ambil URL tunnel + token LANGSUNG dari .env Termux lewat
+#     SSH (parameters sync.config.json), sehingga rahasia tidak pernah Anda salin,
+#     tidak dicetak ke terminal, dan tidak masuk git.
+powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -FromTermux -Logs
+
+# 3. Tarik log sesi terakhir saja.
+powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -Logs -NoPush
+```
+
+1. `kaggle/kernel-metadata.example.json` adalah template (`enable_gpu`, `machine_shape: NvidiaTeslaT4`, `enable_internet: true` — wajib untuk pip install + unduh bobot). `deploy.ps1` menyalinnya ke `kaggle/.deploy/kernel-metadata.json` dengan **id asli** + `dataset_sources` hasil langkah 2; folder `.deploy*` sudah di-gitignore karena memuat username, URL tunnel, dan token.
+2. **Validasi dulu tanpa membakar kuota GPU:** set `ORACLE_NO_MODEL=1` (env var Kaggle) dan jalankan. Kalau log menampilkan `claim ...` dan vonis `dry-run` diterima server, tunnel + token sudah benar. Matikan flag itu untuk menjalankan model sungguhan (`Qwen2.5-VL-7B-Instruct-AWQ` via Hugging Face; bila jaringan Kaggle menolak HF, `pip install kagglehub` + `kagglehub.model_download(...)` lalu set `ORACLE_MODEL_ID` ke path lokal).
+3. Notebook looping dan berhenti sendiri setelah `ORACLE_MAX_MINUTES` (default 690 menit) agar tidak dipotong paksa di jam ke-12. Kuota GPU Kaggle ±30 jam/minggu — jangan biarkan looping kosong menyala semalaman; hentikan manual bila tidak ada job, dan jalankan `deploy.ps1` lagi untuk memulai sesi hari berikutnya.
+4. Jangan hard-code token di notebook — log notebook bisa ter-share.
+
+### Kalibrasi: apakah 360p "cukup mumpuni" (diukur, bukan dikira-kira)
+
+`scratch/oracle_calibrate.mjs` menjawab ini dengan data yang sudah ada di perangkat: label **KOTOR** = `server/rejected_frames/yunet/*.jpg` (ditolak SCRFD/DBNet lokal), label **BERSIH** = frame yang lolos gatekeeper lokal di `server/temp`. Skrip mengirim kedua kelompok pada **beberapa tinggi sekaligus** (`--heights=0,360,720`; `0` = mentah sebagai kontrol) lalu mencetak recall + false-reject per tinggi. Ambang lanjut: **recall ≥ 90%** dan **false-reject ≤ 10%**. Skrip bicara langsung ke antrean `jobStore` (bukan HTTP), jadi tidak butuh token; `--simulate=clean|dirty` memakai DB terpisah di temp dan hanya melayani batch miliknya sendiri — tidak pernah merebut batch job produksi.
+
+```powershell
+node scratch\oracle_calibrate.mjs --simulate=dirty --heights=360   # uji plumbing, tanpa GPU
+node scratch\oracle_calibrate.mjs --heights=0,360,720 --dirty=16 --clean=16 --batch=4   # notebook harus sedang claim
+```
+
+Hasil kalibrasi sungguhan (butuh notebook aktif) — isi tanggal + angka saat dijalankan:
+
+| Tanggal | `VLM_ORACLE_FRAME_HEIGHT` | recall | false-reject | Keputusan |
+|---|---|---|---|---|
+| _(belum dijalankan — kolom ini diisi setelah kalibrasi nyata)_ | `360` | — | — | — |
+
+Bila 360p tidak mencapai ambang (watermark/subtitle kecil hilang), naikkan `VLM_ORACLE_FRAME_HEIGHT=480|720` di `server/.env` — itu flag, tidak perlu perubahan kode — lalu catat hasilnya di tabel ini.
 
 > **`kaggle.json`** (kredensial API Kaggle: username + key) **tidak boleh di-commit** — sudah masuk `.gitignore`. Kalau file itu pernah ada di folder repo yang ter-share, revoke key-nya di Kaggle > Account > Create New API Token.

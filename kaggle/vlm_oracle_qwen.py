@@ -9,14 +9,19 @@
 # lapisan veto (fallback ke gatekeeper legacy) - tidak ada yang rusak.
 #
 # CARA PAKAI (ringkas, detail di README):
-#   1. Kaggle > Settings > Environment variables, tambahkan:
-#        VLM_ORACLE_BASE_URL  = https://<xxx>.trycloudflare.com   (tanpa slash akhir)
-#        API_ACCESS_TOKEN     = <nilai yang SAMA dengan server/.env>
-#      (atau upload kaggle.json sebagai "Kaggle API" input kalau Anda lebih suka
-#       membaca token dari file - keduanya didukung, env lebih diprioritaskan.)
-#   2. Accelerator: GPU T4 x2 (atau P100). Attach GitHub repo zozodoank/clippervps.
-#   3. Jalankan cell di bawah. Notebook ini looping; hentikan manual atau ia exit
-#      sendiri setelah ORACLE_MAX_MINUTES supaya tidak dipotong Kaggle di jam ke-12.
+#   1. Beri tahu notebook dari mana ia harus memanggil API lokal ANDA. Ada dua
+#      cara, dan keduanya tersedia tanpa membuka UI Kaggle sama sekali:
+#      (a) Dataset privat + CLI (DIPRIORITASKAN, karena URL quick-tunnel berubah
+#          tiap server restart): deploy.ps1 meng-upload oracle_config.json ke
+#          dataset <user>/clippervps-oracle-config yang di-attach kernel ini:
+#              {"base_url": "https://xxx.trycloudflare.com", "api_access_token": "..."}
+#      (b) Kaggle > Account > Environment variables (perlu UI sekali per perubahan):
+#              VLM_ORACLE_BASE_URL  = https://<xxx>.trycloudflare.com (tanpa slash akhir)
+#              API_ACCESS_TOKEN     = <nilai yang SAMA dengan server/.env>
+#      Env var mengalahkan dataset, supaya Anda bisa menimpa cepat dari UI.
+#   2. Accelerator: GPU T4 x2 (atau P100). Metadata kernel sudah men-set ini.
+#   3. Jalankan. Notebook ini looping; hentikan manual atau ia exit sendiri
+#      setelah ORACLE_MAX_MINUTES supaya tidak dipotong Kaggle di jam ke-12.
 #
 # Token NIKKIR (tidak pernah dicetak ke log) karena log notebook bisa ter-share.
 # ============================================================================
@@ -31,19 +36,57 @@ import time
 
 import requests
 
+
+def _read_config_dataset():
+    """Cari oracle_config.json dari dataset yang di-attach kernel.
+
+    Kaggle menaruh isi dataset di /kaggle/input/<slug-folder>/. Kita terima lokasi
+    mana pun yang berisi file itu (cuma dibaca, tidak pernah ditulis/dicetak).
+    """
+    root = "/kaggle/input"
+    try:
+        if not os.path.isdir(root):
+            return {}
+        for name in os.listdir(root):
+            cand = os.path.join(root, name, "oracle_config.json")
+            if os.path.exists(cand):
+                with open(cand, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+                return data if isinstance(data, dict) else {}
+    except Exception as err:  # dataset tidak ada/rusak -> biarkan env yang bicara
+        print("[oracle] config dataset dilewati: %s" % err, flush=True)
+    return {}
+
+
+_CFG = _read_config_dataset()
+
+
+def _cfg(*names, **kw):
+    """Urutan prioritas: env var > oracle_config.json (dataset) > default."""
+    for n in names:
+        v = os.getenv(n)
+        if v:
+            return v
+    for n in names:
+        v = _CFG.get(n) or _CFG.get(n.lower())
+        if v:
+            return str(v)
+    return kw.get("default", "")
+
+
 # ------------------------------------------------------------------ KONFIG ---
-BASE_URL = (os.getenv("VLM_ORACLE_BASE_URL") or os.getenv("ORACLE_BASE_URL") or "").rstrip("/")
-TOKEN = os.getenv("API_ACCESS_TOKEN") or os.getenv("VLM_ORACLE_API_TOKEN") or ""
-MODEL_ID = os.getenv("ORACLE_MODEL_ID", "qwen/Qwen2.5-VL-7B-Instruct-AWQ")
-POLL_SEC = float(os.getenv("ORACLE_POLL_SEC", "5"))
-IDLE_SLEEP_MAX = float(os.getenv("ORACLE_IDLE_SLEEP_MAX", "30"))
-MAX_MINUTES = float(os.getenv("ORACLE_MAX_MINUTES", "690"))   # < 12 jam Kaggle
-MAX_SIDE = int(os.getenv("ORACLE_MAX_SIDE", "1024"))          # turun sebelum inference
-MAX_NEW_TOKENS = int(os.getenv("ORACLE_MAX_NEW_TOKENS", "160"))
-AUTO_INSTALL = os.getenv("ORACLE_AUTO_INSTALL", "1") == "1"
+BASE_URL = (_cfg("VLM_ORACLE_BASE_URL", "ORACLE_BASE_URL", "base_url", "baseUrl") or "").rstrip("/")
+TOKEN = _cfg("API_ACCESS_TOKEN", "VLM_ORACLE_API_TOKEN", "api_access_token", "token")
+MODEL_ID = _cfg("ORACLE_MODEL_ID", default="qwen/Qwen2.5-VL-7B-Instruct-AWQ")
+POLL_SEC = float(_cfg("ORACLE_POLL_SEC", default="5") or 5)
+IDLE_SLEEP_MAX = float(_cfg("ORACLE_IDLE_SLEEP_MAX", default="30") or 30)
+MAX_MINUTES = float(_cfg("ORACLE_MAX_MINUTES", default="690") or 690)   # < 12 jam Kaggle
+MAX_SIDE = int(_cfg("ORACLE_MAX_SIDE", default="1024") or 1024)         # turun sebelum inference
+MAX_NEW_TOKENS = int(_cfg("ORACLE_MAX_NEW_TOKENS", default="160") or 160)
+AUTO_INSTALL = _cfg("ORACLE_AUTO_INSTALL", default="1") == "1"
 # Set 1 untuk menguji sambungan (claim/report) TANPA memuat model - berguna untuk
 # memvalidasi tunnel + token sebelum menghabiskan kuota GPU.
-NO_MODEL = os.getenv("ORACLE_NO_MODEL", "0") == "1"
+NO_MODEL = _cfg("ORACLE_NO_MODEL", default="0") == "1"
 
 START = time.time()
 TMP_ROOT = tempfile.mkdtemp(prefix="oracle_frames_")
@@ -231,12 +274,19 @@ def post_result(batch_id, verdict=None, error=""):
 
 def main():
     if not BASE_URL:
-        raise SystemExit("Set VLM_ORACLE_BASE_URL (contoh https://xxx.trycloudflare.com).")
+        raise SystemExit(
+            "URL lokal belum diketahui. Isi lewat salah satu: (a) dataset privat "
+            "clippervps-oracle-config -> oracle_config.json {\"base_url\": \"https://xxx.trycloudflare.com\"} "
+            "(dibuat oleh kaggle/deploy.ps1 -TunnelUrl ...), atau (b) env var VLM_ORACLE_BASE_URL."
+        )
     token = TOKEN or read_token_from_file()
     if not token:
         # Sengaja berhenti, bukan jalan tanpa token: server menolak 503 dan kita
         # hanya membakar kuota GPU untuk permintaan yang pasti ditolak.
-        raise SystemExit("API_ACCESS_TOKEN kosong. Isi lewat Kaggle Secrets (env var) lalu restart notebook.")
+        raise SystemExit(
+            "API_ACCESS_TOKEN kosong. Isi di oracle_config.json (key api_access_token) lewat "
+            "kaggle/deploy.ps1 -TunnelUrl ... -WithToken, atau env var API_ACCESS_TOKEN di Kaggle."
+        )
     log("Base URL siap. Token: %d karakter (tidak ditampilkan). NO_MODEL=%s" % (len(token), NO_MODEL))
 
     model = processor = torch = None

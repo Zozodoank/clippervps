@@ -48,6 +48,10 @@ server/cookies.txt
 # pernah tersentuh folder yang di-share. Lihat kaggle/vlm_oracle_qwen.py.
 kaggle.json
 .kaggle/
+# Hasil staging kaggle/deploy.ps1: berisi metadata dengan username Kaggle asli,
+# dan oracle_config.json yang memuat URL tunnel + API_ACCESS_TOKEN.
+kaggle/.deploy/
+kaggle/.deploy-config/
 
 # AI Gatekeeper Model weights & test cache
 server/gatekeeper/models/*.onnx
