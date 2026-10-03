@@ -26,7 +26,7 @@ const {
   pruneOracleBatches,
 } = await import('../store/jobStore.js');
 
-const { buildConfigSnapshot, configSnapshotToEnvPatch, isVlmOracleEnabled } = await import('../config/runtimeFlags.js');
+const { buildConfigSnapshot, configSnapshotToEnvPatch, isVlmOracleEnabled, isOraclePreflightEnabled } = await import('../config/runtimeFlags.js');
 const {
   resolveOracleConfig,
   pickEvenlySpaced,
@@ -35,6 +35,9 @@ const {
   applyOracleVeto,
   prepareOracleFrames,
   auditClipsWithOracle,
+  preflightCandidatesWithOracle,
+  orderCandidatesAfterPreflight,
+  PREFLIGHT_SCENE_BASE,
 } = await import('../services/vlmOracleService.js');
 const { isAllowedFramePath } = await import('../api/routes/vlmOracleRoutes.js');
 const { tempDir } = await import('../utils/paths.js');
@@ -664,6 +667,340 @@ describe('auditClipsWithOracle (pass klip final, frame 2,5 fps yang sudah ada)',
     expect(res.verdicts.size).toBe(0);
     expect(res.checked).toBe(0);
   }, 20000);
+});
+
+describe('normalizeOracleVerdict - skor peringkat (Lapis 3)', () => {
+  it('vonis LAMA (tanpa field produk) tetap sah dan tidak ikut terpengaruh', () => {
+    const v = normalizeOracleVerdict({ safe: true, face: false, text: false, watermark: false, graphic: false });
+    expect(v.ok).toBe(true);
+    expect(v.vetoTriggered).toBe(false);
+    // null = "tidak ada informasi", bukan 0. Bila ini 0, pre-flight akan membuang
+    // kandidat hanya karena notebook belum di-update.
+    expect(v.productMatch).toBeNull();
+    expect(v.matchScore).toBeNull();
+  });
+
+  it('matchScore dikejar ke 0..100 dan hal tak-berangka dianggap tanpa-skor', () => {
+    const base = { safe: true, face: false, text: false, watermark: false, graphic: false };
+    expect(normalizeOracleVerdict({ ...base, matchScore: 480 }).matchScore).toBe(100);
+    expect(normalizeOracleVerdict({ ...base, matchScore: -20 }).matchScore).toBe(0);
+    expect(normalizeOracleVerdict({ ...base, matchScore: '72' }).matchScore).toBe(72);
+    expect(normalizeOracleVerdict({ ...base, matchScore: 72.6 }).matchScore).toBe(73);
+    // Number('') dan Number(false) = 0. Kalau tidak disaring, kolom kosong berarti
+    // "produk salah" dan kandidat bersih hilang tanpa sebab.
+    expect(normalizeOracleVerdict({ ...base, matchScore: '' }).matchScore).toBeNull();
+    expect(normalizeOracleVerdict({ ...base, matchScore: false }).matchScore).toBeNull();
+    expect(normalizeOracleVerdict({ ...base, matchScore: 'ngawur' }).matchScore).toBeNull();
+  });
+
+  it('agregat notebook mengalahkan median; bila agregat hilang, median per-frame yang bicara', () => {
+    const base = { safe: true, face: false, text: false, watermark: false, graphic: false };
+    expect(normalizeOracleVerdict({ ...base, matchScore: 90, perFrame: [{ index: 0, safe: true, matchScore: 10 }] }).matchScore).toBe(90);
+    // [10, 10, 100]: median 10, mean akan 40 - satu frame halusinasi tidak boleh menyeret.
+    const v = normalizeOracleVerdict({
+      ...base,
+      perFrame: [
+        { index: 0, safe: true, matchScore: 10 },
+        { index: 1, safe: true, matchScore: 10 },
+        { index: 2, safe: true, matchScore: 100 },
+      ],
+    });
+    expect(v.matchScore).toBe(10);
+    // Frame tanpa skor (None di sisi notebook) dibuang, bukan dihitung nol.
+    const campur = normalizeOracleVerdict({
+      ...base,
+      perFrame: [{ index: 0, safe: true, matchScore: null }, { index: 1, safe: true, matchScore: 60 }, { index: 2, safe: true, matchScore: 80 }],
+    });
+    expect(campur.matchScore).toBe(70);
+  });
+
+  it('productMatch:false TIDAK memicu veto kotoran (pass pool/audit tidak pernah menanyakannya)', () => {
+    const v = normalizeOracleVerdict({
+      safe: true, face: false, text: false, watermark: false, graphic: false,
+      productMatch: false, matchScore: 3,
+    });
+    expect(v.productMatch).toBe(false);
+    expect(v.vetoTriggered).toBe(false);
+    // Yang menolak karena produk hanya jalur peringkat - lihat preflightCandidatesWithOracle.
+  });
+});
+
+describe('isOraclePreflightEnabled + beku-snapshot PREFLIGHT_ORACLE', () => {
+  it('efektif hanya bila oracle aktif; default NYALA, mati hanya oleh 0 eksplisit', () => {
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'legacy' })).toBe(false);
+    // Oracle mati = tidak ada yang memvonis frame, jadi flag menyala pun tidak boleh
+    // memindahkan pre-flight ke Kaggle.
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'legacy', PREFLIGHT_ORACLE: '1' })).toBe(false);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle' })).toBe(true);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: '0' })).toBe(false);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: ' 0 ' })).toBe(false);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: '0 ' })).toBe(false);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: '' })).toBe(true);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: 'ya' })).toBe(true);
+  });
+
+  it('flag baru ikut dibekukan DAN di-patch balik (kontrak satu-sumber-kebenaran)', () => {
+    for (const want of [true, false]) {
+      const snap = buildConfigSnapshot({ ...ENV_ON, PREFLIGHT_ORACLE: want ? '1' : '0' });
+      expect(snap.PREFLIGHT_ORACLE).toBe(want);
+      const patched = configSnapshotToEnvPatch(snap);
+      expect(patched.PREFLIGHT_ORACLE).toBe(want ? '1' : '0');
+      // Snapshot harus membaca dirinya sendiri: hasil re-eval identik.
+      expect(isOraclePreflightEnabled(patched)).toBe(want);
+    }
+  });
+});
+
+describe('preflightCandidatesWithOracle (Lapis 2 + peringkat Lapis 3)', () => {
+  const clean = (score) => ({ safe: true, face: false, text: false, watermark: false, graphic: false, productMatch: true, matchScore: score, reason: '' });
+
+  /** Frame sungguhan di disk; frameDir dipakai uji jalur pembersihan. */
+  function makeFrameSet(n, tag) {
+    const frameDir = fs.mkdtempSync(path.join(os.tmpdir(), `pf-${tag}-`));
+    const frames = Array.from({ length: n }, (_, i) => {
+      const filePath = path.join(frameDir, `pf_${i}.jpg`);
+      fs.writeFileSync(filePath, 'x');
+      return { index: i, filePath, timestampMs: i * 1000 };
+    });
+    return { frameDir, frames };
+  }
+
+  /** Ekstraktor suntik: tidak menyentuh jaringan/ffmpeg, tapi bentuknya sama persis. */
+  function fakeExtractor(sets) {
+    return async (urls, outDir, opts) => urls.map((url, index) => ({
+      index, url, outDir, opts,
+      frameDir: sets[index] && sets[index].frameDir,
+      frames: (sets[index] && sets[index].frames) || [],
+    }));
+  }
+
+  /** Notebook imut yang berjalan CONCURRENT: klaim terus sampai `expectCount` terjawab. */
+  async function serveWhile(jobId, verdictFor, expectCount) {
+    const seen = [];
+    const run = (async () => {
+      for (let i = 0; i < 800; i++) {
+        const b = claimOracleBatch({ workerId: 'nb-preflight' });
+        if (!b) { await new Promise((r) => setTimeout(r, 20)); continue; }
+        if (b.jobId !== jobId) { expireOracleBatch(b.id, 'bukan batch tes'); continue; }
+        seen.push(b);
+        if (verdictFor) submitOracleResult({ batchId: b.id, verdict: verdictFor(b) });
+        else expireOracleBatch(b.id, 'notebook sengaja diam');
+        if (seen.length >= expectCount) return seen;
+      }
+      return seen;
+    })();
+    return run;
+  }
+
+  it('peringkat: bersih dulu, lalu matchScore desc, hanya 2 terbaik diterima', async () => {
+    const sets = [makeFrameSet(15, 'rank'), makeFrameSet(15, 'rank'), makeFrameSet(15, 'rank')];
+    const scores = [55, 91, 73];
+    const serving = serveWhile('pf_rank', (b) => clean(scores[b.sceneIdx - PREFLIGHT_SCENE_BASE]), 3);
+    const res = await preflightCandidatesWithOracle(
+      [{ url: 'https://a/1' }, { url: 'https://a/2' }, { url: 'https://a/3' }],
+      { jobId: 'pf_rank', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets) },
+    );
+    const batches = await serving;
+    expect(res.enabled).toBe(true);
+    expect(res.judged).toBe(3);
+    // 91 (pos 1) dan 73 (pos 2) masuk; 55 (pos 0) kalah peringkat - BUKAN karena kotor.
+    expect(res.accepted).toEqual([1, 2]);
+    expect(res.rejected).toEqual([0]);
+    expect(res.results.find((r) => r.index === 0).dropReason).toBe('kalah peringkat');
+    expect(res.results.find((r) => r.index === 0).clean).toBe(true);
+    expect(res.untested).toEqual([]);
+    // sceneIdx khusus pre-flight: tidak boleh bertabrakan dengan pass pool (0..n) atau audit (10000+).
+    expect(batches.map((b) => b.sceneIdx).sort((a, c) => a - c)).toEqual([20000, 20001, 20002]);
+    // SATU batch per kandidat - frame kandidat tidak boleh dipecah ke dua batch.
+    expect(batches).toHaveLength(3);
+    expect(res.framesSent).toBe(45);
+    // Prompt pre-flight membawa kontrak skor (satu-satunya pemicu mode peringkat di notebook).
+    expect(batches[0].prompt).toContain('matchScore');
+    expect(batches[0].prompt).toContain('PRODUCT UNDER TEST');
+  }, 30000);
+
+  it('kandidat divonis kotor dibuang meski skornya tertinggi', async () => {
+    const sets = [makeFrameSet(4, 'dirty'), makeFrameSet(4, 'dirty')];
+    const serving = serveWhile('pf_dirty', (b) => (b.sceneIdx === PREFLIGHT_SCENE_BASE
+      ? { safe: false, face: true, text: false, watermark: false, graphic: false, productMatch: true, matchScore: 99, reason: 'ada wajah presenter' }
+      : clean(20)), 2);
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1', 'https://a/2'],
+      { jobId: 'pf_dirty', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets) },
+    );
+    await serving;
+    expect(res.accepted).toEqual([1]);
+    expect(res.rejected).toEqual([0]);
+    expect(res.results.find((r) => r.index === 0).dropReason).toBe('ada wajah presenter');
+  }, 30000);
+
+  it('produk tidak cocok = ditolak, tapi TIDAK dicatat sebagai kotor', async () => {
+    const sets = [makeFrameSet(4, 'match'), makeFrameSet(4, 'match')];
+    const serving = serveWhile('pf_match', (b) => (b.sceneIdx === PREFLIGHT_SCENE_BASE
+      ? { safe: true, face: false, text: false, watermark: false, graphic: false, productMatch: false, matchScore: 2, reason: 'barang beda' }
+      : clean(60)), 2);
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1', 'https://a/2'],
+      { jobId: 'pf_match', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets) },
+    );
+    await serving;
+    const wrong = res.results.find((r) => r.index === 0);
+    expect(wrong.clean).toBe(true);
+    expect(wrong.productMatch).toBe(false);
+    expect(wrong.dropReason).toBe('produk tidak cocok');
+    expect(res.accepted).toEqual([1]);
+  }, 30000);
+
+  it('FAIL-OPEN: oracle tidak menjawab -> kandidat TIDAK dibuang dan tetap ditandai sudah divisit', async () => {
+    const sets = [makeFrameSet(4, 'silent'), makeFrameSet(4, 'silent')];
+    // Notebook klaim lalu melepas tanpa vonis -> status 'expired' seketika (tanpa tunggu timeout 5s).
+    const serving = serveWhile('pf_silent', null, 2);
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1', 'https://a/2'],
+      { jobId: 'pf_silent', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets) },
+    );
+    await serving;
+    expect(res.enabled).toBe(true);
+    expect(res.judged).toBe(0);
+    expect(res.probed).toEqual([0, 1]);
+    // Dua hal yang tidak boleh terjadi: masuk daftar rejected, dan tidak masuk probed
+    // (pemanggil jadi mengulang pre-flight selamanya - kelas bug yang diperbaiki 4789c76).
+    expect(res.rejected).toEqual([]);
+    expect(res.untested).toEqual([0, 1]);
+    expect(res.accepted).toEqual([]);
+  }, 30000);
+
+  it('oracle mati total -> enabled:false dan ekstraksi TIDAK pernah dipanggil', async () => {
+    let called = 0;
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1'],
+      { jobId: 'pf_off', env: ENV_OFF, logger: silent, extractFrames: async () => { called += 1; return []; } },
+    );
+    expect(res.enabled).toBe(false);
+    expect(res.probed).toEqual([]);
+    expect(called).toBe(0);
+  });
+
+  it('ekstraksi gagal total -> tanpa_frame, Gemini yang menilai (bukan semua kandidat dibuang)', async () => {
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1', 'https://a/2'],
+      { jobId: 'pf_noframe', env: ENV_ON, logger: silent, extractFrames: async () => [] },
+    );
+    expect(res.enabled).toBe(false);
+    expect(res.note).toBe('tanpa_frame');
+    expect(res.rejected).toEqual([]);
+  });
+
+  it('ekstraktor melempar -> note ekstraksi_gagal, tidak menjatuhkan pemanggil', async () => {
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1'],
+      { jobId: 'pf_throw', env: ENV_ON, logger: silent, extractFrames: async () => { throw new Error('youtube menolak'); } },
+    );
+    expect(res.enabled).toBe(false);
+    expect(res.note).toBe('ekstraksi_gagal');
+  });
+
+  it('STABILITAS INDEKS: kandidat yang gagal ekstraksi tidak menggeser posisi yang dilaporkan', async () => {
+    const sets = [makeFrameSet(4, 'idx'), makeFrameSet(4, 'idx')];
+    // Posisi 0 HILANG dari hasil ekstraktor (kirus), hanya index 1 yang balik.
+    const partial = async (urls, outDir, opts) => [{
+      index: 1, url: urls[1], frameDir: sets[1].frameDir, frames: sets[1].frames, opts,
+    }];
+    const serving = serveWhile('pf_idx', () => clean(77), 1);
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/0', 'https://a/1', 'https://a/2'],
+      { jobId: 'pf_idx', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: partial },
+    );
+    const batches = await serving;
+    // Indeks yang dilaporkan = posisi di array pemanggil, bukan posisi di daftar hasil.
+    expect(res.probed).toEqual([1]);
+    expect(res.results.map((r) => r.index)).toEqual([1]);
+    expect(batches[0].sceneIdx).toBe(PREFLIGHT_SCENE_BASE + 1);
+    expect(res.accepted).toEqual([1]);
+  }, 30000);
+
+  it('maxCandidates membatasi jumlah video yang diunduh; url kosong dilewati', async () => {
+    const sets = [makeFrameSet(3, 'cap'), makeFrameSet(3, 'cap'), makeFrameSet(3, 'cap')];
+    const serving = serveWhile('pf_cap', () => clean(50), 3);
+    const res = await preflightCandidatesWithOracle(
+      [null, { url: '' }, 'https://a/2', 'https://a/3', 'https://a/4', 'https://a/5'],
+      { jobId: 'pf_cap', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets), maxCandidates: 3 },
+    );
+    const batches = await serving;
+    expect(batches.map((b) => b.sceneIdx).sort((a, c) => a - c)).toEqual([20002, 20003, 20004]);
+    expect(res.probed).toEqual([2, 3, 4]);
+  }, 30000);
+
+  it('parameter ekstraksi diteruskan apa adanya (15 detik, 1 fps, 360p)', async () => {
+    const sets = [makeFrameSet(2, 'param')];
+    let got = null;
+    const spy = async (urls, outDir, opts) => { got = opts; return fakeExtractor(sets)(urls, outDir, opts); };
+    const serving = serveWhile('pf_param', () => clean(80), 1);
+    await preflightCandidatesWithOracle(['https://a/1'], {
+      jobId: 'pf_param', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: spy,
+    });
+    await serving;
+    expect(got).toMatchObject({ seconds: 15, fps: 1, height: 360 });
+  }, 30000);
+
+  it('frame kandidat dibersihkan setelah vonis dipakai (tidak tinggal berobat di disk)', async () => {
+    const sets = [makeFrameSet(4, 'sweep')];
+    const serving = serveWhile('pf_sweep', () => clean(80), 1);
+    const res = await preflightCandidatesWithOracle(['https://a/1'], {
+      jobId: 'pf_sweep', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets),
+    });
+    await serving;
+    expect(res.judged).toBe(1);
+    expect(fs.existsSync(sets[0].frameDir)).toBe(false);
+  }, 30000);
+
+  it('frame habis sebelum dikirim -> untested, bukan rejected', async () => {
+    const sets = [{ frameDir: '', frames: [] }];
+    const res = await preflightCandidatesWithOracle(['https://a/1'], {
+      jobId: 'pf_ghost', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent,
+      extractFrames: async () => [{ index: 0, frameDir: '', frames: [] }],
+    });
+    expect(sets).toHaveLength(1);
+    expect(res.probed).toEqual([0]);
+    expect(res.untested).toEqual([0]);
+    expect(res.rejected).toEqual([]);
+  });
+});
+
+describe('orderCandidatesAfterPreflight (kontrak fail-open pemanggil)', () => {
+  // Inilah satu-satunya tempat kandidat dibuang setelah Kaggle ikut pre-flight.
+  // Fungsi ini dulunya ditulis inline di stage1Render; satu baris yang salah di sini
+  // membuat kandidat yang TIDAK divisit hilang diam-diam dan tidak ada tes pipeline
+  // yang menangkapnya - makanya ia jadi fungsi murni di service.
+  const pool = [{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }, { id: 'e' }];
+  const ids = (list) => list.map((c) => c.id);
+
+  it('hanya rejected yang keluar; accepted paling depan, sisanya pertahankan urutan', () => {
+    const out = orderCandidatesAfterPreflight(pool, { accepted: [3, 0], untested: [2], probed: [0, 2, 3, 1], rejected: [1] });
+    // accepted urut sesuai daftar (sudah matchScore desc dari service).
+    expect(ids(out)).toEqual(['d', 'a', 'c', 'e']);
+  });
+
+  it('yang divisit tapi tanpa vonis TIDAK hilang walau tidak diterima (oracle diam bukan bukti salah)', () => {
+    const out = orderCandidatesAfterPreflight(pool, { accepted: [], untested: [0, 1], probed: [0, 1], rejected: [] });
+    expect(ids(out)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('kepunyaan kandidat terjamin: keluaran = masuk dikurangi rejected saja', () => {
+    const pf = { accepted: [1], untested: [3], probed: [0, 1, 2, 3], rejected: [0, 2] };
+    const out = orderCandidatesAfterPreflight(pool, pf);
+    expect(out).toHaveLength(pool.length - pf.rejected.length);
+    expect(new Set(out).size).toBe(out.length); // tidak ada duplikat
+    for (const rel of pf.rejected) expect(out).not.toContain(pool[rel]);
+    for (const rel of [1, 3, 4]) expect(out).toContain(pool[rel]);
+  });
+
+  it('indeks di luar jangkauan / field hilang tidak melempar', () => {
+    expect(ids(orderCandidatesAfterPreflight(pool, { accepted: [9], untested: [-1], probed: [99], rejected: [7] }))).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(orderCandidatesAfterPreflight(pool, {})).toEqual(pool);
+    expect(orderCandidatesAfterPreflight([], { accepted: [0] })).toEqual([]);
+    expect(orderCandidatesAfterPreflight()).toEqual([]);
+  });
 });
 
 // Sanitasi: konversi 360p sengaja menulis di bawah server/temp/oracle_frames (itu

@@ -109,6 +109,11 @@ const FLAG_NORMALIZERS = {
   },
   // Interval polling worker saat menunggu vonis (milidetik).
   VLM_ORACLE_POLL_MS: (env) => Math.max(250, Number(env.VLM_ORACLE_POLL_MS) || 2000),
+  // PRE-FLIGHT KANDIDAT dinilai Kaggle (15 frame @1 fps) atau Gemini (MP4 ke File API).
+  // Efektif hanya bila VISION_VERIFY_MODE=oracle; default NYALA karena orang yang
+  // menyalakan oracle justru sedang berusaha memangkas token Gemini. '0' mengembalikan
+  // pre-flight ke jalur lama sementara dua pass oracle lainnya tetap jalan.
+  PREFLIGHT_ORACLE: (env) => isOraclePreflightEnabled(env),
   // Batch 'claimed' lebih tua dari ini (detik) dianggap worker mati -> dikembalikan ke
   // 'pending' (atau 'expired' bila percobaan habis). Notebook Kaggle boleh mati kapan saja.
   VLM_ORACLE_STALE_SEC: (env) => Math.max(30, Number(env.VLM_ORACLE_STALE_SEC) || 300),
@@ -197,6 +202,7 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.VLM_ORACLE_POLL_MS === 'number') patch.VLM_ORACLE_POLL_MS = String(snapshot.VLM_ORACLE_POLL_MS);
   if (typeof snapshot.VLM_ORACLE_STALE_SEC === 'number') patch.VLM_ORACLE_STALE_SEC = String(snapshot.VLM_ORACLE_STALE_SEC);
   if (typeof snapshot.VLM_ORACLE_MAX_ATTEMPTS === 'number') patch.VLM_ORACLE_MAX_ATTEMPTS = String(snapshot.VLM_ORACLE_MAX_ATTEMPTS);
+  if (typeof snapshot.PREFLIGHT_ORACLE === 'boolean') patch.PREFLIGHT_ORACLE = snapshot.PREFLIGHT_ORACLE ? '1' : '0';
   if (typeof snapshot.VLM_ORACLE_BASE_URL === 'string') patch.VLM_ORACLE_BASE_URL = snapshot.VLM_ORACLE_BASE_URL;
   if (typeof snapshot.GEMINI_SCENE_DISCOVERY === 'boolean') patch.GEMINI_SCENE_DISCOVERY = snapshot.GEMINI_SCENE_DISCOVERY ? '1' : '0';
   if (typeof snapshot.SCENE_CLIP_DURATION_SEC === 'number') patch.SCENE_CLIP_DURATION_SEC = String(snapshot.SCENE_CLIP_DURATION_SEC);
@@ -244,6 +250,17 @@ export function isGeminiSceneDiscoveryEnabled(env = process.env) {
  */
 export function isVlmOracleEnabled(env = process.env) {
   return String(env.VISION_VERIFY_MODE || '').trim().toLowerCase() === 'oracle';
+}
+
+/**
+ * Helper konsumen: apakah tahap PRE-FLIGHT KANDIDAT boleh dipindah ke Kaggle.
+ * Dua syarat, dan keduanya nyata: oracle harus aktif (kalau tidak, tidak ada yang
+ * memvonis frame), dan flag-nya tidak boleh dimatikan eksplisit. Default ON karena
+ * pemakai oracle biasanya sedang mengejar penghematan token Gemini — tahap pre-flight
+ * inilah yang mengirim utuh beberapa video lewat File API.
+ */
+export function isOraclePreflightEnabled(env = process.env) {
+  return isVlmOracleEnabled(env) && String(env.PREFLIGHT_ORACLE ?? '1').trim() !== '0';
 }
 
 /**

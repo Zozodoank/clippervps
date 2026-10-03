@@ -2013,38 +2013,11 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
     try {
       const snippetPath = path.join(outputDir, `preflight_snippet_${index}_${Date.now()}.mp4`);
 
-      // Selektor format: DULU "best[ext=mp4]/best" dan itu GAGAL untuk banyak video.
-      // yt-dlp `best` menuntut satu file yang memuat video DAN audio sekaligus, sedangkan
-      // YouTube kini makin sering hanya menyediakan format terpisah (DASH: video-only +
-      // audio-only). Terukur 2026-10-03 pada ucchyFUEvUo: `-F` hanya berisi 137/136/134
-      // "video only" + 140/251 "audio only", sehingga perintah ini keluar dengan
-      // "ERROR: Requested format is not available" dan cuplikan tidak pernah dibuat.
-      // Cuplikan ini toh dipakai hanya untuk menilai GAMBAR (ffmpeg dipanggil dengan -an),
-      // jadi `bv*` (video-only terbaik) adalah pilihan yang benar. `[protocol=https]`
-      // diutamakan agar URL-nya berkas langsung, bukan manifest m3u8 yang tidak bisa
-      // di-seek ffmpeg dengan andal; tinggi 360p cukup untuk seleksi awal dan hemat kuota.
-      const fmtSelector = 'bv*[ext=mp4][protocol=https][height<=360]/bv*[ext=mp4][protocol=https]/bv*[protocol=https]/bv*/b';
-      const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" --js-runtimes node --print "%(url)s|%(duration)s" -f "${fmtSelector}" "${url}"`);
-      const lines = streamInfoRaw.trim().split('\n').filter(Boolean);
-      // Ensure we get the last line (in case there are warnings in stdout)
-      const lastLine = lines[lines.length - 1];
-      if (!lastLine || !lastLine.includes('|')) throw new Error(`Could not fetch stream URL for ${url}`);
-      
-      const [streamUrl, durationStr] = lastLine.split('|');
-      const durationSec = parseFloat(durationStr) || 0;
-      
-      // Calculate middle of video (or 30% mark if very long), fallback to 5s if unknown/short
-      let startSec = 5;
-      if (durationSec > 30) {
-        startSec = Math.floor(durationSec * 0.4); // 40% mark is usually the core content
-      } else if (durationSec > 15) {
-        startSec = 5;
-      }
+      // Selektor format + titik potong kini hidup di SATU tempat (resolvePreflightStream)
+      // karena dipakai dua jalur pre-flight: MP4 untuk Gemini dan frame untuk Kaggle.
+      const { streamUrl, startSec } = await resolvePreflightStream(url, { ytDlpPath, execAsync });
 
-      const formattedStart = new Date(startSec * 1000).toISOString().substr(11, 8); // e.g., 00:01:30
-
-      const browserUserAgent = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-      const ffmpegCmd = `"${ffmpegPath}" -y -user_agent "${browserUserAgent}" -ss ${formattedStart} -i "${streamUrl}" -t 10 -c:v libx264 -preset veryfast -crf 28 -an "${snippetPath}"`;
+      const ffmpegCmd = `"${ffmpegPath}" -y -user_agent "${PREFLIGHT_USER_AGENT}" -ss ${formatClock(startSec)} -i "${streamUrl}" -t 10 -c:v libx264 -preset veryfast -crf 28 -an "${snippetPath}"`;
       await execAsync(ffmpegCmd);
 
       if (fs.existsSync(snippetPath) && fs.statSync(snippetPath).size > 0) {
@@ -2061,6 +2034,179 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
   return results
     .filter(r => r.status === 'fulfilled' && r.value !== null)
     .map(r => r.value);
+}
+
+// ---------------------------------------------------------------------------
+// PRE-FLIGHT: SATU logika pencarian stream, DUA bentuk hasil — MP4 untuk File
+// API Gemini, JPEG untuk notebook Kaggle (Lapis 2).
+// ---------------------------------------------------------------------------
+
+// User agent meniru browser: tanpa ini googlevideo menolak sebagian link langsung.
+const PREFLIGHT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+
+/** `150` -> `00:02:30` (format yang dipakai jalur lama). */
+function formatClock(totalSec) {
+  return new Date(Math.max(0, Number(totalSec) || 0) * 1000).toISOString().substr(11, 8);
+}
+
+/**
+ * Selektor format: DULU "best[ext=mp4]/best" dan itu GAGAL untuk banyak video.
+ * yt-dlp `best` menuntut satu file yang memuat video DAN audio sekaligus, sedangkan
+ * YouTube kini makin sering hanya menyediakan format terpisah (DASH: video-only +
+ * audio-only). Terukur 2026-10-03 pada ucchyFUEvUo: `-F` hanya berisi 137/136/134
+ * "video only" + 140/251 "audio only", sehingga perintah ini keluar dengan
+ * "ERROR: Requested format is not available" dan cuplikan tidak pernah dibuat.
+ * Cuplikan pre-flight dipakai hanya untuk menilai GAMBAR (ffmpeg dipanggil dengan
+ * -an), jadi `bv*` (video-only terbaik) adalah pilihan yang benar. `[protocol=https]`
+ * diutamakan agar URL-nya berkas langsung, bukan manifest m3u8 yang tidak bisa
+ * di-seek ffmpeg dengan andal; tinggi 360p cukup untuk seleksi awal dan hemat kuota.
+ */
+const PREFLIGHT_FORMAT_SELECTOR = 'bv*[ext=mp4][protocol=https][height<=360]/bv*[ext=mp4][protocol=https]/bv*[protocol=https]/bv*/b';
+
+/**
+ * Cari URL stream langsung + titik potong cuplikan untuk satu kandidat.
+ * @returns {Promise<{streamUrl: string, startSec: number, durationSec: number}>}
+ */
+async function resolvePreflightStream(url, { ytDlpPath, execAsync }) {
+  const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" --js-runtimes node --print "%(url)s|%(duration)s" -f "${PREFLIGHT_FORMAT_SELECTOR}" "${url}"`);
+  const lines = String(streamInfoRaw || '').trim().split('\n').filter(Boolean);
+  // Ambil baris TERAKHIR: yt-dlp kadang menulis peringatan ke stdout sebelum baris data.
+  const lastLine = lines[lines.length - 1];
+  if (!lastLine || !lastLine.includes('|')) throw new Error(`Could not fetch stream URL for ${url}`);
+
+  const [streamUrl, durationStr] = lastLine.split('|');
+  const durationSec = parseFloat(durationStr) || 0;
+
+  // Tengah video (40% untuk video panjang), fallback 5 dtk bila durasi tak diketahui/pendek.
+  let startSec = 5;
+  if (durationSec > 30) {
+    startSec = Math.floor(durationSec * 0.4); // 40% mark is usually the core content
+  } else if (durationSec > 15) {
+    startSec = 5;
+  }
+  return { streamUrl, startSec, durationSec };
+}
+
+/**
+ * Jalankan FFmpeg tanpa shell (argv array). Dipakai jalur frame karena URL stream
+ * dari yt-dlp berisi `&` dan `?` yang di dalam command-string adalah karakter hidup
+ * di cmd.exe/POSIX shell; `spawn` menutup kelas bug itu sekaligus membuat timeout bisa
+ * benar-benar membunuh proses (exec tidak bisa).
+ */
+function runFrameExtraction({ ffmpegPath, streamUrl, startSec, seconds, fps, height, pattern, timeoutMs }) {
+  return new Promise((resolve) => {
+    const args = [
+      '-y', '-nostdin',
+      '-user_agent', PREFLIGHT_USER_AGENT,
+      '-ss', formatClock(startSec),
+      '-i', streamUrl,
+      '-t', String(seconds),
+      // fps=<n> -> satu frame per <n> detik; scale=-2:<height> -> tinggi terkunci,
+      // lebar rasio asli dibulatkan ke GENAP (sama seperti prepareOracleFrames).
+      '-vf', `fps=${fps},scale=-2:${height}`,
+      '-q:v', '4', '-an',
+      pattern,
+    ];
+    let proc;
+    try {
+      proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    } catch (err) {
+      resolve({ ok: false, error: err.message, stderr: '' });
+      return;
+    }
+    let stderr = '';
+    proc.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-1200); });
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      try { proc.kill('SIGKILL'); } catch {}
+      resolve({ ok: false, error: `timeout ${timeoutMs}ms`, stderr });
+    }, Math.max(5000, Number(timeoutMs) || 90_000));
+    proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ok: false, error: err.message, stderr });
+    });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ ok: code === 0, error: code === 0 ? '' : `kode keluar ${code}`, stderr });
+    });
+  });
+}
+
+/**
+ * [Lapis 2] Ekstrak cuplikan tengah video kandidat menjadi FRAME JPEG (default 15 frame
+ * @1 fps, tinggi 360 px) untuk dinilai notebook Kaggle lewat jalur batch frame yang SUDAH
+ * ada. Kenapa frame dan bukan MP4: nol perubahan notebook, byte keluar perangkat turun
+ * ~5x, dan satu batch 15 frame muat dalam satu panggilan GPU (VLM_ORACLE_BATCH_SIZE
+ * dijepit 16). Korbannya jujur: gerakan yang muncul <1 detik bisa lolos dari sampling 1 fps.
+ *
+ * Kandidat yang gagal ekstraksi TIDAK muncul di hasil — sama seperti jalur MP4 — dan
+ * pemanggil wajib memperlakukannya sebagai "belum dinilai", BUKAN "ditolak".
+ *
+ * @param {string[]} urls kandidat (urutan = posisi batch)
+ * @param {string} outputDir direktori kerja; frame ditulis di subdirektori preflight_frames
+ * @param {{seconds?:number,fps?:number,height?:number,tag?:string,timeoutMs?:number}} [opts]
+ * @returns {Promise<Array<{url:string,index:number,frameDir:string,startSec:number,frames:Array<{index:number,filePath:string,timestampMs:number}>}>>}
+ */
+export async function extractPreflightFramesForOracle(urls, outputDir, opts = {}) {
+  const {
+    seconds = 15, fps = 1, height = 360, tag = Date.now(), timeoutMs = 90_000,
+  } = opts;
+  if (!urls || !Array.isArray(urls) || urls.length === 0) return [];
+  if (!outputDir) throw new Error('extractPreflightFramesForOracle: outputDir wajib ada');
+
+  const { exec } = await import('child_process');
+  const util = await import('util');
+  const execAsync = util.promisify(exec);
+  const ffmpegPath = getFFmpegPath();
+  const ytDlpPath = await getYtDlpPath();
+
+  const capSeconds = Math.max(2, Math.min(30, Number(seconds) || 15));
+  const capFps = Math.max(0.2, Math.min(4, Number(fps) || 1));
+  const capHeight = Math.max(240, Math.min(720, Number(height) || 360));
+
+  const jobs = urls.map(async (url, index) => {
+    if (!url) return null;
+    let frameDir = '';
+    try {
+      const { streamUrl, startSec } = await resolvePreflightStream(url, { ytDlpPath, execAsync });
+      frameDir = path.join(outputDir, 'preflight_frames', `pf_${index}_${tag}`);
+      fs.mkdirSync(frameDir, { recursive: true });
+      const pattern = path.join(frameDir, 'pf_%03d.jpg');
+      const run = await runFrameExtraction({ ffmpegPath, streamUrl, startSec, seconds: capSeconds, fps: capFps, height: capHeight, pattern, timeoutMs });
+
+      const files = fs.readdirSync(frameDir)
+        .filter((f) => /^pf_\d+\.jpg$/.test(f))
+        .sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
+      if (files.length === 0) {
+        console.warn(`[PreflightFrames] Tidak ada frame untuk indeks ${index} (${url}): ${run.error || 'ffmpeg tidak mengirim error'}`);
+        try { fs.rmSync(frameDir, { recursive: true, force: true }); } catch {}
+        return null;
+      }
+      // timestampMs = posisi frame pada garis waktu video sumber. Filter `fps` mengambil
+      // frame pertama di detik 0 cuplikan, jadi frame ke-i jatuh di startSec + i/fps.
+      const frames = files.map((f, i) => ({
+        index: i,
+        filePath: path.join(frameDir, f),
+        timestampMs: Math.round((startSec + i / capFps) * 1000),
+      }));
+      return { url, index, frameDir, startSec, frames };
+    } catch (err) {
+      console.warn(`[PreflightFrames] Ekstraksi gagal untuk indeks ${index} (${url}): ${err.message}`);
+      if (frameDir) { try { fs.rmSync(frameDir, { recursive: true, force: true }); } catch {} }
+      return null;
+    }
+  });
+
+  const settledJobs = await Promise.allSettled(jobs);
+  return settledJobs
+    .filter((r) => r.status === 'fulfilled' && r.value !== null)
+    .map((r) => r.value);
 }
 
 /**

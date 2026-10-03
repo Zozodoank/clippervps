@@ -522,6 +522,45 @@ def extract_json(text):
 VERDICT_KEYS = ("safe", "face", "text", "watermark", "graphic")
 
 
+def wants_ranking(prompt):
+    """Prompt dari server (buildVlmPrompt requireRanking=True) satu-satunya tempat
+    kata 'matchScore' muncul. Deteksinya string, jadi notebook dan server boleh
+    di-deploy terpisah tanpa salah bicara.
+
+    Kunci peringkat (productMatch/matchScore) sengaja TIDAK digabung ke VERDICT_KEYS:
+    dua pass oracle yang lain (pool & audit klip) memakai prompt tanpa konteks produk,
+    dan mengirim productMatch:false untuk mereka berarti MEMBUANG kandidat yang
+    sebenarnya bersih hanya karena model tidak menjawab pertanyaan yang tidak pernah
+    ditanyakan.
+    """
+    return "matchScore" in (prompt or "")
+
+
+def clamp_score(value):
+    """Skor kecocokan 0-100 sebagai int, atau None bila model tidak mengirim angka
+    sah. None berarti 'tidak ada informasi' dan TIDAK sama dengan 0: sisi server
+    memperlakukan 0 sebagai 'produk salah' sedangkan None sebagai 'tanpa skor'."""
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    if n != n:  # NaN
+        return None
+    return max(0, min(100, int(round(n))))
+
+
+def median_int(values):
+    """Median, bukan mean: satu frame yang dihalusinasi model jadi 100 tidak boleh
+    menyeret skor seluruh kandidat. Nilai None dibuang sebelum menghitung."""
+    nums = sorted(v for v in (clamp_score(x) for x in values) if v is not None)
+    if not nums:
+        return None
+    mid = len(nums) // 2
+    if len(nums) % 2:
+        return nums[mid]
+    return int(round((nums[mid - 1] + nums[mid]) / 2.0))
+
+
 def ask(model, processor, torch, image_paths, prompt):
     from qwen_vl_utils import process_vision_info
     content = [{"type": "image", "image": "file://" + p} for p in image_paths]
@@ -595,6 +634,11 @@ def verdict_batch(payload, model, processor, torch):
     out = {k: bool(obj.get(k, False)) for k in VERDICT_KEYS}
     out["safe"] = bool(obj.get("safe", True))
     out["reason"] = str(obj.get("reason", ""))[:280]
+    # Mode peringkat: hanya aktif bila server memang MEMINTA skor (prompt dari
+    # buildVlmPrompt(requireRanking=True)). Kalau tidak diminta, dua kunci ini tidak
+    # pernah muncul di verdict sehingga pass oracle lama bentuknya identik dengan
+    # sebelum patch ini - tidak ada kode yang perlu di-deploy serentak.
+    ranking = wants_ranking(prompt)
     # `model` = label bobot yang benar-benar dimuat (bukan MODEL_ID mentah): kalau bobot
     # datang dari mount lokal, namanya ikut tercatat di sini. `device`/`dtype` ditambahkan
     # supaya angka recall/false-reject bisa ditelusuri ke PERANGKAT yang memproduksinya -
@@ -602,6 +646,12 @@ def verdict_batch(payload, model, processor, torch):
     out["model"] = MODEL_LABEL
     out["device"] = "%s|%s" % (DEVICE_INFO.get("name", ""), DEVICE_INFO.get("dtype", ""))
     out["elapsedMs"] = int(dt * 1000)
+
+    if ranking:
+        # Skor dari panggilan batch DULU. Kalau nanti refine per-frame jalan, nilai ini
+        # ditimpa dengan median bukti per-frame yang lebih tajam.
+        out["productMatch"] = bool(obj.get("productMatch", True))
+        out["matchScore"] = clamp_score(obj.get("matchScore"))
 
     # Refine per-frame bila ada TANDA kotor apa pun, bukan hanya saat safe:false.
     # Hilir (`normalizeOracleVerdict`) memveto ketika `safe:false` ATAU salah satu flag menyala,
@@ -618,23 +668,43 @@ def verdict_batch(payload, model, processor, torch):
             if obj1 is None:
                 # Gagal parse = tidak tahu = jangan lepas veto. Tandai frame INI saja yang
                 # kotor supaya veto tidak merata ke seluruh batch karena satu frame saja.
-                per_frame.append({"index": idx, "safe": False,
-                                  "face": False, "text": False, "watermark": False, "graphic": False})
+                entry = {"index": idx, "safe": False,
+                         "face": False, "text": False, "watermark": False, "graphic": False}
+                if ranking:
+                    # Umpama gagal parse pun, frame ini tidak boleh menyumbang skor: None,
+                    # bukan 0, supaya median tidak menghukum kandidat karena satu frame rusak.
+                    entry["productMatch"] = None
+                    entry["matchScore"] = None
+                per_frame.append(entry)
                 continue
-            per_frame.append({
+            frame_verdict = {
                 "index": idx,
                 "safe": bool(obj1.get("safe", True)),
                 "face": bool(obj1.get("face", False)),
                 "text": bool(obj1.get("text", False)),
                 "watermark": bool(obj1.get("watermark", False)),
                 "graphic": bool(obj1.get("graphic", False)),
-            })
+            }
+            if ranking:
+                frame_verdict["productMatch"] = bool(obj1.get("productMatch", True))
+                frame_verdict["matchScore"] = clamp_score(obj1.get("matchScore"))
+            per_frame.append(frame_verdict)
         if per_frame:
             out["perFrame"] = per_frame
             out["safe"] = all(f["safe"] for f in per_frame)
             # Flag agregat diturunkan dari bukti per-frame, bukan tebakan satu panggilan.
             for k in ("face", "text", "watermark", "graphic"):
                 out[k] = any(f[k] for f in per_frame)
+            if ranking:
+                # agregat = MEDIAN, bukan mean: satu frame yang dihalusinasi jadi 100
+                # tidak boleh menyeret skor kandidat. productMatch agregat = any(True);
+                # None (frame tak terbaca) diabaikan, dan kalau semuanya None kita pakai
+                # tebakan dari panggilan batch agar field-nya tidak hilang.
+                out["matchScore"] = median_int([f.get("matchScore") for f in per_frame])
+                if out["matchScore"] is None:
+                    out["matchScore"] = clamp_score(obj.get("matchScore"))
+                matches = [f.get("productMatch") for f in per_frame if f.get("productMatch") is not None]
+                out["productMatch"] = any(matches) if matches else bool(obj.get("productMatch", True))
             out["elapsedMs"] = int((time.time() - t0) * 1000)
     shutil.rmtree(batch_dir, ignore_errors=True)
     return out

@@ -6,8 +6,8 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled } from '../config/runtimeFlags.js';
-import { applyOracleVeto, auditClipsWithOracle } from '../services/vlmOracleService.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled, isOraclePreflightEnabled } from '../config/runtimeFlags.js';
+import { applyOracleVeto, auditClipsWithOracle, preflightCandidatesWithOracle, orderCandidatesAfterPreflight } from '../services/vlmOracleService.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 // Pembungkus konteks job untuk pencatatan pemakaian AI (token/byte/biaya per job).
@@ -1343,7 +1343,52 @@ async function _runStage1Pipeline({
         // --- FAST PRE-FLIGHT CHECK ---
         const currentPoolCandidate = candidatePool[candidatePoolIndex];
         const isCurrentOem = currentPoolCandidate && (options.oemUrls?.includes(currentPoolCandidate.url) || options.oemUrl1 === currentPoolCandidate.url || options.oemUrl2 === currentPoolCandidate.url);
-        
+
+        // [Lapis 2 + 3] Pre-flight boleh diambil alih Kaggle: 15 frame @1 fps dari tengah
+        // tiap kandidat dikirim sebagai batch frame yang SUDAH ada, dan vonisnya membawa
+        // matchScore sehingga Kaggle-lah yang memeringkat (bukan lagi Gemini). Bila fungsi
+        // ini menyatakan TIDAK ikut campur (oracle mati / frame gagal diekstrak), blok
+        // Gemini di bawah berjalan persis seperti sebelumnya.
+        if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem && !explicitOnly
+            && isOraclePreflightEnabled(process.env)) {
+          const pfStart = candidatePoolIndex;
+          try {
+            const pf = await preflightCandidatesWithOracle(
+              candidatePool.slice(pfStart, pfStart + 3),
+              { jobId, niche: options.niche || 'kitchen_tools', productName: coreProductNoun, outDir: outputDir, onProgress: updateProgress },
+            );
+            if (pf.enabled && pf.probed.length > 0) {
+              const poolTail = candidatePool.slice(pfStart);
+              for (const rel of pf.probed) {
+                const cand = poolTail[rel];
+                if (!cand) continue;
+                // Ditandai walau TIDAK ada vonis: kandidat seperti ini harus tetap dicoba
+                // lewat jalur normal, bukan di-probe berulang kali (bug kelas indeks yang
+                // sudah diperbaiki di 4789c76 — acuan tetap posisi, bukan indeks array hasil).
+                cand.preFlightChecked = true;
+              }
+              // Fail-open (yang divisit tapi tidak dijawab TETAP di antrian, hanya `rejected`
+              // yang keluar) dijamin fungsi murni di service — lihat testenya di vlmOracle.test.js.
+              const orderedTail = orderCandidatesAfterPreflight(poolTail, pf);
+              for (const rel of pf.rejected) {
+                const cand = poolTail[rel];
+                const rec = pf.results.find((x) => x && x.index === rel);
+                if (cand) {
+                  console.log(`[Job ${jobId}] ⚠️ Membuang kandidat "${cand.title || cand.url}" karena pre-flight Kaggle: ${rec?.dropReason || rec?.reason || 'divonis model'} (skor ${rec?.matchScore ?? '—'}).`);
+                }
+              }
+              candidatePool.splice(pfStart, poolTail.length, ...orderedTail);
+              console.log(`[Job ${jobId}] 🛰️ Pre-flight Kaggle: ${pf.accepted.length} kandidat diterima, ${pf.rejected.length} dibuang, ${pf.untested.length} tanpa vonis (tetap dicoba), ${pf.framesSent} frame dikirim.`);
+              // Susunan antrian berubah -> nilai ulang kepala antrian dari atas.
+              continue;
+            }
+          } catch (pfErr) {
+            // Murni pengaman: preflightCandidatesWithOracle tidak pernah melempar. Kalau ini
+            // terjadi, blok Gemini di bawah yang bekerja seperti biasa.
+            console.warn(`[Job ${jobId}] ⚠️ Pre-flight Kaggle dilewati (${pfErr.message}) -> kembali ke Gemini.`);
+          }
+        }
+
         if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem && !explicitOnly) {
           console.log(`[Job ${jobId}] 🚀 Memulai Fast Pre-Flight Check untuk kandidat...`);
           try {

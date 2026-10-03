@@ -31,7 +31,7 @@ import { spawn } from 'child_process';
 import { buildVlmPrompt } from './vlmGateService.js';
 import { getFFmpegPath } from './binaryChecker.js';
 import { tempDir } from '../utils/paths.js';
-import { isVlmOracleEnabled } from '../config/runtimeFlags.js';
+import { isVlmOracleEnabled, isOraclePreflightEnabled } from '../config/runtimeFlags.js';
 import {
   enqueueOracleBatch,
   waitForOracleVerdict,
@@ -102,9 +102,35 @@ export function pickEvenlySpaced(items = [], n = 0) {
 
 /**
  * Shape vonis yang WAJIB dikirim notebook (divalidasi LONGGAR tapi tidak naif):
- * { safe: bool, face/text/watermark/graphic: bool, reason?, perFrame?: [{index, safe, ...}] }
+ * { safe: bool, face/text/watermark/graphic: bool, reason?, perFrame?: [{index, safe, ...}],
+ *   productMatch?: bool, matchScore?: 0-100 }
  * Key top-level sengaja SAMA dengan kontrak vlmGateService agar hilir cuma satu kosakata.
+ *
+ * `productMatch`/`matchScore` (Lapis 3) bersifat OPSIONAL di sini. Dua pass oracle yang
+ * sudah ada (pool & audit klip) tidak pernah meminta konteks produk, jadi vonis tanpa
+ * kedua field itu harus tetap SAH. Kalau kita memakainya sebagai syarat validasi,
+ * setiap notebook lama yang masih jalan akan dianggap mengirim vonis rusak lalu
+ * seluruh frame kehilangan veto.
  */
+function clampScore(value) {
+  // 'Tidak ada skor' harus tetap berbeda dari 'skor 0' (produk salah). Number('') = 0 dan
+  // Number(false) = 0, jadi keduanya disingkirkan lebih dulu; kalau tidak, notebook yang
+  // mengirim kolom kosong akan diam-diam MEMBUANG kandidat yang sebenarnya cocok.
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+/** Median, bukan mean: satu frame yang dihalusinasi model jadi 100 tidak boleh menyeret skor. */
+function medianScore(values = []) {
+  const nums = values.map((v) => Number(v)).filter((n) => Number.isFinite(n));
+  if (!nums.length) return null;
+  const sorted = nums.slice().sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+}
+
 export function normalizeOracleVerdict(verdict, { expectedFrames = 0 } = {}) {
   if (!verdict || typeof verdict !== 'object') {
     return { ok: false, available: true, infraError: true, error: 'Vonis oracle bukan objek JSON.' };
@@ -131,6 +157,13 @@ export function normalizeOracleVerdict(verdict, { expectedFrames = 0 } = {}) {
     });
   const anyFlag = ['face', 'text', 'watermark', 'graphic'].some((k) => bool(verdict[k]));
   const safe = hasSafe ? bool(verdict.safe) : (perFrame.length > 0 && dirtyFrames.length === 0);
+  // Skor kecocokan produk: agregat dari notebook lebih dipercaya; kalau hilang (mis.
+  // notebook belum di-update, atau satu panggilan batch tidak mengirimkannya),
+  // turunkan dari median per-frame. null = "tidak ada informasi", BUKAN "skor 0".
+  const frameScores = perFrame
+    .map((f) => (f && f.matchScore !== undefined && f.matchScore !== null ? clampScore(f.matchScore) : null))
+    .filter((v) => v !== null);
+  const matchScore = clampScore(verdict.matchScore) ?? (frameScores.length ? medianScore(frameScores) : null);
   return {
     ok: true,
     available: true,
@@ -139,10 +172,15 @@ export function normalizeOracleVerdict(verdict, { expectedFrames = 0 } = {}) {
     text: bool(verdict.text),
     watermark: bool(verdict.watermark),
     graphic: bool(verdict.graphic),
+    productMatch: 'productMatch' in verdict ? bool(verdict.productMatch) : null,
+    matchScore,
     reason: String(verdict.reason || '').slice(0, 300),
     model: String(verdict.model || '').slice(0, 80),
     dirtyFrameIndexes: dirtyFrames,
     // Aggregate flag boleh salah nol; `safe:false` saja sudah cukup untuk memveto.
+    // `productMatch:false` SENGAJA tidak ikut di sini: veto untuk kebersihan harus tetap
+    // bisa bekerja saat prompt tidak membawa konteks produk (matchScore/productMatch null).
+    // Yang memakai productMatch untuk MENOLAK kandidat hanyalah jalur pre-flight (peringkat).
     vetoTriggered: safe === false || anyFlag || dirtyFrames.length > 0,
     framesExpected: expectedFrames,
     elapsedMs: Number(verdict.elapsedMs) || undefined,
@@ -537,4 +575,244 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
   summary.elapsedMs = Date.now() - t0;
   if (!summary.checked && !summary.note) summary.note = 'Audit klip aktif tapi tidak ada frame valid.';
   return { verdicts, ...summary };
+}
+
+// ---------------------------------------------------------------------------
+// PRE-FLIGHT KANDIDAT OLEH KAGGLE (Lapis 2) + PERINGKAT (Lapis 3)
+//
+// Kenapa tahap ini yang dipindah: Pre-Flight adalah satu-satunya titik yang
+// mengirim VIDEO UTUH ke File API Gemini (beberapa kandidat sekaligus) hanya untuk
+// menjawab "video mana yang paling mirip produk saya". Bentuk kerjanya persis kerja
+// oracle: beberapa gambar masuk, satu vonis keluar. Yang dikirim sekarang 15 frame
+// @1 fps dari 15 detik tengah tiap kandidat — nol perubahan notebook karena jalur
+// batch frame sudah ada, dan byte keluar perangkat turun ~5x dibanding MP4.
+//
+// SATU BATCH PER KANDIDAT, sengaja tidak dipecah mengikuti VLM_ORACLE_BATCH_SIZE:
+// kalau 15 frame satu kandidat dipecah jadi dua batch, separuhnya bisa divonis kotor
+// dan separuhnya bersih sehingga tidak ada lagi dasar untuk memeringkat kandidat itu.
+// Yang tersisa hanyalah plafon 16 frame (VLM_ORACLE_BATCH_SIZE dijepit ke 16) supaya
+// satu panggilan GPU tidak pernah membengkak diam-diam.
+// ---------------------------------------------------------------------------
+
+/** Plafon frame per kandidat (satu panggilan GPU), sama seperti clamp VLM_ORACLE_BATCH_SIZE. */
+const PREFLIGHT_MAX_FRAMES = 16;
+/** sceneIdx khusus pre-flight. Pass pool memakai 0..n, pass audit klip 10000+i*100. */
+export const PREFLIGHT_SCENE_BASE = 20000;
+
+/**
+ * Nilai beberapa kandidat video dengan mengirim cuplikan frame-nya ke oracle Kaggle.
+ *
+ * Kontrak keluaran (pemanggil yang mengubah `candidatePool`; fungsi ini tidak menyentuh
+ * struktur job sama sekali supaya bisa diuji tanpa pipeline):
+ *   enabled   true bila oracle benar-benar turun tangan (>=1 kandidat di-probe). false =
+ *             pemanggil HARUS memakai jalur Gemini lama seperti sebelumnya.
+ *   accepted  posisi kandidat terbaik (maks 2), urut: bersih dulu, baru matchScore desc.
+ *   rejected  posisi yang divonis kotor / produk salah / bersih tapi kalah peringkat.
+ *   untested  posisi yang TIDAK divonis (notebook diam, frame gagal diekstrak) — ini
+ *             bukan vonis: kandidat wajib tetap hidup di antrian.
+ *   probed    semua posisi yang sudah dilihat oracle -> pemanggil menandai
+ *             `preFlightChecked` supaya kandidat tidak di-probe dua kali.
+ *
+ * Semua posisi di atas adalah indeks di array `candidates` ASLI (kandidat tanpa URL
+ * dilewati tetapi tetap menghitung posisinya), supaya pemanggil cukup menambahkan
+ * offset antrian tanpa perlu tahu mana yang dibuang di sini.
+ *
+ * TIDAK PERNAH melempar. Semua kegagalan infrastruktur berakhir sebagai `untested`.
+ */
+export async function preflightCandidatesWithOracle(candidates = [], opts = {}) {
+  const {
+    jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', productName = '',
+    outDir = null, logger = console, env = process.env, onProgress = null,
+    extractFrames = null, maxCandidates = 3, snippetSeconds = 15, keepFrames = false,
+  } = opts;
+
+  const cfg = resolveOracleConfig(env);
+  const out = {
+    enabled: false, judged: 0, accepted: [], rejected: [], untested: [], probed: [],
+    results: [], framesSent: 0, elapsedMs: 0, note: '',
+  };
+  if (!cfg.enabled || !isOraclePreflightEnabled(env)) return out;
+
+  const capCandidates = Math.max(1, Number(maxCandidates) || 3);
+  const list = [];
+  (Array.isArray(candidates) ? candidates : []).forEach((c, i) => {
+    const url = typeof c === 'string' ? c : (c && c.url);
+    if (url && list.length < capCandidates) list.push({ url, pos: i });
+  });
+  if (!list.length) return { ...out, note: 'Tidak ada kandidat untuk di-pre-flight.' };
+
+  // Ekstraktor disuntik dari pemanggil (stage1Render) supaya service ini tidak menyeret
+  // graph dependensi videoFilterService. Fallback dinamis menjaga fungsi ini tetap bisa
+  // dipakai sendiri (mis. dari skrip kalibrasi di scratch/).
+  let extract = extractFrames;
+  if (typeof extract !== 'function') {
+    try {
+      ({ extractPreflightFramesForOracle: extract } = await import('./videoFilterService.js'));
+    } catch (err) {
+      logger.warn(`[Oracle][PreFlight] Ekstraktor frame tidak tersedia (${err.message}) -> pre-flight kembali ke Gemini.`);
+      return { ...out, note: 'ekstraktor_frame_hilang' };
+    }
+  }
+
+  const workDir = outDir || tempDir;
+  const t0 = Date.now();
+  const deadline = t0 + cfg.totalTimeoutMs;
+  const prompt = buildVlmPrompt(niche, facePolicy, { productName, requireRanking: true });
+  let extracted = [];
+  try {
+    extracted = await extract(list.map((c) => c.url), workDir, {
+      // `height: 0` berarti "kirim mentah" untuk pass pool/audit; di jalur ini tidak ada
+      // arti yang sama karena frame memang LAHIR dari skala FFmpeg, jadi 360 dipakai apa
+      // adanya (ekstraktor sendiri mengurung nilainya ke 240..720).
+      seconds: snippetSeconds, fps: 1, height: cfg.frameHeight || 360,
+      tag: `${safeJobSegment(jobId)}_${t0}`,
+    }) || [];
+  } catch (err) {
+    logger.warn(`[Oracle][PreFlight] Ekstraksi frame gagal (${err.message}) -> pre-flight kembali ke Gemini.`);
+    return { ...out, note: 'ekstraksi_gagal' };
+  }
+  if (!extracted.length) {
+    logger.warn('[Oracle][PreFlight] Tidak ada satu pun cuplikan kandidat yang berhasil diekstrak -> Gemini yang menilai.');
+    return { ...out, note: 'tanpa_frame' };
+  }
+
+  out.enabled = true;
+  for (const item of extracted) {
+    // Indeks dari ekstraktor = posisi di array URL yang kita kirim; terjemahkan balik ke
+    // indeks `candidates` asli sebelum melaporkan apa pun ke pemanggil.
+    const pos = list[Number(item.index)] ? list[Number(item.index)].pos : -1;
+    if (!Number.isInteger(pos) || pos < 0) continue;
+    out.probed.push(pos);
+    const frames = (Array.isArray(item.frames) ? item.frames : []).filter((f) => f && f.filePath && fs.existsSync(f.filePath));
+    const chosen = pickEvenlySpaced(frames, PREFLIGHT_MAX_FRAMES)
+      .map((f, i) => ({ ...f, index: i }));
+    if (!chosen.length) {
+      out.untested.push(pos);
+      out.results.push({ index: pos, answered: false, reason: 'frame habis sebelum dikirim', matchScore: null });
+      continue;
+    }
+    if (Date.now() > deadline) {
+      out.untested.push(pos);
+      out.results.push({ index: pos, answered: false, reason: 'anggaran waktu oracle habis' });
+      out.note = out.note || 'Anggaran waktu pre-flight habis; sisa kandidat tidak divisit.';
+      logger.warn(`[Oracle][PreFlight] ${out.note} Kandidat #${pos + 1} tetap dicoba lewat jalur normal.`);
+      continue;
+    }
+
+    const paths = chosen.map((f) => f.filePath);
+    const id = makeBatchId(jobId, PREFLIGHT_SCENE_BASE + pos, paths);
+    out.framesSent += paths.length;
+    let entry = { index: pos, answered: false, clean: false, productMatch: null, matchScore: null, reason: '', dirtyFrames: 0 };
+    try {
+      enqueueOracleBatch({
+        id, jobId,
+        sceneIdx: PREFLIGHT_SCENE_BASE + pos,
+        frames: chosen.map((f) => ({ index: f.index, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
+        niche, facePolicy, prompt,
+      });
+      const waited = await waitForOracleVerdict(id, {
+        timeoutMs: Math.min(cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
+        pollMs: cfg.pollMs, sleep,
+      });
+      if (waited.status === 'timeout') expireOracleBatch(id, 'Pre-flight menyerah sebelum vonis tiba.');
+      if (waited.status === 'done') {
+        const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length });
+        if (v.ok) {
+          entry = {
+            index: pos,
+            answered: true,
+            clean: !v.vetoTriggered,
+            productMatch: v.productMatch,
+            matchScore: v.matchScore,
+            reason: v.reason || '',
+            dirtyFrames: (v.dirtyFrameIndexes || []).length,
+            model: v.model,
+          };
+          out.judged += 1;
+        } else {
+          entry.reason = `vonis tidak sah: ${v.error}`;
+          logger.warn(`[Oracle][PreFlight] Kandidat #${pos + 1}: ${v.error} -> TIDAK divonis, kandidat tetap dicoba.`);
+        }
+      } else {
+        entry.reason = `oracle diam (${waited.status})`;
+        logger.warn(`[Oracle][PreFlight] Kandidat #${pos + 1} tidak dijawab (${waited.status}) -> tidak boleh dibuang.`);
+      }
+    } catch (err) {
+      entry.reason = `error antrean: ${err.message}`;
+      logger.warn(`[Oracle][PreFlight] Kandidat #${pos + 1} error: ${err.message} -> lanjut tanpa vonis.`);
+    }
+
+    out.results.push(entry);
+    if (!entry.answered) out.untested.push(pos);
+    if (!keepFrames && item.frameDir) {
+      // Frame tidak lagi dibutuhkan setelah vonis masuk (atau batch dilepas sebagai
+      // expired). Notebook yang datang terlambat akan dapat 410, dan itu memang
+      // maksudnya: antran pekerja sudah ditutup untuk kandidat ini.
+      try { fs.rmSync(item.frameDir, { recursive: true, force: true }); } catch {}
+    }
+
+    if (onProgress) {
+      try {
+        onProgress({
+          step: 'pre_flight',
+          message: `🛰️ Pre-flight Kaggle: ${out.judged}/${extracted.length} kandidat divisit.`,
+          progress: 15,
+          status: 'running',
+        });
+      } catch { /* progres tidak boleh menjatuhkan job */ }
+    }
+  }
+
+  // PERINGKAT: kebersihan dulu, baru skor. Sama seperti jalur Gemini, hanya 2 terbaik
+  // yang diterima; sisanya keluar. Yang TIDAK divisit tidak pernah masuk daftar buang.
+  const isAcceptedVerdict = (r) => r.answered && r.clean && r.productMatch !== false;
+  const ranked = out.results.filter(isAcceptedVerdict)
+    .sort((a, b) => ((b.matchScore ?? -1) - (a.matchScore ?? -1)) || a.index - b.index);
+  out.accepted = ranked.slice(0, 2).map((r) => r.index);
+  for (const r of out.results) {
+    if (!r.answered) continue;
+    if (out.accepted.includes(r.index)) continue;
+    out.rejected.push(r.index);
+    if (!r.clean) r.dropReason = r.reason || 'divonis kotor';
+    else if (r.productMatch === false) r.dropReason = 'produk tidak cocok';
+    else r.dropReason = 'kalah peringkat';
+  }
+  out.elapsedMs = Date.now() - t0;
+  logger.log(`[Oracle][PreFlight] ${out.judged}/${out.probed.length} kandidat divisit dari ${out.framesSent} frame dalam ${Math.round(out.elapsedMs / 1000)}s -> terima ${out.accepted.length}, buang ${out.rejected.length}, tanpa vonis ${out.untested.length}.`);
+  return out;
+}
+
+/**
+ * Susun ulang ekor `candidatePool` sesudah pre-flight Kaggle. Murni dan tidak menyentuh
+ * apa pun selain dua argumennya supaya bisa diuji TANPA pipeline (inilah tempat kelas bug
+ * fail-open hidup: satu baris yang salah di sini membuat kandidat yang TIDAK divisit
+ * hilang dari antrian, dan tidak ada test pipeline yang menangkapnya).
+ *
+ * Aturan yang dijamin:
+ *  - `accepted` paling depan (sudah terurut matchScore desc dari fungsi pemeringkat);
+ *  - `untested` (sudah divisit tapi oracle diam / vonis tidak sah) TETAP ada di antrian —
+ *    tidak ada yang divonis hanya karena tidak dijawab;
+ *  - posisi di luar `probed` (ekstraksi gagal / lewat plafon) dibiarkan di ekor;
+ *  - HANYA `rejected` yang hilang. Jumlah keluaran = poolTail - rejected.
+ *
+ * @param {Array} poolTail - potongan kandidat yang dikirim ke pre-flight (relatif, indeks 0 = kepala).
+ * @param {{accepted?:number[],untested?:number[],probed?:number[]}} pf - keluaran preflightCandidatesWithOracle.
+ * @returns {Array} antrian baru untuk menggantikan `poolTail`.
+ */
+export function orderCandidatesAfterPreflight(poolTail = [], pf = {}) {
+  const probed = new Set(Array.isArray(pf.probed) ? pf.probed : []);
+  const accepted = Array.isArray(pf.accepted) ? pf.accepted : [];
+  const untested = Array.isArray(pf.untested) ? pf.untested : [];
+  const acceptedSet = new Set(accepted);
+  const out = [];
+  const pushAt = (rel) => {
+    const cand = poolTail[Number(rel)];
+    if (cand && !out.includes(cand)) out.push(cand);
+  };
+  for (const rel of accepted) pushAt(rel);
+  // Dijalankan TERPISAH dari loop di atas: urutan daftar harus dihormati, dan mencampur
+  // untested ke accepted membuat kandidat berskor rendah naik ke kepala antrian.
+  for (const rel of untested) if (!acceptedSet.has(rel)) pushAt(rel);
+  for (let rel = 0; rel < poolTail.length; rel++) if (!probed.has(rel)) pushAt(rel);
+  return out;
 }
