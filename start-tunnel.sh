@@ -58,13 +58,28 @@ read_env() {
   printf '%s' "$v"
 }
 
+# Tulis ke SEMUA berkas yang sudah memuat key itu, dan selalu jamin server/.env terisi.
+# Kenapa wajib dua berkas: envLoader memuat root .env TERAKHIR sehingga nilainya menang.
+# Terukur 2026-10-03 di perangkat: baris 44 root .env masih berisi quick tunnel
+# trycloudflare yang sudah mati, sementara kaggle/deploy.ps1 -FromTermux membaca
+# server/.env - kalau hanya server/.env yang ditulis, Node akan memakai URL mati sementara
+# Kaggle dikirim URL baru (CORS/postur keamanan jadi tidak cocok dengan vonis yang datang).
 write_env() {
-  local k="$1" v="$2"
-  if grep -qE "^${k}=" "$ENVF"; then
-    sed -i "s|^${k}=.*|${k}=${v}|" "$ENVF"
-  else
+  local k="$1" v="$2" f touched=0
+  for f in "$ENVF" "$ROOT_ENVF"; do
+    [ -f "$f" ] || continue
+    if grep -qE "^${k}=" "$f"; then
+      sed -i "s|^${k}=.*|${k}=${v}|" "$f"
+      touched=1
+    fi
+  done
+  if ! grep -qE "^${k}=" "$ENVF"; then
     printf '%s=%s\n' "$k" "$v" >> "$ENVF"
   fi
+  if [ "$touched" = "1" ] && [ -f "$ROOT_ENVF" ] && grep -qE "^${k}=" "$ROOT_ENVF"; then
+    echo "(key $k juga diperbarui di root .env - berkas itu menimpa server/.env saat boot)"
+  fi
+  return 0
 }
 
 PORT_RAW="$(read_env TUNNEL_PORT)"

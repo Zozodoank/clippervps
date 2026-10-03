@@ -184,7 +184,11 @@ Jebakan konfigurasi (terbaca dari kode, bukan dugaan): `server/utils/paths.js` m
 `envLoader.reloadEnvironment()` menugaskan `process.env[key]` tanpa mengecek apakah key sudah
 terisi - artinya **root `.env` MENIMPA `server/.env`** untuk key yang sama. Jangan menaruh URL
 yang berbeda di dua file itu. `start-tunnel.sh` meniru urutan yang sama supaya shell dan Node
-tidak pernah melihat dua nilai berbeda.
+tidak pernah melihat dua nilai berbeda - bahkan ia **menulis key URL ke kedua file** bila key itu
+sudah ada di keduanya (terukur: root .env perangkat masih menyimpan quick tunnel
+trycloudflare yang mati di baris 44; kalau hanya `server/.env` yang ditulis, `deploy.ps1
+-FromTermux` mengirim URL baru ke Kaggle sementara proses Node tetap memakai URL mati).
+Skrip mencetak baris `(key ... juga diperbarui di root .env)` saat melakukan itu.
 
 `CLOUDFLARE_TUNNEL_URL` / `PUBLIC_BASE_URL` dipakai untuk dua hal: izin CORS
 (`getExplicitCorsOrigins`) dan peringatan postur keamanan saat boot. **Nama variabelnya masih
