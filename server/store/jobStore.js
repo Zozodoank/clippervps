@@ -679,9 +679,16 @@ export function summarizeAiUsage({ jobId = '', sinceMs = 0, now = Date.now() } =
     acc.requestBytes += r.requestBytes || 0; acc.responseBytes += r.responseBytes || 0;
     return acc;
   }, { calls: 0, okCalls: 0, failedCalls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, requestBytes: 0, responseBytes: 0 });
+  // distinctJobs TIDAK bisa dijumlahkan dari per-group (satu job muncul di banyak
+  // situs), jadi dihitung sekali pada seluruh jendela. Angka inilah yang dipakai
+  // pemanggil untuk menurunkan "token per job".
+  const distinctJobs = db.prepare(`
+    SELECT COUNT(DISTINCT job_id) AS n FROM ai_usage_events
+    WHERE job_id <> '' AND (@jobId = '' OR job_id = @jobId) AND (@since = 0 OR created_at >= @since)
+  `).get({ jobId: String(jobId || ''), since }).n || 0;
   return {
     windowSince: since || null,
-    totals: { ...totals, avgTokensPerCall: totals.calls ? Math.round(totals.totalTokens / totals.calls) : 0 },
+    totals: { ...totals, distinctJobs, avgTokensPerCall: totals.calls ? Math.round(totals.totalTokens / totals.calls) : 0 },
     bySite: rows.map((r) => ({
       site: r.site, provider: r.provider, model: r.model,
       calls: r.calls, okCalls: r.okCalls, failedCalls: r.failedCalls,
@@ -697,6 +704,52 @@ export function summarizeAiUsage({ jobId = '', sinceMs = 0, now = Date.now() } =
 /** Panggilan termahal untuk satu job — dipakai UI/log untuk menunjukkan biang token. */
 export function topAiUsageSitesForJob(jobId, limit = 5) {
   return summarizeAiUsage({ jobId }).bySite.slice(0, Math.max(1, Number(limit) || 5));
+}
+
+/**
+ * PENYEBUT untuk angka "token per klip jadi" (Lapis 1). Dipisah dari summarizeAiUsage
+ * karena datanya ada di tabel `jobs` (JSON), bukan di tabel pemakaian.
+ *
+ * Definisi klip jadi yang dipakai di sini SENGAJA ketat: stage='completed' DAN ada
+ * bukti nama file keluaran (`finalFileName` atau `silentFileName`). Alasan: `completed`
+ * saja bisa ditinggalkan oleh jalur yang menandai selesai tanpa video (mis. perbaikan
+ * meta), dan angka itulah yang akan membagi token Anda — penyebut yang terlalu besar
+ * membuat biaya per klip tampak murah.
+ *
+ * Waktu job diambil dari `updatedAt` (diisi patchJob) lalu `createdAt`. Keduanya string
+ * ISO, jadi harus di-Date.parse; job tanpa keduanya TIDAK dihitung dalam jendela apa pun
+ * (lebih jujur memasukkan 0 daripada menebak).
+ *
+ * @returns {{clips: number, totalJobs: number, unfinished: number, since: number|null}}
+ */
+export function countCompletedClips({ sinceMs = 0, now = Date.now() } = {}) {
+  const since = Number(sinceMs) > 0 ? now - Number(sinceMs) : 0;
+  let clips = 0;
+  let totalJobs = 0;
+  let unfinished = 0;
+  try {
+    for (const row of db.prepare('SELECT data FROM jobs').iterate()) {
+      let job = null;
+      try { job = JSON.parse(row.data); } catch { job = null; }
+      if (!job || typeof job !== 'object') continue;
+      totalJobs += 1;
+      // "Belum selesai" = stage apa pun di luar TERMINAL_STAGES, termasuk job tanpa
+      // stage. Ia dihitung terpisah karena KOMPASNYA sama dengan catatan jujur di
+      // pemanggil: token job yang belum selesai masuk pembilang tapi klipnya tidak
+      // pernah masuk penyebut.
+      if (!TERMINAL_STAGES.has(job.stage)) unfinished += 1;
+      if (job.stage !== 'completed') continue;
+      if (!job.finalFileName && !job.silentFileName) continue;
+      const stamp = Date.parse(job.updatedAt || job.createdAt || '') || 0;
+      if (since && stamp && stamp < since) continue;
+      clips += 1;
+    }
+  } catch {
+    // Tabel `jobs` belum terbaca (DB rusak / sedang dipakai) -> kembalikan nol supaya
+    // rute statistik menampilkan "tidak cukup data", bukan 500.
+    return { clips: 0, totalJobs, unfinished, since: since || null };
+  }
+  return { clips, totalJobs, unfinished, since: since || null };
 }
 
 /** Batasi pertumbuhan tabel: panggilan AI bisa ribuan per hari di auto-run. */

@@ -22,6 +22,7 @@ import {
   listAiUsage,
   topAiUsageSitesForJob,
   pruneAiUsageEvents,
+  countCompletedClips,
 } from '../../store/jobStore.js';
 import { isRecordingEnabled } from '../../services/aiUsageService.js';
 import { createRateLimiter, recordAuditEvent } from '../../utils/security.js';
@@ -38,6 +39,37 @@ function windowFromHours(raw) {
   const hours = Number(raw);
   const h = Number.isFinite(hours) && hours > 0 ? Math.min(MAX_WINDOW_HOURS, hours) : 24;
   return { hours: h, sinceMs: Math.round(h * 3600_000) };
+}
+
+/**
+ * Angka agregat yang benar-benar ingin diturunkan: TOKEN PER KLIP JADI.
+ * Hanya masuk akal bila TIDAK ada filter jobId (satu job = satu klip, pembaginya
+ * selalu 1 sehingga angkanya jadi sama dengan total token job itu).
+ *
+ * Kejujuran yang sengaja dipertahankan:
+ *  - `completedClips` dihitung dari stage job SAAT INI. Job yang masih berjalan
+ *    menyumbat token ke pembilang tanpa menambah penyebut -> angka di atas nyata.
+ *    Karena itu `unfinishedJobs` ikut dikembalikan sebagai penyeimbang pembacaan.
+ *  - `tokensPerJobWithUsage` memakai job yang PERNAH memanggil AI (distinct job_id),
+ *    jadi ia angka produktivitas, bukan biaya per keluaran.
+ *  - Pembulatan ke integer: token sudah bulat; biaya bisa pecahan sangat kecil
+ *    (sub-sen), jadi dipisah jadi milidollar agar tidak terbaca sebagai 0.
+ */
+function perClipStats(summary, { jobId, sinceMs }) {
+  if (jobId) return null;
+  const { clips: completedClips, unfinished: unfinishedJobs } = countCompletedClips({ sinceMs });
+  const tokens = summary.totals.totalTokens || 0;
+  const jobsSeen = summary.totals.distinctJobs || 0;
+  return {
+    completedClips,
+    unfinishedJobs,
+    tokensPerCompletedClip: completedClips > 0 ? Math.round(tokens / completedClips) : null,
+    costMilliUsdPerCompletedClip: completedClips > 0 ? Math.round(((summary.totals.cost || 0) * 1000) / completedClips) : null,
+    tokensPerJobWithUsage: jobsSeen > 0 ? Math.round(tokens / jobsSeen) : null,
+    note: completedClips > 0
+      ? 'Penyebut = job stage=completed yang punya file keluaran pada jendela yang sama. Job yang masih berjalan/GAGAL tidak menambah penyebut, jadi angka ini batas ATAS biaya per klip jadi.'
+      : 'Belum ada klip jadi pada jendela ini — token yang terbakar hari ini semuanya milik job yang tidak menghasilkan klip (gagal/diagnostik).',
+  };
 }
 
 /**
@@ -66,6 +98,7 @@ router.get('/ai-usage', usageLimiter, (req, res) => {
       window: { hours, since: summary.windowSince },
       totals: summary.totals,
       bySite: summary.bySite,
+      perClip: perClipStats(summary, { jobId, sinceMs }),
       // Situs paling sering gagal — inilah bukti "fallback karena kuota", bukan karena produk.
       failingSites: summary.bySite
         .filter((s) => s.failedCalls > 0)

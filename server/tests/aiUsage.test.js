@@ -380,6 +380,73 @@ describe('GET/POST /api/ai-usage', () => {
     // data muda masih utuh
     expect(store.listAiUsage({ jobId: 'au-route-1' }).length).toBe(2);
   });
+
+  it('memberi angka "token per klip jadi" saat tidak memfilter jobId', async () => {
+    store.activeJobs.set('au-clip-a', { id: 'au-clip-a', stage: 'completed', finalFileName: 'final_clip_au-clip-a.mp4', updatedAt: new Date().toISOString() });
+    store.activeJobs.set('au-clip-b', { id: 'au-clip-b', stage: 'completed', silentFileName: 'silent_clip_au-clip-b.mp4', updatedAt: new Date().toISOString() });
+    await recordAiCall({ jobId: 'au-clip-a', site: 'Gemini Visual File API', totalTokens: 4000 }, { env: ENV_ON, logger: silent });
+
+    const { json } = await getJson('/api/ai-usage?hours=24');
+    expect(json.perClip).toBeTruthy();
+    // Dua klip jadi dari test ini + klip dari test lain di file yang sama.
+    expect(json.perClip.completedClips).toBeGreaterThanOrEqual(2);
+    expect(json.perClip.tokensPerCompletedClip).toBeGreaterThan(0);
+    // Pembilang harus benar-benar dibagi, bukan disalin mentah.
+    expect(json.perClip.tokensPerCompletedClip)
+      .toBe(Math.round(json.totals.totalTokens / json.perClip.completedClips));
+    expect(typeof json.perClip.unfinishedJobs).toBe('number');
+    expect(json.perClip.note).toMatch(/batas ATAS|penyebut/i);
+  });
+
+  it('perClip null saat jobId ditentukan (penyebutnya selalu 1, jadi tidak berguna)', async () => {
+    const { json } = await getJson('/api/ai-usage?jobId=au-route-1');
+    expect(json.perClip).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4b. Penyebut "klip jadi" (countCompletedClips)
+// ---------------------------------------------------------------------------
+describe('countCompletedClips', () => {
+  const iso = (msAgo = 0) => new Date(Date.now() - msAgo).toISOString();
+
+  it('hanya menghitung job completed yang punya bukti file keluaran', () => {
+    // Delta terhadap kondisi awal: file DB ini dipakai bersama seluruh bagian test,
+    // jadi angka absolut akan pecah begitu ada test lain menambah job.
+    const before = store.countCompletedClips({ sinceMs: 3600_000 });
+    store.activeJobs.set('au-den-1', { id: 'au-den-1', stage: 'completed', finalFileName: 'f.mp4', updatedAt: iso(0) });
+    store.activeJobs.set('au-den-2', { id: 'au-den-2', stage: 'completed', updatedAt: iso(0) }); // tanpa file = bukan klip jadi
+    store.activeJobs.set('au-den-3', { id: 'au-den-3', stage: 'error', finalFileName: 'f.mp4', updatedAt: iso(0) });
+    store.activeJobs.set('au-den-4', { id: 'au-den-4', stage: 'running', updatedAt: iso(0) });
+    const after = store.countCompletedClips({ sinceMs: 3600_000 });
+    expect(after.totalJobs).toBe(before.totalJobs + 4);
+    expect(after.clips).toBe(before.clips + 1);        // hanya au-den-1
+    expect(after.unfinished).toBe(before.unfinished + 1); // hanya au-den-4 (stage non-terminal)
+  });
+
+  it('memakai jendela waktu: klip lama tidak ikut pada jendela sempit', () => {
+    store.activeJobs.set('au-den-tua', { id: 'au-den-tua', stage: 'completed', finalFileName: 'f.mp4', updatedAt: iso(48 * 3600_000) });
+    const tua = store.countCompletedClips({ sinceMs: 49 * 3600_000 }).clips;
+    const muda = store.countCompletedClips({ sinceMs: 3600_000 }).clips;
+    expect(tua).toBeGreaterThanOrEqual(1);
+    expect(muda).toBeLessThan(tua);
+  });
+
+  it('job tanpa stage/waktu tidak bikin fungsi melempar', () => {
+    store.activeJobs.set('au-den-kosong', { id: 'au-den-kosong' });
+    expect(() => store.countCompletedClips({ sinceMs: 3600_000 })).not.toThrow();
+  });
+
+  it('totals.distinctJobs menghitung job yang muncul di tabel pemakaian', async () => {
+    await recordAiCall({ jobId: 'au-distinct-x', site: 'Gemini Scene Discovery', totalTokens: 100 }, { env: ENV_ON, logger: silent });
+    await recordAiCall({ jobId: 'au-distinct-x', site: 'Gemini Pre-Flight Check', totalTokens: 100 }, { env: ENV_ON, logger: silent });
+    await recordAiCall({ jobId: 'au-distinct-y', site: 'Gemini Scene Discovery', totalTokens: 100 }, { env: ENV_ON, logger: silent });
+    const s = store.summarizeAiUsage({});
+    // distinctJobs BUKAN jumlah nilai per-group (2 + 2), melainkan job unik = 3 di atas
+    // ditambah job dari bagian sebelumnya yang juga punya baris pemakaian.
+    expect(s.totals.distinctJobs).toBeGreaterThanOrEqual(3);
+    expect(s.bySite.reduce((a, r) => a + r.distinctJobs, 0)).toBeGreaterThanOrEqual(s.totals.distinctJobs);
+  });
 });
 
 // ---------------------------------------------------------------------------
