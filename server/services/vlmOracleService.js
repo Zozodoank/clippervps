@@ -87,8 +87,17 @@ export function pickEvenlySpaced(items = [], n = 0) {
   const out = [];
   const step = sorted.length / n;
   for (let i = 0; i < n; i++) out.push(sorted[Math.min(sorted.length - 1, Math.floor(i * step))]);
-  // Dedup (step < 1 bisa menghasilkan index yang sama) sambil mempertahankan urutan waktu.
-  return out.filter((f, i) => f && out.indexOf(f) === i);
+  // Dedup berdasarkan filePath (bukan referensi objek): poolMultiCandidateFrames bisa
+  // menghasilkan dua objek BERBEDA dengan filePath yang SAMA (dari kandidat berbeda).
+  // indexOf(f) hanya mencocokkan referensi, jadi dedup lama tidak bekerja untuk kasus ini.
+  const seen = new Set();
+  return out.filter((f) => {
+    if (!f) return false;
+    const key = (f.filePath != null ? f.filePath : f);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /**
@@ -109,14 +118,16 @@ export function normalizeOracleVerdict(verdict, { expectedFrames = 0 } = {}) {
   // Posisi array TIDAK bisa dipercaya sebagai identitas frame: notebook yang gagal
   // parse satu frame akan mengirim daftar lebih pendek dan pergeseran posisi berarti
   // memveto gambar yang salah. Pakai field `index` bila sah, baru jatuh ke posisi.
+  // Posisi yang dipakai sebagai fallback HARUS posisi di perFrame aslinya, bukan posisi
+  // di daftar yang sudah difilter. Sebelum 2026-10-03 pernah ditulis filter-then-map dan
+  // hasilnya salah geser: perFrame=[bersih,kotor] -> [0] (yang diveto justru yang bersih).
+  // Pasangan { f, i } di bawah ada supaya urutan bisa dibaca jelas TANPA mengorbankan i.
   const dirtyFrames = perFrame
-    .map((f, i) => {
+    .map((f, i) => ({ f, i }))
+    .filter(({ f }) => f && (f.safe === false || f.safe === 'false' || f.safe === 0))
+    .map(({ f, i }) => {
       const idx = Number(f && f.index);
       return Number.isInteger(idx) && idx >= 0 ? idx : i;
-    })
-    .filter((mapped, i) => {
-      const f = perFrame[i];
-      return f && (f.safe === false || f.safe === 'false' || f.safe === 0);
     });
   const anyFlag = ['face', 'text', 'watermark', 'graphic'].some((k) => bool(verdict[k]));
   const safe = hasSafe ? bool(verdict.safe) : (perFrame.length > 0 && dirtyFrames.length === 0);
@@ -331,7 +342,10 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
         niche, facePolicy, prompt,
       });
       const waited = await waitForOracleVerdict(id, {
-        timeoutMs: Math.min(cfg.perBatchTimeoutMs, Math.max(0, deadline - Date.now())),
+        // Math.max(1, ...) memastikan waitForOracleVerdict selalu sempat polling SATU kali
+        // meski deadline hampir habis. Bila 0 dikirim, fungsi langsung return 'timeout'
+        // pada iterasi pertama karena now() >= deadline = now() + 0.
+        timeoutMs: Math.min(cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
         pollMs: cfg.pollMs, sleep,
       });
       status = waited.status;
@@ -472,7 +486,8 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
           niche, facePolicy, prompt,
         });
         const waited = await waitForOracleVerdict(id, {
-          timeoutMs: Math.min(cfg.perBatchTimeoutMs, Math.max(0, deadline - Date.now())),
+          // Math.max(1, ...) sama seperti di sanitizePoolWithOracle: pastikan satu polling terjadi.
+          timeoutMs: Math.min(cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
           pollMs: cfg.pollMs, sleep,
         });
         if (waited.status === 'done') {

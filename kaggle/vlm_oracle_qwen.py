@@ -476,14 +476,47 @@ def prep_image(src_path, dst_dir, idx):
 
 
 def extract_json(text):
-    """Model kadang menambah prolog walau dilarang. Ambil objek JSON pertama yang sah."""
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
+    r"""Model kadang menambah prolog walau dilarang. Ambil objek JSON pertama yang sah.
+
+    PENTING: jangan pakai greedy regex r"\{.*\}" karena model Qwen kadang menuliskan
+    komentar atau kalimat tambahan dalam tanda kurung kurawal SETELAH blok JSON utama.
+    Greedy regex akan menangkap dari '{' pertama sampai '}' PALING AKHIR, melampaui
+    batas JSON yang valid dan membuat json.loads gagal. Solusi: bracket balancing.
+
+    Balancing-nya HARUS sadar-string: terukur 2026-10-03, versi yang hanya menghitung
+    kurung membuat vonis dengan reason berisi '}' (mis. "teks } aneh") jadi None, padahal
+    regex lama masih menanganinya. Itu memindahkan kegagalan dari 'ada prolog' ke 'reason
+    normal' - dua-duanya tidak boleh terjadi, jadi tanda kutip dan backslash ikut dilacak.
+    """
+    if not text:
         return None
-    try:
-        return json.loads(m.group(0))
-    except Exception:
-        return None
+    for m in re.finditer(r"\{", text):
+        start = m.start()
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(start, len(text)):
+            c = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif c == "\\":
+                    esc = True
+                elif c == '"':
+                    in_str = False
+                continue
+            if c == '"':
+                in_str = True
+            elif c == "{":
+                depth += 1
+            elif c == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(text[start:i + 1])
+                    except Exception:
+                        break  # bukan JSON valid, lanjut ke '{' berikutnya
+    return None
 
 
 VERDICT_KEYS = ("safe", "face", "text", "watermark", "graphic")

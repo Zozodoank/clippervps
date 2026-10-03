@@ -22,6 +22,9 @@
 #   # upload URL tunnel + token ke dataset konfigurasi, lalu push kernel:
 #   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -TunnelUrl https://abc-123.trycloudflare.com -WithToken
 #
+#   # HANYA KAGGLE_API_TOKEN (tanpa kaggle.json): wajib isi -KaggleUser agar kernel id terbentuk:
+#   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -KaggleUser nama_user_kaggle -TunnelUrl ... -WithToken
+#
 #   # VALIDASI SAMBUNGAN TANPA MEMBAKAR KUOTA MODEL (dry-run + sesi dipotong 5 menit):
 #   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -FromTermux -NoModel -RunTimeoutSec 300 -Logs
 #
@@ -52,7 +55,11 @@ param(
     [string]$ModelMount = '',
     [string]$KernelSlug = 'clippervps-vlm-oracle',
     [string]$ConfigSlug = 'clippervps-oracle-config',
-    [string]$LogDir = 'scratch/kaggle_out'
+    [string]$LogDir = 'scratch/kaggle_out',
+    # Opsional: isi bila hanya KAGGLE_API_TOKEN dipakai tanpa kaggle.json.
+    # Tanpa ini, $user diambil dari kaggle.json atau `kaggle config view`.
+    # Bila keduanya kosong dan -KaggleUser tidak diisi, script berhenti dengan error.
+    [string]$KaggleUser = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -109,6 +116,14 @@ if (-not $apiToken -and -not ($user -and $key)) {
     throw "Tidak ada kredensial Kaggle. Isi KAGGLE_API_TOKEN di server/.env atau taruh kaggle.json (username+key) di $repoRoot (Kaggle > Account > Create API Token; file ini sudah di-gitignore)."
 }
 if (-not $user -and (Test-Path $credFile)) { $user = $cred.username }
+if (-not $user -and $KaggleUser) {
+    # Fallback eksplisit: pengguna yang hanya mengisi KAGGLE_API_TOKEN di server/.env
+    # (tanpa kaggle.json) bisa menyediakan username lewat -KaggleUser agar kernel id
+    # terbentuk dengan benar ('<user>/clippervps-vlm-oracle'). Tanpa ini, script gagal
+    # dengan error samar karena $meta.id = '/clippervps-vlm-oracle' (tanpa prefix).
+    $user = $KaggleUser
+    Write-Host "Username dari -KaggleUser: $user"
+}
 if (-not $user) {
     # Nama user dibutuhkan untuk ref kernel/dataset. Ambil dari config CLI bila ada.
     Write-Host 'Username tidak ada di kaggle.json; mencoba membaca dari konfigurasi CLI...'
@@ -116,7 +131,7 @@ if (-not $user) {
     $m = [regex]::Match($cfgView, 'username:\s*(\S+)')
     if ($m.Success) { $user = $m.Groups[1].Value }
 }
-if (-not $user) { throw 'Username Kaggle tidak bisa ditentukan; perbaiki kaggle.json (field username).' }
+if (-not $user) { throw 'Username Kaggle tidak bisa ditentukan. Opsi: (1) sediakan kaggle.json dengan field username, (2) isi ~/.kaggle/kaggle.json, atau (3) pakai parameter -KaggleUser <nama_user>.' }
 Write-Host "User Kaggle : $user"
 
 # --- 2. Deteksi CLI + python -------------------------------------------------

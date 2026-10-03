@@ -162,6 +162,23 @@ describe('normalizeOracleVerdict', () => {
     expect(normalizeOracleVerdict({ perFrame: [{ safe: false }] }).dirtyFrameIndexes).toEqual([0]);
   });
 
+  // KUNCI REGRESI 2026-10-03. Fallback posisi HARUS posisi di `perFrame` aslinya, bukan
+  // posisi di daftar yang sudah difilter. Versi `filter(...).map((f, i) => ...)` yang pernah
+  // lewat menghasilkan [0] pada kasus pertama (yang diveto justru frame BERSIH, yang kotor
+  // lolos) dan [2,1] pada kasus campuran. Tes satu-elemen di atas tidak menangkap ini karena
+  // kebetulan benar di kedua versi.
+  it('fallback tanpa field index memakai posisi asli di perFrame', () => {
+    expect(normalizeOracleVerdict({ perFrame: [{ safe: true }, { safe: false }] }).dirtyFrameIndexes).toEqual([1]);
+    expect(normalizeOracleVerdict({
+      perFrame: [{ safe: true }, { index: 2, safe: false }, { safe: true }, { safe: false }],
+    }).dirtyFrameIndexes).toEqual([2, 3]);
+    // Campuran index + posisi, dan daftar yang lebih pendek karena satu entry hilang:
+    // tidak boleh dipadatkan ke 0..n-1.
+    expect(normalizeOracleVerdict({
+      perFrame: [{ index: 4, safe: false }, { safe: true }, { safe: false }],
+    }).dirtyFrameIndexes).toEqual([4, 2]);
+  });
+
   it('flag agregat salah nol tidak bisa menutupi safe:false', () => {
     const v = normalizeOracleVerdict({ safe: false, face: false, text: false, watermark: false, graphic: false });
     expect(v.vetoTriggered).toBe(true);
