@@ -1351,37 +1351,57 @@ async function _runStage1Pipeline({
 
             const snippetUrls = candidatePool.slice(candidatePoolIndex, candidatePoolIndex + 3).map(c => c.url);
             const snippets = await extractFastSnippetsForPreflight(snippetUrls, outputDir);
-            
+
+            // `snippets` sudah DIFILTER (kandidat yang cuplikannya gagal ekstraksi dibuang), jadi
+            // posisi di array ini BUKAN posisi kandidat di `snippetUrls`. Yang boleh dipakai sebagai
+            // acuan hanyalah `snippet.index` (posisi asli di batch) — dan itu pula yang dikirim ke
+            // Gemini sebagai label "Kandidat Video dengan index".
+            // Sebelum 2026-10-03 kode di bawah memakai indeks array, sehingga saat satu ekstraksi
+            // gagal (mis. "Requested format is not available"): (a) flag preFlightChecked menempel
+            // ke kandidat yang salah, (b) kandidat yang TIDAK PERNAH dilihat Gemini ikut dibuang
+            // dengan pesan "ditolak oleh Pre-Flight Gemini", dan (c) lompatan cursor salah jumlah.
+            const judgedPositions = new Set(
+              snippets.map((s) => Number(s && s.index)).filter((n) => Number.isInteger(n) && n >= 0)
+            );
+
             // Tandai kandidat yang telah diekstrak agar tidak diuji ulang
-            for (let i = 0; i < snippets.length; i++) {
-              if (candidatePool[candidatePoolIndex + i]) {
-                candidatePool[candidatePoolIndex + i].preFlightChecked = true;
-              }
+            for (const s of snippets) {
+              const cand = candidatePool[candidatePoolIndex + Number(s.index)];
+              if (cand) cand.preFlightChecked = true;
             }
-            
+
             updateProgress({ step: 'pre_flight', message: 'Memilih video terbaik dengan AI...', progress: 15 });
             const topIndices = await preSelectTop2CandidatesWithGemini(imageForGemini, snippets, apiKey);
-            
-            if (topIndices && topIndices.length > 0) {
+            const acceptedPositions = new Set(
+              (Array.isArray(topIndices) ? topIndices : [])
+                .map((n) => Number(n))
+                .filter((n) => Number.isInteger(n) && n >= 0)
+            );
+
+            if (acceptedPositions.size > 0) {
               const bestCandidates = [];
               const untested = [];
               for (let i = candidatePoolIndex; i < candidatePool.length; i++) {
                 const relativeIdx = i - candidatePoolIndex;
-                if (relativeIdx < snippets.length) {
-                  if (topIndices.includes(relativeIdx)) {
-                    bestCandidates.push(candidatePool[i]);
-                  } else {
-                    console.log(`[Job ${jobId}] ⚠️ Membuang kandidat "${candidatePool[i].title || candidatePool[i].url}" karena ditolak oleh Pre-Flight Gemini.`);
-                  }
-                } else {
+                // Di luar batch yang di-probe, atau cuplikannya gagal => TIDAK boleh divonis.
+                if (relativeIdx >= snippetUrls.length || !judgedPositions.has(relativeIdx)) {
                   untested.push(candidatePool[i]);
+                } else if (acceptedPositions.has(relativeIdx)) {
+                  bestCandidates.push(candidatePool[i]);
+                } else {
+                  console.log(`[Job ${jobId}] ⚠️ Membuang kandidat "${candidatePool[i].title || candidatePool[i].url}" karena ditolak oleh Pre-Flight Gemini.`);
                 }
               }
               candidatePool.splice(candidatePoolIndex, candidatePool.length - candidatePoolIndex, ...bestCandidates, ...untested);
               console.log(`[Job ${jobId}] 🚀 Pre-Flight selesai! Urutan kandidat terbaik:`, bestCandidates.map(c => c.title || c.url));
             } else if (snippets.length > 0) {
-              console.log(`[Job ${jobId}] ⚠️ Pre-Flight: Gemini menolak semua ${snippets.length} kandidat awal (tidak cocok/kotor). Melewati kandidat ini...`);
-              candidatePoolIndex += snippets.length;
+              console.log(`[Job ${jobId}] ⚠️ Pre-Flight: Gemini menolak semua ${snippets.length} cuplikan kandidat awal (tidak cocok/kotor). Melewati kandidat yang benar-benar dinilai saja...`);
+              // Buang HANYA kandidat yang sungguh dinilai (punya cuplikan). Yang gagal ekstraksi
+              // dibiarkan di antrian agar tetap dicoba lewat jalur normal. Iterasi menurun karena
+              // splice menggeser posisi sisanya.
+              for (let rel = snippetUrls.length - 1; rel >= 0; rel--) {
+                if (judgedPositions.has(rel)) candidatePool.splice(candidatePoolIndex + rel, 1);
+              }
               continue; // Langsung cari kandidat baru tanpa perlu streaming
             }
           } catch (err) {

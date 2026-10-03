@@ -1988,6 +1988,9 @@ export async function sampleDenseClustersAroundCleanFrames(streamUrl, outputDir,
 
 /**
  * Extract 10-second MP4 snippets starting at 5s mark from video URLs for Fast Pre-Flight Check.
+ * Catatan penting: hasil SELALU difilter (kandidat yang gagal ekstraksi dibuang), jadi posisi item
+ * di array balik TIDAK sama dengan posisinya di `urls`. Pemanggil wajib memakai field `index`
+ * (posisi asli di batch) sebagai acuan, bukan indeks array hasil.
  * @param {string[]} urls - Array of YouTube / OEM video URLs.
  * @param {string} outputDir - Directory to save snippet MP4s.
  * @returns {Promise<Array<{url: string, snippetPath: string, index: number}>>}
@@ -2009,8 +2012,19 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
     if (!url) return null;
     try {
       const snippetPath = path.join(outputDir, `preflight_snippet_${index}_${Date.now()}.mp4`);
-      
-      const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" --js-runtimes node --print "%(url)s|%(duration)s" -f "best[ext=mp4]/best" "${url}"`);
+
+      // Selektor format: DULU "best[ext=mp4]/best" dan itu GAGAL untuk banyak video.
+      // yt-dlp `best` menuntut satu file yang memuat video DAN audio sekaligus, sedangkan
+      // YouTube kini makin sering hanya menyediakan format terpisah (DASH: video-only +
+      // audio-only). Terukur 2026-10-03 pada ucchyFUEvUo: `-F` hanya berisi 137/136/134
+      // "video only" + 140/251 "audio only", sehingga perintah ini keluar dengan
+      // "ERROR: Requested format is not available" dan cuplikan tidak pernah dibuat.
+      // Cuplikan ini toh dipakai hanya untuk menilai GAMBAR (ffmpeg dipanggil dengan -an),
+      // jadi `bv*` (video-only terbaik) adalah pilihan yang benar. `[protocol=https]`
+      // diutamakan agar URL-nya berkas langsung, bukan manifest m3u8 yang tidak bisa
+      // di-seek ffmpeg dengan andal; tinggi 360p cukup untuk seleksi awal dan hemat kuota.
+      const fmtSelector = 'bv*[ext=mp4][protocol=https][height<=360]/bv*[ext=mp4][protocol=https]/bv*[protocol=https]/bv*/b';
+      const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" --js-runtimes node --print "%(url)s|%(duration)s" -f "${fmtSelector}" "${url}"`);
       const lines = streamInfoRaw.trim().split('\n').filter(Boolean);
       // Ensure we get the last line (in case there are warnings in stdout)
       const lastLine = lines[lines.length - 1];

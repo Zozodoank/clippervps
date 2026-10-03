@@ -3422,7 +3422,12 @@ export async function preSelectTop2CandidatesWithGemini(productImage, candidateS
 
   const fileManager = new GoogleAIFileManager(geminiKey);
   const genAI = new GoogleGenerativeAI(geminiKey);
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", generationConfig: { responseMimeType: "application/json" } });
+  // Model TIDAK BOLEH hard-code "gemini-1.5-flash": diukur 2026-10-03 model itu menjawab
+  // 404 Not Found untuk key user ini, sehingga Pre-Flight selalu jatuh ke `catch` dan
+  // "vonis"-nya sebenarnya hanya urutan 2 kandidat pertama. Pakai resolusi yang sama
+  // dengan pemanggilan Gemini lain di file ini (candidateModels di atas).
+  const preFlightModel = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+  const model = genAI.getGenerativeModel({ model: preFlightModel, generationConfig: { responseMimeType: "application/json" } });
 
   const uploadedFiles = [];
   const contents = [];
@@ -3493,6 +3498,7 @@ export async function preSelectTop2CandidatesWithGemini(productImage, candidateS
 
   } catch (error) {
     console.error(`[PreFlight] AI Error:`, error.message);
+    console.warn(`[PreFlight] ⚠️ TIDAK ADA VONIS AI - mengembalikan ${Math.min(2, candidateSnippets.length)} kandidat pertama apa adanya (bukan pilihan Gemini).`);
     return candidateSnippets.map(c => c.index).slice(0, 2);
   } finally {
     // Cleanup files in Gemini
