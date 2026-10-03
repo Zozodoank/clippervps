@@ -89,9 +89,27 @@ Ambil dari dashboard ngrok (**Your Authtoken**), lalu:
 ngrok config add-authtoken TOKEN_ANDA
 ```
 
+Tempel **isi token saja**, tanpa apa pun di sekelilingnya. Kalau yang tertempel masih
+`<TEMPEL-DARI-DASHBOARD>`, bash menafsirkan `<` sebagai redirect dan keluar dengan
+`` syntax error near unexpected token `newline' `` - dan karena perintahnya mati di baris
+pertama, token tidak pernah tersimpan tanpa Anda sadari.
+
 Perintah ini menulis ke berkas konfigurasi agent (`/root/.config/ngrok/ngrok.yml` di proot),
 sehingga token tersimpan permanen dan **tidak perlu** di-export setiap sesi. Jangan taruh token
 di `server/.env` dan jangan pernah commit berkas `ngrok.yml`.
+
+Cara memastikan tersimpan tanpa membuka isinya (yang dicetak hanya keberadaan berkas dan
+jumlah baris kuncinya):
+
+```bash
+ls -l /root/.config/ngrok/ngrok.yml && grep -c authtoken /root/.config/ngrok/ngrok.yml
+```
+
+Kalau langkah ini dilewatkan, **setiap** percobaan tunnel akan ditolak lebih dulu dengan
+`ERR_NGROK_4018 - This ngrok session is not authenticated` (terukur di perangkat ini, dan
+itu pula yang membuat `start-tunnel.sh` sekarang menolak mendaftarkan tunnel ke PM2: ia
+mencoba satu sesi 8 detik tanpa PM2, dan kalau ditolak, skrip mencetak perintah isian token
+lalu berhenti - bukan membiarkan PM2 mengulang proses yang gagal di HP ber-RAM ketat).
 
 ## 3. Dapatkan URL tetap Anda
 

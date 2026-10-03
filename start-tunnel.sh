@@ -165,6 +165,27 @@ start_ngrok() {
     echo "Biner ngrok tidak ada di PATH. Pasang dulu - lihat ngrok.md bagian 1."
     return 1
   fi
+  # Pra-uji singkat TANPA PM2. Alasannya konkret: sesi ngrok yang ditolak keluar dengan
+  # kode non-zero, dan PM2 akan mengulanginya tanpa henti di HP ber-RAM ketat (autorestart
+  # + binary 31 MB = mesin pembakar). Authtoken kosong -> ERR_NGROK_4018 (terukur di
+  # perangkat ini), domain bukan milik akun -> ERR_NGROK_334. Pra-uji sekaligus membuktikan
+  # dev domain benar-benar bisa diklaim sebelum kita mencatat apa pun ke PM2/.env.
+  local probe
+  probe="$(timeout 8 ngrok http "$PORT" --url "$NGROK_URL_RESOLVED" 2>&1 \
+    | grep -Ei 'err_ngrok|authentication failed|forwarding|session status' | head -4)"
+  [ -n "$probe" ] && printf '%s\n' "$probe"
+  case "$probe" in
+    *rr_NGROK*|*uthentication\ failed*)
+      echo "Tunnel TIDAK didaftarkan ke PM2 karena sesi ngrok menolak."
+      echo "Isi authtoken langsung di perangkat - JANGAN kirim token ke chat dan JANGAN taruh di .env:"
+      echo "  ngrok config add-authtoken TOKEN_ASLI_ANDA      # tanpa tanda kurung siku sama sekali"
+      echo "(tutorial: ngrok.md bagian 2 dan 3)"
+      return 1
+      ;;
+  esac
+  # Sesi pra-uji tadi memegang dev domain; ngrok menolak sesi kedua yang memakai domain
+  # sama selama sesi lama belum dilepas, jadi beri jeda sebelum PM2 mengambil alih.
+  sleep 3
   need_pm2 || return 1
   pm2 delete tunnel >/dev/null 2>&1 || true
   # --url memakai dev domain account => alamatnya tidak berubah walau agent direstart.
