@@ -10,7 +10,10 @@ while true; do
   echo "       🎬 CLIPPER - CONTROL PANEL & MONITOR (TERMUX)"
   echo "====================================================================="
   echo "  Status Service Background:"
-  pm2 list | grep -E "clipper|gatekeeper" || pm2 list
+  pm2 list | grep -E "clipper|gatekeeper|tunnel" || pm2 list
+  # Tunnel publik = syarat Oracle Kaggle bisa mengetuk API kita. Tampilkan URL aktifnya.
+  TUNNEL_URL=$(grep -E '^CLOUDFLARE_TUNNEL_URL=' server/.env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r')
+  echo "  Tunnel publik : ${TUNNEL_URL:-(belum ada - Oracle Kaggle tidak akan dapat vonis)}"
   echo "====================================================================="
   echo ""
   echo "  [1] 📋 LIHAT LOG REAL-TIME BACKGROUND (PM2 LOGS)"
@@ -23,10 +26,18 @@ while true; do
   echo ""
   echo "  [4] 📊 CEK PENGGUNAAN RESOURCE (RAM, CPU, Disk)"
   echo ""
+  echo "  [5] 🌐 TUNNEL PUBLIK (ngrok URL tetap / cloudflared)"
+  echo "      - Dibutuhkan Oracle Kaggle: notebook yang memanggil API kita"
+  echo "      - URL aktif otomatis ditulis ke server/.env (dipakai kaggle/deploy.ps1 -FromTermux)"
+  echo ""
+  echo "  [6] 🛡️ DAFTARKAN PENGAWASAN PM2 (clipper + gatekeeper + tunnel)"
+  echo "      - Sembuhkan 'job mati di tengah render tanpa pesan error': proses yang"
+  echo "        hanya hidup di terminal ikut mati saat terminal/proot ditutup"
+  echo ""
   echo "  [0] ❌ KELUAR KE SHELL BIASA"
   echo ""
   echo "====================================================================="
-  read -p "Pilih menu [1-4, 0]: " opt
+  read -p "Pilih menu [1-6, 0]: " opt
 
   case $opt in
     1)
@@ -76,6 +87,53 @@ while true; do
       echo "=== PM2 STATUS ==="
       pm2 list
       echo "====================================================================="
+      read -p "Tekan Enter untuk kembali ke menu..."
+      ;;
+    5)
+      clear
+      echo "====================================================================="
+      echo "🌐 TUNNEL PUBLIK"
+      echo "====================================================================="
+      echo "  [a] start otomatis (ngrok bila NGROK_DOMAIN terisi, selain itu cloudflared)"
+      echo "  [b] status + uji /api/health lewat URL publik"
+      echo "  [c] stop"
+      read -p "  Pilih [a/b/c]: " topt
+      case $topt in
+        a) bash "$DIR/start-tunnel.sh" auto ;;
+        b) bash "$DIR/start-tunnel.sh" status ;;
+        c) bash "$DIR/start-tunnel.sh" stop ;;
+        *) echo "Pilihan tidak dikenal." ;;
+      esac
+      echo ""
+      echo "Tutorial ngrok (install agent, authtoken, dev domain): lihat ngrok.md."
+      read -p "Tekan Enter untuk kembali ke menu..."
+      ;;
+    6)
+      clear
+      echo "====================================================================="
+      echo "🛡️ PENGAWASAN PM2"
+      echo "====================================================================="
+      # Daemon PM2 yang baru lahir kosong: simpanan terakhir harus dibangkitkan dulu,
+      # kalau tidak menu ini malah mendaftarkan aplikasi baru dengan setting seadanya.
+      if ! pm2 list 2>/dev/null | grep -qE "clipper|gatekeeper"; then
+        echo "(daemon PM2 kosong - mencoba resurrect dari simpanan terakhir...)"
+        pm2 resurrect >/dev/null 2>&1 || true
+      fi
+      if ! pm2 describe clipper >/dev/null 2>&1; then
+        echo "▶️ Mendaftarkan clipper (dev-runner) dengan auto-restart + batas memori..."
+        pm2 start dev-runner.js --name clipper --max-memory-restart 900M
+      else
+        echo "✓ clipper sudah terdaftar di PM2."
+      fi
+      if ! pm2 describe gatekeeper >/dev/null 2>&1; then
+        echo "▶️ Gatekeeper belum ada di PM2; jalankan setup-gatekeeper.sh di server/gatekeeper."
+      else
+        echo "✓ gatekeeper sudah terdaftar di PM2."
+      fi
+      bash "$DIR/start-tunnel.sh" auto
+      pm2 save
+      echo ""
+      echo "✅ Selesai. Job tidak lagi hilang diam-diam saat terminal/proot ditutup."
       read -p "Tekan Enter untuk kembali ke menu..."
       ;;
     0)
