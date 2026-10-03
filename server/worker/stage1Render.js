@@ -10,6 +10,11 @@ import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, i
 import { applyOracleVeto, auditClipsWithOracle } from '../services/vlmOracleService.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
+// Pembungkus konteks job untuk pencatatan pemakaian AI (token/byte/biaya per job).
+// Dipasang di SATU titik masuk pipeline ini supaya 6 panggilan Gemini + seluruh
+// panggilan chat (yang lewat pembungkus fetch di services/ai/aiClient.js) tahu job
+// aktif TANPA harus mengubah signature fungsi AI satu per satu.
+import { withAiUsageJob } from '../services/aiUsageService.js';
 import {
   selectHighlightWithAI,
   analyzeYouTubeVideoWithGemini,
@@ -3328,6 +3333,8 @@ async function _runStage1Pipeline({
 }
 
 export function runStage1Pipeline(args) {
-  return heavyTaskQueue(() => _runStage1Pipeline(args));
+  // withAiUsageJob HARUS berada di dalam callback queue, bukan di luarnya: konteks
+  // async diwarisi ke seluruh await turunan hanya jika scope-nya dimulai di sini.
+  return heavyTaskQueue(() => withAiUsageJob(args?.jobId, () => _runStage1Pipeline(args)));
 }
 

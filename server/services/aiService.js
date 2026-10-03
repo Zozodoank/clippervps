@@ -18,6 +18,11 @@ import { GoogleAIFileManager } from '@google/generative-ai/server';
 import { getMediaDurationSec } from './videoRenderer.js';
 import { saveToEnglishDictionary } from './dictionaryService.js';
 import { trackBandwidth } from './bandwidthTracker.js';
+// Pencatatan pemakaian AI SESUNGGUHNYA (usageMetadata) per panggilan Gemini.
+// `trackBandwidth` di atas memakai angka karangan (2500/3500) dan sengaja dibiarkan
+// apa adanya; kolom bytes di ai_usage_events-lah yang nanti jadi dasar keputusan
+// "panggilan mana yang harus dipindah ke Oracle Kaggle". Tidak pernah melempar.
+import { recordGeminiCall, recordGeminiFailure } from './aiUsageService.js';
 import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from './discoveryService.js';
 import { getNichePreset } from '../config/nichePresets.js';
 import { isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
@@ -115,6 +120,7 @@ Return ONLY compact JSON: {"windows":[{"startSec":<number>,"endSec":<number>,"re
     'gemini-2.5-flash-lite',
   ];
   let lastErr = null;
+  let aiStartedAt = 0;
   for (let i = 0; i < candidateModels.length; i++) {
     const modelName = candidateModels[i];
     try {
@@ -123,10 +129,12 @@ Return ONLY compact JSON: {"windows":[{"startSec":<number>,"endSec":<number>,"re
         generationConfig: { responseMimeType: 'application/json', temperature: 0.2, mediaResolution: 'MEDIA_RESOLUTION_LOW' },
       });
       trackBandwidth('aiRequests', 2500, `Gemini Scene Discovery (${modelName})`);
+      aiStartedAt = Date.now();
       const result = await model.generateContent([
         { fileData: { fileUri: youtubeUrl, mimeType: 'video/mp4' }, videoMetadata: { fps: 0.5 } },
         { text: prompt },
       ]);
+      await recordGeminiCall({ site: 'Gemini Scene Discovery', model: modelName, inputKind: 'youtube_url_stream', mediaCount: 1, result, startedAt: aiStartedAt });
       const parsed = repairJson(result.response.text());
       const rawWindows = Array.isArray(parsed?.windows) ? parsed.windows : [];
       const windows = rawWindows
@@ -145,6 +153,7 @@ Return ONLY compact JSON: {"windows":[{"startSec":<number>,"endSec":<number>,"re
       lastErr = new Error('Gemini tidak mengembalikan window (kosong).');
     } catch (err) {
       lastErr = err;
+      await recordGeminiFailure({ site: 'Gemini Scene Discovery', model: modelName, inputKind: 'youtube_url_stream', error: err, startedAt: aiStartedAt });
       console.warn(`[Gemini Scene Discovery] ${modelName} gagal: ${err?.message}`);
     }
   }
@@ -380,6 +389,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
   let activeGeminiModel = candidateModels[0];
   let lastGeminiErr = null;
   let allQuotaErrors = true;
+  let aiStartedAt = 0;
 
   for (let i = 0; i < candidateModels.length; i++) {
     const modelName = candidateModels[i];
@@ -412,8 +422,13 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       }
       contentParts.push({ text: videoPrompt });
 
+      aiStartedAt = Date.now();
       const result = await model.generateContent(contentParts);
 
+      await recordGeminiCall({
+        site: 'Gemini YouTube Stream', model: modelName, inputKind: 'youtube_url_stream',
+        mediaCount: 1 + (refImageInlineData ? 1 : 0), result, startedAt: aiStartedAt,
+      });
       const rawText = result.response.text();
       console.log(`[Gemini YouTube Stream ${modelName}] Response:`, rawText);
       parsed = repairJson(rawText);
@@ -422,6 +437,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       }
     } catch (gemErr) {
       lastGeminiErr = gemErr;
+      await recordGeminiFailure({ site: 'Gemini YouTube Stream', model: modelName, inputKind: 'youtube_url_stream', error: gemErr, startedAt: aiStartedAt });
       const isQuota = isQuotaError(gemErr);
       if (!isQuota) {
         allQuotaErrors = false;
@@ -822,6 +838,7 @@ CRITICAL RULES FOR OUTPUT:
   let activeGeminiModel = candidateModels[0];
   let lastGeminiErr = null;
   let allQuotaErrors = true;
+  let aiStartedAt = 0;
 
   for (let i = 0; i < candidateModels.length; i++) {
     const modelName = candidateModels[i];
@@ -847,7 +864,12 @@ CRITICAL RULES FOR OUTPUT:
       }
       contentParts.push({ text: videoPrompt });
 
+      aiStartedAt = Date.now();
       const result = await model.generateContent(contentParts);
+      await recordGeminiCall({
+        site: 'Gemini Multi-Video Stream', model: modelName, inputKind: 'youtube_url_stream',
+        mediaCount: youtubeUrls.length + (refImageInlineData ? 1 : 0), result, startedAt: aiStartedAt,
+      });
       const rawText = result.response.text();
       console.log(`[Gemini Multi-Video Stream ${modelName}] Response:`, rawText);
       parsed = repairJson(rawText);
@@ -856,6 +878,7 @@ CRITICAL RULES FOR OUTPUT:
       }
     } catch (gemErr) {
       lastGeminiErr = gemErr;
+      await recordGeminiFailure({ site: 'Gemini Multi-Video Stream', model: modelName, inputKind: 'youtube_url_stream', error: gemErr, startedAt: aiStartedAt });
       const isQuota = isQuotaError(gemErr);
       if (!isQuota) allQuotaErrors = false;
       const isDailyQuota = isQuota && (gemErr.message?.toLowerCase().includes('per-day') || gemErr.message?.toLowerCase().includes('daily'));
@@ -1201,6 +1224,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     let parsed = null;
     let activeGeminiModel = candidateModels[0];
     let lastGeminiErr = null;
+    let aiStartedAt = 0;
 
     for (const modelName of candidateModels) {
       try {
@@ -1227,8 +1251,13 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         }
         contentParts.push({ text: videoPrompt });
 
+        aiStartedAt = Date.now();
         const result = await model.generateContent(contentParts);
 
+        await recordGeminiCall({
+          site: 'Gemini Visual File API', model: modelName, inputKind: 'file_api_video',
+          mediaCount: 1 + (refImageInlineData ? 1 : 0), result, startedAt: aiStartedAt,
+        });
         const rawText = result.response.text();
         console.log(`[Gemini File API ${modelName}] Response:`, rawText);
         parsed = repairJson(rawText);
@@ -1238,6 +1267,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       } catch (gemErr) {
         console.warn(`[Gemini File API] Model ${modelName} error:`, gemErr.message);
         lastGeminiErr = gemErr;
+        await recordGeminiFailure({ site: 'Gemini Visual File API', model: modelName, inputKind: 'file_api_video', error: gemErr, startedAt: aiStartedAt });
       }
     }
 
@@ -3431,6 +3461,9 @@ export async function preSelectTop2CandidatesWithGemini(productImage, candidateS
 
   const uploadedFiles = [];
   const contents = [];
+  // Diisi tepat sebelum generateContent; dibaca juga oleh `catch` di ujung fungsi,
+  // jadi harus berada di scope fungsi (bukan di dalam try) agar durasinya tidak hilang.
+  let aiStartedAt = 0;
 
   // Helper to upload
   const uploadToGemini = async (filePath, mimeType) => {
@@ -3478,7 +3511,12 @@ export async function preSelectTop2CandidatesWithGemini(productImage, candidateS
     });
 
     console.log(`[PreFlight] Mengirim 10 detik cuplikan dari ${candidateSnippets.length} kandidat video dan 1 gambar produk ke Gemini File API...`);
+    aiStartedAt = Date.now();
     const response = await model.generateContent(contents);
+    await recordGeminiCall({
+      site: 'Gemini Pre-Flight Check', model: preFlightModel, inputKind: 'file_api_snippets',
+      mediaCount: candidateSnippets.length + 1, result: response, startedAt: aiStartedAt,
+    });
     const text = response.response.text();
     let json;
     try {
@@ -3498,6 +3536,7 @@ export async function preSelectTop2CandidatesWithGemini(productImage, candidateS
 
   } catch (error) {
     console.error(`[PreFlight] AI Error:`, error.message);
+    await recordGeminiFailure({ site: 'Gemini Pre-Flight Check', model: preFlightModel, inputKind: 'file_api_snippets', error, startedAt: aiStartedAt });
     console.warn(`[PreFlight] ⚠️ TIDAK ADA VONIS AI - mengembalikan ${Math.min(2, candidateSnippets.length)} kandidat pertama apa adanya (bukan pilihan Gemini).`);
     return candidateSnippets.map(c => c.index).slice(0, 2);
   } finally {

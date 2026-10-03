@@ -3,6 +3,11 @@ import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+// Pembungkus fetch untuk pencatatan pemakaian AI (token/byte/biaya). Dipasang di DUA
+// titik konstruksi client di bawah, sehingga SEMUA `client.chat.completions.create(...)`
+// — 8 titik yang ada sekarang dan yang akan ditulis nanti — tercatat tanpa perlu
+// menyentuh fungsinya satu per satu. Lihat services/aiUsageService.js.
+import { buildInstrumentedFetch } from '../aiUsageService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -151,6 +156,7 @@ export function getDirectGeminiClientConfig({ apiKeyOverride } = {}) {
       baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai/',
       timeout: 35000,
       maxRetries: 0,
+      fetch: buildInstrumentedFetch({ provider: 'Google Gemini Direct' }),
     }),
     models: defaultGeminiDirectModels,
     provider: 'Google Gemini Direct',
@@ -180,6 +186,7 @@ export function getAiClientConfig({ apiKeyOverride, aiProvider } = {}) {
         apiKey: openRouterKeys[safeIndex],
         baseURL: 'https://openrouter.ai/api/v1',
         timeout: 120000,
+        fetch: buildInstrumentedFetch({ provider: 'OpenRouter' }),
         defaultHeaders: {
           "HTTP-Referer": "https://github.com/affiliate-clipper",
           "X-Title": "AI Affiliate Clipper",

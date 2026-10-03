@@ -160,6 +160,7 @@ import generateRoutes from './api/routes/generateRoutes.js';
 import systemRoutes from './api/routes/systemRoutes.js';
 import draftsRoutes from './api/routes/draftsRoutes.js';
 import vlmOracleRoutes from './api/routes/vlmOracleRoutes.js';
+import aiUsageRoutes from './api/routes/aiUsageRoutes.js';
 import { tokenAuthMiddleware, buildCorsOptions, describeAuthPosture } from './api/middleware/tokenAuth.js';
 
 // ⚠️ MUST stay before every app.use('/api', ...) below, otherwise the routers answer the
@@ -176,6 +177,9 @@ app.use('/api', systemRoutes);
 // Oracle Kaggle (vonis frame oleh model besar). SAMA SEKALI tidak boleh masuk allowlist
 // publik tokenAuth: endpoint ini menyerahkan bingkai video ke mesin cloud di luar LAN.
 app.use('/api', vlmOracleRoutes);
+// Statistik pemakaian AI (token/biaya per panggilan). Sama sekali tidak boleh masuk
+// allowlist publik: isinya pola tagihan AI, bukan data yang layak dibaca anonim.
+app.use('/api', aiUsageRoutes);
 app.use('/api/drafts', draftsRoutes);
 
 

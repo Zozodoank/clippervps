@@ -7,6 +7,10 @@ import https from 'https';
 import { searchYouTubeVideos, extractVideoId, buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from './downloader.js';
 import { getNichePreset, generateCombinatorialGadgetKeywords } from '../config/nichePresets.js';
 import { getMinVideoDurationSec, getMaxVideoDurationSec } from '../config/videoLimits.js';
+// Pencatatan pemakaian AI (usageMetadata) — lihat services/aiUsageService.js.
+// Modul ini tidak punya jobId sendiri; identitas job diisi otomatis dari konteks
+// async bila fungsi ini dipanggil di dalam pipeline (runStage1Pipeline).
+import { recordGeminiCall, recordGeminiFailure } from './aiUsageService.js';
 import {
   REPAIR_TERMS,
   TUTORIAL_TERMS,
@@ -2700,6 +2704,7 @@ Keluarkan JSON dengan format persis:
 }`;
 
     for (const modelName of candidateModels) {
+      const aiStartedAt = Date.now();
       try {
         const model = genAI.getGenerativeModel({
           model: modelName,
@@ -2715,6 +2720,10 @@ Keluarkan JSON dengan format persis:
             }
           }
         ]);
+        await recordGeminiCall({
+          site: 'Gemini Visual Keywords', model: modelName, inputKind: 'inline_image',
+          mediaCount: 1, result, startedAt: aiStartedAt,
+        });
 
         const text = result?.response?.text();
         if (text) {
@@ -2730,6 +2739,7 @@ Keluarkan JSON dengan format persis:
           }
         }
       } catch (mErr) {
+        await recordGeminiFailure({ site: 'Gemini Visual Keywords', model: modelName, inputKind: 'inline_image', error: mErr, startedAt: aiStartedAt });
         // try next candidate model
       }
     }

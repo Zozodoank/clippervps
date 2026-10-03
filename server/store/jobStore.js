@@ -47,6 +47,36 @@ db.exec(`
     data TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_vlm_oracle_status ON vlm_oracle_batches(status, created_at);
+
+  -- PEMAKAIAN AI (Lapis 1 rencana hemat token): SATU baris per panggilan provider AI,
+  -- termasuk yang GAGAL (ok=0) karena justru kegagalan/kuota yang menjelaskan rantai
+  -- fallback model. total_tokens diambil dari provider, BUKAN dari angka karangan yang
+  -- dipakai trackBandwidth selama ini (2500/3500 byte tetap dibiarkan apa adanya di situs
+  -- lamanya supaya pencatatan lama tidak berubah makna; itulah guna kolom bytes di sini).
+  -- cost terisi hanya bila provider mengirimkannya (OpenRouter menyertakan usage.cost).
+  CREATE TABLE IF NOT EXISTS ai_usage_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id TEXT NOT NULL DEFAULT '',
+    site TEXT NOT NULL DEFAULT 'unknown',
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    input_kind TEXT NOT NULL DEFAULT '',
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    total_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_tokens INTEGER NOT NULL DEFAULT 0,
+    cost REAL NOT NULL DEFAULT 0,
+    request_bytes INTEGER NOT NULL DEFAULT 0,
+    response_bytes INTEGER NOT NULL DEFAULT 0,
+    media_count INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    ok INTEGER NOT NULL DEFAULT 1,
+    error_code TEXT NOT NULL DEFAULT '',
+    note TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_ai_usage_job ON ai_usage_events(job_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_ai_usage_site ON ai_usage_events(site, created_at);
 `);
 
 export function sanitizeJobForDisk(job) {
@@ -531,4 +561,149 @@ export function pruneOracleBatches({ keepMs = 24 * 3600_000, now = Date.now() } 
   const res = db.prepare('DELETE FROM vlm_oracle_batches WHERE status IN (\'done\',\'expired\') AND COALESCE(completed_at, created_at) < ?')
     .run(now - keepMs);
   return res.changes;
+}
+
+// ---------------------------------------------------------------------------
+// PEMAKAIAN AI (ai_usage_events). Semua pembacaan di bawah bersifat ADAPTIF:
+// tidak ada satu kolom pun yang boleh membuat pemanggil melempar kalau barisnya
+// kosong, karena pencatatan ini selalu berada di jalur samping (di dalam catch,
+// di dalam pembungkus fetch) dan tidak pernah boleh menjatuhkan job.
+// ---------------------------------------------------------------------------
+
+const aiUsageInsert = db.prepare(`
+  INSERT INTO ai_usage_events (
+    job_id, site, provider, model, input_kind,
+    prompt_tokens, completion_tokens, total_tokens, cached_tokens, cost,
+    request_bytes, response_bytes, media_count, duration_ms,
+    ok, error_code, note, created_at
+  ) VALUES (
+    @jobId, @site, @provider, @model, @inputKind,
+    @promptTokens, @completionTokens, @totalTokens, @cachedTokens, @cost,
+    @requestBytes, @responseBytes, @mediaCount, @durationMs,
+    @ok, @errorCode, @note, @createdAt
+  )
+`);
+
+const clampInt = (v, max) => {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(max, Math.round(n));
+};
+
+/** Simpan satu kejadian pemakaian AI. Mengembalikan rowid, atau null bila input rusak. */
+export function recordAiUsage(row = {}, { now = Date.now() } = {}) {
+  if (!row || typeof row !== 'object') return null;
+  try {
+    const res = aiUsageInsert.run({
+      jobId: String(row.jobId || '').slice(0, 120),
+      site: String(row.site || 'unknown').slice(0, 80),
+      provider: String(row.provider || '').slice(0, 40),
+      model: String(row.model || '').slice(0, 80),
+      inputKind: String(row.inputKind || '').slice(0, 60),
+      promptTokens: clampInt(row.promptTokens, 1e12),
+      completionTokens: clampInt(row.completionTokens, 1e12),
+      totalTokens: clampInt(row.totalTokens, 1e12),
+      cachedTokens: clampInt(row.cachedTokens, 1e12),
+      cost: Number(row.cost) > 0 ? Number(row.cost) : 0,
+      requestBytes: clampInt(row.requestBytes, 1e12),
+      responseBytes: clampInt(row.responseBytes, 1e12),
+      mediaCount: clampInt(row.mediaCount, 1e6),
+      durationMs: clampInt(row.durationMs, 1e9),
+      // `ok` tidak boleh ditulis `row.ok === false ? 0 : 1`: aiUsageService sudah
+      // menormalkan nilainya jadi angka, dan 0 !== false sehingga SEMUA panggilan
+      // gagal akan tersimpan sebagai berhasil. Hanya false/0/'0'/'' yang berarti gagal;
+      // undefined/null berarti "panggilan biasa" = berhasil.
+      ok: row.ok === undefined || row.ok === null ? 1 : (row.ok === false || row.ok === 0 || row.ok === '0' || row.ok === '' ? 0 : 1),
+      errorCode: String(row.errorCode || '').slice(0, 120),
+      note: String(row.note || '').slice(0, 200),
+      createdAt: now,
+    });
+    return Number(res.lastInsertRowid) || null;
+  } catch {
+    // Tabel belum ada (DB lama yang belum pernah dibuka sejak perubahan ini) atau
+    // disk penuh. Pemanggil TIDAK boleh ikut gagal karena statistik.
+    return null;
+  }
+}
+
+const aiUsageListStmt = db.prepare(`
+  SELECT id, job_id, site, provider, model, input_kind,
+         prompt_tokens, completion_tokens, total_tokens, cached_tokens, cost,
+         request_bytes, response_bytes, media_count, duration_ms,
+         ok, error_code, note, created_at
+  FROM ai_usage_events
+  WHERE (@jobId = '' OR job_id = @jobId)
+  ORDER BY created_at DESC, id DESC
+  LIMIT @limit
+`);
+
+/** Riwayat mentah per job (jobId kosong = seluruh waktu), terbaru lebih dulu. */
+export function listAiUsage({ jobId = '', limit = 200 } = {}) {
+  const cap = Math.max(1, Math.min(2000, Number(limit) || 200));
+  return aiUsageListStmt.all({ jobId: String(jobId || ''), limit: cap }).map((r) => ({
+    id: r.id, jobId: r.job_id, site: r.site, provider: r.provider, model: r.model,
+    inputKind: r.input_kind, promptTokens: r.prompt_tokens, completionTokens: r.completion_tokens,
+    totalTokens: r.total_tokens, cachedTokens: r.cached_tokens, cost: r.cost,
+    requestBytes: r.request_bytes, responseBytes: r.response_bytes, mediaCount: r.media_count,
+    durationMs: r.duration_ms, ok: r.ok === 1, errorCode: r.error_code, note: r.note,
+    createdAt: r.created_at,
+  }));
+}
+
+/**
+ * Ikhtisar yang menjawab pertanyaan sebenarnya: PANGGILAN MANA yang membakar token.
+ * Grup per (site, model). `distinctJobs` dihitung dari job_id non-kosong supaya
+ * angka "token per klip" bisa diturunkan di pemanggil tanpa menebak jumlah job.
+ */
+export function summarizeAiUsage({ jobId = '', sinceMs = 0, now = Date.now() } = {}) {
+  const since = Number(sinceMs) > 0 ? now - Number(sinceMs) : 0;
+  const rows = db.prepare(`
+    SELECT site, provider, model,
+           COUNT(*) AS calls,
+           SUM(CASE WHEN ok = 1 THEN 1 ELSE 0 END) AS okCalls,
+           SUM(CASE WHEN ok = 0 THEN 1 ELSE 0 END) AS failedCalls,
+           SUM(prompt_tokens) AS promptTokens, SUM(completion_tokens) AS completionTokens,
+           SUM(total_tokens) AS totalTokens, SUM(cached_tokens) AS cachedTokens,
+           SUM(cost) AS cost, SUM(request_bytes) AS requestBytes, SUM(response_bytes) AS responseBytes,
+           SUM(media_count) AS mediaCount, MAX(duration_ms) AS maxDurationMs,
+           COUNT(DISTINCT CASE WHEN job_id <> '' THEN job_id END) AS distinctJobs
+    FROM ai_usage_events
+    WHERE (@jobId = '' OR job_id = @jobId) AND (@since = 0 OR created_at >= @since)
+    GROUP BY site, provider, model
+    ORDER BY totalTokens DESC, calls DESC
+  `).all({ jobId: String(jobId || ''), since });
+  const totals = rows.reduce((acc, r) => {
+    acc.calls += r.calls; acc.okCalls += r.okCalls; acc.failedCalls += r.failedCalls;
+    acc.promptTokens += r.promptTokens || 0; acc.completionTokens += r.completionTokens || 0;
+    acc.totalTokens += r.totalTokens || 0; acc.cost += r.cost || 0;
+    acc.requestBytes += r.requestBytes || 0; acc.responseBytes += r.responseBytes || 0;
+    return acc;
+  }, { calls: 0, okCalls: 0, failedCalls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, cost: 0, requestBytes: 0, responseBytes: 0 });
+  return {
+    windowSince: since || null,
+    totals: { ...totals, avgTokensPerCall: totals.calls ? Math.round(totals.totalTokens / totals.calls) : 0 },
+    bySite: rows.map((r) => ({
+      site: r.site, provider: r.provider, model: r.model,
+      calls: r.calls, okCalls: r.okCalls, failedCalls: r.failedCalls,
+      promptTokens: r.promptTokens || 0, completionTokens: r.completionTokens || 0,
+      totalTokens: r.totalTokens || 0, cachedTokens: r.cachedTokens || 0, cost: r.cost || 0,
+      requestBytes: r.requestBytes || 0, responseBytes: r.responseBytes || 0,
+      mediaCount: r.mediaCount || 0, maxDurationMs: r.maxDurationMs || 0, distinctJobs: r.distinctJobs || 0,
+      avgTokensPerCall: r.calls ? Math.round((r.totalTokens || 0) / r.calls) : 0,
+    })),
+  };
+}
+
+/** Panggilan termahal untuk satu job — dipakai UI/log untuk menunjukkan biang token. */
+export function topAiUsageSitesForJob(jobId, limit = 5) {
+  return summarizeAiUsage({ jobId }).bySite.slice(0, Math.max(1, Number(limit) || 5));
+}
+
+/** Batasi pertumbuhan tabel: panggilan AI bisa ribuan per hari di auto-run. */
+export function pruneAiUsageEvents({ keepMs = 30 * 24 * 3600_000, now = Date.now() } = {}) {
+  try {
+    return db.prepare('DELETE FROM ai_usage_events WHERE created_at < ?').run(now - keepMs).changes;
+  } catch {
+    return 0;
+  }
 }
