@@ -8,7 +8,7 @@ import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js'
 import { planSectionDownloads } from '../services/renderSections.js';
 import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled } from '../config/runtimeFlags.js';
 import { applyOracleVeto, auditClipsWithOracle } from '../services/vlmOracleService.js';
-import { shouldAllowRescue, buildVisionProvenance, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
+import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 import {
   selectHighlightWithAI,
@@ -522,7 +522,9 @@ async function _runStage1Pipeline({
       if (Array.isArray(ctx.framesRef)) visionState.lastFramesSent = ctx.framesRef;
       // Hanya jalur frame (evidence/stride) yang memberi vonis per-frame. Stream video
       // penuh tidak mengembalikan daftar frame -> vonis frame dianggap belum terjadi.
-      if (prov.mode === 'evidence' || prov.mode === 'frames_stride') {
+      // Daftarnya hidup di satu tempat (isFrameVerdictMode) supaya mode pelaporan baru
+      // seperti product_verify/vlm_local tidak ikut menyalakan gerbang ini secara tidak sengaja.
+      if (isFrameVerdictMode(prov.mode)) {
         visionState.aiGaveFrameVerdict = true;
         visionState.accepted = Math.max(visionState.accepted, prov.acceptedCount);
         visionState.rejected = Math.max(visionState.rejected, prov.rejectedCount);
@@ -661,7 +663,16 @@ async function _runStage1Pipeline({
           pipelineVersion: 'smolvlm_v1',
           productHook: null,
         };
-        noteVisionProvenance(hl, { usableFrames: scenes.reduce((a, s) => a + s.frames.length, 0), framesRef: [], origin: 'smolvlm_scenes' });
+        noteVisionProvenance(hl, {
+          // Vonisnya per-scene dan datang dari VLM LOKAL, bukan Gemini. Mode baru ini sengaja
+          // TIDAK masuk daftar penyalakan `aiGaveFrameVerdict` ( itu khusus bukti yang dikirim
+          // ke Gemini), jadi keputusan Rescue Pipeline tetap seperti semula.
+          mode: 'vlm_local',
+          usableFrames: scenes.reduce((a, s) => a + s.frames.length, 0),
+          framesSent: scenes.reduce((a, s) => a + s.frames.length, 0),
+          framesRef: [],
+          origin: 'smolvlm_scenes',
+        });
         if (!targetUrl || targetUrl === currentYoutubeUrl) gatesPassedThisRun = true;
         console.log(`[Job ${jobId}] ✅ [SmolVLM2] ${approvedClips.length}/${scenes.length} scene lolos verifikasi (0 panggilan Whisper/gatekeeper).`);
         return { approved: true, highlight: hl, videoMeta: meta, previewVideoPath: null, probe: { eligible: true, vlm: true } };
@@ -789,7 +800,17 @@ async function _runStage1Pipeline({
         productHook: null 
       };
 
-      noteVisionProvenance(hl, { usableFrames: verifiedCleanFrames.length, framesRef: verifiedCleanFrames, origin: 'candidate_frames' });
+      // Frame-nya benar-benar terkirim ke Gemini di atas (verifyProductCandidateWithAI), jadi
+      // tanpa label ini trace melaporkan "unknown: 0 frame dikirim" padahal 5-30 frame dipakai.
+      // Ini panggilan kecocokan PRODUK, bukan vonis kebersihan per-frame -> mode 'product_verify'
+      // (tidak menyalakan gerbang vonis frame, supaya Rescue Pipeline tidak berubah perilaku).
+      noteVisionProvenance(hl, {
+        mode: 'product_verify',
+        usableFrames: verifiedCleanFrames.length,
+        framesSent: verifiedCleanFrames.length,
+        framesRef: verifiedCleanFrames,
+        origin: 'candidate_frames',
+      });
       if (!targetUrl || targetUrl === currentYoutubeUrl) gatesPassedThisRun = true;
       return { 
         approved: true,
@@ -866,7 +887,15 @@ async function _runStage1Pipeline({
           throw noClipErr;
         }
         approved = true;
-        noteVisionProvenance(highlight, { usableFrames: localCacheCheck.cleanFrames.length, framesRef: localCacheCheck.cleanFrames, origin: 'cached_raw_frames' });
+        // selectHighlightWithAI dengan `frames:` = jalur bukti (evidence). Fallback ini hanya
+        // terpakai bila aiService tidak ikut menempelkan visionEvidence pada hasilnya.
+        noteVisionProvenance(highlight, {
+          mode: 'evidence',
+          usableFrames: localCacheCheck.cleanFrames.length,
+          framesSent: localCacheCheck.cleanFrames.length,
+          framesRef: localCacheCheck.cleanFrames,
+          origin: 'cached_raw_frames',
+        });
       } catch (cacheEvalErr) {
         if (cacheEvalErr.isAiRejection || String(cacheEvalErr?.message || '').toLowerCase().includes('ditolak')) {
           console.warn(`[Job ${jobId}] Cached video 1080p ditolak AI: ${cacheEvalErr.message}. Menghapus cache dan mencoba online...`);
@@ -1458,6 +1487,10 @@ async function _runStage1Pipeline({
           }
 
           if (testPool.length >= 2) {
+            // Label cabang untuk provenance. Variabelnya HARUS di luar `try` karena blok `catch`
+            // di bawah ikut membacanya: `let` di dalam `try` tidak terlihat dari `catch`, dan
+            // kalau salah tulis ini melempar ReferenceError yang menenggelamkan job.
+            let multiVisionMode = 'unknown';
             updateProgress({
               step: 'gemini_vision',
               message: `AI Vision menganalisa ${testPool.length} frame peragaan dari ${preferredSoFar.length} video kandidat...`,
@@ -1467,6 +1500,9 @@ async function _runStage1Pipeline({
 
             try {
               let testHl;
+              // Cabang mana yang benar-benar dijalankan harus terbaca dari trace: stream video
+              // penuh mengirim 0 frame, cabang bukti mengirim seluruh testPool.
+              multiVisionMode = canUseGeminiStream() ? 'gemini_stream_multi' : 'evidence';
 
               // EVIDENCE MODE: multi-video stream (baca semua video penuh) DILEWATI —
               // pool frame bersih per kandidat dikirim sebagai bukti (branch else).
@@ -1535,9 +1571,10 @@ async function _runStage1Pipeline({
               }
 
               noteVisionProvenance(testHl, {
-                mode: 'gemini_stream_multi',
+                mode: multiVisionMode,
                 sourceCount: preferredSoFar.length,
                 usableFrames: testPool.length,
+                framesSent: multiVisionMode === 'evidence' ? testPool.length : 0,
                 origin: 'multi_harvest',
               });
 
@@ -1604,8 +1641,10 @@ async function _runStage1Pipeline({
                 acceptedFrames: aiErr.acceptedFrames || [],
                 rejectedFrames: aiErr.rejectedFrames || [],
               } : null, {
+                mode: multiVisionMode,
                 sourceCount: preferredSoFar.length,
                 usableFrames: Array.isArray(testPool) ? testPool.length : 0,
+                framesSent: multiVisionMode === 'evidence' && Array.isArray(testPool) ? testPool.length : 0,
                 origin: 'multi_harvest_reject',
               });
               
@@ -1676,7 +1715,13 @@ async function _runStage1Pipeline({
                 creativePlan,
                 onProgress: updateProgress,
               });
-              noteVisionProvenance(hl, { usableFrames: pooledFrames.length, framesRef: pooledFrames, origin: 'final_pooled' });
+              noteVisionProvenance(hl, {
+                mode: 'evidence',
+                usableFrames: pooledFrames.length,
+                framesSent: pooledFrames.length,
+                framesRef: pooledFrames,
+                origin: 'final_pooled',
+              });
             } catch (finalAiErr) {
               console.warn(`[Job ${jobId}] ⛔ AI Storyboard percobaan akhir gagal: ${finalAiErr.message}`);
               noteVisionProvenance(finalAiErr.visionEvidence ? {
@@ -1684,7 +1729,9 @@ async function _runStage1Pipeline({
                 acceptedFrames: finalAiErr.acceptedFrames || [],
                 rejectedFrames: finalAiErr.rejectedFrames || [],
               } : null, {
+                mode: 'evidence',
                 usableFrames: pooledFrames.length,
+                framesSent: pooledFrames.length,
                 origin: 'final_pooled_reject',
               });
               lastRejectionError = finalAiErr;

@@ -9,6 +9,7 @@ import {
   mapFramesToBudgeted,
   shouldAllowRescue,
   buildVisionProvenance,
+  isFrameVerdictMode,
   summarizeVisionRuns,
 } from '../services/visionEvidenceService.js';
 import {
@@ -310,6 +311,21 @@ describe('buildVisionProvenance + summarizeVisionRuns — penanda durabel jalur 
     expect(buildVisionProvenance({ mode: 'stream' }).mode).toBe('unknown');
     expect(buildVisionProvenance({}).mode).toBe('unknown');
   });
+  // Terukur di Termux 3 Okt 2026 (job auto_dbc4b00594): trace melaporkan
+  // "Jalur visual unknown: 0 frame dikirim" padahal product_verify mengirim 5 frame bersih
+  // ke Gemini, karena panggilan itu tidak membawa label mode sama sekali.
+  it('mode pelaporan baru dikenal, tetapi TIDAK menyalakan gerbang vonis frame', () => {
+    expect(buildVisionProvenance({ mode: 'product_verify', framesSent: 5 }).mode).toBe('product_verify');
+    expect(buildVisionProvenance({ mode: 'vlm_local', framesSent: 30 }).mode).toBe('vlm_local');
+    // Invarian inti: gerbang vonis hanya untuk bukti yang benar-benar divonis Gemini per-frame.
+    // Kalau ini berubah, keputusan Rescue Pipeline (shouldAllowRescue) ikut berubah.
+    expect(isFrameVerdictMode('evidence')).toBe(true);
+    expect(isFrameVerdictMode('frames_stride')).toBe(true);
+    for (const m of ['product_verify', 'vlm_local', 'gemini_stream', 'gemini_stream_multi', 'unknown']) {
+      expect(isFrameVerdictMode(m), `mode ${m} tidak boleh dianggap vonis frame`).toBe(false);
+    }
+  });
+
   it('angka dinegatifkan/di-bulatkan dan nilai sampah jadi 0', () => {
     const p = buildVisionProvenance({ mode: 'evidence', usableFrames: '12.7', framesSent: -5, acceptedCount: NaN, rejectedCount: null });
     expect(p).toEqual({ mode: 'evidence', usableFrames: 13, framesSent: 0, acceptedCount: 0, rejectedCount: 0, sourceCount: 0 });

@@ -295,11 +295,18 @@ export function shouldAllowRescue({ aiGaveVerdict = false, acceptedCount = 0, re
  * Ringkasan asal-usul analisa visual, dipakai sebagai penanda DURABEL di record job
  * dan trace. Tanpa ini operator hanya bisa menduga jalur mana yang dijalankan,
  * karena stdout dev-runner di Termux masuk ke /dev/pts/0 (tidak pernah tersimpan).
+ *
+ * `mode` HANYA label pelaporan. Yang boleh menyalakan gerbang vonis frame di
+ * stage1Render (`aiGaveFrameVerdict`) tetap 'evidence' dan 'frames_stride' saja, jadi
+ * menambah mode baru di sini tidak mengubah keputusan Rescue Pipeline.
+ * - product_verify : panggilan `verifyProductCandidateWithAI` (kecocokan produk, bukan
+ *   vonis per-frame) pada frame bersih kandidat.
+ * - vlm_local      : vonis per-scene oleh VLM LOKAL (SmolVLM2), tanpa Gemini sama sekali.
  * @param {{ mode?: string, usableFrames?: number, framesSent?: number, acceptedCount?: number, rejectedCount?: number, sourceCount?: number }} info
  */
 export function buildVisionProvenance(info = {}) {
   const num = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0);
-  const allowedModes = ['evidence', 'frames_stride', 'gemini_stream', 'gemini_stream_multi'];
+  const allowedModes = ['evidence', 'frames_stride', 'gemini_stream', 'gemini_stream_multi', 'product_verify', 'vlm_local'];
   const mode = allowedModes.includes(String(info.mode)) ? String(info.mode) : 'unknown';
   return {
     mode,
@@ -309,6 +316,21 @@ export function buildVisionProvenance(info = {}) {
     rejectedCount: num(info.rejectedCount),
     sourceCount: num(info.sourceCount),
   };
+}
+
+/**
+ * Gerbang vonis frame. HANYA mode yang berarti Gemini memberi vonis per-frame pada BUKTI
+ * yang benar-benar terkirim. Ini alasan `product_verify` dan `vlm_local` sengaja TIDAK ada
+ * di daftar: keduanya adalah panggilan yang tidak menghasilkan vonis kebersihan per-frame
+ * untuk Rescue Pipeline, sehingga menyalakan gerbang darinya akan mengubah keputusan
+ * `shouldAllowRescue` tanpa dasar.
+ * Dipakai stage1Render untuk mengisi `visionState.aiGaveFrameVerdict`.
+ * @param {string} mode nilai `mode` dari provenance
+ * @returns {boolean}
+ */
+export const FRAME_VERDICT_MODES = ['evidence', 'frames_stride'];
+export function isFrameVerdictMode(mode) {
+  return FRAME_VERDICT_MODES.includes(String(mode));
 }
 
 /**
