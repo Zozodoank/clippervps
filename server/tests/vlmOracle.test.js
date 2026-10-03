@@ -166,6 +166,39 @@ describe('normalizeOracleVerdict', () => {
     const v = normalizeOracleVerdict({ safe: false, face: false, text: false, watermark: false, graphic: false });
     expect(v.vetoTriggered).toBe(true);
   });
+
+  // Perilaku TERUKUR di perangkat (kalibrasi 2026-10-03, Qwen2.5-VL-3B-Instruct fp16):
+  // model sering membiarkan safe:true sambil menyalakan satu flag — misalnya frame berisi
+  // tulisan WA toko + wajah penuh divonis {safe:true, text:true}. Kalau hilir hanya
+  // membaca `safe`, kotoran itu lolos semua. Flag yang menyala = veto, apa pun kata `safe`.
+  it('flag yang menyala memveto walau model menulis safe:true', () => {
+    for (const k of ['face', 'text', 'watermark', 'graphic']) {
+      const v = normalizeOracleVerdict({ safe: true, [k]: true });
+      expect(v.ok).toBe(true);
+      expect(v.vetoTriggered, `flag ${k} harus memveto`).toBe(true);
+    }
+    // Kontrol: semuanya benar-benar nol = bersih.
+    expect(normalizeOracleVerdict({ safe: true, face: false, text: false, watermark: false, graphic: false }).vetoTriggered).toBe(false);
+  });
+
+  // Kalibrasi 2026-10-03 menunjukkan veto berbasis flag tanpa `perFrame` ikut menghitamkan
+  // frame baik di batch yang sama (2 dari 5 frame yang divonis bersih gatekeeper lokal ikut
+  // tertolak). Notebook kini mengirim perFrame begitu ada flag menyala; hilir harus memakai
+  // daftar itu, bukan menjatuhkan vonis ke seluruh batch.
+  it('veto berbasis flag + perFrame membatasi frame kotor ke frame yang terbukti saja', () => {
+    const v = normalizeOracleVerdict({
+      safe: false,
+      text: true,
+      perFrame: [
+        { index: 0, safe: true, text: false },
+        { index: 1, safe: false, text: true },
+        { index: 2, safe: true, text: false },
+      ],
+    }, { expectedFrames: 3 });
+    expect(v.ok).toBe(true);
+    expect(v.vetoTriggered).toBe(true);
+    expect(v.dirtyFrameIndexes).toEqual([1]);
+  });
 });
 
 describe('jobStore oracle queue', () => {

@@ -22,8 +22,15 @@
 #   # upload URL tunnel + token ke dataset konfigurasi, lalu push kernel:
 #   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -TunnelUrl https://abc-123.trycloudflare.com -WithToken
 #
+#   # VALIDASI SAMBUNGAN TANPA MEMBAKAR KUOTA MODEL (dry-run + sesi dipotong 5 menit):
+#   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -FromTermux -NoModel -RunTimeoutSec 300 -Logs
+#
 #   # hanya menarik log sesi Kaggle yang terakhir:
 #   powershell -ExecutionPolicy Bypass -File kaggle\deploy.ps1 -Logs -NoPush
+#
+# -NoModel menulis ORACLE_NO_MODEL=1 ke oracle_config.json (worker membacanya lewat
+# kanal dataset, karena env var Kaggle hanya bisa diisi dari UI). Sesi NO_MODEL tetap
+# memegang GPU sambil looping, jadi SELALU pakai -RunTimeoutSec saat dry-run.
 #
 # Nilai rahasia tidak pernah dicetak ke terminal maupun masuk git (staging di
 # kaggle/.deploy* yang sudah di-gitignore).
@@ -33,6 +40,8 @@ param(
     [switch]$NoPush,
     [switch]$WithToken,
     [switch]$FromTermux,
+    [switch]$NoModel,
+    [int]$RunTimeoutSec = 0,
     [string]$TunnelUrl = '',
     [string]$KernelSlug = 'clippervps-vlm-oracle',
     [string]$ConfigSlug = 'clippervps-oracle-config',
@@ -94,16 +103,64 @@ Write-Host "User Kaggle : $user"
 $Py = $null
 foreach ($cand in @('python', 'py', 'python3')) {
     try {
+        if (-not (Get-Command $cand -ErrorAction SilentlyContinue)) { continue }
         & $cand --version 2>&1 | Out-Null
         if ($LASTEXITCODE -eq 0) { $Py = $cand; break }
     } catch { }
 }
 function Invoke-Kaggle([array]$KaggleArgs) {
-    if ($script:Py) { return & $script:Py -m kaggle @KaggleArgs 2>&1 }
-    return & kaggle @KaggleArgs 2>&1
+    # PENTING: $ErrorActionPreference='Stop' membuat stderr dari perintah NATIVE (python -m kaggle
+    # menulis progress/error ke stderr) berubah jadi terminating error, sehingga fallback
+    # "datasets version gagal -> datasets create" tidak pernah jalan. Turunkan preferensi lokal,
+    # stringify keluaran, dan simpan exit code sendiri supaya pemanggil punya nilai yang akurat.
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    $script:KaggleExit = 1
+    $lines = @()
+    try {
+        if ($script:Py) { $raw = & $script:Py -m kaggle @KaggleArgs 2>&1 }
+        else { $raw = & kaggle @KaggleArgs 2>&1 }
+        $script:KaggleExit = $LASTEXITCODE
+        # stderr datang sebagai ErrorRecord; stdout sebagai string. Normalisasi keduanya.
+        $lines = @($raw | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $_.Exception.Message } else { [string]$_ }
+        } | Where-Object { $_ -and $_.Trim() -ne '' })
+    } catch {
+        # CLI tidak ditemukan sama sekali -> biarkan caller mencetak pesan pemasangan,
+        # bukan CommandNotFoundException yang membingungkan.
+        $script:KaggleExit = 127
+        $lines = @("Invoke-Kaggle: $($_.Exception.Message)")
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    return $lines
+}
+function Save-KaggleLog([string]$KernelId, [string]$DestDir) {
+    # 'kernels logs' = log sesi TERAKHIR dan tersedia bahkan saat sesi masih berjalan;
+    # 'kernels output' baru berisi sesuatu setelah sesi selesai. Jadi logs dulu, output
+    # hanya sebagai cadangan.
+    $abs = if ([System.IO.Path]::IsPathRooted($DestDir)) { $DestDir } else { Join-Path $repoRoot $DestDir }
+    New-Item -ItemType Directory -Force -Path $abs | Out-Null
+    $raw = Invoke-Kaggle @('kernels', 'logs', $KernelId)
+    if ($script:KaggleExit -eq 0 -and $raw) {
+        $txt = ($raw -join "`n")
+        $parsed = $null
+        try { $parsed = ($txt | ConvertFrom-Json) } catch { $parsed = $null }
+        if ($parsed) {
+            ($parsed | ForEach-Object { $_.data -replace "`r?`n", '' }) -join "`n" |
+                Set-Content -Path (Join-Path $abs 'session.log') -Encoding utf8
+        } else {
+            $txt | Set-Content -Path (Join-Path $abs 'session.log') -Encoding utf8
+        }
+        Write-Host "Log sesi terakhir tersimpan di: $(Join-Path $abs 'session.log')"
+        return
+    }
+    Write-Host "'kernels logs' belum memberi hasil (exit $script:KaggleExit); mencoba 'kernels output'..."
+    Invoke-Kaggle @('kernels', 'output', $KernelId, '-p', $abs) | ForEach-Object { Write-Host $_ }
+    Write-Host "Log/hasil eksekusi di: $abs"
 }
 $ver = Invoke-Kaggle @('kernels', '--help')
-if ($LASTEXITCODE -ne 0 -or -not $ver) {
+if ($script:KaggleExit -ne 0 -or -not $ver) {
     $hint = if ($Py) { "$Py -m pip install --user --upgrade kaggle" } else { 'pip install --user --upgrade kaggle' }
     throw "Kaggle CLI belum terpasang. Pasang dengan: $hint"
 }
@@ -154,26 +211,48 @@ if ($TunnelUrl) {
     } else {
         Write-Host 'CATATAN: token tidak disertakan -> notebook harus mendapat API_ACCESS_TOKEN dari env var Kaggle.'
     }
+    if ($NoModel) {
+        # Dry-run: worker memuat tanpa bobot model. Ini TIDAK bisa dikirim lewat env var
+        # Kaggle tanpa UI, jadi kanal dataset yang dipakai.
+        $cfgObj['ORACLE_NO_MODEL'] = '1'
+        Write-Host 'Mode DRY-RUN: ORACLE_NO_MODEL=1 ditulis ke konfigurasi (model tidak dimuat).'
+        if ($RunTimeoutSec -le 0) {
+            Write-Warning '-NoModel tanpa -RunTimeoutSec: sesi dry-run akan looping sampai 690 menit sambil memegang GPU. Tambahkan -RunTimeoutSec 300.'
+        }
+    }
+    if ($RunTimeoutSec -gt 0) {
+        # Kaggle punya --timeout sendiri, tapi sesi tetap bisa bertahan jauh melampaui
+        # angka itu (teramati: sesi dry-run -t 1200 masih RUNNING setelah 25 menit) - dan
+        # setiap menit di atas GPU dipotong dari kuota mingguan Anda. Jadi batas waktu
+        # juga ditulis ke konfigurasi supaya worker berhenti sendiri (ORACLE_MAX_MINUTES).
+        $maxMinutes = [Math]::Max(5, [Math]::Floor($RunTimeoutSec / 60) - 2)
+        $cfgObj['ORACLE_MAX_MINUTES'] = [string]$maxMinutes
+        Write-Host "Batas diri worker: ORACLE_MAX_MINUTES=$maxMinutes (berhenti sebelum Kaggle memotong)."
+    }
     ($cfgObj | ConvertTo-Json -Depth 4) | Set-Content -Path (Join-Path $cfgDir 'oracle_config.json') -Encoding ascii
     Write-Host "base_url   : $($cfgObj.base_url)"
 
     $cfgDatasetId = "$user/$ConfigSlug"
+    # Bentuk metadata dataset CLI v2: `keywords` dipetakan ke category_ids dan HARUS list
+    # (string tunggal -> TypeError: category_ids must be of type list), dan `create`
+    # menolak tanpa `licenses` ("Key licenses not found in data").
     $dsMeta = [ordered]@{
         title        = 'ClipperVPS Oracle Config'
         id           = $cfgDatasetId
         isPrivate    = $true
         description  = 'URL tunnel + token untuk worker VLM oracle. Berisi rahasia - jangan di-share.'
-        keywords     = 'clippervps, oracle, config'
+        keywords     = @('clippervps', 'oracle', 'config')
+        licenses     = @(@{ name = 'other' })
     }
     ($dsMeta | ConvertTo-Json -Depth 4) | Set-Content -Path (Join-Path $cfgDir 'dataset-metadata.json') -Encoding ascii
 
     Write-Host 'Meng-upload dataset konfigurasi...'
     Invoke-Kaggle @('datasets', 'version', '-p', $cfgDir, '-q', '-m', 'perbarui URL tunnel/token') | ForEach-Object { Write-Host $_ }
-    if ($LASTEXITCODE -ne 0) {
+    if ($script:KaggleExit -ne 0) {
         # Dataset belum pernah ada -> create dulu (version gagal untuk ref asing).
         Write-Host 'Dataset belum ada; membuat baru...'
         Invoke-Kaggle @('datasets', 'create', '-p', $cfgDir, '-q') | ForEach-Object { Write-Host $_ }
-        if ($LASTEXITCODE -ne 0) { throw 'Upload dataset konfigurasi gagal (lihat pesan di atas).' }
+        if ($script:KaggleExit -ne 0) { throw 'Upload dataset konfigurasi gagal (lihat pesan di atas).' }
     }
     $configRef = $cfgDatasetId
     New-Item -ItemType Directory -Force -Path $stageDir | Out-Null
@@ -181,6 +260,12 @@ if ($TunnelUrl) {
     Write-Host "Dataset konfigurasi siap: $configRef"
 } elseif ($configRef) {
     Write-Host "Dataset konfigurasi yang sudah ada akan dipakai: $configRef"
+    # Dataset TIDAK ditulis ulang bila -TunnelUrl tidak diberikan -> ORACLE_NO_MODEL dari
+    # dry-run kemarin bisa ikut terpakai di sesi sungguhan tanpa Anda sadari.
+    $cfgLocal = Join-Path $cfgDir 'oracle_config.json'
+    if ((Test-Path $cfgLocal) -and ((Get-Content $cfgLocal -Raw) -match 'ORACLE_NO_MODEL')) {
+        Write-Warning "oracle_config.json masih memuat ORACLE_NO_MODEL. Jalankan lagi dengan -TunnelUrl ... (tanpa -NoModel) untuk menimpanya sebelum uji model sungguhan."
+    }
 }
 
 # --- 4. Staging kernel + metadata dengan id asli -----------------------------
@@ -200,24 +285,32 @@ if ($configRef) {
 Write-Host "Kernel      : $($meta.id) | GPU=$($meta.enable_gpu) shape=$($meta.machine_shape) internet=$($meta.enable_internet)"
 Write-Host "Staging     : $stageDir"
 
+if ($Logs) { Save-KaggleLog $meta.id $LogDir }
 if ($NoPush) { Write-Host 'NoPush: staging selesai, kernel tidak dikirim (tidak ada sesi GPU baru).'; return }
 
 # --- 5. Push (Kaggle langsung menjalankan versi baru) ------------------------
-$push = Invoke-Kaggle @('kernels', 'push', '-p', $stageDir, '-q')
+# Catatan: `kernels push` TIDAK menerima -q (unrecognized arguments -> exit 2), tidak
+# seperti datasets/kernels output.
+$pushArgs = @('kernels', 'push', '-p', $stageDir)
+if ($RunTimeoutSec -gt 0) {
+    # Kaggle punya --timeout sendiri, tapi TIDAK selalu ditegakkan (sesi dry-run -t 1200
+    # teramati masih RUNNING setelah 25 menit). Batas yang benar-benar bekerja ditulis ke
+    # dataset konfigurasi sebagai ORACLE_MAX_MINUTES (lihat langkah 3) - worker berhenti sendiri.
+    $pushArgs += @('-t', [string]$RunTimeoutSec)
+    Write-Host "Batas sesi kernel (Kaggle -t): $RunTimeoutSec detik - batas diri worker ada di ORACLE_MAX_MINUTES."
+}
+$push = Invoke-Kaggle $pushArgs
 $push | ForEach-Object { Write-Host $_ }
-if ($LASTEXITCODE -ne 0) {
-    throw "kaggle kernels push gagal (exit $LASTEXITCODE). Penyebab umum: enable_internet butuh akun terverifikasi, dataset source tidak ada, atau id kernel dipakai orang lain."
+if ($script:KaggleExit -ne 0) {
+    throw "kaggle kernels push gagal (exit $script:KaggleExit). Penyebab umum: enable_internet butuh akun terverifikasi, dataset source tidak ada, atau id kernel dipakai orang lain."
 }
 Write-Host ''
 Write-Host "Kernel dijalankan Kaggle. Cek progres: python -m kaggle kernels status $($meta.id)"
 
 # --- 6. Status + log ---------------------------------------------------------
 Start-Sleep -Seconds 10
-Invoke-Kaggle @('kernels', 'status', $meta.id, '-q') | ForEach-Object { Write-Host $_ }
+Invoke-Kaggle @('kernels', 'status', $meta.id) | ForEach-Object { Write-Host $_ }
 
 if ($Logs) {
-    $absLog = if ([System.IO.Path]::IsPathRooted($LogDir)) { $LogDir } else { Join-Path $repoRoot $LogDir }
-    New-Item -ItemType Directory -Force -Path $absLog | Out-Null
-    Invoke-Kaggle @('kernels', 'output', $meta.id, '-p', $absLog, '-q') | ForEach-Object { Write-Host $_ }
-    Write-Host "Log/hasil eksekusi di: $absLog"
+    Save-KaggleLog $meta.id $LogDir
 }

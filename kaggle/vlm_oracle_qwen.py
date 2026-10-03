@@ -37,22 +37,56 @@ import time
 import requests
 
 
+def _load_json_if_config(path):
+    """Baca JSON dan terima HANYA bila ia memang konfigurasi oracle."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return None
+    if isinstance(data, dict) and any(k in data for k in ("base_url", "baseUrl", "api_access_token", "token", "ORACLE_NO_MODEL")):
+        return data
+    return None
+
+
 def _read_config_dataset():
     """Cari oracle_config.json dari dataset yang di-attach kernel.
 
-    Kaggle menaruh isi dataset di /kaggle/input/<slug-folder>/. Kita terima lokasi
-    mana pun yang berisi file itu (cuma dibaca, tidak pernah ditulis/dicetak).
+    Kaggle menaruh isi dataset di bawah /kaggle/input/, tapi nama foldernya dibuat dari
+    JUDUL dataset (spasi -> tanda hubung) dan bisa berlapis lagi di dalam. Jadi jangan
+    tebak satu path: jalan rekursif dan kenali file dari ISINYA. Isi file tidak pernah
+    dicetak - yang muncul hanya nama file, supaya log notebook aman di-share.
     """
     root = "/kaggle/input"
     try:
         if not os.path.isdir(root):
+            print("[oracle] /kaggle/input tidak ada (dataset konfigurasi tidak ter-attach).", flush=True)
             return {}
-        for name in os.listdir(root):
-            cand = os.path.join(root, name, "oracle_config.json")
-            if os.path.exists(cand):
-                with open(cand, "r", encoding="utf-8") as fh:
-                    data = json.load(fh)
-                return data if isinstance(data, dict) else {}
+        stack = [(root, 0)]
+        seen = []
+        while stack:
+            cur, depth = stack.pop()
+            try:
+                names = sorted(os.listdir(cur))
+            except Exception:
+                continue
+            if cur == root:
+                seen = names
+            for name in names:
+                full = os.path.join(cur, name)
+                if os.path.isdir(full):
+                    if depth < 4:
+                        stack.append((full, depth + 1))
+                    continue
+                if not name.lower().endswith(".json"):
+                    continue
+                data = _load_json_if_config(full)
+                if data is not None:
+                    print("[oracle] konfigurasi dibaca dari dataset: %s (key: %s)" % (
+                        name, ",".join(sorted(data.keys()))), flush=True)
+                    return data
+        print("[oracle] tidak menemukan oracle_config.json di bawah /kaggle/input; mount teratas: %s"
+              % (",".join(seen) or "(kosong)"), flush=True)
     except Exception as err:  # dataset tidak ada/rusak -> biarkan env yang bicara
         print("[oracle] config dataset dilewati: %s" % err, flush=True)
     return {}
@@ -78,6 +112,9 @@ def _cfg(*names, **kw):
 BASE_URL = (_cfg("VLM_ORACLE_BASE_URL", "ORACLE_BASE_URL", "base_url", "baseUrl") or "").rstrip("/")
 TOKEN = _cfg("API_ACCESS_TOKEN", "VLM_ORACLE_API_TOKEN", "api_access_token", "token")
 MODEL_ID = _cfg("ORACLE_MODEL_ID", default="qwen/Qwen2.5-VL-7B-Instruct-AWQ")
+# Bila AWQ tidak bisa dimuat (lihat load_model), turun ke bobot fp16 3B yang muat di T4
+# 16 GB dan tidak butuh quantizer apa pun.
+FALLBACK_MODEL_ID = _cfg("ORACLE_FALLBACK_MODEL_ID", default="qwen/Qwen2.5-VL-3B-Instruct")
 POLL_SEC = float(_cfg("ORACLE_POLL_SEC", default="5") or 5)
 IDLE_SLEEP_MAX = float(_cfg("ORACLE_IDLE_SLEEP_MAX", default="30") or 30)
 MAX_MINUTES = float(_cfg("ORACLE_MAX_MINUTES", default="690") or 690)   # < 12 jam Kaggle
@@ -87,6 +124,15 @@ AUTO_INSTALL = _cfg("ORACLE_AUTO_INSTALL", default="1") == "1"
 # Set 1 untuk menguji sambungan (claim/report) TANPA memuat model - berguna untuk
 # memvalidasi tunnel + token sebelum menghabiskan kuota GPU.
 NO_MODEL = _cfg("ORACLE_NO_MODEL", default="0") == "1"
+
+# (module yang di-import, nama paket pip). Hanya yang HILANG yang dipasang, jadi sesi
+# tidak menghabiskan waktu untuk `pip install` hal-hal yang sudah ada di image Kaggle.
+REQUIRED_PIP = (
+    ("transformers", "transformers"),
+    ("accelerate", "accelerate"),
+    ("qwen_vl_utils", "qwen-vl-utils[decord]==0.0.8"),
+    ("PIL", "pillow"),
+)
 
 START = time.time()
 TMP_ROOT = tempfile.mkdtemp(prefix="oracle_frames_")
@@ -113,34 +159,40 @@ def read_token_from_file():
 def ensure_deps():
     if NO_MODEL:
         return
-    try:
-        import transformers  # noqa: F401
+    # Cek SATU PER SATU, bukan hanya `import transformers`. Image Kaggle sudah membawa
+    # transformers + torch, jadi cek tunggal dulu selalu "lolos" dan qwen_vl_utils tidak
+    # pernah terpasang - gejalanya: model termuat, claim sukses, lalu seluruh batch
+    # kembali dengan error `No module named 'qwen_vl_utils'` (kuota GPU terpakai, vonis nol).
+    missing = []
+    for mod, pkg in REQUIRED_PIP:
+        try:
+            __import__(mod)
+        except ImportError:
+            missing.append(pkg)
+    if not missing:
         return
-    except ImportError:
-        pass
     if not AUTO_INSTALL:
-        raise SystemExit("transformers belum terpasang; set ORACLE_AUTO_INSTALL=1 atau install manual.")
-    log("Menginstal dependensi (sekali per sesi)...")
-    # subprocess + argumen list (BUKAN string ke shell): tidak ada interpreasi shell,
-    # jadi nilai env/user tidak bisa menyuntik perintah.
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "-q", "--no-warn-conflicts",
-         "transformers==4.49.0", "accelerate", "qwen-vl-utils[decord]==0.0.8",
-         "autoawq", "autoawq-kernels", "av"],
-        check=False,
-    )
+        raise SystemExit("Dependensi kurang: %s. Set ORACLE_AUTO_INSTALL=1 atau install manual." % ", ".join(missing))
+    log("Menginstal dependensi yang kurang (sekali per sesi): %s" % ", ".join(missing))
+    pip_install(*missing)
     time.sleep(3)  # beri kesempatan filesystem sinkron
 
 
-def load_model():
-    """Muat Qwen2.5-VL sekali per proses. Bobot AWQ ~7-8 GB, aman di T4 16 GB."""
+def pip_install(*packages):
+    """pip via subprocess + argumen list (BUKAN string ke shell): tidak ada interpreasi
+    shell, jadi nilai env/user tidak bisa menyuntik perintah."""
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "--no-warn-conflicts"] + list(packages),
+        check=False,
+    )
+
+
+def _build(model_id):
     import torch
     from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
-
-    log("Memuat %s ..." % MODEL_ID)
     t0 = time.time()
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        MODEL_ID,
+        model_id,
         torch_dtype="auto",
         device_map="auto",
         # sdpa menghindari kebutuhan flash-attention yang sering gagal build di Kaggle.
@@ -148,8 +200,40 @@ def load_model():
     )
     model.eval()
     processor = AutoProcessor.from_pretrained(
-        MODEL_ID, min_pixels=256 * 28 * 28, max_pixels=1280 * 28 * 28)
-    log("Model siap dalam %.0fs." % (time.time() - t0))
+        model_id, min_pixels=256 * 28 * 28, max_pixels=1280 * 28 * 28)
+    log("Model %s siap dalam %.0fs." % (model_id.split("/")[-1], time.time() - t0))
+    return model, processor, torch
+
+
+def load_model():
+    """Muat Qwen2.5-VL sekali per proses, dengan rantai fallback.
+
+    Kenapa perlu: image Kaggle sudah punya transformers terbaru, dan sejak versi itu
+    bobot AWQ dimuat lewat gptqmodel (bukan autoawq) -> ImportError saat load. ensure_deps
+    sengaja TIDAK menurunkan transformers sistem (bisa merusak notebook lain di image),
+    jadi kita coba: (1) model pilihan, (2) pasang gptqmodel lalu coba lagi, (3) model
+    non-kuantisasi yang tidak butuh quantizer apa pun. Yang tercatat di vonis adalah model
+    yang BENAR-BENAR termuat, jadi Anda tahu angka kalibrasi datang dari bobot mana.
+    """
+    global MODEL_ID
+    try:
+        return _build(MODEL_ID)
+    except ImportError as err:
+        msg = str(err)
+        log("Muat %s gagal: %s" % (MODEL_ID, msg[:200]))
+        if AUTO_INSTALL and "gptqmodel" in msg.lower():
+            log("Menginstal gptqmodel (perlu untuk AWQ di transformers sistem Kaggle)...")
+            pip_install("gptqmodel")
+            try:
+                return _build(MODEL_ID)
+            except Exception as err2:
+                log("Masih gagal setelah gptqmodel: %s" % str(err2)[:200])
+        elif not AUTO_INSTALL:
+            raise
+    # Fallback: bobot fp16 kecil yang jalan di T4 tanpa quantizer.
+    log("Fallback ke %s (tanpa kuantisasi, tidak butuh quantizer)." % FALLBACK_MODEL_ID)
+    model, processor, torch = _build(FALLBACK_MODEL_ID)
+    MODEL_ID = FALLBACK_MODEL_ID
     return model, processor, torch
 
 
@@ -201,6 +285,31 @@ def ask(model, processor, torch, image_paths, prompt):
     return raw, extract_json(raw)
 
 
+def fetch_frames_raw(payload):
+    """Unduh seluruh JPEG batch lewat tunnel (tanpa preprocessing).
+
+    Dipakai jalur NO_MODEL: claim + report saja tidak cukup membuktikan apa pun, karena
+    justru pengambilan frame yang bisa gagal diam-diam (allowlist path di sisi server,
+    file sementara job yang sudah dibersihkan, tunnel putus). Yang dikembalikan hanya
+    (index, jumlah byte) - isi frame tidak pernah dicetak ke log.
+    """
+    batch_dir = os.path.join(TMP_ROOT, payload["batchId"])
+    os.makedirs(batch_dir, exist_ok=True)
+    sess = requests.Session()
+    sess.headers.update({"x-api-token": TOKEN})
+    got = []
+    for fr in payload["frames"]:
+        r = sess.get(BASE_URL + fr["url"], timeout=120)
+        if r.status_code != 200:
+            raise RuntimeError("frame %s -> HTTP %s" % (fr["url"], r.status_code))
+        raw = os.path.join(batch_dir, "raw%03d.jpg" % int(fr["index"]))
+        with open(raw, "wb") as fh:
+            fh.write(r.content)
+        got.append((int(fr["index"]), len(r.content)))
+    shutil.rmtree(batch_dir, ignore_errors=True)
+    return got
+
+
 def verdict_batch(payload, model, processor, torch):
     """Satu batch -> verdict. Hemat GPU: satu panggilan multi-frame dulu. Hanya
     kalau batch dinyatakan KOTOR kita panggil per-frame untuk menemukan frame mana
@@ -233,12 +342,23 @@ def verdict_batch(payload, model, processor, torch):
     out["model"] = MODEL_ID.split("/")[-1]
     out["elapsedMs"] = int(dt * 1000)
 
-    if not out["safe"] and len(paths) > 1:
-        # Refine per-frame supaya worker lokal hanya memveto frame yang benar-benar kotor.
+    # Refine per-frame bila ada TANDA kotor apa pun, bukan hanya saat safe:false.
+    # Hilir (`normalizeOracleVerdict`) memveto ketika `safe:false` ATAU salah satu flag menyala,
+    # dan model kecil sering menulis safe:true SAMBIL menyalakan text/watermark. Kalau refine
+    # hanya jalan saat safe:false, veto berbasis flag tidak pernah punya bukti per-frame dan
+    # worker lokal menghitamkan SELURUH batch (terukur 2026-10-03: 2 dari 5 frame yang
+    # divonis bersih oleh gatekeeper lokal ikut tertolak). Biaya tambahan hanya untuk batch
+    # yang memang dicurigai: <= N inferensi satu-frame.
+    any_flag = any(out[k] for k in ("face", "text", "watermark", "graphic"))
+    if (not out["safe"] or any_flag) and len(paths) > 1:
         per_frame = []
         for idx, one in paths:
             _, obj1 = ask(model, processor, torch, [one], prompt)
             if obj1 is None:
+                # Gagal parse = tidak tahu = jangan lepas veto. Tandai frame INI saja yang
+                # kotor supaya veto tidak merata ke seluruh batch karena satu frame saja.
+                per_frame.append({"index": idx, "safe": False,
+                                  "face": False, "text": False, "watermark": False, "graphic": False})
                 continue
             per_frame.append({
                 "index": idx,
@@ -251,6 +371,10 @@ def verdict_batch(payload, model, processor, torch):
         if per_frame:
             out["perFrame"] = per_frame
             out["safe"] = all(f["safe"] for f in per_frame)
+            # Flag agregat diturunkan dari bukti per-frame, bukan tebakan satu panggilan.
+            for k in ("face", "text", "watermark", "graphic"):
+                out[k] = any(f[k] for f in per_frame)
+            out["elapsedMs"] = int((time.time() - t0) * 1000)
     shutil.rmtree(batch_dir, ignore_errors=True)
     return out
 
@@ -287,11 +411,19 @@ def main():
             "API_ACCESS_TOKEN kosong. Isi di oracle_config.json (key api_access_token) lewat "
             "kaggle/deploy.ps1 -TunnelUrl ... -WithToken, atau env var API_ACCESS_TOKEN di Kaggle."
         )
-    log("Base URL siap. Token: %d karakter (tidak ditampilkan). NO_MODEL=%s" % (len(token), NO_MODEL))
+    log("Base URL siap. Token: %d karakter (tidak ditampilkan). NO_MODEL=%s|max=%.0f menit"
+        % (len(token), NO_MODEL, MAX_MINUTES))
 
     model = processor = torch = None
     if not NO_MODEL:
         ensure_deps()
+        # Cek lagi sebelum claim: kalau modul ini tetap hilang, lebih baik sesi mati sekarang
+        # daripada mengklaim batch lalu mengirim error untuk setiap batch (kuota GPU terpakai,
+        # vonis nol - persis kegagalan sesi sebelumnya).
+        try:
+            import qwen_vl_utils  # noqa: F401
+        except ImportError as err:
+            raise SystemExit("qwen_vl_utils tidak tersedia setelah pip install: %s" % err)
         model, processor, torch = load_model()
 
     idle = POLL_SEC
@@ -321,7 +453,18 @@ def main():
             bid = data["batchId"]
             log("claim %s (%d frame, job=%s scene=%s)" % (bid, len(data["frames"]), data.get("jobId"), data.get("sceneIdx")))
             if NO_MODEL:
-                post_result(bid, {"safe": True, "model": "dry-run"})
+                # Dry-run tetap MENGUNDUH frame: itu bagian yang paling mungkin pecah
+                # (allowlist path + usia file + tunnel), dan gratis di sisi GPU.
+                try:
+                    got = fetch_frames_raw(data)
+                    kb = sum(b for _, b in got) / 1024.0
+                    log("  dry-run: %d/%d frame diunduh, total %.0f KB (rata-rata %.0f KB/frame)"
+                        % (len(got), len(data["frames"]), kb, (kb / max(1, len(got)))))
+                    post_result(bid, {"safe": True, "model": "dry-run"})
+                except Exception as dl_err:
+                    log("  dry-run GAGAL unduh frame: %s" % dl_err)
+                    post_result(bid, None, error=str(dl_err))
+                    failed += 1
                 done += 1
                 continue
             v = verdict_batch(data, model, processor, torch)
