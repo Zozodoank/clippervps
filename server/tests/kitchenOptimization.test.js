@@ -3,6 +3,7 @@ import { buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from '../services/do
 import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, getAutoKeywords, bingTitleRelevancePredicate, buildDynamicProductSearchQueries } from '../services/discoveryService.js';
 import { buildNicheProductCriterion } from '../services/aiService.js';
 import { getNichePreset } from '../config/nichePresets.js';
+import { hasRepairIntent, stripForbiddenTerms, coreNegativeOperators, forbiddenNegativeOperators } from '../config/forbiddenTerms.js';
 
 describe('Kitchen Tools & Video-First Optimization', () => {
   describe('YouTube Query Cleaning & Chopper Preservation', () => {
@@ -35,6 +36,27 @@ describe('Kitchen Tools & Video-First Optimization', () => {
   // FIX 0/20 (A2): query "merk + tipe" POLOS tidak boleh dihujani operator negatif sampai 6
   // (dulu cabang non-branded -> 6 operator -> YouTube 0 hasil). Identity pendek dijepit <= 3,
   // tetapi operator prioritas berbahaya (-servis/-cara/-tutorial) tetap terkirim (bug 30 Sep).
+  describe('Kata "fix" (Inggris) kini terlarang - satu sumber (bug auto_41fb4b59)', () => {
+    it('hasRepairIntent menolak judul produk reparasi berbahasa Inggris (kata fix saja)', () => {
+      // Tanpa 'how to' agar murni menguji kata 'fix' di kelas REPAIR.
+      expect(hasRepairIntent('Magicom Rice Cooker Fix Not Cooked')).toBe(true);
+      expect(hasRepairIntent('5 fixes for magicom tidak panas')).toBe(true);
+      // Produk sah tidak boleh kena false-positive: kata yang MEMUAT 'fix' sebagai
+      // bagian kata lain (prefix/suffix) harus Lolos karena pencocokan \b...\b.
+      expect(hasRepairIntent('Kopi Prefix Robusta 250g')).toBe(false);
+    });
+
+    it('stripForbiddenTerms membuang kata fix dari query pencarian', () => {
+      const cleaned = stripForbiddenTerms('magicom how to fix rice not cooked');
+      expect(cleaned.toLowerCase()).not.toMatch(/\bfix(es)?\b/);
+    });
+
+    it('-fix ikut menjadi operator negatif yang dikirim ke mesin telusur', () => {
+      expect(coreNegativeOperators()).toContain('-fix');
+      expect(forbiddenNegativeOperators()).toContain('-fix');
+    });
+  });
+
   describe('Query brand+tipe polos: pembatasan operator negatif (A2)', () => {
     it('identity pendek (<= 4 kata) dijepit maksimal 3 operator namun tetap terproteksi', () => {
       const cleaned = buildCleanYouTubeQuery('Coolpad Cool Dual');

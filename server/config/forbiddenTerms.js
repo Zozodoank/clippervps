@@ -22,7 +22,13 @@
 
 // Penanda jasa servis, barang rusak, atau bongkar-pasang. Berlaku SEMUA niche.
 export const REPAIR_TERMS = [
-  'servis', 'service', 'reparasi', 'repair',
+  // 'fix'/'fixes' (Inggris) dulu TIDAK ada di daftar ini, sehingga judul produk
+  // berbahasa Inggris seperti "How to Fix Magicom Rice Not Cooked" lolos sebagai
+  // PRODUK (hanya kena kelas tutorial via 'how to', bukan repair). Bug lapangan
+  // auto_41fb4b59: job memilih listing reparasi lalu mati no_verdict. Kini kata
+  // 'fix' ikut dibuang dari query (stripForbiddenTerms), jadi operator negatif, dan
+  // menolak judul produk/kandidat reparasi di semua konsumen satu-sumber ini.
+  'servis', 'service', 'reparasi', 'repair', 'fix', 'fixes',
   'perbaikan', 'memperbaiki', 'rusak', 'kerusakan',
   'mati total', 'matot', 'korslet', 'konslet', 'gelek',
   'bongkar', 'membongkar', 'disassembly', 'teardown', 'turun mesin',
@@ -151,7 +157,7 @@ export function coreNegativeOperators() {
   // review/unboxing (paling sering dipakai) karena itulah kata yang menghasilkan
   // listing servis/tutorial di hasil pencarian.
   return [
-    '-servis', '-cara', '-tutorial', '-diy', '-reparasi', '-repair', '-perbaikan',
+    '-servis', '-cara', '-tutorial', '-diy', '-reparasi', '-repair', '-fix', '-perbaikan',
     '-rusak', '-matot', '-bongkar', '-"mati total"', '-service',
     '-vlog', '-"mini vlog"', '-wajah', '-host'
   ];
