@@ -279,12 +279,14 @@ export async function runSourceAcquisitionV2(p) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
 
-  // (L2b) ORACLE KAGGLE (opt-in, VISION_VERIFY_MODE=oracle) — veto model besar SEBELUM
-  // vonis Gemini. Tanpa blok ini, ACQUISITION_FLOW=v2 lolos sepenuhnya dari filter model
-  // besar karena jalur lama (stage1Render storyboard) tidak dilewati.
-  // Kebijakan sama dengan stage1Render: oracle diam/timeout/error = TIDAK memveto apa pun,
-  // keputusan gatekeeper lokal (L2a) + Gemini tetap berlaku. Bukan fail-open terhadap
-  // konten karena lapisan lokal di sekitar titik ini tetap berjalan penuh.
+  // (L2b) ORACLE KAGGLE (VISION_VERIFY_MODE=oracle — satu-satunya mode yang diizinkan) —
+  // veto model besar SEBELUM vonis Gemini. Tanpa blok ini, ACQUISITION_FLOW=v2 lolos
+  // sepenuhnya dari filter model besar karena jalur lama (stage1Render storyboard) tidak
+  // dilewati.
+  // Kebijakan SAMA dengan stage1Render (STRICT, mandate 2026-10): oracle diam/timeout/
+  // vonis tidak sah -> applyOracleVeto melempar OracleUnavailableError dan job BERHENTI
+  // (propagate ke pemanggil di stage1Render). Tidak ada lagi "keputusan gatekeeper lokal
+  // (L2a) + Gemini tetap berlaku".
   if (isVlmOracleEnabled(process.env)) {
     updateProgress({ step: 'vlm_oracle', message: '🛰️ [V2] Oracle Kaggle memvonis frame kandidat...', progress: 19 });
     const vetoed = [];

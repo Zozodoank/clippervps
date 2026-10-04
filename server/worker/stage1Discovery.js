@@ -381,6 +381,24 @@ export async function runAutoStage1Worker(run) {
 
         run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
 
+        // 0. Oracle Kaggle tidak terhubung / tidak memvonis (kebijakan KAGGLE-ONLY,
+        // user mandate 2026-10): hentikan SELURUH auto-run, bukan cuma produk ini.
+        // Selama notebook oracle mati, semua job berikutnya akan gagal dengan reason
+        // yang sama — lanjut coba-coba hanya membakar kuota Gemini/YouTube. (Pola sama
+        // dengan YouTube bot block: status 'stopped' + return.)
+        if (err && err.code === 'ORACLE_UNAVAILABLE') {
+          console.error(`[Auto] 🛑 Oracle Kaggle tidak tersedia (${err.reason || 'unknown'}): ${err.message}`);
+          updateAutoRun(run, {
+            status: 'stopped',
+            message: `⛔ Auto Mode dihentikan: Oracle Kaggle tidak terhubung / tidak memvonis (reason: ${err.reason || 'unknown'}). Nyalakan tunnel + kernel oracle (lihat /api/vlm-oracle/status), lalu jalankan ulang Auto Mode. (Berhasil: ${run.successfulJobs}, Gagal: ${run.failedJobs}).`,
+            progress: 100,
+            finishedAt: new Date().toISOString(),
+            currentJobId: null,
+            currentProductTitle: null,
+          });
+          return;
+        }
+
         // Evaluasi apakah harus berhenti total atau lanjut mencari video lain (Self-Healing)
         if (isYouTubeBotBlock) {
           console.error(`[Auto] 🛑 YouTube memblokir/membatasi IP server (HTTP 429 / Bot Detection). Menghentikan Auto Mode.`);

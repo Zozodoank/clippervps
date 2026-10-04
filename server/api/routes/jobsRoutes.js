@@ -350,9 +350,16 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
           console.log(`[Retry ${jobId}] Kandidat ${i + 1} (${candidate.url}) sukses di-generate 1080p!`);
           break;
         } catch (candErr) {
-          console.warn(`[Retry ${jobId}] Kandidat ${i + 1} (${candidate.url}) gagal: ${candErr.message}. Mencoba kandidat berikutnya...`);
           lastRetryErr = candErr;
           deleteJobFiles(jobId, outputDir, tempDir);
+          if (candErr && candErr.code === 'ORACLE_UNAVAILABLE') {
+            // KEBIJAKAN KAGGLE-ONLY: oracle mati/vonis tidak tiba = TERMINAL. Ganti kandidat
+            // tidak menolong — semua jalur butuh vonis Kaggle yang sama. Berhenti sekarang,
+            // jangan membakar 8x siklus gate/timeout.
+            console.error(`[Retry ${jobId}] ⛔ Oracle Kaggle tidak tersedia (reason: ${candErr.reason || 'unknown'}) — retry dihentikan, bukan lanjut kandidat berikutnya.`);
+            break;
+          }
+          console.warn(`[Retry ${jobId}] Kandidat ${i + 1} (${candidate.url}) gagal: ${candErr.message}. Mencoba kandidat berikutnya...`);
         }
       }
 

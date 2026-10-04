@@ -75,7 +75,10 @@ export function isVlmAvailable(env = process.env) {
  *
  * `requireRanking` (Lapis 3) memperluas kontrak vonis: model tidak hanya menyatakan
  * bersih/kotor tapi juga MENILAI apakah produk di frame memang produk yang dicari,
- * lewat `productMatch` + `matchScore` 0-100. Tanpa flag ini prompt menghasilkan teks
+ * lewat `productMatch` + `matchScore` 0-100, DAN menilai kualitas tampak sumber video
+ * lewat `apparentQuality` 0-100 (filter resolusi pre-flight - lihat VLM_ORACLE_MIN_QUALITY).
+ * Qwen tidak bisa membaca resolusi native dari frame (apalagi kiriman 360p), jadi yang
+ * diminta adalah persepsi ketajaman/blur/blok kompresi - BUKAN angka piksel. Tanpa flag ini prompt menghasilkan teks
  * yang IDENTIK dengan sebelumnya — pemanggil lama (jalur SmolVLM lokal dan dua pass
  * oracle yang sudah ada) tidak boleh ikut berubah.
  *
@@ -102,8 +105,9 @@ export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict', {
     lines.push(`PRODUCT UNDER TEST: "${core}".`);
     lines.push('Set productMatch=true ONLY if the frames clearly show that product (same kind of item), not just any gadget in the same category.');
     lines.push('matchScore = 0-100 confidence that the PRODUCT UNDER TEST is shown being used as intended (0 = wrong or unrelated product, 100 = unmistakably that product doing its job).');
+    lines.push('apparentQuality = 0-100 estimate of the SOURCE video picture quality visible in these frames (100 = sharp and clean, 0 = heavily blurred, blocky, pixelated or double-compressed). Judge ONLY what is visible in the frames; NEVER guess an exact pixel resolution.');
     lines.push('Answer with ONLY a compact JSON object, no prose:');
-    lines.push('{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false,"productMatch":true|false,"matchScore":0-100,"reason":"very short"}');
+    lines.push('{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false,"productMatch":true|false,"matchScore":0-100,"apparentQuality":0-100,"reason":"very short"}');
   } else {
     lines.push('Answer with ONLY a compact JSON object, no prose:');
     lines.push('{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false}');

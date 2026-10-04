@@ -68,15 +68,26 @@ const FLAG_NORMALIZERS = {
   // 'oracle'  = pipeline LEGACY utuh (Whisper + gatekeeper ONNX tetap jalan), ditambah satu
   // lapis sanitasi frame oleh model besar di luar perangkat (notebook Kaggle menarik batch
   // frame dari API lokal, memvonis, lalu mengirim balik). Frame yang divonis KOTOR masuk
-  // `blacklistedFramePaths` yang sudah ada. Oracle diam/timeout = perilaku hari ini persis.
+  // `blacklistedFramePaths` yang sudah ada.
+  // KEBIJAKAN 2026-10 (user mandate): HANYA mode 'oracle' yang boleh menjalankan job.
+  // Default tidak-set/nilai tidak dikenal = 'oracle' (bukan 'legacy' lagi). Nilai eksplisit
+  // 'legacy'/'smolvlm' tetap dikenali agar gerbang mode di stage1Render bisa MENOLAK job
+  // dengan pesan jelas (dan snapshot lama bisa dibaca forensiknya), tetapi job-nya stop.
   VISION_VERIFY_MODE: (env) => {
     const v = String(env.VISION_VERIFY_MODE || '').trim().toLowerCase();
-    return (v === 'smolvlm' || v === 'oracle') ? v : 'legacy';
+    return (v === 'legacy' || v === 'smolvlm') ? v : 'oracle';
   },
   // Plafon TOTAL frame per job yang dikirim ke oracle (biaya GPU Kaggle ±30 jam/minggu).
   // Pool bisa berisi ratusan frame; subset dipilih merata sepanjang garis waktu (lihat
   // pickEvenlySpaced) agar cakupan temporal tetap ada walau jumlahnya dibatasi.
-  VLM_ORACLE_MAX_FRAMES: (env) => Math.max(0, Number(env.VLM_ORACLE_MAX_FRAMES) || 120),
+  // 0 EKSPISIT dihormati (tidak dikonversi ke 120): di kebijakan strict, 0 = "tidak ada
+  // yang divisit" = job DITOLAK di gerbang oracle (OracleUnavailableError reason 'infra').
+  VLM_ORACLE_MAX_FRAMES: (env) => {
+    const raw = env.VLM_ORACLE_MAX_FRAMES;
+    if (raw === undefined || raw === null || String(raw).trim() === '') return 120;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.max(0, n) : 120;
+  },
   // Tinggi (px) JPEG yang DIKIRIM ke notebook. Download section tetap 1080p; frame hasil
   // ekstraksi dikecilkan dulu di perangkat (FFmpeg scale=-2:<height>) karena dua alasan:
   // byte yang naik lewat tunnel turun ~7x, dan jumlah vision-token GPU turun. 0 = kirim
@@ -91,12 +102,16 @@ const FLAG_NORMALIZERS = {
   // Jumlah frame per batch (satu panggilan klaim notebook). 8 = satu kali muat bobot untuk
   // beberapa frame tanpa prompt yang kepanjangan.
   VLM_ORACLE_BATCH_SIZE: (env) => Math.min(16, Math.max(1, Number(env.VLM_ORACLE_BATCH_SIZE) || 8)),
-  // Waktu tunggu MAKSIMAL per batch (detik) sebelum worker menyerah dan lanjut dengan
-  // keputusan legacy. Bukan vonis: tidak menjawab = tidak memveto.
+  // Waktu tunggu MAKSIMAL per batch (detik). Lewat = JOB DIHENTIKAN (OracleUnavailableError),
+  // bukan "lanjut dengan keputusan legacy" lagi — vonis Kaggle adalah satu-satunya gerbang.
   VLM_ORACLE_TIMEOUT_SEC: (env) => Math.max(5, Number(env.VLM_ORACLE_TIMEOUT_SEC) || 180),
   // Anggaran waktu seluruh tahap sanitasi oracle dalam satu job (detik). Mencegah satu job
-  // menahan antrean berjam-jam saat notebook mati/manusia belum menekan Run.
+  // menahan antrean berjam-jam saat notebook mati/manusia belum menekan Run. Lewat = stop job.
   VLM_ORACLE_TOTAL_TIMEOUT_SEC: (env) => Math.max(10, Number(env.VLM_ORACLE_TOTAL_TIMEOUT_SEC) || 600),
+  // Batas menunggu batch PERTAMA diklaim notebook (= sinyal "Kaggle terhubung", detik).
+  // Batch yang sampai batas ini masih 'pending' (tak pernah diklaim) = notebook offline ->
+  // job dihentikan dengan reason 'never_claimed'.
+  VLM_ORACLE_CONNECT_TIMEOUT_SEC: (env) => Math.max(10, Number(env.VLM_ORACLE_CONNECT_TIMEOUT_SEC) || 120),
   // Plafon frame tahap AUDIT KLIP FINAL (clip_audit pasca-download, cadence 2,5 fps yang
   // sudah ada). Terpisah dari VLM_ORACLE_MAX_FRAMES (pass pool) supaya keduanya bisa
   // diatur sendiri: audit klip jauh lebih mahal per job karena memakan seluruh klip.
@@ -106,6 +121,16 @@ const FLAG_NORMALIZERS = {
     if (n === 0) return 0;
     if (!Number.isFinite(n)) return 90;
     return Math.min(240, Math.max(8, Math.round(n)));
+  },
+  // Filter kualitas sumber pre-flight: kandidat yang divonis Kaggle dengan
+  // apparentQuality 0-100 DI BAWAH ambang ini dibuang sebelum peringkat. 0 (default) =
+  // mati - skor tetap dicatat di hasil vonis sebagai forensik, tak ada yang gugur.
+  // CATATAN: ini persepsi visual model (blur/blok kompresi), BUKAN pengukur resolusi
+  // native - frame sengaja dikirim 360p, jadi skor tinggi pun tidak menjamin sumber 1080p.
+  VLM_ORACLE_MIN_QUALITY: (env) => {
+    const n = Math.round(Number(env.VLM_ORACLE_MIN_QUALITY));
+    if (!Number.isFinite(n) || n < 0) return 0;
+    return Math.min(100, n);
   },
   // Interval polling worker saat menunggu vonis (milidetik).
   VLM_ORACLE_POLL_MS: (env) => Math.max(250, Number(env.VLM_ORACLE_POLL_MS) || 2000),
@@ -118,6 +143,11 @@ const FLAG_NORMALIZERS = {
   // 'pending' (atau 'expired' bila percobaan habis). Notebook Kaggle boleh mati kapan saja.
   VLM_ORACLE_STALE_SEC: (env) => Math.max(30, Number(env.VLM_ORACLE_STALE_SEC) || 300),
   VLM_ORACLE_MAX_ATTEMPTS: (env) => Math.max(1, Number(env.VLM_ORACLE_MAX_ATTEMPTS) || 2),
+  // AUTO-LAUNCH sesi Kaggle dari perangkat server (butuh kaggle CLI + kredensial,
+  // mis. Termux proot). Default MATI: PC tanpa CLI tidak pernah mencoba spawn.
+  ORACLE_AUTO_LAUNCH: (env) => String(env.ORACLE_AUTO_LAUNCH || '').trim() === '1',
+  ORACLE_AUTO_LAUNCH_WAIT_SEC: (env) => Math.max(15, Number(env.ORACLE_AUTO_LAUNCH_WAIT_SEC) || 300),
+  ORACLE_AUTO_LAUNCH_COOLDOWN_MIN: (env) => Math.max(1, Number(env.ORACLE_AUTO_LAUNCH_COOLDOWN_MIN) || 25),
   // URL publik lokal (tunnel) tempat notebook memanggil API. Server hanya menyimpan/melaporkan
   // untuk kenyamanan log; yang memakai nilai ini adalah notebook di sisi Kaggle.
   VLM_ORACLE_BASE_URL: (env) => String(env.VLM_ORACLE_BASE_URL || '').trim(),
@@ -197,8 +227,10 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.VLM_ORACLE_BATCH_SIZE === 'number') patch.VLM_ORACLE_BATCH_SIZE = String(snapshot.VLM_ORACLE_BATCH_SIZE);
   if (typeof snapshot.VLM_ORACLE_FRAME_HEIGHT === 'number') patch.VLM_ORACLE_FRAME_HEIGHT = String(snapshot.VLM_ORACLE_FRAME_HEIGHT);
   if (typeof snapshot.VLM_ORACLE_AUDIT_MAX_FRAMES === 'number') patch.VLM_ORACLE_AUDIT_MAX_FRAMES = String(snapshot.VLM_ORACLE_AUDIT_MAX_FRAMES);
+  if (typeof snapshot.VLM_ORACLE_MIN_QUALITY === 'number') patch.VLM_ORACLE_MIN_QUALITY = String(snapshot.VLM_ORACLE_MIN_QUALITY);
   if (typeof snapshot.VLM_ORACLE_TIMEOUT_SEC === 'number') patch.VLM_ORACLE_TIMEOUT_SEC = String(snapshot.VLM_ORACLE_TIMEOUT_SEC);
   if (typeof snapshot.VLM_ORACLE_TOTAL_TIMEOUT_SEC === 'number') patch.VLM_ORACLE_TOTAL_TIMEOUT_SEC = String(snapshot.VLM_ORACLE_TOTAL_TIMEOUT_SEC);
+  if (typeof snapshot.VLM_ORACLE_CONNECT_TIMEOUT_SEC === 'number') patch.VLM_ORACLE_CONNECT_TIMEOUT_SEC = String(snapshot.VLM_ORACLE_CONNECT_TIMEOUT_SEC);
   if (typeof snapshot.VLM_ORACLE_POLL_MS === 'number') patch.VLM_ORACLE_POLL_MS = String(snapshot.VLM_ORACLE_POLL_MS);
   if (typeof snapshot.VLM_ORACLE_STALE_SEC === 'number') patch.VLM_ORACLE_STALE_SEC = String(snapshot.VLM_ORACLE_STALE_SEC);
   if (typeof snapshot.VLM_ORACLE_MAX_ATTEMPTS === 'number') patch.VLM_ORACLE_MAX_ATTEMPTS = String(snapshot.VLM_ORACLE_MAX_ATTEMPTS);
@@ -244,12 +276,25 @@ export function isGeminiSceneDiscoveryEnabled(env = process.env) {
 }
 
 /**
- * Helper konsumen: apakah SANITASI ORACLE aktif (vonis frame oleh model besar di
- * notebook Kaggle). Mode ini TIDAK mengganti gatekeeper ONNX/Whisper — hanya menambah
- * veto sebelum storyboard Gemini, sehingga fallback saat oracle diam = jalur lama.
+ * Helper konsumen: apakah SANITASI ORACLE aktif. Kebijakan Kaggle-only (mandate 2026-10):
+ * oracle adalah satu-satunya mode yang diizinkan sehingga nilai TIDAK-SET/aneh dihitung
+ * AKTIF (sama dengan default normalizer snapshot L72). Hanya 'legacy'/'smolvlm' eksplisit
+ * yang mematikan — dan dua nilai itu pun kini ditolak gerbang stage1Render sebelum job jalan.
  */
 export function isVlmOracleEnabled(env = process.env) {
-  return String(env.VISION_VERIFY_MODE || '').trim().toLowerCase() === 'oracle';
+  const v = String(env.VISION_VERIFY_MODE || '').trim().toLowerCase();
+  return v !== 'legacy' && v !== 'smolvlm';
+}
+
+/**
+ * Helper konsumen: apakah kebijakan STRICT oracle-only berlaku. Sejak user mandate
+ * 2026-10 mode oracle SELALU strict: oracle diam/timeout/vonis tidak sah = job BERHENTI,
+ * bukan "lanjut dengan keputusan legacy". Helper dipisah agar tooling kalibrasi di
+ * scratch/ bisa mengirim strict=false lewat opsi pemanggil (perilaku lama dipertahankan
+ * di sana) tanpa menyentuh jalur produksi.
+ */
+export function isOracleStrictMode(env = process.env) {
+  return isVlmOracleEnabled(env);
 }
 
 /**

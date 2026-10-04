@@ -225,6 +225,30 @@ export async function runAutoRetryWorker(jobId, run) {
           console.log(`[AutoRetry ${jobId}] BERHASIL pada percobaan ke-${run.attemptCount} dengan video: ${candidate.url}`);
           break;
         } catch (candErr) {
+          // KAGGLE-ONLY (user mandate 2026-10): Oracle tidak terhubung / tidak memvonis ->
+          // mencoba kandidat berikutnya sia-sia (semua job berhenti dengan reason sama).
+          // run.status di-set 'error' sehingga `while (run.status === 'running')` di luar
+          // ikut selesai — setara kondisi terminal, BUKAN gagal-per-kandidat.
+          if (candErr && candErr.code === 'ORACLE_UNAVAILABLE') {
+            run.status = 'error';
+            run.sourceStatus = 'UNAVAILABLE';
+            run.failureCode = 'ORACLE_UNAVAILABLE';
+            run.message = `⛔ Auto Retry dihentikan (kebijakan Kaggle-only): ${candErr.message} (reason: ${candErr.reason || 'unknown'}). Nyalakan tunnel + kernel oracle lalu ulangi.`;
+            run.updatedAt = new Date().toISOString();
+            console.error(`[AutoRetry ${jobId}] 🛑 Oracle Kaggle tidak tersedia: ${run.message}`);
+            updateJobProgress(jobId, {
+              step: 'vlm_oracle',
+              sourceStatus: 'UNAVAILABLE',
+              failureCode: 'ORACLE_UNAVAILABLE',
+              message: run.message,
+              progress: 100,
+              status: 'error',
+              error: run.message,
+              isAutoRetrying: false,
+              attemptCount: run.attemptCount,
+            });
+            break;
+          }
           const diag = classifyPipelineError(candErr);
           deleteJobFiles(jobId, outputDir, tempDir);
 

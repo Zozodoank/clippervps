@@ -7,7 +7,8 @@ import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecke
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
 import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled, isOraclePreflightEnabled } from '../config/runtimeFlags.js';
-import { applyOracleVeto, auditClipsWithOracle, preflightCandidatesWithOracle, orderCandidatesAfterPreflight } from '../services/vlmOracleService.js';
+import { applyOracleVeto, auditClipsWithOracle, preflightCandidatesWithOracle, orderCandidatesAfterPreflight, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
+import { maybeAutoLaunchOracle, waitForOracleOnline } from '../services/oracleLauncherService.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 // Pembungkus konteks job untuk pencatatan pemakaian AI (token/byte/biaya per job).
@@ -315,6 +316,38 @@ async function _runStage1Pipeline({
   const visionState = { runs: [], aiGaveFrameVerdict: false, accepted: 0, rejected: 0, lastFramesSent: null };
 
   try {
+
+    // ─── GERBANG KAGGLE-ONLY (user mandate 2026-10) ───
+    // Job HANYA boleh jalan dengan Oracle Kaggle sebagai gerbang verifikasi visual:
+    //  1) mode efektif bukan 'oracle' (legacy/smolvlm — termasuk snapshot retry job lama)
+    //     -> DITOLAK sebelum kerja berat apa pun;
+    //  2) API_ACCESS_TOKEN kosong atau notebook Kaggle tidak pernah memanggil API dalam
+    //     window segar (heartbeat claim) -> job DIHENTIKAN. Tidak ada lagi "lanjut dengan
+    //     keputusan legacy": vonis model besar di GPU adalah satu-satunya gerbang.
+    // Sengaja DI DALAM try (setelah jobMeta di-persist): error gerbang lewat cabang
+    // ORACLE_UNAVAILABLE di catch bawah -> riwayat job berisi alasan, bukan hilangkan
+    // senyap. Kode legacy di service/store TIDAK dihapus (dorman) — tetapi tidak ada
+    // satu pun jalur eksekusi produksinya.
+    let oracleGate = assertOracleConnected({ logger: console });
+    // AUTO-LAUNCH ORACLE (ORACLE_AUTO_LAUNCH=1, khusus perangkat yang punya
+    // kaggle CLI + kredensial — Termux): notebook mati bukan lagi kegagalan, tapi
+    // sinyal untuk menyalakan sesi Kaggle sendiri lewat 'kaggle kernels push'
+    // (oracle-launch.sh; tanpa PC/browser). Job lalu MENUNGGU heartbeat sampai
+    // ORACLE_AUTO_LAUNCH_WAIT_SEC (default 300 dtk) sebelum gerbang memutuskan.
+    // Flag mati = perilaku lama persis: gagal seketika, tidak spawn apa pun.
+    if (!oracleGate.ok && oracleGate.detail === 'notebook_offline') {
+      const launch = maybeAutoLaunchOracle({ logger: console });
+      if (launch.triggered) {
+        oracleGate = await waitForOracleOnline({ logger: console });
+      } else if (launch.reason === 'cooldown') {
+        console.log(`[OracleAutoLaunch] sesi terakhir berumur < cooldown — job tetap memakai gerbang lama (${Math.round(launch.waitMs / 60000)} mnt lagi boleh launch).`);
+      }
+    }
+    if (!oracleGate.ok) {
+      throw new OracleUnavailableError(`⛔ Job dihentikan (kebijakan Kaggle-only): ${oracleGate.message}`, { reason: oracleGate.detail, jobId });
+    }
+    // Jejak forensik: gerbang pernah lolos dan melihat heartbeat kapan.
+    jobMeta.oraclePreflight = { ok: true, lastSeenAt: oracleGate.lastSeenAt, checkedAt: new Date().toISOString() };
 
     const existingVideoInTemp = (() => {
       try {
@@ -1344,11 +1377,11 @@ async function _runStage1Pipeline({
         const currentPoolCandidate = candidatePool[candidatePoolIndex];
         const isCurrentOem = currentPoolCandidate && (options.oemUrls?.includes(currentPoolCandidate.url) || options.oemUrl1 === currentPoolCandidate.url || options.oemUrl2 === currentPoolCandidate.url);
 
-        // [Lapis 2 + 3] Pre-flight boleh diambil alih Kaggle: 15 frame @1 fps dari tengah
-        // tiap kandidat dikirim sebagai batch frame yang SUDAH ada, dan vonisnya membawa
-        // matchScore sehingga Kaggle-lah yang memeringkat (bukan lagi Gemini). Bila fungsi
-        // ini menyatakan TIDAK ikut campur (oracle mati / frame gagal diekstrak), blok
-        // Gemini di bawah berjalan persis seperti sebelumnya.
+        // [Lapis 2 + 3] Pre-flight diambil alih Kaggle: 15 frame @1 fps dari tengah tiap
+        // kandidat dikirim sebagai batch frame, dan vonisnya membawa matchScore sehingga
+        // Kaggle-lah yang memeringkat. KEBIJAKAN STRICT (mandate 2026-10): bila oracle mati
+        // / tidak memvonis, job BERHENTI — blok Gemini di bawah tidak pernah lagi dipakai
+        // sebagai pengganti vonis (fallback lama "kembali ke Gemini" sudah dihapus).
         if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem && !explicitOnly
             && isOraclePreflightEnabled(process.env)) {
           const pfStart = candidatePoolIndex;
@@ -1357,7 +1390,12 @@ async function _runStage1Pipeline({
               candidatePool.slice(pfStart, pfStart + 3),
               { jobId, niche: options.niche || 'kitchen_tools', productName: coreProductNoun, outDir: outputDir, onProgress: updateProgress },
             );
-            if (pf.enabled && pf.probed.length > 0) {
+            if (pf.enabled) {
+              if (pf.probed.length === 0) {
+                // Ekstraktor mengembalikan hasil tapi tidak ada posisi yang terpetakan —
+                // kondisi ini dulu lolos diam-diam ke blok Gemini di bawah. STRICT: berhenti.
+                throw new OracleUnavailableError('⛔ Pre-flight Kaggle aktif tetapi tidak ada satu pun kandidat ter-probe — job dihentikan; penilaian kandidat tanpa Kaggle tidak diizinkan.', { reason: 'infra', jobId });
+              }
               const poolTail = candidatePool.slice(pfStart);
               for (const rel of pf.probed) {
                 const cand = poolTail[rel];
@@ -1383,13 +1421,25 @@ async function _runStage1Pipeline({
               continue;
             }
           } catch (pfErr) {
-            // Murni pengaman: preflightCandidatesWithOracle tidak pernah melempar. Kalau ini
-            // terjadi, blok Gemini di bawah yang bekerja seperti biasa.
-            console.warn(`[Job ${jobId}] ⚠️ Pre-flight Kaggle dilewati (${pfErr.message}) -> kembali ke Gemini.`);
+            // STRICT: kegagalan pre-flight Kaggle = job berhenti, BUKAN "kembali ke Gemini".
+            // (preflightCandidatesWithOracle mode strict sudah melempar OracleUnavailableError;
+            // bungkus error lain agar auto-run tetap mengenali code-nya.)
+            if (pfErr instanceof OracleUnavailableError) throw pfErr;
+            throw new OracleUnavailableError(
+              `⛔ Pre-flight Kaggle gagal (${pfErr.message}) — job dihentikan; penilaian kandidat tanpa Kaggle tidak diizinkan.`,
+              { reason: 'infra', jobId },
+            );
           }
         }
 
-        if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem && !explicitOnly) {
+        // JALUR LAMA (Gemini pre-flight). KEBIJAKAN KAGGLE-ONLY: blok ini HANYA boleh
+        // berjalan bila pre-flight Kaggle memang DIMATIKAN secara sah oleh operator
+        // (PREFLIGHT_ORACLE=0) atau oracle tidak aktif. Dengan PREFLIGHT_ORACLE=1,
+        // kandidat yang tidak ter-probe Kaggle TIDAK boleh dinilai Gemini (itu jalur
+        // non-Kaggle) — mereka lanjut ke jalur normal yang tetap bergate veto pool +
+        // audit klip Kaggle.
+        if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem && !explicitOnly
+            && !isOraclePreflightEnabled(process.env)) {
           console.log(`[Job ${jobId}] 🚀 Memulai Fast Pre-Flight Check untuk kandidat...`);
           try {
             updateProgress({ step: 'pre_flight', message: 'Mencari gambar produk & memotong cuplikan kandidat...', progress: 10 });
@@ -1540,12 +1590,13 @@ async function _runStage1Pipeline({
           let testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 500, includeEligible: true })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
-          // ORACLE KAGGLE (opt-in, VISION_VERIFY_MODE=oracle): lapisan veto SEBELUM storyboard.
-          // Model besar memvonis frame yang akan dipakai; yang KOTOR masuk blacklistedFramePaths
-          // yang SUDAH ada -> Gemini, retainedFrames, dan rescue pool otomatis mengecalikannya.
-          // Oracle diam/timeout/error = tidak memveto apa pun, keputusan gatekeeper legacy +
-          // Gemini tetap berlaku. INI BUKAN fail-open: jalur legacy di sekitar titik ini tidak
-          // pernah dilewati (bandingkan branch 'smolvlm' yang me-return lebih awal).
+          // ORACLE KAGGLE (VISION_VERIFY_MODE=oracle — satu-satunya mode yang diizinkan):
+          // lapisan veto SEBELUM storyboard. Model besar memvonis frame yang akan dipakai;
+          // yang KOTOR masuk blacklistedFramePaths yang SUDAH ada -> Gemini, retainedFrames,
+          // dan rescue pool otomatis mengecalikannya.
+          // STRICT (mandate 2026-10): oracle diam/timeout/vonis tidak sah -> applyOracleVeto
+          // melempar OracleUnavailableError dan job BERHENTI. Tidak ada lagi "keputusan
+          // gatekeeper legacy + Gemini tetap berlaku".
           if (isVlmOracleEnabled(process.env)) {
             const veto = await applyOracleVeto(testPool, {
               jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
@@ -2418,7 +2469,8 @@ async function _runStage1Pipeline({
       // section 1080p yang baru diunduh. Yang dikirim ke notebook versi 360p
       // (VLM_ORACLE_FRAME_HEIGHT). Klip yang divonis kotor masuk discardedDirtyClips
       // dan mesin recovery di bawah yang menangani sisanya (Slot 1 + pooledFrames).
-      // Oracle diam/timeout = TIDAK ada vonis = klip tetap dipakai (legacy berlaku).
+      // STRICT (mandate 2026-10): oracle diam/timeout/vonis tidak sah -> job BERHENTI,
+      // bukan "klip tetap dipakai dengan keputusan legacy".
       if (isVlmOracleEnabled(process.env) && oracleClips.length > 0) {
         updateProgress({
           step: 'vlm_oracle',
@@ -2441,9 +2493,14 @@ async function _runStage1Pipeline({
           });
           console.log(`[Job ${jobId}] 🛰️ [Oracle audit klip] ${audit.checked} frame divisit, ${dirtySlots.length} klip ditolak model besar, ${audit.timedOut} frame tak dijawab (dalam ${Math.round(audit.elapsedMs / 1000)}s).`);
         } catch (oracleErr) {
-          // Jaga-jaga murni: auditClipsWithOracle tidak pernah melempar. Kalau ini
-          // terjadi, klip tetap dipakai — keputusan legacy + Gemini yang berlaku.
-          console.warn(`[Job ${jobId}] ⚠️ [Oracle audit klip] dilewati (${oracleErr.message}) -> semua klip hasil audit lokal tetap dipakai.`);
+          // STRICT: audit klip yang gagal divonis = job berhenti (klip tanpa vonis Kaggle
+          // tidak boleh dipakai). auditClipsWithOracle mode strict sudah melempar
+          // OracleUnavailableError; error lain dibungkus agar code-nya dikenali hilir.
+          if (oracleErr instanceof OracleUnavailableError) throw oracleErr;
+          throw new OracleUnavailableError(
+            `⛔ [Oracle audit klip] gagal (${oracleErr.message}) — job dihentikan; klip tanpa vonis Kaggle tidak diizinkan.`,
+            { reason: 'infra', jobId },
+          );
         }
       }
 
@@ -3284,6 +3341,38 @@ async function _runStage1Pipeline({
 
     // Immediately clean up temporary files so disk storage is freed
     deleteJobTempDirectory(jobId, tempDir);
+
+    // KEBIJAKAN KAGGLE-ONLY: stop karena oracle bersifat TERMINAL untuk SEMUA kelas job
+    // (manual DAN auto). Tanpa cabang ini, job manual yang sudah punya rawVideoPath akan
+    // di-downgrade ke 'awaiting_voiceover' di bawah -> retry manual / auto-retry melaporkan
+    // SUKSES padahal vonis Kaggle tidak pernah tiba, dan jalur TTS bisa merilis klip
+    // tanpa vonis. Video mentah tetap di disk (retry setelah notebook nyala tidak perlu
+    // unduh ulang), tapi statusnya error — bukan await voiceover.
+    if (error && error.code === 'ORACLE_UNAVAILABLE') {
+      const currentJob = activeJobs.get(jobId) || jobMeta || {};
+      const errorJob = {
+        ...currentJob,
+        ...extraJobMeta,
+        stage: 'error',
+        lastError: error.message,
+        oracleStopReason: error.reason || 'unknown',
+        errorAt: new Date().toISOString(),
+        visionProvenance: summarizeVisionRuns(visionState.runs),
+        isRescueStoryboard: Boolean(highlight?.isRescueStoryboard),
+      };
+      activeJobs.set(jobId, errorJob);
+      persistJob(jobId, errorJob);
+      updateProgress({
+        step: 'error',
+        message: error.message,
+        progress: 0,
+        status: 'error',
+        error: error.message,
+        canRetry: true,
+      });
+      error.jobId = jobId;
+      throw error;
+    }
 
     const hasSilentVideo = silentOutputPath && fs.existsSync(silentOutputPath);
     const hasRawVideo = rawVideoPath && fs.existsSync(rawVideoPath);

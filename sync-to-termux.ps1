@@ -54,16 +54,8 @@ Write-Host "   Remote project: $rel" -ForegroundColor DarkGray
 Write-Host "======================================================" -ForegroundColor Cyan
 
 try {
-  # [1/5] Checkpoint WAL jobs.db agar file db self-contained & aman disalin (protokol keamanan DB).
-  Write-Host "`n[1/6] Meng-flush WAL jobs.db (PRAGMA wal_checkpoint TRUNCATE)..." -ForegroundColor Yellow
-  Push-Location (Join-Path $RepoRoot 'server')
-  try {
-    & node -e "const D=require('better-sqlite3');const db=new D('./jobs.db');db.pragma('journal_mode = WAL');db.pragma('wal_checkpoint(TRUNCATE)');db.close();console.log('   checkpoint OK');"
-    if ($LASTEXITCODE -ne 0) { throw "checkpoint node gagal (exit $LASTEXITCODE). Pastikan better-sqlite3 terinstall di server/node_modules." }
-  } finally { Pop-Location }
-
-  # [2/5] Stop server ClipperVPS lokal (dev-runner/server.js) supaya tidak ada write baru saat menyalin.
-  Write-Host "[2/6] Menghentikan server lokal (node dev-runner/server.js)..." -ForegroundColor Yellow
+  # [1/6] Stop server ClipperVPS lokal (dev-runner/server.js) supaya tidak ada write baru saat menyalin.
+  Write-Host "`n[1/6] Menghentikan server lokal (node dev-runner/server.js)..." -ForegroundColor Yellow
   $nodeProcs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue | Where-Object {
     $_.CommandLine -match 'dev-runner\.js' -or $_.CommandLine -match 'server[\\/]+server\.js'
   }
@@ -77,9 +69,17 @@ try {
     Write-Host "   (tidak ada proses server node yang berjalan - lanjut)" -ForegroundColor DarkGray
   }
 
-  # [3/5] Pastikan pm2 Termux distop (jaga-jaga bila syn.sh belum dijalankan).
+  # [2/6] Checkpoint WAL jobs.db agar file db self-contained & aman disalin (protokol keamanan DB).
+  Write-Host "[2/6] Meng-flush WAL jobs.db (PRAGMA wal_checkpoint TRUNCATE)..." -ForegroundColor Yellow
+  Push-Location (Join-Path $RepoRoot 'server')
+  try {
+    & node -e "const D=require('better-sqlite3');const db=new D('./jobs.db');db.pragma('journal_mode = WAL');db.pragma('wal_checkpoint(TRUNCATE)');db.close();console.log('   checkpoint OK');"
+    if ($LASTEXITCODE -ne 0) { throw "checkpoint node gagal (exit $LASTEXITCODE). Pastikan better-sqlite3 terinstall di server/node_modules." }
+  } finally { Pop-Location }
+
+  # [3/6] Pastikan pm2 Termux distop (jaga-jaga bila syn.sh belum dijalankan).
   Write-Host "[3/6] Memastikan service Termux distop (pm2 stop clipper gatekeeper)..." -ForegroundColor Yellow
-  & ssh @sshArgs $dest "bash -lc 'command -v pm2 >/dev/null && pm2 stop clipper gatekeeper || true'"
+  & ssh @sshArgs $dest "bash -lc 'command -v pm2 >/dev/null && pm2 stop clipper gatekeeper >/dev/null 2>&1 </dev/null || true'"
 
   # [4/5] Salin jobs.db + folder output (video hasil) ke Termux.
   Write-Host "[4/6] Menyalin jobs.db + video output ke Termux..." -ForegroundColor Yellow
@@ -123,7 +123,7 @@ try {
 
   # [6/6] Restart pm2 Termux agar riwayat & video langsung tampil.
   Write-Host "[6/6] Merestart service Termux (pm2 restart clipper gatekeeper)..." -ForegroundColor Yellow
-  & ssh @sshArgs $dest "bash -lc 'command -v pm2 >/dev/null && pm2 restart clipper gatekeeper || true; command -v pm2 >/dev/null && pm2 save || true'"
+  & ssh @sshArgs $dest "bash -lc 'command -v pm2 >/dev/null && pm2 restart clipper gatekeeper >/dev/null 2>&1 </dev/null || true; command -v pm2 >/dev/null && pm2 save >/dev/null 2>&1 </dev/null || true'"
 
   Write-Host "`n======================================================" -ForegroundColor Green
   Write-Host "✅ SELESAI. Riwayat job + video PC sekarang sama di Termux." -ForegroundColor Green

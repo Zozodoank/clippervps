@@ -2025,7 +2025,7 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
       }
       return null;
     } catch (err) {
-      console.warn(`[FastPreflight] Snippet extraction failed for index ${index} (${url}): ${err.message}`);
+      console.warn(`[FastPreflight] Snippet extraction failed for index ${index} (${url}): ${scrubStreamUrl(err.message)}`);
       return null;
     }
   });
@@ -2047,6 +2047,27 @@ const PREFLIGHT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWeb
 /** `150` -> `00:02:30` (format yang dipakai jalur lama). */
 function formatClock(totalSec) {
   return new Date(Math.max(0, Number(totalSec) || 0) * 1000).toISOString().substr(11, 8);
+}
+
+/**
+ * Buang URL stream dari teks log. URL googlevideo hasil yt-dlp membawa token bertanda
+ * tangan yang bisa dipakai ulang siapa pun yang melihatnya sampai kedaluwarsa, jadi log
+ * (dan pesan error `exec` yang mengulang command-line utuh) tidak boleh menuliskannya.
+ */
+function scrubStreamUrl(text) {
+  return String(text || '').replace(/https?:\/\/\S+/g, '<url>');
+}
+
+/**
+ * Baris stderr FFmpeg yang paling menjelaskan, sudah dibersihkan dari URL.
+ * Dipakai karena `kode keluar N` saja hampir tidak pernah cukup untuk mendiagnosis:
+ * kode yang sama muncul untuk 403, durasi nol, dan stream tanpa video.
+ */
+function ffmpegHint(stderr) {
+  const lines = scrubStreamUrl(stderr).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return '';
+  const picked = lines.filter((l) => /error|denied|forbidden|40[134]|invalid|empty|none|timed out|server returned/i.test(l));
+  return (picked.length ? picked.slice(-2) : lines.slice(-2)).join(' | ').slice(0, 260);
 }
 
 /**
@@ -2184,7 +2205,11 @@ export async function extractPreflightFramesForOracle(urls, outputDir, opts = {}
         .filter((f) => /^pf_\d+\.jpg$/.test(f))
         .sort((a, b) => Number(a.match(/\d+/)[0]) - Number(b.match(/\d+/)[0]));
       if (files.length === 0) {
-        console.warn(`[PreflightFrames] Tidak ada frame untuk indeks ${index} (${url}): ${run.error || 'ffmpeg tidak mengirim error'}`);
+        // Konteks lengkap sengaja di sini: jalur lama (MP4) tidak pernah gagal dengan
+        // bentuk ini, jadi tanpa host/seek/stderr kita hanya punya angka exit code.
+        let streamHost = '?';
+        try { streamHost = new URL(streamUrl).host; } catch {}
+        console.warn(`[PreflightFrames] Tidak ada frame untuk indeks ${index} (${url}): ${run.error} — stream ${streamHost}, seek ${startSec}s, ${capSeconds}s @${capFps}fps, stderr: ${ffmpegHint(run.stderr) || '(kosong)'}`);
         try { fs.rmSync(frameDir, { recursive: true, force: true }); } catch {}
         return null;
       }
@@ -2197,7 +2222,7 @@ export async function extractPreflightFramesForOracle(urls, outputDir, opts = {}
       }));
       return { url, index, frameDir, startSec, frames };
     } catch (err) {
-      console.warn(`[PreflightFrames] Ekstraksi gagal untuk indeks ${index} (${url}): ${err.message}`);
+      console.warn(`[PreflightFrames] Ekstraksi gagal untuk indeks ${index} (${url}): ${scrubStreamUrl(err.message)}`);
       if (frameDir) { try { fs.rmSync(frameDir, { recursive: true, force: true }); } catch {} }
       return null;
     }

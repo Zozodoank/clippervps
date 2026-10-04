@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from '../services/downloader.js';
-import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, getAutoKeywords } from '../services/discoveryService.js';
+import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, getAutoKeywords, bingTitleRelevancePredicate } from '../services/discoveryService.js';
 import { buildNicheProductCriterion } from '../services/aiService.js';
 import { getNichePreset } from '../config/nichePresets.js';
 
@@ -84,6 +84,31 @@ describe('Kitchen Tools & Video-First Optimization', () => {
       expect(shopeeUrl).toContain('shopee.co.id/search?keyword=');
       const hasProduct = shopeeUrl.toLowerCase().includes('chopper');
       expect(hasProduct).toBe(true);
+    });
+  });
+
+  // Regresi 4 Okt 2026: scraping Bing Video menyedot kartu trending/iklan - query
+  // "Sokany Hand Blender" menghasilkan "Made by Google '26" dan "GTA 6 Leak" yang
+  // lalu dibobol pre-flight Kaggle (kuota + waktu + undangan throttle).
+  describe('Gerbang relevansi judul kandidat Bing', () => {
+    it('membuang judul tanpa satu pun kata produk dari query', () => {
+      const rel = bingTitleRelevancePredicate('sokany hand blender unboxing -servis -cara');
+      expect(rel("Made by Google '26")).toBe(false);
+      expect(rel('Another Wild GTA 6 Leak Just Happened')).toBe(false);
+      expect(rel("It's Infecting Everything")).toBe(false);
+      expect(rel('')).toBe(false);
+    });
+
+    it('menerima judul yang memuat kata produk (sokany / hand / blender)', () => {
+      const rel = bingTitleRelevancePredicate('sokany hand blender unboxing -servis -cara');
+      expect(rel('Sokany Hand Blender Murah Meriah')).toBe(true);
+      expect(rel('review blender dapur 300 watt')).toBe(true);
+    });
+
+    it('fail-open: query tanpa token bermakna tidak boleh mengosongkan antrian', () => {
+      const rel = bingTitleRelevancePredicate('-servis -cara 2026 review');
+      expect(rel('judul apa pun')).toBe(true);
+      expect(rel('')).toBe(true);
     });
   });
 

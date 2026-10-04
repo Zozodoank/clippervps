@@ -7,9 +7,11 @@ import { fileURLToPath } from 'url';
 
 // ============================================================================
 // VLM ORACLE (Kaggle) - test kontrak antrean, normalisasi vonis, dan yang paling
-// penting: JAMINAN FALLBACK. Kalau oracle tidak menjawab, TIDAK ADA frame yang
-// diveto dan pool kembali utuh. Regresi di sini = risiko fail-open/lolos filter.
-// DB terisolasi via JOBS_DB_PATH sebelum import jobStore (pola jobStorePatch.test.js).
+// penting: JAMINAN STRICT oracle-only (mandate 2026-10). Kalau oracle tidak
+// menjawab, job DIHENTIKAN (OracleUnavailableError) - bukan diam-diam lanjut
+// dengan keputusan legacy. Perilaku lama tetap teruji lewat opsi strict:false
+// (jalur tooling kalibrasi). Regresi di sini = risiko lolos filter / restart
+// tanpa henti. DB terisolasi via JOBS_DB_PATH sebelum import jobStore.
 // ============================================================================
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const testDbPath = path.join(os.tmpdir(), `jobs-oracle-test-${process.pid}-${Date.now()}.db`);
@@ -24,9 +26,13 @@ const {
   waitForOracleVerdict,
   oracleQueueStats,
   pruneOracleBatches,
+  touchOracleHeartbeat,
+  oracleLastSeenMs,
+  countBusyOracleJobs,
+  activeJobs,
 } = await import('../store/jobStore.js');
 
-const { buildConfigSnapshot, configSnapshotToEnvPatch, isVlmOracleEnabled, isOraclePreflightEnabled } = await import('../config/runtimeFlags.js');
+const { buildConfigSnapshot, configSnapshotToEnvPatch, isVlmOracleEnabled, isOraclePreflightEnabled, isOracleStrictMode } = await import('../config/runtimeFlags.js');
 const {
   resolveOracleConfig,
   pickEvenlySpaced,
@@ -37,9 +43,12 @@ const {
   auditClipsWithOracle,
   preflightCandidatesWithOracle,
   orderCandidatesAfterPreflight,
+  assertOracleConnected,
+  OracleUnavailableError,
   PREFLIGHT_SCENE_BASE,
 } = await import('../services/vlmOracleService.js');
 const { isAllowedFramePath } = await import('../api/routes/vlmOracleRoutes.js');
+const { maybeAutoLaunchOracle, waitForOracleOnline, __resetAutoLaunchCooldown } = await import('../services/oracleLauncherService.js');
 const { tempDir } = await import('../utils/paths.js');
 const { getFFmpegPath } = await import('../services/binaryChecker.js');
 
@@ -82,14 +91,26 @@ async function serveBatchAny(jobId, verdictFor) {
   return served;
 }
 
-describe('runtimeFlags - mode oracle', () => {
-  it('hanya menerima legacy/smolvlm/oracle, nilai aneh jatuh ke legacy', () => {
+describe('runtimeFlags - mode oracle (Kaggle-only, mandate 2026-10)', () => {
+  it('default tidak-set/nilai aneh = oracle; hanya legacy/smolvlm eksplisit yang dikenali', () => {
     expect(buildConfigSnapshot({ ...ENV_OFF, VISION_VERIFY_MODE: 'oracle' }).VISION_VERIFY_MODE).toBe('oracle');
     expect(buildConfigSnapshot({ ...ENV_OFF, VISION_VERIFY_MODE: 'ORACLE ' }).VISION_VERIFY_MODE).toBe('oracle');
-    expect(buildConfigSnapshot({ ...ENV_OFF, VISION_VERIFY_MODE: 'ya-yang-tau' }).VISION_VERIFY_MODE).toBe('legacy');
+    expect(buildConfigSnapshot({ ...ENV_OFF, VISION_VERIFY_MODE: 'ya-yang-tau' }).VISION_VERIFY_MODE).toBe('oracle');
+    expect(buildConfigSnapshot({}).VISION_VERIFY_MODE).toBe('oracle');
+    expect(buildConfigSnapshot({ VISION_VERIFY_MODE: 'legacy' }).VISION_VERIFY_MODE).toBe('legacy'); // dikenali, ditolak gerbang pipeline
     expect(isVlmOracleEnabled({ VISION_VERIFY_MODE: 'oracle' })).toBe(true);
     expect(isVlmOracleEnabled({ VISION_VERIFY_MODE: 'smolvlm' })).toBe(false);
-    expect(isVlmOracleEnabled({})).toBe(false);
+    expect(isVlmOracleEnabled({ VISION_VERIFY_MODE: 'legacy' })).toBe(false);
+    expect(isVlmOracleEnabled({})).toBe(true); // default mengikuti normalizer: oracle
+    expect(isOracleStrictMode({ VISION_VERIFY_MODE: 'oracle' })).toBe(true);
+    expect(isOracleStrictMode(ENV_OFF)).toBe(false);
+  });
+
+  it('VLM_ORACLE_CONNECT_TIMEOUT_SEC: default 120, floor 10, ikut ter-patch dan terbaca ms', () => {
+    expect(buildConfigSnapshot({}).VLM_ORACLE_CONNECT_TIMEOUT_SEC).toBe(120);
+    expect(buildConfigSnapshot({ VLM_ORACLE_CONNECT_TIMEOUT_SEC: '3' }).VLM_ORACLE_CONNECT_TIMEOUT_SEC).toBe(10);
+    expect(configSnapshotToEnvPatch(buildConfigSnapshot({ VLM_ORACLE_CONNECT_TIMEOUT_SEC: '45' })).VLM_ORACLE_CONNECT_TIMEOUT_SEC).toBe('45');
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_CONNECT_TIMEOUT_SEC: '45' }).connectTimeoutMs).toBe(45000);
   });
 
   it('semua flag oracle ikut dibekukan DAN di-patch balik (kontrak configSnapshot)', () => {
@@ -117,6 +138,17 @@ describe('resolveOracleConfig', () => {
     expect(cfg.batchSize).toBe(8);            // 0 -> default
     const off = resolveOracleConfig(ENV_OFF);
     expect(off.enabled).toBe(false);
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle' }).connectTimeoutMs).toBe(120000); // default
+    // 0 eksplisit dihormati (bukan diam-diam 120) - gerbang strict yang menolak job.
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_MAX_FRAMES: '0' }).maxFrames).toBe(0);
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_MAX_FRAMES: '' }).maxFrames).toBe(120);
+    expect(buildConfigSnapshot({ VLM_ORACLE_MAX_FRAMES: '0' }).VLM_ORACLE_MAX_FRAMES).toBe(0);
+    // Filter kualitas pre-flight: default 0 (mati - hanya mencatat), dijepit 0..100, ikut dibekukan.
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle' }).minQuality).toBe(0);
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_MIN_QUALITY: '55' }).minQuality).toBe(55);
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_MIN_QUALITY: '300' }).minQuality).toBe(100);
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_MIN_QUALITY: 'ngawur' }).minQuality).toBe(0);
+    expect(buildConfigSnapshot({ VLM_ORACLE_MIN_QUALITY: '35' }).VLM_ORACLE_MIN_QUALITY).toBe(35);
   });
 });
 
@@ -321,18 +353,26 @@ describe('sanitizePoolWithOracle / applyOracleVeto', () => {
     expect(oracleQueueStats().counts.pending).toBe(before);
   });
 
-  it('maxFrames=0 -> tidak divisit sama sekali', async () => {
-    const out = await sanitizePoolWithOracle(frameFiles, { jobId: 'zero', env: { ...ENV_ON, VLM_ORACLE_MAX_FRAMES: '0' }, logger: silent });
+  it('STRICT: VLM_ORACLE_MAX_FRAMES=0 -> LEMPAR (satu knob env tidak bisa lagi mematikan verifikasi diam-diam)', async () => {
+    let err = null;
+    try {
+      await sanitizePoolWithOracle(frameFiles, { jobId: 'zero', env: { ...ENV_ON, VLM_ORACLE_MAX_FRAMES: '0' }, logger: silent });
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(OracleUnavailableError);
+    expect(err.reason).toBe('infra');
+    // strict:false (tooling kalibrasi) tetap boleh berjalan tanpa visitasi.
+    const out = await sanitizePoolWithOracle(frameFiles, { jobId: 'zero', env: { ...ENV_ON, VLM_ORACLE_MAX_FRAMES: '0' }, logger: silent, strict: false });
     expect(out.enabled).toBe(true);
     expect(out.checked).toBe(0);
     expect(out.blacklisted).toEqual([]);
   });
 
-  it('oracle TIDAK MENJAWAB -> tidak ada veto, pool utuh, timedOut terisi', async () => {
+  it('STRICT:false (tooling kalibrasi): oracle TIDAK MENJAWAB -> tidak ada veto, pool utuh, timedOut terisi', async () => {
     const out = await applyOracleVeto(frameFiles, {
       jobId: 'diam',
       env: { ...ENV_ON, VLM_ORACLE_TIMEOUT_SEC: '5', VLM_ORACLE_TOTAL_TIMEOUT_SEC: '10', VLM_ORACLE_MAX_FRAMES: '1', VLM_ORACLE_POLL_MS: '150' },
       logger: silent,
+      strict: false,
     });
     expect(out.enabled).toBe(true);
     expect(out.rejected).toBe(0);
@@ -380,13 +420,40 @@ describe('sanitizePoolWithOracle / applyOracleVeto', () => {
     expect(res.checked).toBe(2);
   }, 25000);
 
-  it('vonis tidak sah (kawat rusak) -> tidak memveto apa pun', async () => {
-    const run = sanitizePoolWithOracle(frameFiles, { jobId: 'sampah', env: { ...ENV_ON, VLM_ORACLE_MAX_FRAMES: '1' }, logger: silent });
+  it('STRICT:false (tooling kalibrasi): vonis tidak sah (kawat rusak) -> tidak memveto apa pun', async () => {
+    const run = sanitizePoolWithOracle(frameFiles, { jobId: 'sampah', env: { ...ENV_ON, VLM_ORACLE_MAX_FRAMES: '1' }, logger: silent, strict: false });
     await serveBatch('sampah', () => ({ text: 'model mengirim prosa, bukan JSON' }));
     const res = await run;
     expect(res.checked).toBe(1);
     expect(res.rejected).toBe(0);
     expect(res.blacklisted).toEqual([]);
+  }, 25000);
+
+  // ---- KEBIJAKAN STRICT (default produksi mode oracle, mandate 2026-10) ----
+  // Dua test di bawah adalah INTI larangan "lanjut dengan keputusan legacy":
+  // kalau salah satunya berubah jadi lulus-diam, berarti job bisa lolos tanpa vonis Kaggle.
+  it('STRICT: notebook tidak pernah klaim -> LEMPAR OracleUnavailableError(never_claimed)', async () => {
+    const run = applyOracleVeto(frameFiles, {
+      jobId: 'strictnc',
+      env: { ...ENV_ON, VLM_ORACLE_TIMEOUT_SEC: '5', VLM_ORACLE_TOTAL_TIMEOUT_SEC: '6', VLM_ORACLE_MAX_FRAMES: '1', VLM_ORACLE_POLL_MS: '150' },
+      logger: silent,
+    });
+    let err = null;
+    try { await run; } catch (e) { err = e; }
+    expect(err, 'oracle diam TIDAK BOLEH lagi berarti lanjut legacy').toBeInstanceOf(OracleUnavailableError);
+    expect(err.code).toBe('ORACLE_UNAVAILABLE');
+    expect(err.reason).toBe('never_claimed');
+    expect(err.jobId).toBe('strictnc');
+  }, 25000);
+
+  it('STRICT: vonis tidak sah -> LEMPAR OracleUnavailableError(invalid_verdict), bukan diam-diam lolos', async () => {
+    const run = sanitizePoolWithOracle(frameFiles, { jobId: 'stricinv', env: { ...ENV_ON, VLM_ORACLE_MAX_FRAMES: '1' }, logger: silent });
+    await serveBatch('stricinv', () => ({ text: 'model mengirim prosa, bukan JSON' }));
+    let err = null;
+    try { await run; } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(OracleUnavailableError);
+    expect(err.reason).toBe('invalid_verdict');
+    expect(err.batchId, 'jejak forensik batch harus ikut terbawa').toMatch(/^orc_/);
   }, 25000);
 });
 
@@ -405,7 +472,8 @@ describe('path frame oracle (anti traversal)', () => {
 // ============================================================================
 // KONVERSI 360p SEBELUM DIKIRIM + AUDIT KLIP FINAL
 // Dua hal yang tidak boleh regresi: (1) file ASLI 1080p tidak pernah berubah dan
-// vonis selalu mengenai path asli, (2) oracle diam = klip TETAP dipakai.
+// vonis selalu mengenai path asli, (2) oracle diam = JOB DIHENTIKAN (strict adalah
+// default mode oracle); perilaku lama "klip tetap dipakai" hanya lewat strict:false.
 // ============================================================================
 
 describe('flag VLM_ORACLE_FRAME_HEIGHT + VLM_ORACLE_AUDIT_MAX_FRAMES', () => {
@@ -606,9 +674,9 @@ describe('auditClipsWithOracle (pass klip final, frame 2,5 fps yang sudah ada)',
     expect(res.verdicts.size).toBe(0);
   });
 
-  it('oracle diam -> TIDAK ada klip yang ditolak (klip tetap dipakai seperti sekarang)', async () => {
+  it('STRICT:false (tooling kalibrasi): oracle diam -> TIDAK ada klip yang ditolak (klip tetap dipakai)', async () => {
     const res = await auditClipsWithOracle(clips, groupsFor(), {
-      jobId: 'a_timeout', env: { ...ENV_ON, VLM_ORACLE_TIMEOUT_SEC: '5', VLM_ORACLE_TOTAL_TIMEOUT_SEC: '5' }, logger: silent,
+      jobId: 'a_timeout', env: { ...ENV_ON, VLM_ORACLE_TIMEOUT_SEC: '5', VLM_ORACLE_TOTAL_TIMEOUT_SEC: '5' }, logger: silent, strict: false,
     });
     expect(res.verdicts.size).toBe(0);
     expect(res.timedOut).toBeGreaterThan(0);
@@ -647,10 +715,10 @@ describe('auditClipsWithOracle (pass klip final, frame 2,5 fps yang sudah ada)',
     expect(res.checked).toBeGreaterThan(0);
   }, 30000);
 
-  it('vonis tidak sah -> tidak memveto (bukan vonis bersih, juga bukan penolakan)', async () => {
+  it('STRICT:false (tooling kalibrasi): vonis tidak sah -> tidak memveto (bukan vonis bersih, juga bukan penolakan)', async () => {
     let selesai = false;
     const pending = serveAll('a_bogus', () => ({ reason: 'model mengirim prosa' }), () => selesai);
-    const res = await auditClipsWithOracle(clips, groupsFor(), { jobId: 'a_bogus', env: ENV_ON, logger: silent });
+    const res = await auditClipsWithOracle(clips, groupsFor(), { jobId: 'a_bogus', env: ENV_ON, logger: silent, strict: false });
     selesai = true;
     await pending;
     expect(res.verdicts.size).toBe(0);
@@ -658,12 +726,36 @@ describe('auditClipsWithOracle (pass klip final, frame 2,5 fps yang sudah ada)',
     expect(res.timedOut).toBeGreaterThan(0);
   }, 30000);
 
-  it('frame hilang di disk / klip tanpa frame -> dilewati tanpa melempar', async () => {
-    const res = await auditClipsWithOracle(
-      [{ duration: 4 }, { duration: 4 }],
-      [[{ filePath: path.join(os.tmpdir(), 'tak-ada-1.jpg') }], []],
-      { jobId: 'a_noframe', env: { ...ENV_ON, VLM_ORACLE_TOTAL_TIMEOUT_SEC: '5' }, logger: silent },
-    );
+  it('STRICT: klip diklaim tapi tidak dijawab -> LEMPAR OracleUnavailableError(no_verdict)', async () => {
+    const run = auditClipsWithOracle(clips, groupsFor(), {
+      jobId: 'a_strict', env: { ...ENV_ON, VLM_ORACLE_TIMEOUT_SEC: '5', VLM_ORACLE_TOTAL_TIMEOUT_SEC: '5' }, logger: silent,
+    });
+    // Notebook hidup tapi sengaja diam: klaim lalu lepas tanpa vonis -> lastStatus
+    // 'claimed'/'expired' (BUKAN 'pending') sehingga reason yang benar 'no_verdict'.
+    for (let i = 0; i < 200; i++) {
+      const b = claimOracleBatch({ workerId: 'nb-a_strict' });
+      if (b) {
+        if (b.jobId !== 'a_strict') { expireOracleBatch(b.id, 'bukan batch tes'); continue; }
+        expireOracleBatch(b.id, 'notebook sengaja diam');
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    let err = null;
+    try { await run; } catch (e) { err = e; }
+    expect(err, 'klip tanpa vonis Kaggle tidak boleh dipakai lagi').toBeInstanceOf(OracleUnavailableError);
+    expect(err.reason).toBe('no_verdict');
+  }, 30000);
+
+  it('STRICT: klip tanpa frame valid -> LEMPAR infra; STRICT:false: dilewati tanpa melempar', async () => {
+    const clips2 = [{ duration: 4 }, { duration: 4 }];
+    const groups = [[{ filePath: path.join(os.tmpdir(), 'tak-ada-1.jpg') }], []];
+    const env = { ...ENV_ON, VLM_ORACLE_TOTAL_TIMEOUT_SEC: '5' };
+    let err = null;
+    try { await auditClipsWithOracle(clips2, groups, { jobId: 'a_noframe', env, logger: silent }); } catch (e) { err = e; }
+    expect(err, 'klip yang tidak bisa divisit Kaggle tidak boleh lolos diam-diam').toBeInstanceOf(OracleUnavailableError);
+    expect(err.reason).toBe('infra');
+    const res = await auditClipsWithOracle(clips2, groups, { jobId: 'a_noframe', env, logger: silent, strict: false });
     expect(res.verdicts.size).toBe(0);
     expect(res.checked).toBe(0);
   }, 20000);
@@ -722,6 +814,43 @@ describe('normalizeOracleVerdict - skor peringkat (Lapis 3)', () => {
     expect(v.productMatch).toBe(false);
     expect(v.vetoTriggered).toBe(false);
     // Yang menolak karena produk hanya jalur peringkat - lihat preflightCandidatesWithOracle.
+  });
+});
+
+describe('normalizeOracleVerdict - apparentQuality/lowQuality (kualitas tampak, BUKAN resolusi native)', () => {
+  const base = { safe: true, face: false, text: false, watermark: false, graphic: false };
+
+  it('vonis tanpa field kualitas = null (BUKAN 0): notebook lama tidak boleh membuat kandidat gugur', () => {
+    const v = normalizeOracleVerdict({ ...base });
+    expect(v.apparentQuality).toBeNull();
+    expect(v.lowQuality).toBeNull();
+    // Kolom kosong/false bukan 'kualitas 0' - persis jebakan matchScore yang sudah diuji.
+    expect(normalizeOracleVerdict({ ...base, apparentQuality: '' }).apparentQuality).toBeNull();
+    expect(normalizeOracleVerdict({ ...base, apparentQuality: false }).apparentQuality).toBeNull();
+  });
+
+  it('agregat dijepit 0..100 dan menang atas median; per-frame mengambil alih bila agregat hilang', () => {
+    expect(normalizeOracleVerdict({ ...base, apparentQuality: 78 }).apparentQuality).toBe(78);
+    expect(normalizeOracleVerdict({ ...base, apparentQuality: 480 }).apparentQuality).toBe(100);
+    expect(normalizeOracleVerdict({ ...base, apparentQuality: -12 }).apparentQuality).toBe(0);
+    const per = normalizeOracleVerdict({
+      ...base,
+      perFrame: [
+        { index: 0, safe: true, apparentQuality: 20 },
+        { index: 1, safe: true, apparentQuality: 30 },
+        { index: 2, safe: true, apparentQuality: 95 },
+      ],
+    });
+    // MEDIAN (30), bukan mean (48): satu frame halusinasi tajam tidak boleh menutup
+    // fakta bahwa sumbernya buram - inilah angka yang dipakai operator sebagai filter.
+    expect(per.apparentQuality).toBe(30);
+  });
+
+  it('lowQuality: boolean eksplisit menang; tanpa skor = null; hanya tanpa-skor-tanpa-flag yang netral', () => {
+    expect(normalizeOracleVerdict({ ...base, apparentQuality: 85, lowQuality: true }).lowQuality).toBe(true);
+    expect(normalizeOracleVerdict({ ...base, apparentQuality: 12 }).lowQuality).toBe(true);
+    expect(normalizeOracleVerdict({ ...base, apparentQuality: 85 }).lowQuality).toBe(false);
+    expect(normalizeOracleVerdict(base).lowQuality).toBeNull();
   });
 });
 
@@ -851,13 +980,65 @@ describe('preflightCandidatesWithOracle (Lapis 2 + peringkat Lapis 3)', () => {
     expect(res.accepted).toEqual([1]);
   }, 30000);
 
-  it('FAIL-OPEN: oracle tidak menjawab -> kandidat TIDAK dibuang dan tetap ditandai sudah divisit', async () => {
+  it('VLM_ORACLE_MIN_QUALITY: kandidat berkualitas rendah DIBUANG meski skornya tertinggi', async () => {
+    const withQ = (score, q) => ({ ...clean(score), apparentQuality: q });
+    const sets = [makeFrameSet(4, 'pfq'), makeFrameSet(4, 'pfq')];
+    // Kandidat 0: skor produk 90 TAPI kualitas sumber 20. Kandidat 1: skor 60, kualitas 88.
+    const serving = serveWhile('pf_qual', (b) => (b.sceneIdx === PREFLIGHT_SCENE_BASE ? withQ(90, 20) : withQ(60, 88)), 2);
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1', 'https://a/2'],
+      { jobId: 'pf_qual', outDir: path.join(os.tmpdir(), 'pf-out'), env: { ...ENV_ON, VLM_ORACLE_MIN_QUALITY: '50' }, logger: silent, extractFrames: fakeExtractor(sets) },
+    );
+    await serving;
+    // Urutan pemotongan: bersih -> produk -> KUALITAS -> peringkat. Skor 90 tidak menyelamatkan.
+    expect(res.accepted).toEqual([1]);
+    expect(res.rejected).toEqual([0]);
+    const low = res.results.find((r) => r.index === 0);
+    expect(low.clean).toBe(true);
+    expect(low.qualityBlocked).toBe(true);
+    expect(low.dropReason).toMatch(/kualitas sumber rendah \(apparentQuality 20 < 50\)/);
+    expect(res.results.find((r) => r.index === 1).apparentQuality).toBe(88);
+  }, 30000);
+
+  it('Ambang mati (default 0): apparentQuality hanya DICATAT, tidak ada kandidat gugur karenanya', async () => {
+    const withQ = (score, q) => ({ ...clean(score), apparentQuality: q });
+    const sets = [makeFrameSet(4, 'pfq0')];
+    const serving = serveWhile('pf_qual0', () => withQ(70, 5), 1);
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1'],
+      { jobId: 'pf_qual0', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets) },
+    );
+    await serving;
+    expect(res.accepted).toEqual([0]);
+    expect(res.rejected).toEqual([]);
+    expect(res.results[0].apparentQuality).toBe(5);
+    // Flag informatif tetap ada (bekal forensik untuk menetapkan ambang), tapi tidak memvonis buang.
+    expect(res.results[0].lowQuality).toBe(true);
+    expect(res.results[0].qualityBlocked).toBe(false);
+  }, 30000);
+
+  it('Notebook lama tanpa apparentQuality tidak gugur meski ambang tinggi dipasang', async () => {
+    const sets = [makeFrameSet(4, 'pfqn')];
+    const serving = serveWhile('pf_qualn', () => clean(80), 1);
+    const res = await preflightCandidatesWithOracle(
+      ['https://a/1'],
+      { jobId: 'pf_qualn', outDir: path.join(os.tmpdir(), 'pf-out'), env: { ...ENV_ON, VLM_ORACLE_MIN_QUALITY: '60' }, logger: silent, extractFrames: fakeExtractor(sets) },
+    );
+    await serving;
+    // null = tidak ada informasi, BUKAN 'kualitas 0'. Kalau ini dibuang, deploy server
+    // mendahului deploy notebook akan memangkas semua kandidat secara misterius.
+    expect(res.accepted).toEqual([0]);
+    expect(res.results[0].apparentQuality).toBeNull();
+    expect(res.results[0].qualityBlocked).toBe(false);
+  }, 30000);
+
+  it('STRICT:false (tooling kalibrasi): oracle tidak menjawab -> kandidat TIDAK dibuang dan tetap ditandai sudah divisit', async () => {
     const sets = [makeFrameSet(4, 'silent'), makeFrameSet(4, 'silent')];
     // Notebook klaim lalu melepas tanpa vonis -> status 'expired' seketika (tanpa tunggu timeout 5s).
     const serving = serveWhile('pf_silent', null, 2);
     const res = await preflightCandidatesWithOracle(
       ['https://a/1', 'https://a/2'],
-      { jobId: 'pf_silent', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets) },
+      { jobId: 'pf_silent', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets), strict: false },
     );
     await serving;
     expect(res.enabled).toBe(true);
@@ -868,6 +1049,34 @@ describe('preflightCandidatesWithOracle (Lapis 2 + peringkat Lapis 3)', () => {
     expect(res.rejected).toEqual([]);
     expect(res.untested).toEqual([0, 1]);
     expect(res.accepted).toEqual([]);
+  }, 30000);
+
+  it('STRICT: kandidat diklaim tanpa vonis -> LEMPAR OracleUnavailableError(no_verdict)', async () => {
+    const sets = [makeFrameSet(4, 'pfstrict')];
+    const serving = serveWhile('pf_strict', null, 1);
+    let err = null;
+    try {
+      await preflightCandidatesWithOracle(['https://a/1'], {
+        jobId: 'pf_strict', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets),
+      });
+    } catch (e) { err = e; }
+    await serving;
+    expect(err, 'kandidat tanpa vonis tidak boleh lagi lanjut ke Gemini lama').toBeInstanceOf(OracleUnavailableError);
+    expect(err.reason).toBe('no_verdict');
+  }, 30000);
+
+  it('STRICT: vonis pre-flight tidak sah -> LEMPAR OracleUnavailableError(invalid_verdict)', async () => {
+    const sets = [makeFrameSet(4, 'pfbad')];
+    const serving = serveWhile('pf_bad', () => ({ text: 'prosa, bukan vonis' }), 1);
+    let err = null;
+    try {
+      await preflightCandidatesWithOracle(['https://a/1'], {
+        jobId: 'pf_bad', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent, extractFrames: fakeExtractor(sets),
+      });
+    } catch (e) { err = e; }
+    await serving;
+    expect(err).toBeInstanceOf(OracleUnavailableError);
+    expect(err.reason).toBe('invalid_verdict');
   }, 30000);
 
   it('oracle mati total -> enabled:false dan ekstraksi TIDAK pernah dipanggil', async () => {
@@ -881,24 +1090,80 @@ describe('preflightCandidatesWithOracle (Lapis 2 + peringkat Lapis 3)', () => {
     expect(called).toBe(0);
   });
 
-  it('ekstraksi gagal total -> tanpa_frame, Gemini yang menilai (bukan semua kandidat dibuang)', async () => {
+  it('STRICT:false (tooling): ekstraksi gagal total -> tanpa_frame, Gemini yang menilai (bukan semua kandidat dibuang)', async () => {
     const res = await preflightCandidatesWithOracle(
       ['https://a/1', 'https://a/2'],
-      { jobId: 'pf_noframe', env: ENV_ON, logger: silent, extractFrames: async () => [] },
+      { jobId: 'pf_noframe', env: { ...ENV_ON, VLM_ORACLE_PREFLIGHT_EXTRACT_RETRIES: '0' }, logger: silent, extractFrames: async () => [], strict: false },
     );
     expect(res.enabled).toBe(false);
     expect(res.note).toBe('tanpa_frame');
     expect(res.rejected).toEqual([]);
   });
 
-  it('ekstraktor melempar -> note ekstraksi_gagal, tidak menjatuhkan pemanggil', async () => {
+  it('STRICT:false (tooling): ekstraktor melempar -> note ekstraksi_gagal, tidak menjatuhkan pemanggil', async () => {
     const res = await preflightCandidatesWithOracle(
       ['https://a/1'],
-      { jobId: 'pf_throw', env: ENV_ON, logger: silent, extractFrames: async () => { throw new Error('youtube menolak'); } },
+      { jobId: 'pf_throw', env: { ...ENV_ON, VLM_ORACLE_PREFLIGHT_EXTRACT_RETRIES: '0' }, logger: silent, extractFrames: async () => { throw new Error('youtube menolak'); }, strict: false },
     );
     expect(res.enabled).toBe(false);
     expect(res.note).toBe('ekstraksi_gagal');
   });
+
+  // --- Retry ekstraksi pra-flight (regresi throttle 4 Okt 2026, auto_2fff755605) ---
+
+  it('RETRY: 0 frame pada percobaan pertama (throttle sementara) -> kandidat tetap divisit, job tidak mati', async () => {
+    const sets = [makeFrameSet(4, 'retryok')];
+    let calls = 0;
+    const flaky = async (urls) => {
+      calls += 1;
+      if (calls === 1) return [];
+      return urls.map((url, index) => ({ index, url, frameDir: sets[index].frameDir, frames: sets[index].frames }));
+    };
+    const serving = serveWhile('pf_retry_ok', () => clean(80), 1);
+    const res = await preflightCandidatesWithOracle(['https://a/1'], {
+      jobId: 'pf_retry_ok', outDir: path.join(os.tmpdir(), 'pf-out'),
+      env: { ...ENV_ON, VLM_ORACLE_PREFLIGHT_EXTRACT_RETRIES: '2', VLM_ORACLE_PREFLIGHT_RETRY_DELAY_MS: '5' },
+      logger: silent, extractFrames: flaky,
+    });
+    await serving;
+    expect(calls).toBe(2); // percobaan pertama nol, kedua berhasil -> berhenti tanpa mencoba ke-3
+    expect(res.enabled).toBe(true);
+    expect(res.accepted).toEqual([0]);
+  }, 30000);
+
+  it('RETRY: ekstraktor melempar lalu pulih -> vonis tetap jalan (error sesaat BUKAN lagi vonis mati)', async () => {
+    const sets = [makeFrameSet(4, 'retryth')];
+    let calls = 0;
+    const flaky = async (urls) => {
+      calls += 1;
+      if (calls === 1) throw new Error('googlevideo timeout');
+      return urls.map((url, index) => ({ index, url, frameDir: sets[index].frameDir, frames: sets[index].frames }));
+    };
+    const serving = serveWhile('pf_retry_th', () => clean(70), 1);
+    const res = await preflightCandidatesWithOracle(['https://a/1'], {
+      jobId: 'pf_retry_th', outDir: path.join(os.tmpdir(), 'pf-out'),
+      env: { ...ENV_ON, VLM_ORACLE_PREFLIGHT_EXTRACT_RETRIES: '1', VLM_ORACLE_PREFLIGHT_RETRY_DELAY_MS: '5' },
+      logger: silent, extractFrames: flaky,
+    });
+    await serving;
+    expect(calls).toBe(2);
+    expect(res.accepted).toEqual([0]);
+  }, 30000);
+
+  it('STRICT: nol frame di SEMUA percobaan -> tetap LEMPAR OracleUnavailableError(infra) setelah retry habis', async () => {
+    let calls = 0;
+    let err = null;
+    try {
+      await preflightCandidatesWithOracle(['https://a/1'], {
+        jobId: 'pf_retry_strict', outDir: path.join(os.tmpdir(), 'pf-out'),
+        env: { ...ENV_ON, VLM_ORACLE_PREFLIGHT_EXTRACT_RETRIES: '2', VLM_ORACLE_PREFLIGHT_RETRY_DELAY_MS: '5' },
+        logger: silent, extractFrames: async () => { calls += 1; return []; },
+      });
+    } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(OracleUnavailableError);
+    expect(err.reason).toBe('infra');
+    expect(calls).toBe(3); // 1 + 2 retry - kebijakan STRICT tidak dilonggarkan, hanya diberi napas
+  }, 30000);
 
   it('STABILITAS INDEKS: kandidat yang gagal ekstraksi tidak menggeser posisi yang dilaporkan', async () => {
     const sets = [makeFrameSet(4, 'idx'), makeFrameSet(4, 'idx')];
@@ -954,11 +1219,11 @@ describe('preflightCandidatesWithOracle (Lapis 2 + peringkat Lapis 3)', () => {
     expect(fs.existsSync(sets[0].frameDir)).toBe(false);
   }, 30000);
 
-  it('frame habis sebelum dikirim -> untested, bukan rejected', async () => {
+  it('STRICT:false (tooling): frame habis sebelum dikirim -> untested, bukan rejected', async () => {
     const sets = [{ frameDir: '', frames: [] }];
     const res = await preflightCandidatesWithOracle(['https://a/1'], {
       jobId: 'pf_ghost', outDir: path.join(os.tmpdir(), 'pf-out'), env: ENV_ON, logger: silent,
-      extractFrames: async () => [{ index: 0, frameDir: '', frames: [] }],
+      extractFrames: async () => [{ index: 0, frameDir: '', frames: [] }], strict: false,
     });
     expect(sets).toHaveLength(1);
     expect(res.probed).toEqual([0]);
@@ -1003,13 +1268,165 @@ describe('orderCandidatesAfterPreflight (kontrak fail-open pemanggil)', () => {
   });
 });
 
+describe('jobStore - heartbeat notebook & lastStatus (fondasi gerbang koneksi)', () => {
+  it('touchOracleHeartbeat idempoten dan terbaca di oracleLastSeenMs + oracleQueueStats', () => {
+    const t = Date.now();
+    expect(touchOracleHeartbeat('nb-hb', t)).toMatchObject({ workerId: 'nb-hb', lastSeenAt: t });
+    expect(oracleLastSeenMs()).toBeGreaterThanOrEqual(t);
+    touchOracleHeartbeat('nb-hb', t + 5000); // worker yang sama HANYA menaikkan umur, bukan duplikat baris
+    expect(oracleLastSeenMs()).toBe(t + 5000);
+    expect(oracleQueueStats().lastSeenAt).toBe(t + 5000);
+  });
+
+  it('batch tak pernah diklaim: waitForOracleVerdict -> status timeout dengan lastStatus pending', async () => {
+    enqueueOracleBatch({ id: 'q_hb_never', jobId: 'hb', sceneIdx: 0, frames: [{ index: 0, filePath: path.join(os.tmpdir(), 'hb-tak-ada.jpg') }], prompt: 'p' });
+    const waited = await waitForOracleVerdict('q_hb_never', { timeoutMs: 150, pollMs: 50 });
+    expect(waited.status).toBe('timeout');
+    // 'pending' = tidak pernah diklaim -> pemanggil STRICT melaporkan never_claimed.
+    expect(waited.lastStatus).toBe('pending');
+    expireOracleBatch('q_hb_never', 'bersihkan tes heartbeat');
+  });
+
+  it('batch tak dikenal: lastStatus unknown (bukan pending diam-diam)', async () => {
+    const waited = await waitForOracleVerdict('q_hb_hantu', { timeoutMs: 1, pollMs: 1 });
+    expect(waited.status).toBe('unknown');
+    expect(waited.lastStatus).toBe('unknown');
+  });
+
+  it('wiring gerbang: endpoint claim memanggil touchOracleHeartbeat untuk SETIAP polling (cek source, pola tokenAuth.test)', () => {
+    // Polling KOSONG pun harus terhitung "notebook hidup" - klaim adalah satu-satunya
+    // sinyal koneksi yang jujur (Kaggle tidak punya inbound). Sedikit goyah bila handler
+    // di-refactor; perbarui regex ini bersama routes-nya.
+    const src = fs.readFileSync(path.resolve(__dirname, '..', 'api/routes/vlmOracleRoutes.js'), 'utf8');
+    expect(src).toMatch(/touchOracleHeartbeat/);
+    expect(src.indexOf("router.post('/vlm-oracle/claim'")).toBeLessThan(src.indexOf('touchOracleHeartbeat(workerId)'));
+  });
+
+  it('wiring idle-exit: respons klaim KOSONG wajib membawa activeJobs (cek source, pola yang sama)', () => {
+    // Notebook hanya boleh membunuh kernel bila server bilang tidak ada job sibuk.
+    // Tanpa field ini, jeda render panjang (antrean kosong!) akan menghentikan job
+    // audit klip final di 61% - kegagalan yang dibeli dengan fitur hemat kuota.
+    const src = fs.readFileSync(path.resolve(__dirname, '..', 'api/routes/vlmOracleRoutes.js'), 'utf8');
+    expect(src).toMatch(/countBusyOracleJobs/);
+    expect(src).toMatch(/claimed: false[\s\S]{0,220}activeJobs: countBusyOracleJobs\(\)/);
+  });
+});
+
+describe('countBusyOracleJobs - sinyal "jangan bunuh diri" untuk idle-exit notebook', () => {
+  const T0 = Date.now() + 10_000_000; // jauh ke depan: memo 10 detik tidak pernah bentrok
+  const iso = (ms) => new Date(ms).toISOString();
+
+  it('hanya stage non-terminal yang sentuh-baru dihitung; terminal/lama tidak; tanpa-timestamp konservatif sibuk', () => {
+    activeJobs.set('busy_rekan', { id: 'busy_rekan', stage: 'rendering', updatedAt: iso(T0 - 60_000) });
+    activeJobs.set('selesai_rekan', { id: 'selesai_rekan', stage: 'completed', updatedAt: iso(T0 - 60_000) });
+    activeJobs.set('mati_rekan', { id: 'mati_rekan', stage: 'running', updatedAt: iso(T0 - 3_700_000) }); // > window 1 jam
+    expect(countBusyOracleJobs({ now: T0, windowMs: 3_600_000 })).toBe(1);
+    // Baris TANPA updatedAt: konservatif = sibuk. Sengaja dibaca dengan `now` >10s
+    // kemudian supaya memo cache tidak mengembalikan nilai test sebelumnya.
+    activeJobs.set('hantu_rekan', { id: 'hantu_rekan', stage: 'clip_audit' });
+    expect(countBusyOracleJobs({ now: T0 + 20_000, windowMs: 3_600_000 })).toBe(2);
+  });
+});
+
+describe('assertOracleConnected - gerbang "Kaggle terhubung" sebelum kerja berat', () => {
+  it('mode efektif bukan oracle -> ok:false detail mode_not_oracle', () => {
+    const r = assertOracleConnected({ logger: silent, env: { ...ENV_OFF, API_ACCESS_TOKEN: 'x' } });
+    expect(r.ok).toBe(false);
+    expect(r.detail).toBe('mode_not_oracle');
+    expect(r.message).toMatch(/VISION_VERIFY_MODE=oracle/);
+  });
+
+  it('API_ACCESS_TOKEN kosong -> ok:false detail token_kosong (endpoint akan 503)', () => {
+    const r = assertOracleConnected({ logger: silent, env: { VISION_VERIFY_MODE: 'oracle', API_ACCESS_TOKEN: '   ' } });
+    expect(r.ok).toBe(false);
+    expect(r.detail).toBe('token_kosong');
+  });
+
+  it('mode oracle + token + heartbeat segar -> ok:true connected', () => {
+    touchOracleHeartbeat('nb-gate', Date.now());
+    const r = assertOracleConnected({ logger: silent, env: { ...ENV_ON, API_ACCESS_TOKEN: 'token-tes' } });
+    expect(r.ok).toBe(true);
+    expect(r.detail).toBe('connected');
+    expect(r.lastSeenAt).toBeGreaterThan(0);
+  });
+  // CATATAN: cabang 'notebook_offline' sengaja TIDAK diuji eksplisit - oracleLastSeenMs
+  // adalah MAX lintas worker, jadi begitu satu heartbeat segar tertanam di DB tes yang
+  // sama ia tidak bisa dibuat basi lagi. Jalur itu ter-cover smoke manual (notebook mati).
+});
+
+describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (mandate 2026-10)', () => {
+  const ENV_LAUNCH = { ...ENV_ON, API_ACCESS_TOKEN: 'tok-tes', ORACLE_AUTO_LAUNCH: '1', ORACLE_AUTO_LAUNCH_CMD: '/tmp/fake-launch.sh' };
+  const mkSpawn = (calls) => (bin, args, opts) => { calls.push({ bin, args, opts }); return { on() {}, unref() {} }; };
+
+  it('flag OFF (default) -> flag_off, spawn TIDAK pernah dipanggil', () => {
+    const calls = [];
+    const r = maybeAutoLaunchOracle({ env: { ...ENV_ON, API_ACCESS_TOKEN: 'tok' }, logger: silent, spawnFn: mkSpawn(calls) });
+    expect(r).toMatchObject({ triggered: false, reason: 'flag_off' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('token kosong -> token_kosong walau flag ON', () => {
+    const calls = [];
+    const r = maybeAutoLaunchOracle({ env: { ...ENV_LAUNCH, API_ACCESS_TOKEN: '' }, logger: silent, spawnFn: mkSpawn(calls) });
+    expect(r).toMatchObject({ triggered: false, reason: 'token_kosong' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('heartbeat masih segar -> notebook_alive, tidak ada sesi ganda', () => {
+    touchOracleHeartbeat('nb-launch', Date.now());
+    const calls = [];
+    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), spawnFn: mkSpawn(calls) });
+    expect(r).toMatchObject({ triggered: false, reason: 'notebook_alive' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('heartbeat basi (now = +10 mnt) -> spawn detached bash <cmd>', () => {
+    __resetAutoLaunchCooldown();
+    const calls = [];
+    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now() + 10 * 60000, spawnFn: mkSpawn(calls) });
+    expect(r).toMatchObject({ triggered: true, reason: 'launched', cmd: '/tmp/fake-launch.sh' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].bin).toBe('bash');
+    expect(calls[0].args).toEqual(['/tmp/fake-launch.sh']);
+    expect(calls[0].opts).toMatchObject({ detached: true, stdio: 'ignore' });
+  });
+
+  it('pemanggilan kedua dalam cooldown -> cooldown, tanpa spawn baru', () => {
+    const calls = [];
+    // lastLaunchAtMs masih +10 mnt dari tes sebelumnya; now sama -> selisih 0 < cooldown.
+    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now() + 10 * 60000, spawnFn: mkSpawn(calls) });
+    expect(r).toMatchObject({ triggered: false, reason: 'cooldown' });
+    expect(calls).toHaveLength(0);
+    __resetAutoLaunchCooldown();
+  });
+
+  it('waitForOracleOnline: heartbeat muncul di tengah tunggu -> ok:true', async () => {
+    let i = 0;
+    const seq = [0, 0, Date.now()]; // dua poll basi, lalu notebook terlihat
+    const r = await waitForOracleOnline({
+      env: ENV_ON, logger: silent, waitMs: 5000, pollMs: 5, deadline: Date.now(),
+      lastSeenFn: () => seq[Math.min(i++, seq.length - 1)], sleep: async () => {},
+    });
+    expect(r).toMatchObject({ ok: true, detail: 'connected' });
+  });
+
+  it('waitForOracleOnline: deadline lewat tanpa heartbeat -> ok:false notebook_offline', async () => {
+    const r = await waitForOracleOnline({
+      env: ENV_ON, logger: silent, waitMs: 250, pollMs: 50, deadline: Date.now(),
+      lastSeenFn: () => 0, sleep: async () => {},
+    });
+    expect(r).toMatchObject({ ok: false, detail: 'notebook_offline' });
+    expect(r.message).toMatch(/Auto-launch sudah dikirim/);
+  });
+});
+
 // Sanitasi: konversi 360p sengaja menulis di bawah server/temp/oracle_frames (itu
 // perilaku default yang juga diuji di file ini), jadi direktori milik tes dibuang
 // supaya tidak meninggalkan sampah di tree produksi perangkat.
 afterAll(() => {
   const base = path.join(tempDir, 'oracle_frames');
   if (!fs.existsSync(base)) return;
-  const milikTes = ['zero', 'diam', 'kotor', 'agregat', 'sampah', 'peta', 'raw', 'small', 'ghost', 'conv', 'junk', 'a_', 'off'];
+  const milikTes = ['zero', 'diam', 'kotor', 'agregat', 'sampah', 'peta', 'raw', 'small', 'ghost', 'conv', 'junk', 'a_', 'off', 'strict'];
   for (const name of fs.readdirSync(base)) {
     if (!milikTes.some((p) => name.startsWith(p))) continue;
     try { fs.rmSync(path.join(base, name), { recursive: true, force: true }); } catch { }

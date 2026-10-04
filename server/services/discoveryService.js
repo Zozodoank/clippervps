@@ -2251,12 +2251,42 @@ export async function discoverYouTubeCandidatesForProduct({
   return cleanCandidates.length > 0 ? cleanCandidates : scoredCandidates;
 }
 
+// Kata umum yang bukan identitas produk: hampir semua judul video memuatnya, jadi mereka
+// tidak bisa dipakai sebagai bukti relevansi terhadap query.
+const BING_RELEVANCE_STOPWORDS = new Set([
+  'review', 'unboxing', 'official', 'video', 'hands', 'test', 'tes', 'demo',
+  'best', 'top', 'viral', 'terbaru', 'bagus', 'untuk', 'dengan', 'this', 'that',
+  'from', 'youtube', 'full', 'hd', '4k', 'original', 'trailer', 'versus', 'how',
+  'make', 'bikin', 'cara', 'pada', 'dan', 'the', 'smart', 'pro', 'plus', 'max',
+  'mini', 'new',
+]);
+
+/**
+ * Predikat gerbang relevansi Bing: judul kandidat harus memuat minimal satu kata bermakna
+ * dari query bersih. Fail-open - query tanpa token bermakna menganggap SEMUA judul relevan
+ * (lebih baik menahan daripada mengosongkan antrian). Diekspor untuk unit test.
+ */
+export function bingTitleRelevancePredicate(cleanQuery) {
+  const tokens = [...new Set(String(cleanQuery || '')
+    .toLowerCase()
+    .replace(/-\S+/g, ' ')   // operator negatif (-servis) bukan kata produk - jangan jadi token
+    .replace(/["']/g, ' ')
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length >= 3 && !/^\d+$/.test(t) && !BING_RELEVANCE_STOPWORDS.has(t)))];
+  if (!tokens.length) return () => true;
+  return (title) => {
+    const tl = String(title || '').toLowerCase();
+    return tokens.some((t) => tl.includes(t));
+  };
+}
+
 /**
  * Scrapes Bing Videos for high-quality demonstration candidates matching the query.
  * Bing Video Search returns rich metadata: video title, duration, uploader, and direct YouTube URLs.
  */
 export async function searchBingVideos(query, { limit = 20, onProgress = () => {} } = {}) {
   const cleanQuery = buildCleanYouTubeQuery(query);
+  const titleRelevant = bingTitleRelevancePredicate(cleanQuery);
   const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
   const url = `https://www.bing.com/videos/search?q=${encodeURIComponent(cleanQuery)}`;
 
@@ -2315,6 +2345,12 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
         if (uploaderMatch) channel = uploaderMatch[1].trim();
       }
 
+      // Gerbang relevansi (ditemukan 4 Okt 2026): Bing menyisipkan kartu trending/iklan berisi
+      // ID YouTube yang sama sekali tidak berkaitan - query "hand blender" menghasilkan
+      // "Made by Google '26" dan "GTA 6 Leak". Judul tanpa satu pun kata produk dibuang di
+      // sini, bukan disedot pre-flight Kaggle lalu dimuntahkan ulang.
+      if (!titleRelevant(title)) return;
+
       // Filter out videos with known duration < min (default 5 mnt) or > max (default 15 mnt)
       if (durationSec > 0 && (durationSec < getMinVideoDurationSec() || durationSec > getMaxVideoDurationSec())) return;
 
@@ -2336,24 +2372,10 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
       if (candidates.length >= safeLimit) return false;
     });
 
-    if (candidates.length < safeLimit) {
-      const ytRegex = /https?:\/\/(?:www\.)?youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})/g;
-      let rm;
-      while ((rm = ytRegex.exec(html)) !== null && candidates.length < safeLimit) {
-        const id = rm[1];
-        if (!seenIds.has(id)) {
-          seenIds.add(id);
-          candidates.push({
-            id,
-            title: query,
-            url: `https://www.youtube.com/watch?v=${id}`,
-            duration: 0,
-            channel: '',
-            source: 'bing_video',
-          });
-        }
-      }
-    }
+    // FALLBACK REGEX "ambil semua link watch?v= dari halaman" DIHAPUS 4 Okt 2026: link yang
+    // dipungut adalah trending/iklan tanpa judul terverifikasi (title=query, duration=0 sehingga
+    // lolos semua filter metadata). Di bawah pre-flight Kaggle yang STRICT kandidat buta ini
+    // hanya membuang kuota, waktu, dan mengundang throttle.
 
     return candidates;
   } catch (err) {

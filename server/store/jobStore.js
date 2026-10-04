@@ -48,6 +48,15 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_vlm_oracle_status ON vlm_oracle_batches(status, created_at);
 
+  -- HEARTBEAT NOTEBOOK KAGGLE: satu baris per workerId, di-update setiap kali dia memanggil
+  -- POST /vlm-oracle/claim — TERMASUK polling kosong (200 claimed:false). Ini-sinyal jujur
+  -- "Kaggle terhubung": arah koneksi dipaksa fisika jaringan (notebook = klien), jadi tidak
+  -- ada cara lain mengetahui notebook hidup selain melihat dia terakhir bertanya.
+  CREATE TABLE IF NOT EXISTS oracle_heartbeat (
+    worker_id TEXT PRIMARY KEY,
+    last_seen_at INTEGER NOT NULL
+  );
+
   -- PEMAKAIAN AI (Lapis 1 rencana hemat token): SATU baris per panggilan provider AI,
   -- termasuk yang GAGAL (ok=0) karena justru kegagalan/kuota yang menjelaskan rantai
   -- fallback model. total_tokens diambil dari provider, BUKAN dari angka karangan yang
@@ -530,18 +539,56 @@ const sleepDefault = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /**
  * Tunggu vonis satu batch. SELALU mengembalikan status akhir, tidak pernah melempar:
  * 'done' (verdict ada), 'expired' (worker/notebook menyerah), 'timeout' (deadline
- * lewat — caller memperlakukannya sebagai TIDAK ADA VONIS, bukan vonis bersih).
+ * lewat — pemanggil STRICT memperlakukannya sebagai JOB BERHENTI, bukan vonis bersih).
+ * `lastStatus` = status batch PALING MAJU yang pernah terlihat saat polling
+ * ('pending' = tidak pernah diklaim -> notebook offline; 'claimed' = diklaim tapi
+ * vonis tidak pernah tiba). Pemanggil butuh ini untuk membedakan reason 'never_claimed'
+ * vs 'no_verdict' pada OracleUnavailableError.
  */
 export async function waitForOracleVerdict(id, { timeoutMs = 180_000, pollMs = 2_000, sleep = sleepDefault, now = () => Date.now() } = {}) {
   const deadline = now() + Math.max(0, Number(timeoutMs) || 0);
+  const RANK = { pending: 0, claimed: 1, done: 2, expired: 1, unknown: -1 };
+  let lastStatus = 'unknown';
+  const observe = (status) => {
+    if ((RANK[status] ?? -1) > (RANK[lastStatus] ?? -1)) lastStatus = status;
+    return lastStatus;
+  };
   for (;;) {
     const b = getOracleBatch(id);
-    if (!b) return { status: 'unknown', batch: null };
-    if (b.status === 'done') return { status: 'done', batch: b, verdict: b.verdict };
-    if (b.status === 'expired') return { status: 'expired', batch: b };
-    if (now() >= deadline) return { status: 'timeout', batch: b };
+    if (!b) return { status: 'unknown', lastStatus, batch: null };
+    observe(b.status);
+    if (b.status === 'done') return { status: 'done', lastStatus, batch: b, verdict: b.verdict };
+    if (b.status === 'expired') return { status: 'expired', lastStatus, batch: b };
+    if (now() >= deadline) return { status: 'timeout', lastStatus, batch: b };
     await sleep(Math.min(pollMs, Math.max(50, deadline - now())));
   }
+}
+
+/**
+ * Untuk idle-exit NOTEBOOK Kaggle: apakah masih ada job lokal yang mungkin segera
+ * mengantri batch vonis? Antrean KOSONG bukan berarti tidak ada kerja - di antara
+ * pre-flight -> pool -> render -> audit klip ada jeda menit-jam (unduh+render di
+ * Termux) ketika antrean memang kosong. 'Sibuk' = stage tidak terminal DAN sempat
+ * disentuh dalam window (patchJob selalu menulis updatedAt; baris tanpa timestamp
+ * dianggap sibuk secara konservatif - lebih baik sesi notebook bertahan 1 jam lagi
+ * daripada kernelnya membunuh audit klip yang akan datang). Memo 10 detik: dipakai
+ * di respons poll kosong yang bisa tiap 5 detik; parsing seluruh tabel job per-poll
+ * tidak perlu.
+ */
+let busyJobsCache = { at: 0, n: -1 };
+export function countBusyOracleJobs({ now = Date.now(), windowMs = 3_600_000 } = {}) {
+  if (now - busyJobsCache.at < 10_000 && busyJobsCache.n >= 0) return busyJobsCache.n;
+  let n = 0;
+  for (const row of db.prepare('SELECT data FROM jobs').iterate()) {
+    let job = null;
+    try { job = JSON.parse(row.data); } catch { continue; }
+    if (!job || TERMINAL_STAGES.has(job.stage)) continue;
+    const touched = Date.parse(job.updatedAt || job.lastUpdated || '');
+    if (Number.isFinite(touched) && now - touched > windowMs) continue;
+    n += 1;
+  }
+  busyJobsCache = { at: now, n };
+  return n;
 }
 
 export function oracleQueueStats({ now = Date.now() } = {}) {
@@ -552,8 +599,35 @@ export function oracleQueueStats({ now = Date.now() } = {}) {
   return {
     counts,
     oldestPendingAgeMs: oldest.pending ? Math.max(0, now - oldest.pending) : null,
+    lastSeenAt: oracleLastSeenMs(),
     total: Object.values(counts).reduce((a, b) => a + b, 0),
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HEARTBEAT NOTEBOOK — dipanggil dari endpoint claim setiap kali notebook bertanya.
+// ─────────────────────────────────────────────────────────────────────────────
+const heartbeatUpsert = db.prepare(`INSERT INTO oracle_heartbeat (worker_id, last_seen_at)
+  VALUES (?, ?) ON CONFLICT(worker_id) DO UPDATE SET last_seen_at = excluded.last_seen_at`);
+// DI-PREPARE SEKALI di module scope: endpoint claim memanggil jalur ini SETIAP polling
+// (~2 detik) — db.prepare per panggilan = parsing SQL sia-sia di Termux.
+const heartbeatSeenSelect = db.prepare('SELECT MAX(last_seen_at) AS seen FROM oracle_heartbeat');
+const claimedSeenSelect = db.prepare('SELECT MAX(claimed_at) AS seen FROM vlm_oracle_batches');
+
+/** Catat "notebook ini masih hidup". Idempoten; tidak pernah melempar untuk kesalahan sepele. */
+export function touchOracleHeartbeat(workerId = 'kaggle', now = Date.now()) {
+  const id = String(workerId || 'kaggle').slice(0, 120) || 'kaggle';
+  heartbeatUpsert.run(id, now);
+  return { workerId: id, lastSeenAt: now };
+}
+
+/** Kapan terakhir KALI ada notebook memanggil API (null = belum pernah). */
+export function oracleLastSeenMs() {
+  const row = heartbeatSeenSelect.get();
+  if (row && row.seen) return row.seen;
+  // Fallback untuk instalasi sebelum tabel heartbeat ada: klaim batch tertua yang tercatat.
+  const claimed = claimedSeenSelect.get();
+  return claimed && claimed.seen ? claimed.seen : null;
 }
 
 /** Bersihkan jejak batch lama (dipanggil dari endpoint status/CRON lokal; anti DB membengkak). */

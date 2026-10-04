@@ -25,9 +25,12 @@ import {
   submitOracleResult,
   getOracleBatch,
   oracleQueueStats,
+  countBusyOracleJobs,
   pruneOracleBatches,
+  touchOracleHeartbeat,
 } from '../../store/jobStore.js';
 import { resolveOracleConfig } from '../../services/vlmOracleService.js';
+import { isOracleStrictMode } from '../../config/runtimeFlags.js';
 import { createRateLimiter, recordAuditEvent } from '../../utils/security.js';
 import { getApiAccessToken } from '../middleware/tokenAuth.js';
 import { serverRoot, outputDir, tempDir, rejectedYunetDir } from '../../utils/paths.js';
@@ -69,10 +72,18 @@ router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
   if (!requireOracleToken(req, res)) return undefined;
   const cfg = resolveOracleConfig(process.env);
   const workerId = String((req.body && req.body.workerId) || req.headers['x-oracle-worker'] || 'kaggle').slice(0, 120);
+  // HEARTBEAT: setiap claim yang lewat — termasuk polling kosong (claimed:false) — adalah
+  // bukti notebook HIDUP. Satu-satunya sinyal koneksi yang jujur, karena arah panggilan
+  // dipaksa fisika jaringan (Kaggle tidak punya inbound). Dibaca gerbang stage1Render via
+  // oracleLastSeenMs(): tanpa heartbeat segar, job baru langsung dihentikan.
+  touchOracleHeartbeat(workerId);
   const batch = claimOracleBatch({ workerId, staleMs: cfg.staleMs, maxAttempts: cfg.maxAttempts });
   if (!batch) {
     // 200 (bukan 204) karena tetap mengirim ikhtisar antrean; 204 tidak boleh berbadan.
-    res.json({ success: true, claimed: false, pending: oracleQueueStats().counts.pending });
+    // `activeJobs` = sinyal HEMAT untuk idle-exit notebook: antrean kosong saat ada job
+    // berjalan (fase unduh/render panjang di antara tahap oracle) BUKAN waktunya membunuh
+    // kernel - audit klip final akan mengantri batch beberapa menit/jam lagi.
+    res.json({ success: true, claimed: false, pending: oracleQueueStats().counts.pending, activeJobs: countBusyOracleJobs() });
     return undefined;
   }
   recordAuditEvent({ req, action: 'vlm-oracle-claim', detail: `batch=${batch.id} frames=${batch.frames.length} worker=${workerId}` });
@@ -150,15 +161,26 @@ router.get('/vlm-oracle/frames/:batchId/:index', frameLimiter, (req, res) => {
 router.get('/vlm-oracle/status', (req, res) => {
   const cfg = resolveOracleConfig(process.env);
   const stats = oracleQueueStats();
+  const lastSeenAt = stats.lastSeenAt;
+  // Window "terhubung" = VLM_ORACLE_STALE_SEC (sama dengan gerbang stage1Render);
+  // CONNECT_TIMEOUT dipakai untuk batas tunggu klaim PERTAMA, bukan window heartbeat.
+  const freshMs = cfg.staleMs;
+  const connected = Boolean(lastSeenAt) && (Date.now() - lastSeenAt) <= freshMs;
   res.json({
     success: true,
     oracle: {
       enabled: cfg.enabled,
-      mode: process.env.VISION_VERIFY_MODE || 'legacy',
+      mode: process.env.VISION_VERIFY_MODE || 'oracle',
+      strict: isOracleStrictMode(process.env), // vonis legacy hanya ada bila mode non-oracle di-set eksplisit (tooling) — produksi selalu true
+      connected,
+      lastSeenAt,
+      lastSeenAgeMs: lastSeenAt ? Date.now() - lastSeenAt : null,
       maxFrames: cfg.maxFrames,
       batchSize: cfg.batchSize,
       perBatchTimeoutSec: Math.round(cfg.perBatchTimeoutMs / 1000),
       totalTimeoutSec: Math.round(cfg.totalTimeoutMs / 1000),
+      connectTimeoutSec: Math.round(cfg.connectTimeoutMs / 1000),
+      heartbeatWindowSec: Math.round(freshMs / 1000),
       baseUrl: cfg.baseUrl || null,
       tokenConfigured: Boolean(getApiAccessToken()),
       queue: stats.counts,

@@ -24,6 +24,13 @@
 #      KONFIG: lapisan ini ada justru karena GPU, bukan untuk inferensi CPU pelan.
 #   3. Jalankan. Notebook ini looping; hentikan manual atau ia exit sendiri
 #      setelah ORACLE_MAX_MINUTES supaya tidak dipotong Kaggle di jam ke-12.
+#      HEMAT KUOTA GPU: setelah ORACLE_IDLE_EXIT_MIN menit tanpa ada batch yang
+#      pernah diklaim (default 20; 0 = mati total) DAN server melaporkan tidak ada
+#      job sibuk (field activeJobs/pending di respons klaim kosong), worker berhenti
+#      dan mencoba membunuh kernel Jupyter-nya (ORACLE_IDLE_SHUTDOWN=1) supaya waktu
+#      GPU berhenti terhitung. Sesi berikutnya harus di-start manual lagi dari UI
+#      Kaggle. Server lokal tetap aman: heartbeat yang berhenti = gerbang
+#      Kaggle-only menghentikan job dengan alasan jelas, BUKAN vonis legacy.
 #
 # Token NIKKIR (tidak pernah dicetak ke log) karena log notebook bisa ter-share.
 # ============================================================================
@@ -114,6 +121,23 @@ def _cfg(*names, **kw):
     return kw.get("default", "")
 
 
+def _cfg_raw(name, default=""):
+    """Sama seperti _cfg tapi membaca KEHADIRAN, bukan kebenaran nilai.
+
+    Penting untuk knob yang nilai 'mati'-nya justru 0/false: dengan _cfg, JSON
+    {"ORACLE_IDLE_SHUTDOWN": 0} dilewati (falsy) sehingga default menang dan operator
+    yang berusaha MELARANG pembunuhan kernel malah mendapatkannya. deploy.ps1 aman
+    karena menulis string; user yang mengedit oracle_config.json manual tidak.
+    """
+    v = os.getenv(name)
+    if v is not None and v != "":
+        return v
+    for k in (name, name.lower()):
+        if k in _CFG and _CFG[k] is not None:
+            return str(_CFG[k])
+    return default
+
+
 # ------------------------------------------------------------------ KONFIG ---
 BASE_URL = (_cfg("VLM_ORACLE_BASE_URL", "ORACLE_BASE_URL", "base_url", "baseUrl") or "").rstrip("/")
 TOKEN = _cfg("API_ACCESS_TOKEN", "VLM_ORACLE_API_TOKEN", "api_access_token", "token")
@@ -152,8 +176,17 @@ if HF_TOKEN:
 POLL_SEC = float(_cfg("ORACLE_POLL_SEC", default="5") or 5)
 IDLE_SLEEP_MAX = float(_cfg("ORACLE_IDLE_SLEEP_MAX", default="30") or 30)
 MAX_MINUTES = float(_cfg("ORACLE_MAX_MINUTES", default="690") or 690)   # < 12 jam Kaggle
+# Idle-exit HEMAT KUOTA: menit tanpa satu pun batch ter-klaim -> worker berhenti dan
+# (bila ORACLE_IDLE_SHUTDOWN=1) membunuh kernel supaya GPU berhenti dihitung. Diubah
+# dari default 20 hanya bila Anda sengaja menjaga notebook hangat antar job.
+# Dibaca lewat _cfg_raw: 0/false di oracle_config.json HARUS dihormati (mati = mati).
+IDLE_EXIT_MIN = float(_cfg_raw("ORACLE_IDLE_EXIT_MIN", "20") or 0)
+IDLE_SHUTDOWN = str(_cfg_raw("ORACLE_IDLE_SHUTDOWN", "1")).strip().lower() not in ("0", "false", "off", "")
 MAX_SIDE = int(_cfg("ORACLE_MAX_SIDE", default="1024") or 1024)         # turun sebelum inference
-MAX_NEW_TOKENS = int(_cfg("ORACLE_MAX_NEW_TOKENS", default="160") or 160)
+# 200 (bukan 160): kontrak ranking kini membawa satu kunci tambahan (apparentQuality) -
+# JSON terpotong = extract_json gagal = vonis invalid = job STRICT mati. Kepala murah,
+# buntung mahal.
+MAX_NEW_TOKENS = int(_cfg("ORACLE_MAX_NEW_TOKENS", default="200") or 200)
 AUTO_INSTALL = _cfg("ORACLE_AUTO_INSTALL", default="1") == "1"
 # Set 1 untuk menguji sambungan (claim/report) TANPA memuat model - berguna untuk
 # memvalidasi tunnel + token sebelum menghabiskan kuota GPU.
@@ -540,6 +573,11 @@ def clamp_score(value):
     """Skor kecocokan 0-100 sebagai int, atau None bila model tidak mengirim angka
     sah. None berarti 'tidak ada informasi' dan TIDAK sama dengan 0: sisi server
     memperlakukan 0 sebagai 'produk salah' sedangkan None sebagai 'tanpa skor'."""
+    if isinstance(value, bool):
+        # Cermin clampScore() di server: True/False BUKAN angka. float(True)=1.0 akan
+        # menjadi 'skor 1' sungguhan dan bisa menjatuhkan kandidat lewat filter
+        # kualitas, padahal artinya persis 'tidak ada informasi'.
+        return None
     try:
         n = float(value)
     except (TypeError, ValueError):
@@ -652,6 +690,10 @@ def verdict_batch(payload, model, processor, torch):
         # ditimpa dengan median bukti per-frame yang lebih tajam.
         out["productMatch"] = bool(obj.get("productMatch", True))
         out["matchScore"] = clamp_score(obj.get("matchScore"))
+        # Kualitas tampak sumber (filter resolusi pre-flight sisi server, lihat
+        # VLM_ORACLE_MIN_QUALITY). None = model tidak menjawab - server TIDAK boleh
+        # menjadikan ketiadaan informasi sebagai vonis 'rendah'.
+        out["apparentQuality"] = clamp_score(obj.get("apparentQuality"))
 
     # Refine per-frame bila ada TANDA kotor apa pun, bukan hanya saat safe:false.
     # Hilir (`normalizeOracleVerdict`) memveto ketika `safe:false` ATAU salah satu flag menyala,
@@ -675,6 +717,7 @@ def verdict_batch(payload, model, processor, torch):
                     # bukan 0, supaya median tidak menghukum kandidat karena satu frame rusak.
                     entry["productMatch"] = None
                     entry["matchScore"] = None
+                    entry["apparentQuality"] = None
                 per_frame.append(entry)
                 continue
             frame_verdict = {
@@ -688,6 +731,7 @@ def verdict_batch(payload, model, processor, torch):
             if ranking:
                 frame_verdict["productMatch"] = bool(obj1.get("productMatch", True))
                 frame_verdict["matchScore"] = clamp_score(obj1.get("matchScore"))
+                frame_verdict["apparentQuality"] = clamp_score(obj1.get("apparentQuality"))
             per_frame.append(frame_verdict)
         if per_frame:
             out["perFrame"] = per_frame
@@ -703,6 +747,9 @@ def verdict_batch(payload, model, processor, torch):
                 out["matchScore"] = median_int([f.get("matchScore") for f in per_frame])
                 if out["matchScore"] is None:
                     out["matchScore"] = clamp_score(obj.get("matchScore"))
+                out["apparentQuality"] = median_int([f.get("apparentQuality") for f in per_frame])
+                if out["apparentQuality"] is None:
+                    out["apparentQuality"] = clamp_score(obj.get("apparentQuality"))
                 matches = [f.get("productMatch") for f in per_frame if f.get("productMatch") is not None]
                 out["productMatch"] = any(matches) if matches else bool(obj.get("productMatch", True))
             out["elapsedMs"] = int((time.time() - t0) * 1000)
@@ -727,6 +774,59 @@ def post_result(batch_id, verdict=None, error=""):
     return r.status_code
 
 
+def shutdown_kernel_session():
+    """Matikan kernel Jupyter yang inang worker supaya Kaggle berhenti menghitung waktu GPU.
+
+    Rantai parent dibaca dari /proc (Kaggle = Linux): worker bisa berjalan sebagai kernel
+    sendiri (import/exec di sel) ATAU sebagai anak `!python ...` - dua-duanya selesai di
+    proses yang cmdline-nya memuat 'ipykernel'. SIGKILL dipilih karena kernel yang
+    berhenti membuat sesi mati; setelah ini tidak ada lagi kuota yang terpotong.
+    Tidak ditemukan = tidak apa-apa: log menyuruh operator stop manual dari UI.
+    """
+    import signal as _signal
+
+    def _cmdline(pid):
+        try:
+            with open("/proc/%d/cmdline" % pid, "rb") as fh:
+                return fh.read().decode("utf-8", "replace")
+        except Exception:
+            return ""
+
+    def _ppid(pid):
+        try:
+            with open("/proc/%d/status" % pid) as fh:
+                for line in fh:
+                    if line.startswith("PPid:"):
+                        return int(line.split()[1])
+        except Exception:
+            pass
+        return 0
+
+    pid, target, fallback = os.getpid(), None, None
+    for _ in range(8):
+        if not pid or pid <= 1:
+            break
+        cmd = _cmdline(pid)
+        if "ipykernel_launcher" in cmd or "-m ipykernel" in cmd:
+            target = pid
+            break
+        if fallback is None and pid > 1 and "ipykernel" in cmd:
+            # Generic hanya sebagai cadangan: substring 'ipykernel' juga cocok untuk
+            # pembantu (pip install ipykernel dll) yang TIDAK boleh kita bunuh.
+            fallback = pid
+        pid = _ppid(pid)
+    target = target or fallback
+    if not target or target <= 1:
+        log("Kernel ipykernel tidak terlihat di rantai parent - hentikan sesi manual dari UI Kaggle.")
+        return
+    log("Sesi idle: membunuh kernel (pid=%d) supaya kuota GPU berhenti terhitung. "
+        "Start sesi manual lagi dari Kaggle saat job berikutnya dibutuhkan." % target)
+    try:
+        os.kill(target, _signal.SIGKILL)
+    except Exception as err:
+        log("Gagal membunuh kernel: %s - hentikan sesi manual dari UI." % err)
+
+
 def main():
     if not BASE_URL:
         raise SystemExit(
@@ -743,8 +843,9 @@ def main():
             "kaggle/deploy.ps1 -TunnelUrl ... -WithToken, atau env var API_ACCESS_TOKEN di Kaggle."
         )
     log("Base URL siap. Token: %d karakter (tidak ditampilkan). Model: %s (SATU bobot, tanpa fallback). "
-        "GPU wajib=%s|NO_MODEL=%s|max=%.0f menit"
-        % (len(token), MODEL_ID.split("/")[-1], REQUIRE_GPU, NO_MODEL, MAX_MINUTES))
+        "GPU wajib=%s|NO_MODEL=%s|max=%.0f menit|idle-exit=%.0f menit(shutdown=%s)"
+        % (len(token), MODEL_ID.split("/")[-1], REQUIRE_GPU, NO_MODEL, MAX_MINUTES,
+           IDLE_EXIT_MIN, "on" if IDLE_SHUTDOWN else "off"))
 
     model = processor = torch = None
     if not NO_MODEL:
@@ -761,7 +862,24 @@ def main():
     idle = POLL_SEC
     done = failed = 0
     bid = None
+    # Idle-exit dihitung dari PEKERJAAN sungguhan (batch ter-klaim/diselesaikan), bukan
+    # dari request HTTP: poll kosong tetap memperbarui heartbeat di server, tapi tidak
+    # membayar GPU untuk vonis.
+    last_work = time.time()
+    # Anting-Server: respons 'claimed':false membawa {pending, activeJobs}. Antrean
+    # kosong SAAT ADA job berjalan (fase unduh/render panjang di antara tahap oracle)
+    # bukan waktunya bunuh diri - audit klip final akan mengantri batch beberapa menit
+    # lagi. server_busy = sinyal terakhir dari server; tunnel mati = nilai terakhir
+    # dipertahankan (True = jangan berhenti; False = tetap hemat). Server lama tanpa
+    # field activeJobs dianggap SIBUK (konservatif: lebih baik sesi hangat kepanjangan
+    # daripada kernel membunuh audit yang akan datang).
+    server_busy = False
+    idle_exited = False
     while (time.time() - START) / 60.0 < MAX_MINUTES:
+        if IDLE_EXIT_MIN > 0 and not server_busy and (time.time() - last_work) / 60.0 >= IDLE_EXIT_MIN:
+            idle_exited = True
+            log("Tidak ada batch diklaim selama %.0f menit dan server melaporkan tidak ada job sibuk -> worker berhenti (hemat kuota GPU)." % IDLE_EXIT_MIN)
+            break
         try:
             bid = None
             r = requests.post(BASE_URL + "/api/vlm-oracle/claim",
@@ -778,10 +896,14 @@ def main():
                 continue
             data = r.json()
             if not data.get("claimed"):
+                aj = data.get("activeJobs")
+                server_busy = int(data.get("pending") or 0) > 0 or (int(aj or 0) > 0 if aj is not None else True)
                 idle = min(IDLE_SLEEP_MAX, idle * 1.6)
                 time.sleep(idle)
                 continue
             idle = POLL_SEC
+            server_busy = True  # ada kerja nyata - idle-exit tidak boleh muncul di tengah batch
+            last_work = time.time()
             bid = data["batchId"]
             log("claim %s (%d frame, job=%s scene=%s)" % (bid, len(data["frames"]), data.get("jobId"), data.get("sceneIdx")))
             if NO_MODEL:
@@ -798,10 +920,16 @@ def main():
                     post_result(bid, None, error=str(dl_err))
                     failed += 1
                 done += 1
+                last_work = time.time()
                 continue
             v = verdict_batch(data, model, processor, torch)
             post_result(bid, v)
             done += 1
+            # Jam idle dimulai ulang setelah vonis SELESAI, bukan saat diklaim: batch
+            # besar + refine per-frame di tunnel lambat bisa memakan >= IDLE_EXIT_MIN dan
+            # polling kosong berikutnya akan langsung membunuh kernel tepat setelah
+            # pekerjaan berat berhasil.
+            last_work = time.time()
             log("  -> safe=%s flags=%s %dms" % (v["safe"],
                 ",".join(k for k in ("face", "text", "watermark", "graphic") if v.get(k)) or "-",
                 v.get("elapsedMs", 0)))
@@ -821,6 +949,11 @@ def main():
             time.sleep(min(IDLE_SLEEP_MAX, idle))
     shutil.rmtree(TMP_ROOT, ignore_errors=True)
     log("Selesai. vonis=%s gagal=%s durasi=%.1f menit." % (done, failed, (time.time() - START) / 60.0))
+    # Path ORACLE_MAX_MINUTES juga ikut mematikan: berhenti di menit 690 lalu membayar
+    # 30 menit sisa sampai pemotongan paksa Kaggle di jam ke-12 bukan hemat, itu bakar kuota.
+    reached_cap = (not idle_exited) and (time.time() - START) / 60.0 >= MAX_MINUTES
+    if IDLE_SHUTDOWN and (idle_exited or reached_cap):
+        shutdown_kernel_session()
 
 
 if __name__ == "__main__":

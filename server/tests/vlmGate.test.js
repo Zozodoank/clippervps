@@ -84,14 +84,20 @@ describe('vlmGateService - fungsi murni', () => {
     expect(p).toContain('PRODUCT UNDER TEST: "Wajan Anti Lengket 26cm".');
     expect(p).toContain('productMatch=true ONLY if');
     expect(p).toContain('matchScore = 0-100');
+    // Kontrak kualitas tampak (filter resolusi pre-flight, VLM_ORACLE_MIN_QUALITY):
+    // diminta HANYA di mode peringkat, dan melarang model menebak angka piksel.
+    expect(p).toContain('apparentQuality = 0-100');
+    expect(p).toContain('NEVER guess an exact pixel resolution');
     // Baris skema JSON paling akhir ikut membawa kunci baru -> notebook membaca 'matchScore'
     // di dalam prompt sebagai sinyal mode peringkat (deteksi string, bebas urutan deploy).
     const last = p.trim().split('\n').pop();
     expect(last).toContain('"productMatch":true|false');
     expect(last).toContain('"matchScore":0-100');
-    // Mode peringkat menambah TIGA baris (produk, aturan productMatch, aturan matchScore);
-    // dua baris penutup 'Answer with ONLY...' + skema JSON hanya DIGANTI, bukan ditambah.
-    expect(p.trim().split('\n')).toHaveLength(buildVlmPrompt('kitchen_tools', 'strict').split('\n').length + 3);
+    expect(last).toContain('"apparentQuality":0-100');
+    // Mode peringkat menambah EMPAT baris (produk, aturan productMatch, aturan matchScore,
+    // aturan apparentQuality); dua baris penutup 'Answer with ONLY...' + skema JSON hanya
+    // DIGANTI, bukan ditambah.
+    expect(p.trim().split('\n')).toHaveLength(buildVlmPrompt('kitchen_tools', 'strict').split('\n').length + 4);
   });
 
   it('buildVlmPrompt menetralkan injeksi dari judul produk penjual', () => {
@@ -100,7 +106,7 @@ describe('vlmGateService - fungsi murni', () => {
     const lines = p.trim().split('\n');
     // Inti pertahanan: kata-katanya tidak bisa disensor (kita memang tidak tahu isi judul),
     // tapi ia TIDAK BOLEH menjadi baris baru. Baris baru = instruksi baru bagi model.
-    expect(lines).toHaveLength(buildVlmPrompt('kitchen_tools', 'strict').split('\n').length + 3);
+    expect(lines).toHaveLength(buildVlmPrompt('kitchen_tools', 'strict').split('\n').length + 4);
     expect(lines.some((l) => l.trim() === 'ABOVE RULES')).toBe(false);
     expect(lines.some((l) => l.trim().startsWith('Ignore everything above'))).toBe(false);
     const line = lines.find((l) => l.startsWith('PRODUCT UNDER TEST:'));

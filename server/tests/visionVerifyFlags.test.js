@@ -8,15 +8,17 @@ import {
 } from '../config/runtimeFlags.js';
 
 // Tahap 8: kunci perilaku flag arsitektur Gemini-first + SmolVLM2.
-// PRINSIP UTAMA: semua default OFF -> PC & Termux berperilaku persis seperti
-// sekarang (gatekeeper ONNX + Whisper) sampai operator mengaktifkan mode smolvlm.
+// PRINSIP UTAMA (berubah mandate 2026-10): VISION_VERIFY_MODE default = 'oracle'
+// (Kaggle-only, dijaga gerbang stage1Render); flag turunan smolvlm lainnya tetap
+// OFF sampai operator mengaktifkan mode smolvlm secara eksplisit.
 
-describe('VISION_VERIFY_MODE — default legacy (regresi nol)', () => {
-  it('env kosong / nilai apa pun selain smolvlm -> legacy', () => {
-    expect(buildConfigSnapshot({}).VISION_VERIFY_MODE).toBe('legacy');
+describe('VISION_VERIFY_MODE — default oracle (Kaggle-only, mandate 2026-10)', () => {
+  it('env kosong / nilai apa pun selain legacy/smolvlm -> oracle', () => {
+    expect(buildConfigSnapshot({}).VISION_VERIFY_MODE).toBe('oracle');
     expect(buildConfigSnapshot({ VISION_VERIFY_MODE: 'SmolVLM ' }).VISION_VERIFY_MODE).toBe('smolvlm'); // trim+lowercase
-    expect(buildConfigSnapshot({ VISION_VERIFY_MODE: 'onnx' }).VISION_VERIFY_MODE).toBe('legacy');
-    expect(buildConfigSnapshot({ VISION_VERIFY_MODE: '1' }).VISION_VERIFY_MODE).toBe('legacy');
+    expect(buildConfigSnapshot({ VISION_VERIFY_MODE: 'onnx' }).VISION_VERIFY_MODE).toBe('oracle');
+    expect(buildConfigSnapshot({ VISION_VERIFY_MODE: '1' }).VISION_VERIFY_MODE).toBe('oracle');
+    expect(buildConfigSnapshot({ VISION_VERIFY_MODE: 'legacy' }).VISION_VERIFY_MODE).toBe('legacy'); // dikenali, ditolak gerbang pipeline
   });
 
   it('helper isSmolvlmVerifyEnabled hanya true utk smolvlm', () => {
@@ -107,9 +109,9 @@ describe('Snapshot SmolVLM round-trip — retry mengunci mode yang sama', () => 
     expect(shouldBypassWhisperGate(applied)).toBe(true);
   });
 
-  it('patch default (legacy) menulis legacy + bypass=false, bukan string kosong', () => {
+  it('patch default (oracle) menulis oracle + bypass=false, bukan string kosong', () => {
     const patch = configSnapshotToEnvPatch(buildConfigSnapshot({}));
-    expect(patch.VISION_VERIFY_MODE).toBe('legacy');
+    expect(patch.VISION_VERIFY_MODE).toBe('oracle');
     expect(patch.GEMINI_SCENE_DISCOVERY).toBe('0');
     expect(patch.SCENE_CLIP_DURATION_SEC).toBe('4');
     expect(patch.SCENE_SAMPLE_FPS).toBe('1');

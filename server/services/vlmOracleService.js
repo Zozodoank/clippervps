@@ -15,14 +15,17 @@
 // antrean SQLite dan membaca hasilnya. Konsekuensi bagus: notebook boleh mati
 // kapan saja tanpa merusak job.
 //
-// KEBIJAKAN FALLBACK (yang ini penting, jangan diubah tanpa alasan). "Fallback" di sini =
-// perilaku saat oracle TIDAK menjawab, BUKAN fallback antar-bobot model:
-//   oracle menjawab  -> frame divonis KOTOR masuk daftar blacklist (veto).
-//   oracle diam/timeout/validasi gagal -> TIDAK ADA VONIS = tidak memveto apa pun,
-//   dan keputusan gatekeeper legacy + Gemini tetap berlaku. Ini BUKAN fail-open
-//   terhadap konten, karena legacy path sudah berjalan penuh di sekitar tahap ini;
-//   oracle hanya menambah lapisan. (Bandingkan jalur 'smolvlm' yang MELEWATI
-//   legacy lalu fail-open saat VLM timeout — jalur itu berbahaya, lihat README.)
+// KEBIJAKAN FALLBACK (user mandate 2026-10 — STRICT ORACLE-ONLY, jangan dilonggarkan
+// tanpa izin eksplisit). "Fallback" di sini = perilaku saat oracle TIDAK menjawab:
+//   oracle menjawab        -> frame divonis KOTOR masuk daftar blacklist (veto).
+//   oracle diam/timeout/vonis tidak sah -> JOB DIHENTIKAN (OracleUnavailableError).
+//   DULU perilaku default-nya "lanjut dengan keputusan legacy" — itu TIDAK DIIZINKAN
+//   lagi: vonis model besar di Kaggle adalah satu-satunya gerbang verifikasi visual.
+//   Perilaku lama hanya dipertahankan untuk tooling kalibrasi yang mengirim
+//   `strict: false` eksplisit (mis. skrip di scratch/).
+//   (Bandingkan jalur 'smolvlm' yang MELEWATI legacy lalu fail-open saat VLM timeout —
+//   jalur itu juga ditolak: job dengan mode efektif bukan 'oracle' ditolak di gerbang
+//   stage1Render sebelum download.)
 // ============================================================================
 import crypto from 'crypto';
 import fs from 'fs';
@@ -31,14 +34,33 @@ import { spawn } from 'child_process';
 import { buildVlmPrompt } from './vlmGateService.js';
 import { getFFmpegPath } from './binaryChecker.js';
 import { tempDir } from '../utils/paths.js';
-import { isVlmOracleEnabled, isOraclePreflightEnabled } from '../config/runtimeFlags.js';
+import { isVlmOracleEnabled, isOraclePreflightEnabled, isOracleStrictMode } from '../config/runtimeFlags.js';
 import {
   enqueueOracleBatch,
   waitForOracleVerdict,
   expireOracleBatch,
+  oracleLastSeenMs,
 } from '../store/jobStore.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Error keras kebijakan STRICT: oracle tidak turun tangan (tidak terhubung, diam,
+ * vonis tidak sah, atau anggaran habis). Pemanggil di worker mem-propagate ini sampai
+ * luar _runStage1Pipeline sehingga job berakhir stage 'error' dengan lastError berisi
+ * alasan yang terbaca operator. `code` SELALU 'ORACLE_UNAVAILABLE' — itu yang dipakai
+ * auto-run/retry untuk memutuskan berhenti total, bukan lanjut ke produk berikutnya.
+ */
+export class OracleUnavailableError extends Error {
+  constructor(message, { reason = 'unknown', jobId = '', batchId = '' } = {}) {
+    super(message);
+    this.name = 'OracleUnavailableError';
+    this.code = 'ORACLE_UNAVAILABLE';
+    this.reason = reason; // never_claimed | no_verdict | invalid_verdict | budget_exhausted | infra | mode_not_oracle
+    this.jobId = jobId;
+    this.batchId = batchId;
+  }
+}
 
 /** Konfigurasi antrean oracle. Semuanya dibekukan per-job via configSnapshot. */
 export function resolveOracleConfig(env = process.env) {
@@ -48,10 +70,20 @@ export function resolveOracleConfig(env = process.env) {
   };
   return {
     enabled: isVlmOracleEnabled(env),
-    maxFrames: Math.max(0, Number(env.VLM_ORACLE_MAX_FRAMES ?? 120)),
+    // 0 EKSPISIT dihormati (bukan dikonversi diam-diam ke 120): di jalur strict nilai 0
+    // berarti "tidak ada yang divisit" dan GERBANG STRICT menolak job (OracleUnavailableError).
+    // unset/kosong/NaN -> 120, sama seperti normalizer configSnapshot.
+    maxFrames: (() => {
+      const raw = env.VLM_ORACLE_MAX_FRAMES;
+      if (raw === undefined || raw === null || String(raw).trim() === '') return 120;
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.max(0, n) : 120;
+    })(),
     batchSize: Math.min(16, Math.max(1, Number(env.VLM_ORACLE_BATCH_SIZE) || 8)),
     perBatchTimeoutMs: Math.max(5, sec('VLM_ORACLE_TIMEOUT_SEC', 180)) * 1000,
     totalTimeoutMs: Math.max(10, sec('VLM_ORACLE_TOTAL_TIMEOUT_SEC', 600)) * 1000,
+    // Batas menunggu klaim PERTAMA notebook pada satu batch. Lewat = 'never_claimed'.
+    connectTimeoutMs: Math.max(10, sec('VLM_ORACLE_CONNECT_TIMEOUT_SEC', 120)) * 1000,
     pollMs: Math.max(250, Number(env.VLM_ORACLE_POLL_MS) || 2000),
     staleMs: Math.max(30, sec('VLM_ORACLE_STALE_SEC', 300)) * 1000,
     maxAttempts: Math.max(1, sec('VLM_ORACLE_MAX_ATTEMPTS', 2)),
@@ -70,7 +102,56 @@ export function resolveOracleConfig(env = process.env) {
       if (!Number.isFinite(n)) return 90;
       return Math.min(240, Math.max(8, Math.round(n)));
     })(),
+    // Filter kualitas sumber pre-flight (Lapis 3): kandidat dengan apparentQuality di
+    // bawah ambang ini DIBUANG sebelum peringkat. 0 (default) = filter mati - skor tetap
+    // dicatat di hasil vonis tapi tidak ada kandidat yang gugur karenanya.
+    minQuality: (() => {
+      const n = Math.round(Number(env.VLM_ORACLE_MIN_QUALITY));
+      if (!Number.isFinite(n) || n < 0) return 0;
+      return Math.min(100, n);
+    })(),
   };
+}
+
+/**
+ * Cek koneksi Oracle Kaggle TANPA melempar — dipanggil stage1Render sebelum kerja berat.
+ * Tiga syarat "terhubung", semuanya nyata:
+ *  (a) mode efektif = 'oracle' (kalau tidak, gerbang mode sudah menolak lebih dulu);
+ *  (b) API_ACCESS_TOKEN terisi — endpoint oracle sengaja 503 tanpa token, jadi notebook
+ *      tak akan pernah bisa klaim dan job hanya buang kuota download/Gemini;
+ *  (c) ada heartbeat claim dari notebook dalam window segar (VLM_ORACLE_STALE_SEC;
+ *      VLM_ORACLE_CONNECT_TIMEOUT_SEC dipakai untuk batas tunggu KLAIM PERTAMA batch).
+ * Return { ok, detail, lastSeenAt, message }. Pemanggil yang memutuskan stop.
+ */
+export function assertOracleConnected({ logger = console, env = process.env } = {}) {
+  const cfg = resolveOracleConfig(env);
+  if (!cfg.enabled) {
+    const mode = String(env.VISION_VERIFY_MODE || 'oracle').trim().toLowerCase();
+    return {
+      ok: false, detail: 'mode_not_oracle', lastSeenAt: null,
+      message: `Verifikasi visual wajib lewat Oracle Kaggle (VISION_VERIFY_MODE=oracle). Mode terdeteksi: '${mode}'.`,
+    };
+  }
+  if (!String(env.API_ACCESS_TOKEN || '').trim()) {
+    return {
+      ok: false, detail: 'token_kosong', lastSeenAt: null,
+      message: 'API_ACCESS_TOKEN kosong — endpoint Oracle menolak melayani notebook Kaggle (503). Set token di server/.env lalu restart.',
+    };
+  }
+  const lastSeenAt = oracleLastSeenMs();
+  const freshMs = cfg.staleMs;
+  const ageMs = lastSeenAt ? Date.now() - lastSeenAt : null;
+  if (!lastSeenAt || ageMs > freshMs) {
+    const seenDesc = lastSeenAt
+      ? `terakhir terlihat ${Math.round(ageMs / 1000)} dtk lalu`
+      : 'belum pernah memanggil API sama sekali';
+    return {
+      ok: false, detail: 'notebook_offline', lastSeenAt,
+      message: `Notebook Kaggle tidak terhubung (${seenDesc}; batas ${Math.round(freshMs / 1000)} dtk). Jalankan kernel oracle + tunnel, lalu ulangi job.`,
+    };
+  }
+  if (logger && logger.log) logger.log(`[Oracle] Preflight koneksi OK: notebook terlihat ${Math.round(ageMs / 1000)} dtk lalu.`);
+  return { ok: true, detail: 'connected', lastSeenAt, message: 'Oracle Kaggle terhubung.' };
 }
 
 /**
@@ -103,7 +184,7 @@ export function pickEvenlySpaced(items = [], n = 0) {
 /**
  * Shape vonis yang WAJIB dikirim notebook (divalidasi LONGGAR tapi tidak naif):
  * { safe: bool, face/text/watermark/graphic: bool, reason?, perFrame?: [{index, safe, ...}],
- *   productMatch?: bool, matchScore?: 0-100 }
+ *   productMatch?: bool, matchScore?: 0-100, apparentQuality?: 0-100, lowQuality?: bool }
  * Key top-level sengaja SAMA dengan kontrak vlmGateService agar hilir cuma satu kosakata.
  *
  * `productMatch`/`matchScore` (Lapis 3) bersifat OPSIONAL di sini. Dua pass oracle yang
@@ -164,6 +245,19 @@ export function normalizeOracleVerdict(verdict, { expectedFrames = 0 } = {}) {
     .map((f) => (f && f.matchScore !== undefined && f.matchScore !== null ? clampScore(f.matchScore) : null))
     .filter((v) => v !== null);
   const matchScore = clampScore(verdict.matchScore) ?? (frameScores.length ? medianScore(frameScores) : null);
+  // Kualitas tampak sumber video (0-100). Sama seperti matchScore: agregat notebook
+  // mengalahkan median per-frame; null = "tidak ada informasi" - BUKAN "kualitas 0".
+  // Notebook lama (belum di-patch apparentQuality) TIDAK boleh membuat kandidat gugur.
+  const frameQuality = perFrame
+    .map((f) => (f && f.apparentQuality !== undefined && f.apparentQuality !== null ? clampScore(f.apparentQuality) : null))
+    .filter((v) => v !== null);
+  const apparentQuality = clampScore(verdict.apparentQuality) ?? (frameQuality.length ? medianScore(frameQuality) : null);
+  // lowQuality: boolean eksplisit dari notebook/tooling kustom menang (notebook default
+  // HANYA mengirim apparentQuality - kunci ini jalur cadangan kontrak, bukan diwajibkan);
+  // kalau tidak ada, turunkan dari ambang info 40. Flag informatif ini BUKAN kebijakan
+  // filter: yang menggugurkan kandidat hanya VLM_ORACLE_MIN_QUALITY di preflight.
+  const lowQualityExplicit = 'lowQuality' in verdict && verdict.lowQuality !== null && verdict.lowQuality !== undefined && verdict.lowQuality !== '';
+  const lowQuality = lowQualityExplicit ? bool(verdict.lowQuality) : (apparentQuality === null ? null : apparentQuality < 40);
   return {
     ok: true,
     available: true,
@@ -174,6 +268,8 @@ export function normalizeOracleVerdict(verdict, { expectedFrames = 0 } = {}) {
     graphic: bool(verdict.graphic),
     productMatch: 'productMatch' in verdict ? bool(verdict.productMatch) : null,
     matchScore,
+    apparentQuality,
+    lowQuality,
     reason: String(verdict.reason || '').slice(0, 300),
     model: String(verdict.model || '').slice(0, 80),
     dirtyFrameIndexes: dirtyFrames,
@@ -333,20 +429,37 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
  * memasukkannya ke `blacklistedFramePaths` yang SUDAH ada, sehingga Gemini,
  * retainedFrames, dan rescue pool otomatis menghormatinya.
  *
- * TIDAK PERNAH melempar: kegagalan infrastruktur = anggap oracle tidak ada.
+ * KEBIJAKAN STRICT (default saat mode oracle): oracle diam / tidak pernah klaim /
+ * vonis tidak sah / anggaran habis -> LEMPAR OracleUnavailableError (JOB BERHENTI).
+ * `strict: false` eksplisit mengembalikan perilaku lama (lanjut tanpa vonis) untuk
+ * tooling kalibrasi — JANGAN dipakai di jalur produksi.
  */
 export async function sanitizePoolWithOracle(frames = [], opts = {}) {
   const {
     jobId = '', niche = 'kitchen_tools', facePolicy = 'strict',
     logger = console, env = process.env, onProgress = null, outDir = null,
+    strict = isOracleStrictMode(env),
   } = opts;
   const cfg = resolveOracleConfig(env);
   const result = { enabled: cfg.enabled, checked: 0, rejected: 0, timedOut: 0, blacklisted: [], elapsedMs: 0, converted: 0, resizeFailed: 0, note: '' };
-  if (!cfg.enabled || cfg.maxFrames === 0) return result;
+  if (!cfg.enabled) return result;
+  if (cfg.maxFrames === 0) {
+    // Kebijakan STRICT: "tidak ada frame yang divisit" = tidak ada vonis Kaggle = job berhenti.
+    // Satu env knob tidak boleh lagi bisa mematikan seluruh mandate 2026-10 diam-diam.
+    if (strict) {
+      throw new OracleUnavailableError('VLM_ORACLE_MAX_FRAMES=0 menonaktifkan verifikasi Kaggle — kebijakan strict melarang job tanpa vonis. Naikkan plafon (atau pakai strict:false untuk tooling kalibrasi).', { reason: 'infra', jobId });
+    }
+    return result;
+  }
 
   const valid = (Array.isArray(frames) ? frames : []).filter((f) => f && f.filePath && fs.existsSync(f.filePath));
   const subset = pickEvenlySpaced(valid, cfg.maxFrames);
-  if (subset.length === 0) return result;
+  if (subset.length === 0) {
+    if (strict) {
+      throw new OracleUnavailableError('Tidak ada frame pool yang ditemukan di disk untuk divisit Kaggle — job dihentikan (vonis legacy tidak diizinkan).', { reason: 'infra', jobId });
+    }
+    return result;
+  }
 
   // Perkecil dulu (360p), baru antre. Yang tercatat di batch adalah SALINAN kirim;
   // vonis nanti dipetakan balik ke path asli supaya blacklist hilir tetap cocok.
@@ -363,6 +476,12 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
   for (let start = 0; start < sendable.length; start += cfg.batchSize) {
     const batchFrames = sendable.slice(start, start + cfg.batchSize);
     if (Date.now() > deadline) {
+      if (strict) {
+        throw new OracleUnavailableError(
+          `Anggaran waktu oracle habis (${cfg.totalTimeoutMs / 1000}s) dengan ${sendable.length - start} frame belum divisit — job dihentikan, vonis legacy tidak diizinkan.`,
+          { reason: 'budget_exhausted', jobId },
+        );
+      }
       result.note = `Anggaran waktu oracle habis (${cfg.totalTimeoutMs / 1000}s) — sisa ${sendable.length - start} frame TIDAK divisit, keputusan legacy berlaku.`;
       logger.warn(`[Oracle] ${result.note}`);
       break;
@@ -383,7 +502,9 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
         // Math.max(1, ...) memastikan waitForOracleVerdict selalu sempat polling SATU kali
         // meski deadline hampir habis. Bila 0 dikirim, fungsi langsung return 'timeout'
         // pada iterasi pertama karena now() >= deadline = now() + 0.
-        timeoutMs: Math.min(cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
+        // Batch PERTAMA dibatasi connectTimeoutMs: menunggu bukti "notebook terhubung"
+        // (klaim pertama) tidak boleh lebih lama dari batas koneksi itu sendiri.
+        timeoutMs: Math.min(start === 0 ? Math.min(cfg.connectTimeoutMs, cfg.perBatchTimeoutMs) : cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
         pollMs: cfg.pollMs, sleep,
       });
       status = waited.status;
@@ -401,18 +522,37 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
           logger.log(`[Oracle] ⛔ batch ${id} divonis KOTOR (${toBlacklist.length}/${paths.length} frame) ${v.reason ? `— ${v.reason}` : ''} [${v.model || 'model=?'}]`);
         } else if (v.ok) {
           logger.log(`[Oracle] ✅ batch ${id} bersih (${paths.length} frame).`);
+        } else if (strict) {
+          // Vonis rusak = tidak ada dasar keputusan = job berhenti (bukan diam-diam legacy).
+          throw new OracleUnavailableError(
+            `Vonis oracle batch ${id} tidak sah (${v.error}) — job dihentikan; frame tidak boleh divonis oleh keputusan legacy.`,
+            { reason: 'invalid_verdict', jobId, batchId: id },
+          );
         } else {
           result.timedOut += paths.length;
           logger.warn(`[Oracle] Vonis batch ${id} tidak sah (${v.error}) -> TIDAK memveto.`);
         }
       } else {
-        result.timedOut += paths.length;
         // Berhenti menunggu = lepaskan batch supaya notebook tidak membuang GPU
         // untuk kerjaan yang sudah tidak dibaca siapa pun.
         if (status === 'timeout') expireOracleBatch(id, 'Worker menyerah sebelum vonis tiba.');
+        if (strict) {
+          const neverClaimed = waited.lastStatus === 'pending' || waited.lastStatus === 'unknown';
+          throw new OracleUnavailableError(
+            neverClaimed
+              ? `Batch ${id} tidak pernah diklaim notebook Kaggle (status ${status}) — oracle tidak terhubung, job dihentikan.`
+              : `Batch ${id} diklaim tapi tidak pernah dijawab (status ${status}) — job dihentikan; vonis legacy tidak diizinkan.`,
+            { reason: neverClaimed ? 'never_claimed' : 'no_verdict', jobId, batchId: id },
+          );
+        }
+        result.timedOut += paths.length;
         logger.warn(`[Oracle] Batch ${id} ${status === 'expired' ? 'kadaluarsa' : 'tidak dijawab'} (${status}) -> lanjut dengan keputusan legacy.`);
       }
     } catch (err) {
+      if (err instanceof OracleUnavailableError) throw err;
+      if (strict) {
+        throw new OracleUnavailableError(`Error antrean oracle batch ${id}: ${err.message} — job dihentikan.`, { reason: 'infra', jobId, batchId: id });
+      }
       result.timedOut += paths.length;
       logger.warn(`[Oracle] Error antrean batch ${id}: ${err.message} -> lanjut dengan keputusan legacy.`);
     }
@@ -431,6 +571,11 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
 
   result.elapsedMs = Date.now() - t0;
   if (result.checked === 0 && !result.note) result.note = 'Oracle aktif tapi tidak ada frame valid di pool.';
+  // Jaring pengaman STRICT: setiap cabang kegagalan di atas sudah melempar sendiri;
+  // kalau toh ada jalur baru yang lolos tanpa satu vonis pun, job TETAP berhenti.
+  if (strict && result.checked === 0) {
+    throw new OracleUnavailableError(`Oracle tidak memvonis satu frame pun (${result.note || 'tanpa catatan'}) — job dihentikan; vonis legacy tidak diizinkan.`, { reason: 'no_verdict', jobId });
+  }
   if (result.converted > 0) {
     logger.log(`[Oracle] ${result.converted} frame dikirim sebagai ${cfg.frameHeight}p (hemat byte tunnel + vision-token GPU).`);
   }
@@ -445,8 +590,8 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
  *
  * Mode oracle OFF -> `frames` dikembalikan utuh, tanpa efek samping apa pun.
  */
-export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', blacklisted = null, onProgress = null, logger = console, env = process.env, outDir = null } = {}) {
-  const res = await sanitizePoolWithOracle(frames, { jobId, niche, facePolicy, onProgress, logger, env, outDir });
+export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', blacklisted = null, onProgress = null, logger = console, env = process.env, outDir = null, strict } = {}) {
+  const res = await sanitizePoolWithOracle(frames, { jobId, niche, facePolicy, onProgress, logger, env, outDir, strict });
   if (!res.enabled) return { frames, ...res };
   if (res.blacklisted.length && blacklisted && typeof blacklisted.add === 'function') {
     for (const p of res.blacklisted) blacklisted.add(p);
@@ -470,13 +615,15 @@ export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitche
  * klip yang kotor ke `discardedDirtyClips` yang sudah ada (Slot 1 restore +
  * pemulihan dari pooledFrames menangani sisanya).
  *
- * KEBIJAKAN SAMA seperti pass pool: tidak menjawab / timeout / vonis tidak sah =
- * TIDAK ada entri di `verdicts` = klip lolos seperti sekarang. Tidak pernah melempar.
+ * KEBIJAKAN SAMA seperti pass pool (STRICT default): tidak menjawab / timeout /
+ * vonis tidak sah -> LEMPAR OracleUnavailableError (JOB BERHENTI). `strict: false`
+ * mengembalikan perilaku lama (klip lolos tanpa vonis) untuk tooling kalibrasi.
  */
 export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = {}) {
   const {
     jobId = '', niche = 'kitchen_tools', facePolicy = 'strict',
     logger = console, env = process.env, onProgress = null, outDir = null,
+    strict = isOracleStrictMode(env),
   } = opts;
   const cfg = resolveOracleConfig(env);
   const verdicts = new Map();
@@ -498,8 +645,20 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
   for (let i = 0; i < list.length; i++) {
     const group = Array.isArray(frameGroups[i]) ? frameGroups[i] : [];
     const frames = group.filter((f) => f && f.filePath && fs.existsSync(f.filePath));
-    if (!frames.length) continue;
+    if (!frames.length) {
+      // STRICT: klip tanpa frame TIDAK bisa divisit Kaggle -> tidak boleh dipakai.
+      if (strict) {
+        throw new OracleUnavailableError(`Klip #${i + 1} tidak punya frame valid untuk diaudit Kaggle — job dihentikan (klip tanpa vonis tidak boleh dipakai).`, { reason: 'infra', jobId });
+      }
+      continue;
+    }
     if (Date.now() > deadline) {
+      if (strict) {
+        throw new OracleUnavailableError(
+          `Anggaran waktu audit klip habis (${cfg.totalTimeoutMs / 1000}s) dengan klip #${i + 1} dst belum divisit — job dihentikan, vonis legacy tidak diizinkan.`,
+          { reason: 'budget_exhausted', jobId },
+        );
+      }
       summary.note = `Anggaran waktu audit klip habis (${cfg.totalTimeoutMs / 1000}s) — klip #${i + 1} dst TIDAK divisit oracle.`;
       logger.warn(`[Oracle] ${summary.note}`);
       break;
@@ -525,7 +684,8 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
         });
         const waited = await waitForOracleVerdict(id, {
           // Math.max(1, ...) sama seperti di sanitizePoolWithOracle: pastikan satu polling terjadi.
-          timeoutMs: Math.min(cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
+          // Batch pertama seluruh audit dibatasi connectTimeoutMs (batas "terhubung").
+          timeoutMs: Math.min(i === 0 && start === 0 ? Math.min(cfg.connectTimeoutMs, cfg.perBatchTimeoutMs) : cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
           pollMs: cfg.pollMs, sleep,
         });
         if (waited.status === 'done') {
@@ -545,16 +705,34 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
             break; // klipnya sudah tertolak; meneruskan batch untuk klip ini hanya membakar GPU
           } else if (v.ok) {
             logger.log(`[Oracle] ✅ ${clipLabel} bersih (${paths.length} frame).`);
+          } else if (strict) {
+            throw new OracleUnavailableError(
+              `Vonis ${clipLabel} dari oracle tidak sah (${v.error}) — job dihentikan; klip tidak boleh lolos tanpa vonis Kaggle.`,
+              { reason: 'invalid_verdict', jobId, batchId: id },
+            );
           } else {
             summary.timedOut += paths.length;
             logger.warn(`[Oracle] Vonis ${clipLabel} tidak sah (${v.error}) -> klip TETAP dipakai.`);
           }
         } else {
-          summary.timedOut += paths.length;
           if (waited.status === 'timeout') expireOracleBatch(id, 'Worker menyerah sebelum vonis audit klip tiba.');
+          if (strict) {
+            const neverClaimed = waited.lastStatus === 'pending' || waited.lastStatus === 'unknown';
+            throw new OracleUnavailableError(
+              neverClaimed
+                ? `${clipLabel} tidak pernah diklaim notebook Kaggle (${waited.status}) — oracle tidak terhubung, job dihentikan.`
+                : `${clipLabel} diklaim tapi tidak dijawab (${waited.status}) — job dihentikan; klip tanpa vonis Kaggle tidak boleh dipakai.`,
+              { reason: neverClaimed ? 'never_claimed' : 'no_verdict', jobId, batchId: id },
+            );
+          }
+          summary.timedOut += paths.length;
           logger.warn(`[Oracle] ${clipLabel} tidak dijawab (${waited.status}) -> klip TETAP dipakai.`);
         }
       } catch (err) {
+        if (err instanceof OracleUnavailableError) throw err;
+        if (strict) {
+          throw new OracleUnavailableError(`Error antrean oracle ${clipLabel}: ${err.message} — job dihentikan.`, { reason: 'infra', jobId });
+        }
         summary.timedOut += paths.length;
         logger.warn(`[Oracle] Error antrean audit ${clipLabel}: ${err.message} -> klip TETAP dipakai.`);
       }
@@ -574,6 +752,10 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
 
   summary.elapsedMs = Date.now() - t0;
   if (!summary.checked && !summary.note) summary.note = 'Audit klip aktif tapi tidak ada frame valid.';
+  // Jaring pengaman STRICT seperti pass pool: nol vonis = job berhenti.
+  if (strict && list.length > 0 && summary.checked === 0) {
+    throw new OracleUnavailableError(`Audit klip tidak memvonis satu frame pun (${summary.note || 'tanpa catatan'}) — job dihentikan.`, { reason: 'no_verdict', jobId });
+  }
   return { verdicts, ...summary };
 }
 
@@ -617,13 +799,17 @@ export const PREFLIGHT_SCENE_BASE = 20000;
  * dilewati tetapi tetap menghitung posisinya), supaya pemanggil cukup menambahkan
  * offset antrian tanpa perlu tahu mana yang dibuang di sini.
  *
- * TIDAK PERNAH melempar. Semua kegagalan infrastruktur berakhir sebagai `untested`.
+ * KEBIJAKAN STRICT (default saat mode oracle): kandidat yang tidak divisit Kaggle tidak
+ * boleh dilanjutkan ke penilaian Gemini lama (itu jalur non-Kaggle) -> LEMPAR
+ * OracleUnavailableError (JOB BERHENTI). `strict: false` mengembalikan kontrak lama
+ * ("TIDAK PERNAH melempar; kegagalan infrastruktur = untested") untuk tooling.
  */
 export async function preflightCandidatesWithOracle(candidates = [], opts = {}) {
   const {
     jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', productName = '',
     outDir = null, logger = console, env = process.env, onProgress = null,
     extractFrames = null, maxCandidates = 3, snippetSeconds = 15, keepFrames = false,
+    strict = isOracleStrictMode(env),
   } = opts;
 
   const cfg = resolveOracleConfig(env);
@@ -649,6 +835,9 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
     try {
       ({ extractPreflightFramesForOracle: extract } = await import('./videoFilterService.js'));
     } catch (err) {
+      if (strict) {
+        throw new OracleUnavailableError(`Ekstraktor frame pre-flight tidak tersedia (${err.message}) — job dihentikan; pre-flight tanpa Kaggle tidak diizinkan.`, { reason: 'infra', jobId });
+      }
       logger.warn(`[Oracle][PreFlight] Ekstraktor frame tidak tersedia (${err.message}) -> pre-flight kembali ke Gemini.`);
       return { ...out, note: 'ekstraktor_frame_hilang' };
     }
@@ -658,20 +847,48 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
   const t0 = Date.now();
   const deadline = t0 + cfg.totalTimeoutMs;
   const prompt = buildVlmPrompt(niche, facePolicy, { productName, requireRanking: true });
+  // Throttle sementara YouTube di IP mobile (googlevideo lambat / 429) pernah membuat jalur
+  // ini mengembalikan nol frame dan mode STRICT membunuh job yang sebetulnya sehat
+  // (auto_2fff755605, 4 Okt 2026: dijalankan ulang beberapa menit kemudian 2 dari 3 kandidat
+  // berhasil diekstrak). Beri ekstraksi kesempatan pulih sebelum menyatakan nol: 1 retry
+  // ekstra secara default; matikan dengan VLM_ORACLE_PREFLIGHT_EXTRACT_RETRIES=0.
+  // Sleep tidak pernah melewati deadline total job.
+  const extraRetries = Math.max(0, Math.min(3, Number(env.VLM_ORACLE_PREFLIGHT_EXTRACT_RETRIES ?? 1)));
+  const retryDelayMs = Math.max(0, Math.min(60000, Number(env.VLM_ORACLE_PREFLIGHT_RETRY_DELAY_MS ?? 9000)));
   let extracted = [];
-  try {
-    extracted = await extract(list.map((c) => c.url), workDir, {
-      // `height: 0` berarti "kirim mentah" untuk pass pool/audit; di jalur ini tidak ada
-      // arti yang sama karena frame memang LAHIR dari skala FFmpeg, jadi 360 dipakai apa
-      // adanya (ekstraktor sendiri mengurung nilainya ke 240..720).
-      seconds: snippetSeconds, fps: 1, height: cfg.frameHeight || 360,
-      tag: `${safeJobSegment(jobId)}_${t0}`,
-    }) || [];
-  } catch (err) {
-    logger.warn(`[Oracle][PreFlight] Ekstraksi frame gagal (${err.message}) -> pre-flight kembali ke Gemini.`);
-    return { ...out, note: 'ekstraksi_gagal' };
+  let lastExtractErr = null;
+  for (let attempt = 0; attempt <= extraRetries; attempt++) {
+    if (attempt > 0) {
+      if (Date.now() + retryDelayMs > deadline) break;
+      logger.warn(`[Oracle][PreFlight] 0 frame terekstrak${lastExtractErr ? ` (${lastExtractErr.message})` : ''} — percobaan ulang ${attempt}/${extraRetries} dalam ${retryDelayMs}ms (kemungkinan throttle sementara).`);
+      await sleep(retryDelayMs);
+    }
+    try {
+      extracted = await extract(list.map((c) => c.url), workDir, {
+        // `height: 0` berarti "kirim mentah" untuk pass pool/audit; di jalur ini tidak ada
+        // arti yang sama karena frame memang LAHIR dari skala FFmpeg, jadi 360 dipakai apa
+        // adanya (ekstraktor sendiri mengurung nilainya ke 240..720).
+        seconds: snippetSeconds, fps: 1, height: cfg.frameHeight || 360,
+        tag: `${safeJobSegment(jobId)}_${t0}${attempt ? `_r${attempt}` : ''}`,
+      }) || [];
+      lastExtractErr = null;
+    } catch (err) {
+      lastExtractErr = err;
+      extracted = [];
+    }
+    if (extracted.length) break;
   }
   if (!extracted.length) {
+    if (strict) {
+      if (lastExtractErr) {
+        throw new OracleUnavailableError(`Ekstraksi frame pre-flight gagal (${lastExtractErr.message}) — job dihentikan; kandidat tanpa vonis Kaggle tidak boleh dinilai Gemini lama.`, { reason: 'infra', jobId });
+      }
+      throw new OracleUnavailableError('Tidak ada satu pun cuplikan kandidat yang berhasil diekstrak — job dihentikan (pre-flight wajib divonis Kaggle).', { reason: 'infra', jobId });
+    }
+    if (lastExtractErr) {
+      logger.warn(`[Oracle][PreFlight] Ekstraksi frame gagal (${lastExtractErr.message}) -> pre-flight kembali ke Gemini.`);
+      return { ...out, note: 'ekstraksi_gagal' };
+    }
     logger.warn('[Oracle][PreFlight] Tidak ada satu pun cuplikan kandidat yang berhasil diekstrak -> Gemini yang menilai.');
     return { ...out, note: 'tanpa_frame' };
   }
@@ -687,11 +904,17 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
     const chosen = pickEvenlySpaced(frames, PREFLIGHT_MAX_FRAMES)
       .map((f, i) => ({ ...f, index: i }));
     if (!chosen.length) {
+      if (strict) {
+        throw new OracleUnavailableError(`Kandidat #${pos + 1} kehabisan frame sebelum dikirim ke Kaggle — job dihentikan (vonis legacy tidak diizinkan).`, { reason: 'infra', jobId });
+      }
       out.untested.push(pos);
       out.results.push({ index: pos, answered: false, reason: 'frame habis sebelum dikirim', matchScore: null });
       continue;
     }
     if (Date.now() > deadline) {
+      if (strict) {
+        throw new OracleUnavailableError(`Anggaran waktu pre-flight Kaggle habis (${cfg.totalTimeoutMs / 1000}s) dengan kandidat #${pos + 1} dst belum divisit — job dihentikan.`, { reason: 'budget_exhausted', jobId });
+      }
       out.untested.push(pos);
       out.results.push({ index: pos, answered: false, reason: 'anggaran waktu oracle habis' });
       out.note = out.note || 'Anggaran waktu pre-flight habis; sisa kandidat tidak divisit.';
@@ -702,7 +925,7 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
     const paths = chosen.map((f) => f.filePath);
     const id = makeBatchId(jobId, PREFLIGHT_SCENE_BASE + pos, paths);
     out.framesSent += paths.length;
-    let entry = { index: pos, answered: false, clean: false, productMatch: null, matchScore: null, reason: '', dirtyFrames: 0 };
+    let entry = { index: pos, answered: false, clean: false, productMatch: null, matchScore: null, apparentQuality: null, lowQuality: null, qualityBlocked: false, reason: '', dirtyFrames: 0 };
     try {
       enqueueOracleBatch({
         id, jobId,
@@ -711,7 +934,8 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
         niche, facePolicy, prompt,
       });
       const waited = await waitForOracleVerdict(id, {
-        timeoutMs: Math.min(cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
+        // Kandidat PERTAMA dibatasi connectTimeoutMs (sinyal "notebook terhubung").
+        timeoutMs: Math.min(out.framesSent === paths.length ? Math.min(cfg.connectTimeoutMs, cfg.perBatchTimeoutMs) : cfg.perBatchTimeoutMs, Math.max(1, deadline - Date.now())),
         pollMs: cfg.pollMs, sleep,
       });
       if (waited.status === 'timeout') expireOracleBatch(id, 'Pre-flight menyerah sebelum vonis tiba.');
@@ -724,20 +948,45 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
             clean: !v.vetoTriggered,
             productMatch: v.productMatch,
             matchScore: v.matchScore,
+            apparentQuality: v.apparentQuality,
+            lowQuality: v.lowQuality,
             reason: v.reason || '',
             dirtyFrames: (v.dirtyFrameIndexes || []).length,
             model: v.model,
           };
+          // Filter kualitas HANYA bila operator menaikkan VLM_ORACLE_MIN_QUALITY. Skor
+          // null (notebook lama / model tidak menjawab) TIDAK boleh membunuh kandidat:
+          // ketiadaan informasi bukan vonis berkualitas rendah.
+          entry.qualityBlocked = cfg.minQuality > 0 && (
+            entry.apparentQuality !== null ? entry.apparentQuality < cfg.minQuality : entry.lowQuality === true
+          );
           out.judged += 1;
+        } else if (strict) {
+          throw new OracleUnavailableError(
+            `Vonis pre-flight kandidat #${pos + 1} tidak sah (${v.error}) — job dihentikan; kandidat tanpa vonis Kaggle yang sah tidak boleh dinilai Gemini lama.`,
+            { reason: 'invalid_verdict', jobId, batchId: id },
+          );
         } else {
           entry.reason = `vonis tidak sah: ${v.error}`;
           logger.warn(`[Oracle][PreFlight] Kandidat #${pos + 1}: ${v.error} -> TIDAK divonis, kandidat tetap dicoba.`);
         }
+      } else if (strict) {
+        const neverClaimed = waited.lastStatus === 'pending' || waited.lastStatus === 'unknown';
+        throw new OracleUnavailableError(
+          neverClaimed
+            ? `Batch pre-flight kandidat #${pos + 1} tidak pernah diklaim notebook Kaggle (${waited.status}) — oracle tidak terhubung, job dihentikan.`
+            : `Batch pre-flight kandidat #${pos + 1} diklaim tapi tidak dijawab (${waited.status}) — job dihentikan.`,
+          { reason: neverClaimed ? 'never_claimed' : 'no_verdict', jobId, batchId: id },
+        );
       } else {
         entry.reason = `oracle diam (${waited.status})`;
         logger.warn(`[Oracle][PreFlight] Kandidat #${pos + 1} tidak dijawab (${waited.status}) -> tidak boleh dibuang.`);
       }
     } catch (err) {
+      if (err instanceof OracleUnavailableError) throw err;
+      if (strict) {
+        throw new OracleUnavailableError(`Error antrean pre-flight kandidat #${pos + 1}: ${err.message} — job dihentikan.`, { reason: 'infra', jobId });
+      }
       entry.reason = `error antrean: ${err.message}`;
       logger.warn(`[Oracle][PreFlight] Kandidat #${pos + 1} error: ${err.message} -> lanjut tanpa vonis.`);
     }
@@ -765,7 +1014,7 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
 
   // PERINGKAT: kebersihan dulu, baru skor. Sama seperti jalur Gemini, hanya 2 terbaik
   // yang diterima; sisanya keluar. Yang TIDAK divisit tidak pernah masuk daftar buang.
-  const isAcceptedVerdict = (r) => r.answered && r.clean && r.productMatch !== false;
+  const isAcceptedVerdict = (r) => r.answered && r.clean && r.productMatch !== false && !r.qualityBlocked;
   const ranked = out.results.filter(isAcceptedVerdict)
     .sort((a, b) => ((b.matchScore ?? -1) - (a.matchScore ?? -1)) || a.index - b.index);
   out.accepted = ranked.slice(0, 2).map((r) => r.index);
@@ -775,6 +1024,7 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
     out.rejected.push(r.index);
     if (!r.clean) r.dropReason = r.reason || 'divonis kotor';
     else if (r.productMatch === false) r.dropReason = 'produk tidak cocok';
+    else if (r.qualityBlocked) r.dropReason = `kualitas sumber rendah (apparentQuality ${r.apparentQuality ?? '?'} < ${cfg.minQuality})`;
     else r.dropReason = 'kalah peringkat';
   }
   out.elapsedMs = Date.now() - t0;
