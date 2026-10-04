@@ -25,7 +25,7 @@
 #   3. Jalankan. Notebook ini looping; hentikan manual atau ia exit sendiri
 #      setelah ORACLE_MAX_MINUTES supaya tidak dipotong Kaggle di jam ke-12.
 #      HEMAT KUOTA GPU: setelah ORACLE_IDLE_EXIT_MIN menit tanpa ada batch yang
-#      pernah diklaim (default 20; 0 = mati total) DAN server melaporkan tidak ada
+#      pernah diklaim (default 5; 0 = mati total) DAN server melaporkan tidak ada
 #      job sibuk (field activeJobs/pending di respons klaim kosong), worker berhenti
 #      dan mencoba membunuh kernel Jupyter-nya (ORACLE_IDLE_SHUTDOWN=1) supaya waktu
 #      GPU berhenti terhitung. Sesi berikutnya harus di-start manual lagi dari UI
@@ -178,9 +178,10 @@ IDLE_SLEEP_MAX = float(_cfg("ORACLE_IDLE_SLEEP_MAX", default="30") or 30)
 MAX_MINUTES = float(_cfg("ORACLE_MAX_MINUTES", default="690") or 690)   # < 12 jam Kaggle
 # Idle-exit HEMAT KUOTA: menit tanpa satu pun batch ter-klaim -> worker berhenti dan
 # (bila ORACLE_IDLE_SHUTDOWN=1) membunuh kernel supaya GPU berhenti dihitung. Diubah
-# dari default 20 hanya bila Anda sengaja menjaga notebook hangat antar job.
+# dari default 20 ke 5 (4 Okt 2026, instruksi user) - aman karena exit hanya terjadi
+# bila server melaporkan activeJobs/pending kosong; auto-launch menyalakan kembali.
 # Dibaca lewat _cfg_raw: 0/false di oracle_config.json HARUS dihormati (mati = mati).
-IDLE_EXIT_MIN = float(_cfg_raw("ORACLE_IDLE_EXIT_MIN", "20") or 0)
+IDLE_EXIT_MIN = float(_cfg_raw("ORACLE_IDLE_EXIT_MIN", "5") or 0)
 IDLE_SHUTDOWN = str(_cfg_raw("ORACLE_IDLE_SHUTDOWN", "1")).strip().lower() not in ("0", "false", "off", "")
 MAX_SIDE = int(_cfg("ORACLE_MAX_SIDE", default="1024") or 1024)         # turun sebelum inference
 # 200 (bukan 160): kontrak ranking kini membawa satu kunci tambahan (apparentQuality) -

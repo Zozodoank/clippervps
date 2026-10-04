@@ -17,7 +17,7 @@
 // Pengaman kuota GPU (sesi ganda = kuota hangus):
 //   - fitur ini MATI kecuali ORACLE_AUTO_LAUNCH=1 (default aman di PC);
 //   - tidak menembak apa pun bila notebook masih heartbeat-segar;
-//   - cooldown antar-launch (default 25 mnt > idle-exit notebook) + guard
+//   - cooldown antar-launch (default 10 mnt) + guard
 //     "skip live" di dalam script launcher itu sendiri.
 // Tidak pernah melempar: kegagalan launcher dikembalikan sebagai objek.
 // ─────────────────────────────────────────────────────────────────────────
@@ -61,10 +61,11 @@ export function maybeAutoLaunchOracle({ env = process.env, logger = console, now
   const last = oracleLastSeenMs();
   if (last && now - last <= cfg.staleMs) return { triggered: false, reason: 'notebook_alive', lastSeenAt: last };
 
-  // Cooldown: jangan push kernel tiap batch/frame. Angka default (25 mnt) sengaja
-  // lebih besar dari idle-exit notebook (20 mnt) supaya sesi tunggal sempat mati
-  // rapi sebelum sesi berikutnya ditembakkan.
-  const cooldownMs = Math.max(30, Number(env.ORACLE_AUTO_LAUNCH_COOLDOWN_MIN) || 25) * 60000;
+  // Cooldown: jangan push kernel tiap batch/frame. idle-exit notebook kini 5 mnt
+  // (4 Okt 2026) — cooldown lama (25 mnt) akan memblokir restart job berikutnya
+  // setelah sesi mati rapi. 10 mnt cukup menahan thrashing push-gagal/boot-lama,
+  // guard 'notebook_alive' (heartbeat segar) tetap yang pertama menyaring.
+  const cooldownMs = Math.max(1, Number(env.ORACLE_AUTO_LAUNCH_COOLDOWN_MIN) || 10) * 60000;
   if (now - lastLaunchAtMs < cooldownMs) {
     return { triggered: false, reason: 'cooldown', waitMs: cooldownMs - (now - lastLaunchAtMs) };
   }

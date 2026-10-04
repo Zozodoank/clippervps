@@ -147,7 +147,7 @@ const FLAG_NORMALIZERS = {
   // mis. Termux proot). Default MATI: PC tanpa CLI tidak pernah mencoba spawn.
   ORACLE_AUTO_LAUNCH: (env) => String(env.ORACLE_AUTO_LAUNCH || '').trim() === '1',
   ORACLE_AUTO_LAUNCH_WAIT_SEC: (env) => Math.max(15, Number(env.ORACLE_AUTO_LAUNCH_WAIT_SEC) || 300),
-  ORACLE_AUTO_LAUNCH_COOLDOWN_MIN: (env) => Math.max(1, Number(env.ORACLE_AUTO_LAUNCH_COOLDOWN_MIN) || 25),
+  ORACLE_AUTO_LAUNCH_COOLDOWN_MIN: (env) => Math.max(1, Number(env.ORACLE_AUTO_LAUNCH_COOLDOWN_MIN) || 10),
   // URL publik lokal (tunnel) tempat notebook memanggil API. Server hanya menyimpan/melaporkan
   // untuk kenyamanan log; yang memakai nilai ini adalah notebook di sisi Kaggle.
   VLM_ORACLE_BASE_URL: (env) => String(env.VLM_ORACLE_BASE_URL || '').trim(),
