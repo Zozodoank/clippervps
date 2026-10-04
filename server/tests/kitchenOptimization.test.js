@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from '../services/downloader.js';
-import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, getAutoKeywords, bingTitleRelevancePredicate, buildDynamicProductSearchQueries } from '../services/discoveryService.js';
+import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, getAutoKeywords, bingTitleRelevancePredicate, buildDynamicProductSearchQueries, isVagueOrAggregateProduct } from '../services/discoveryService.js';
 import { buildNicheProductCriterion } from '../services/aiService.js';
 import { getNichePreset } from '../config/nichePresets.js';
 import { hasRepairIntent, stripForbiddenTerms, coreNegativeOperators, forbiddenNegativeOperators } from '../config/forbiddenTerms.js';
@@ -36,6 +36,23 @@ describe('Kitchen Tools & Video-First Optimization', () => {
   // FIX 0/20 (A2): query "merk + tipe" POLOS tidak boleh dihujani operator negatif sampai 6
   // (dulu cabang non-branded -> 6 operator -> YouTube 0 hasil). Identity pendek dijepit <= 3,
   // tetapi operator prioritas berbahaya (-servis/-cara/-tutorial) tetap terkirim (bug 30 Sep).
+  describe('Gerbang produk konkret (opsi #1) - tolak generik/agregat sebelum stream', () => {
+    it('menolak judul GENERIK tanpa produk konkret (kategori/kolektif saja)', () => {
+      expect(isVagueOrAggregateProduct({ title: 'Beko 2022 Produk Peralatan Dapur Lini', productType: 'Peralatan Dapur' })).toBe(true);
+    });
+
+    it('menolak judul AGREGAT multi-produk yang disambung penghubung', () => {
+      expect(isVagueOrAggregateProduct({ title: 'Review Kompor Niko Reflection Gold dan Food Chopper Katana Pro Gold', productType: 'Kompor' })).toBe(true);
+    });
+
+    it('MELOLOSKAN satu produk konkret (1 kata benda), tanpa false-positive', () => {
+      expect(isVagueOrAggregateProduct({ title: 'Food Chopper Mini Elektrik Niko', productType: 'Chopper' })).toBe(false);
+      expect(isVagueOrAggregateProduct({ title: 'Samsung Galaxy A54 8/256', productType: 'Smartphone' })).toBe(false);
+      // 2 kata benda TAPI tanpa penghubung (multi-fungsi 2in1) -> tetap lolos.
+      expect(isVagueOrAggregateProduct({ title: 'Blender Mixer Juicer 2in1', productType: 'Blender' })).toBe(false);
+    });
+  });
+
   describe('Kata "fix" (Inggris) kini terlarang - satu sumber (bug auto_41fb4b59)', () => {
     it('hasRepairIntent menolak judul produk reparasi berbahasa Inggris (kata fix saja)', () => {
       // Tanpa 'how to' agar murni menguji kata 'fix' di kelas REPAIR.

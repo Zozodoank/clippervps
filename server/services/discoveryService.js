@@ -4000,6 +4000,71 @@ export function isGenericShopeeTitle(title = '') {
   return genericPatterns.some((pattern) => norm.includes(pattern));
 }
 
+// ============================================================================
+// GERBANG "PRODUK KONKRET" (opsi #1 - fix throughput Auto Mode, hemat kuota)
+// ----------------------------------------------------------------------------
+// Laporan lapangan (autorun_92f3bd2a): listing berjudul GENERIK ("Beko 2022: Produk
+// Peralatan Dapur Lini") atau AGREGAT multi-produk/multi-merek ("Review Kompor Niko
+// Reflection Gold DAN Food Chopper Katana Pro Gold") LOLOS gerbang brand+type lama
+// karena productType masih terisi kata KATEGORI. Akibatnya: stream 3 video + preflight
+// Kaggle sia-sia, Qwen benar tidak menemukan satu produk spesifik yang cocok -> skip.
+// Gerbang ini MEMBUANG judul semacam itu SEBELUM streaming (hemat kuota Kaggle +
+// naikkan rasio sukses). Presisi tinggi - hanya tolak:
+//   (a) AGREGAT: >= 2 kata benda produk BERBEDA yang disambung kata penghubung
+//       (dan / & / + / koma / garis miring). "Blender Mixer" SATU fungsi -> tetap lolos.
+//   (b) GENERIK: NOL kata benda produk konkret TAPI ada token kategori/kolektif
+//       (produk/peralatan/lini/series/katalog/dsb). "Kompor" (1 kata benda) -> lolos.
+// Kata benda = \b...\b, jadi 'watch' TIDAK tertangkap di dalam 'smartwatch'.
+const PRODUCT_NOUN_TOKENS = [
+  // alat dapur
+  'kompor', 'chopper', 'choper', 'blender', 'mixer', 'slicer', 'grater', 'parutan',
+  'peeler', 'pisau', 'gunting', 'wajan', 'panci', 'teflon', 'dispenser', 'sealer',
+  'air fryer', 'fryer', 'rice cooker', 'oven', 'pemanggang', 'cetakan', 'talenan',
+  'termos', 'electric kettle', 'ketel', 'juicer', 'food processor', 'kulkas',
+  'mesin cuci', 'vacuum cleaner', 'penyedot', 'timbangan', 'gelas', 'mug', 'tumbler',
+  'set toples', 'toples', 'alat', 'mesin', 'mesin jus', 'penanak nasi',
+  // gadget/smartphone
+  'smartphone', 'handphone', 'hp', 'laptop', 'tablet', 'tws', 'earphone', 'earbuds',
+  'headset', 'headphone', 'charger', 'power bank', 'powerbank', 'smartwatch', 'watch',
+  'kamera', 'camera', 'speaker', 'mouse', 'keyboard', 'monitor', 'router', 'ssd',
+  'flashdisk', 'proyektor',
+];
+const CATEGORY_COLLECTIVE_TOKENS = [
+  'produk', 'peralatan', 'perlengkapan', 'lini', 'line', 'series', 'seri', 'katalog',
+  'koleksi', 'assortment', 'varian', 'macam', 'lengkap', 'grosir', 'paket',
+];
+const AGGREGATE_CONNECTOR_RE = /(?:\bdan\b|\bdan\s|&|\+|,|\/)/i;
+
+/**
+ * @param {{ title?: string, brand?: string, productType?: string, model?: string }} info
+ * @returns {boolean} true bila judul TIDAK merujuk satu produk konkret (agregat/generik)
+ */
+export function isVagueOrAggregateProduct(info = {}) {
+  const title = normalizeText(String(info.title || ''));
+  const type = normalizeText(String(info.productType || ''));
+  // Periksa gabungan: productType + title, karena identitas produk tersebar di keduanya.
+  const text = `${type} ${title}`.trim();
+  if (!text) return true;
+
+  const matchedNouns = new Set();
+  for (const noun of PRODUCT_NOUN_TOKENS) {
+    const re = new RegExp(`\\b${noun.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    if (re.test(text)) matchedNouns.add(noun);
+  }
+
+  // (a) Agregat: 2+ kata benda produk BERBEDA yang disambung penghubung eksplisit.
+  if (matchedNouns.size >= 2 && AGGREGATE_CONNECTOR_RE.test(title)) return true;
+
+  // (b) Generik: tanpa satu pun kata benda produk konkret, tapi memuat token kategori.
+  const hasCategoryToken = CATEGORY_COLLECTIVE_TOKENS.some((c) => {
+    const re = new RegExp(`\\b${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i');
+    return re.test(type) || re.test(title);
+  });
+  if (matchedNouns.size === 0 && hasCategoryToken) return true;
+
+  return false;
+}
+
 export function cleanTitle(value = '', productUrl = '') {
   let cleaned = String(value || '')
     .replace(/\[[^\]]*\]/g, ' ')

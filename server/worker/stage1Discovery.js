@@ -63,6 +63,7 @@ import {
   cleanTitle,
   normalizeText,
   isBulkyOrUnsuitableProduct,
+  isVagueOrAggregateProduct,
   markKeywordAsUsed,
   loadUsedKeywords,
   isKeywordUsed,
@@ -217,6 +218,18 @@ export async function runAutoStage1Worker(run) {
         updateAutoRun(run, {
           message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": listing tidak memiliki brand + type yang terverifikasi.`,
         });
+        continue;
+      }
+
+      // ── GERBANG PRODUK KONKRET (opsi #1) ── Buang judul generik/agregat SEBELUM
+      // stream video + preflight Kaggle (hemat kuota). Qwen toh akan menolak footage
+      // yang tak cocok dengan "satu produk", jadi lebih baik disaring di sini.
+      if (isVagueOrAggregateProduct({ title: shopeeCandidate.title, brand, productType, model })) {
+        run.skippedProducts++;
+        updateAutoRun(run, {
+          message: `[Auto] Skip "${shopeeCandidate.title.slice(0, 45)}": judul generik/agregat (bukan satu produk konkret) — dilewati sebelum streaming (hemat kuota).`,
+        });
+        console.log(`[Auto] ⏭️ Skip produk non-konkret "${String(shopeeCandidate.title).slice(0, 60)}" (type="${productType}") — gerbang produk konkret.`);
         continue;
       }
 
