@@ -132,6 +132,47 @@ describe('Face Policy (Fase 3) - videoFilterService', () => {
     });
   });
 
+  describe('inspectFramesLocally - gatekeeper OFFLINE (:5050 dimatikan)', () => {
+    // Regresi mandate 2026-10-04: user mematikan :5050 dengan sengaja. Di mode ADVISORY
+    // (default saat Oracle aktif), gatekeeper mati = TIDAK ADA kecurigaan lokal, BUKAN
+    // penolakan — semua frame WAJIB tetap diteruskan ke Oracle (Qwen pemutus akhir).
+    // Kalau tidak, kandidat dibuang sebelum pool dan "AI lokal berhenti mengirim frame ke Kaggle".
+    it('advisory: fetch gagal -> eligible true, SEMUA frame jadi cleanFrames (lanjut ke Oracle)', async () => {
+      const prev = process.env.GK_LOCAL_VETO;
+      process.env.GK_LOCAL_VETO = 'advisory';
+      const frames = makeTempFrameFiles(6);
+      global.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED 127.0.0.1:5050'));
+      try {
+        const res = await inspectFramesLocally(frames, { niche: 'kitchen_tools' });
+        expect(res.gatekeeperBackend).toBe('skipped_unavailable_advisory');
+        expect(res.eligible).toBe(true);
+        expect(res.cleanFrames.length).toBe(6);
+        expect(res.discardedFrames).toEqual([]);
+        expect(res.localSuspicion).toBeNull();
+      } finally {
+        if (prev === undefined) delete process.env.GK_LOCAL_VETO; else process.env.GK_LOCAL_VETO = prev;
+      }
+    });
+
+    it('strict: fetch gagal -> eligible false + sentinel gatekeeperBackend unavailable (pemanggil lempar infra)', async () => {
+      const prevVeto = process.env.GK_LOCAL_VETO;
+      const prevHeur = process.env.GK_ALLOW_HEURISTIC_FALLBACK;
+      process.env.GK_LOCAL_VETO = 'strict';
+      delete process.env.GK_ALLOW_HEURISTIC_FALLBACK;
+      const frames = makeTempFrameFiles(6);
+      global.fetch = vi.fn().mockRejectedValue(new Error('ECONNREFUSED 127.0.0.1:5050'));
+      try {
+        const res = await inspectFramesLocally(frames, { niche: 'kitchen_tools' });
+        expect(res.gatekeeperBackend).toBe('unavailable');
+        expect(res.eligible).toBe(false);
+        expect(res.cleanFrames).toEqual([]);
+      } finally {
+        if (prevVeto === undefined) delete process.env.GK_LOCAL_VETO; else process.env.GK_LOCAL_VETO = prevVeto;
+        if (prevHeur !== undefined) process.env.GK_ALLOW_HEURISTIC_FALLBACK = prevHeur;
+      }
+    });
+  });
+
   describe('poolMultiCandidateFrames - includeEligible default false', () => {
     const buildCandidate = (idx) => ({
       candidateIndex: idx,

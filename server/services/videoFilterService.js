@@ -1353,10 +1353,40 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
     };
   }
 
-  // (#B) JANGAN diam-diam pakai heuristik piksel "tolak-semua" saat gatekeeper gagal: heuristik
-  // itu menuduh video bersih (review HP berpresenter) sebagai berwajah/ber-watermark sehingga job
-  // gagal PALSU (0/223). Default sekarang: gagal JUJUR (bukan karena konten). Heuristik lama hanya
-  // aktif secara eksplisit via GK_ALLOW_HEURISTIC_FALLBACK=1.
+  // Gatekeeper TIDAK menjawab (aiResult null). Perilaku ditentukan dari PERAN vonis lokal:
+  //
+  //  'advisory' (DEFAULT selama Oracle aktif): pemutus akhir adalah Qwen, bukan gerbang
+  //  lokal. Kalau gatekeeper sengaja dimatikan, itu berarti TIDAK ADA kecurigaan lokal —
+  //  BUKAN penolakan. Membuang kandidat di sini justru membuat frame tidak pernah diteruskan
+  //  ke Kaggle (gejala teramati user 2026-10-04: ":5050 dimatikan -> AI lokal berhenti
+  //  mengirim frame ke Kaggle"). Jadi kembalikan SEMUA frame sebagai bersih tanpa
+  //  localSuspicion supaya tetap masuk pool Oracle dan Qwen yang menilai frame-nya.
+  //
+  //  'strict' (mode legacy, Oracle tidak aktif): tidak ada pemutus lain, maka kegagalan
+  //  gerbang lokal = masalah INFRASTRUKTUR yang jujur (bukan vonis konten) — jangan
+  //  menuduh produk, biarkan pemanggil memutuskan (fastProbeLocal melempar isInfraError).
+  if (isLocalGatekeeperAdvisory(process.env)) {
+    console.warn('[inspectFramesLocally] 🛰️ AI Gatekeeper tidak merespons (:5050) TAPI peran lokal = PENASIHAT. Seluruh frame diteruskan ke Oracle Kaggle tanpa vonis/kecurigaan lokal (Qwen = pemutus akhir).');
+    return {
+      eligible: true,
+      cleanFrames: frames.map((f) => ({ ...f })),
+      cameraResultEligibleFrames: [],
+      discardedFrames: [],
+      verifiedSegments: [],
+      reason: undefined,
+      localSuspicion: null,
+      hasOpeningIntro: false,
+      introCutoffSec: 0,
+      facePolicy: activeFacePolicy,
+      gatekeeperBackend: 'skipped_unavailable_advisory',
+    };
+  }
+
+  // (#B) JANGAN diam-diam pakai heuristik piksel "tolak-semua" saat gatekeeper gagal (mode
+  // strict): heuristik itu menuduh video bersih (review HP berpresenter) sebagai berwajah/
+  // ber-watermark sehingga job gagal PALSU (0/223). Default: gagal JUJUR (bukan karena konten,
+  // ditandai gatekeeperBackend='unavailable' supaya pemanggil memperlakukannya sebagai infra).
+  // Heuristik lama hanya aktif secara eksplisit via GK_ALLOW_HEURISTIC_FALLBACK=1.
   if (process.env.GK_ALLOW_HEURISTIC_FALLBACK !== '1') {
     console.error('[inspectFramesLocally] ⛔ AI Gatekeeper tidak merespons (127.0.0.1:5050, semua chunk gagal). Video TIDAK dinilai — ini masalah infrastruktur, bukan konten. Aktifkan gatekeeper lalu ulangi job. (Fallback heuristik lama: GK_ALLOW_HEURISTIC_FALLBACK=1)');
     return {
@@ -1365,6 +1395,7 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       cameraResultEligibleFrames: [],
       discardedFrames: [],
       verifiedSegments: [],
+      localSuspicion: null,
       reason: 'AI Gatekeeper tidak tersedia/gagal merespons — video belum dinilai (bukan karena konten). Periksa service gatekeeper :5050 lalu ulangi job.',
       gatekeeperBackend: 'unavailable',
     };
@@ -2392,8 +2423,11 @@ export async function fastProbeLocal(videoFilePath, jobId, {
   onProgress({ step: 'frame_probe', message: 'Mengirim 5 frame ke Gatekeeper...', progress: 28 });
   const inspection = await inspectFramesLocally(frames, { niche, facePolicy, onProgress });
   
-  if (!inspection.eligible && inspection.reason && inspection.reason.includes('Gatekeeper unavailable')) {
-    // P1-5: microservice Gatekeeper mati/busuk = infrastruktur, bukan vonis konten.
+  // P1-5 + fix 2026-10-04: deteksi kegagalan gerbang lokal lewat SENTINEL gatekeeperBackend,
+  // BUKAN cocok string alasan (dulu cek 'Gatekeeper unavailable' bahasa Inggris padahal reason
+  // bahasa Indonesia → tidak pernah match). 'unavailable' = mode strict gatekeeper mati → infra.
+  // 'skipped_unavailable_advisory' = penasihat → TIDAK dibuang, frame lanjut ke Oracle (eligible true).
+  if (inspection.gatekeeperBackend === 'unavailable') {
     throw Object.assign(new Error('Gatekeeper unavailable'), { isInfraError: true });
   }
 
