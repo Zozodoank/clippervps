@@ -323,26 +323,40 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
             productTitle: job.productTitle,
             productDescription: job.productDescription,
             apiKey: undefined,
-            options: isAutoJob
-              // Retry AUTO punya dua semantic berbeda (user meminta keduanya bisa dipilih via forceNewCandidate):
-              //  - forceNewCandidate:true  -> memang MAU kandidat baru; biarkan pipeline auto-search/harvest.
-              //  - forceNewCandidate:false -> "retry tanpa mencari" (targetCandidates sudah = youtubeUrl terkunci,
-              //    lihat L293). Pipeline WAJIB pakai ulang SATU sumber itu saja, DILARANG menelusuri/memanen
-              //    video lain — sama ketatnya dengan retry manual (explicit_only). Dulu cabang ini lolos ke
-              //    Multi-Video Harvesting karena tidak men-set sourcePolicy/singleVideoOnly -> retry auto diam-diam
-              //    mencari video baru. Itulah bug yang diperbaiki di sini.
-              ? (forceNewCandidate
-                  ? { aiProvider: effectiveAiProvider, autoSearchFallback: false, niche: jobNiche }
-                  : { aiProvider: effectiveAiProvider, autoSearchFallback: false, sourcePolicy: 'explicit_only', singleVideoOnly: true, niche: jobNiche })
-              : {
+            options: (() => {
+              // ─── ALUR BARU (samakan dengan AutoJob / runAutoStage1Worker) ───
+              // Mandet user 2026-10: retry (AUTO & MANUAL, niche smartphone & alat dapur)
+              // harus memakai SET RENDER yang sama dengan autojob — isVideoFirst +
+              // multiVideoHarvesting + sceneDuration 3.3 + minDuration 30.0.
+              // PENGLONGGARAN: hanya opsi RENDER. Sumber tetap dikunci sesuai jenis retry
+              // (manual & auto-no-force = sourcePolicy 'explicit_only'; pipeline sudah
+              // membungkam auto-search/multi-video-harvesting saat explicit_only, lihat
+              // stage1Render: maxStreamVideos/candidatePool di-guard explicitOnly). Untuk
+              // niche, jobNiche sudah mengalir otomatis (gadget_smartphone vs kitchen_tools).
+              const NEW_FLOW_RENDER = { multiVideoHarvesting: true, isVideoFirst: true, sceneDuration: 3.3, minDuration: 30.0 };
+              if (isAutoJob) {
+                // Retry AUTO punya dua semantic berbeda (user meminta keduanya bisa dipilih via forceNewCandidate):
+                //  - forceNewCandidate:true  -> memang MAU kandidat baru; biarkan pipeline auto-search/harvest.
+                //  - forceNewCandidate:false -> "retry tanpa mencari" (targetCandidates sudah = youtubeUrl terkunci,
+                //    lihat L293). Pipeline WAJIB pakai ulang SATU sumber itu saja, DILARANG menelusuri/memanen
+                //    video lain — sama ketatnya dengan retry manual (explicit_only). Dulu cabang ini lolos ke
+                //    Multi-Video Harvesting karena tidak men-set sourcePolicy/singleVideoOnly -> retry auto diam-diam
+                //    mencari video baru. Itulah bug yang diperbaiki di sini.
+                return forceNewCandidate
+                  ? { aiProvider: effectiveAiProvider, autoSearchFallback: false, niche: jobNiche, ...NEW_FLOW_RENDER }
+                  : { aiProvider: effectiveAiProvider, autoSearchFallback: false, sourcePolicy: 'explicit_only', singleVideoOnly: true, niche: jobNiche, ...NEW_FLOW_RENDER };
+              }
+              // Kunci manual: hanya link user yang diproses, persis seperti POST /generate.
+              return {
                 aiProvider: effectiveAiProvider,
                 autoSearchFallback: false,
-                // Kunci manual: hanya link user yang diproses, persis seperti POST /generate.
                 sourcePolicy: 'explicit_only',
                 singleVideoOnly: job.singleVideoOnly ?? (savedOemUrls.length === 0),
                 oemUrls: savedOemUrls,
                 niche: jobNiche,
-              },
+                ...NEW_FLOW_RENDER,
+              };
+            })(),
             requireCleanGeminiPlan: true,
           });
 

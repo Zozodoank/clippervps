@@ -91,7 +91,15 @@ describe('POST /api/jobs/:jobId/retry — kontrak manual vs auto', () => {
       sourcePolicy: 'explicit_only',
       singleVideoOnly: false,
       niche: 'gadget_smartphone',
+      // ALUR BARU: retry manual niche smartphone ikut set render autojob.
+      multiVideoHarvesting: true,
+      isVideoFirst: true,
+      sceneDuration: 3.3,
+      minDuration: 30.0,
     });
+    // LOCK manual TETAP: menambah multiVideoHarvesting TIDAK boleh membuka auto-search.
+    expect(arg.options.autoSearchFallback).toBe(false);
+    expect(arg.options.sourcePolicy).toBe('explicit_only');
     // oemUrls tersaring (string kosong dibuang), urutan & isi terjaga.
     expect(arg.options.oemUrls).toEqual(['https://shopee.foo/1', 'https://shopee.foo/2']);
     activeJobs.delete(jobId);
@@ -117,6 +125,9 @@ describe('POST /api/jobs/:jobId/retry — kontrak manual vs auto', () => {
     expect(arg.youtubeUrl).toBe('https://youtu.be/FROM_OEM');
     expect(arg.options.sourcePolicy).toBe('explicit_only');
     expect(arg.options.niche).toBe('kitchen_tools');
+    // ALUR BARU: retry manual niche alat dapur ikut set render autojob (tanpa cari web).
+    expect(arg.options).toMatchObject({ multiVideoHarvesting: true, isVideoFirst: true, sceneDuration: 3.3, minDuration: 30.0 });
+    expect(discoverYouTubeCandidatesForProduct).not.toHaveBeenCalled();
     activeJobs.delete(jobId);
   });
 
@@ -157,6 +168,8 @@ describe('POST /api/jobs/:jobId/retry — kontrak manual vs auto', () => {
     // Cabang auto TIDAK mengunci explicit_only.
     expect(arg.options.sourcePolicy).toBeUndefined();
     expect(arg.youtubeUrl).toBe('https://youtu.be/AUTONEW');
+    // ALUR BARU: retry auto niche smartphone ikut set render autojob.
+    expect(arg.options).toMatchObject({ multiVideoHarvesting: true, isVideoFirst: true, sceneDuration: 3.3, minDuration: 30.0, niche: 'gadget_smartphone' });
     activeJobs.delete(jobId);
   });
 });
