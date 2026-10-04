@@ -48,7 +48,7 @@ const {
   PREFLIGHT_SCENE_BASE,
 } = await import('../services/vlmOracleService.js');
 const { isAllowedFramePath } = await import('../api/routes/vlmOracleRoutes.js');
-const { maybeAutoLaunchOracle, waitForOracleOnline, __resetAutoLaunchCooldown } = await import('../services/oracleLauncherService.js');
+const { maybeAutoLaunchOracle, waitForOracleOnline, probeOracleKernelAlive, __resetAutoLaunchCooldown } = await import('../services/oracleLauncherService.js');
 const { tempDir } = await import('../utils/paths.js');
 const { getFFmpegPath } = await import('../services/binaryChecker.js');
 
@@ -1407,6 +1407,62 @@ describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (man
     expect(r).toMatchObject({ triggered: false, reason: 'cooldown' });
     expect(calls).toHaveLength(0);
     __resetAutoLaunchCooldown();
+  });
+
+  // ─── ZOMBIE-PROOF (regresi idle-exit ~5 mnt = staleMs, 2026-10-04) ───
+  it('force=true (zombie dikonfirmasi) -> TETAP launch walau heartbeat segar + args dapat --force', () => {
+    __resetAutoLaunchCooldown();
+    touchOracleHeartbeat('nb-zombie', Date.now()); // heartbeat sengaja SEGAR
+    const calls = [];
+    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), force: true, spawnFn: mkSpawn(calls) });
+    expect(r).toMatchObject({ triggered: true, reason: 'launched', cmd: '/tmp/fake-launch.sh', forced: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].args).toEqual(['/tmp/fake-launch.sh', '--force']);
+    __resetAutoLaunchCooldown();
+  });
+
+  it('force=false + heartbeat segar -> notebook_alive (guard lama UTUH, tak berubah)', () => {
+    __resetAutoLaunchCooldown();
+    touchOracleHeartbeat('nb-segar', Date.now());
+    const calls = [];
+    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), spawnFn: mkSpawn(calls) });
+    expect(r).toMatchObject({ triggered: false, reason: 'notebook_alive' });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('waitForOracleOnline(afterMs=baseline): heartbeat zombie yang TIDAK maju -> timeout; heartbeat maju -> terhubung', async () => {
+    const baseline = Date.now() - 30_000; // heartbeat zombie: 30 dtk lalu (masih < staleMs)
+    // (1) notebook belum benar-benar restart -> lastSeen tetap = baseline -> TOLAK,
+    //     meski usianya < staleMs. Inilah inti perbaikan zombie.
+    const rNo = await waitForOracleOnline({
+      env: ENV_ON, logger: silent, waitMs: 200, pollMs: 40, deadline: Date.now(), afterMs: baseline,
+      lastSeenFn: () => baseline, sleep: async () => {},
+    });
+    expect(rNo).toMatchObject({ ok: false, detail: 'notebook_offline' });
+    // (2) sesi BARU memanggil API -> lastSeen MAJU melampaui baseline -> TERHUBUNG.
+    const rYes = await waitForOracleOnline({
+      env: ENV_ON, logger: silent, waitMs: 1000, pollMs: 5, deadline: Date.now(), afterMs: baseline,
+      lastSeenFn: () => Date.now() + 5000, sleep: async () => {},
+    });
+    expect(rYes).toMatchObject({ ok: true, detail: 'connected' });
+  });
+
+  it('probeOracleKernelAlive: COMPLETE->false, RUNNING->true, keluaran kosong/err->unknown', async () => {
+    const execOk = (out) => (bin, args, opts, cb) => cb(null, out, '');
+    const envK = { KAGGLE_USER: 'u', KAGGLE_BIN: 'kg' };
+    const dead = await probeOracleKernelAlive({ env: envK, logger: silent, execFileFn: execOk('u/clippervps-vlm-oracle has status: KernelWorkerStatus.COMPLETE') });
+    expect(dead.alive).toBe(false);
+    const run = await probeOracleKernelAlive({ env: envK, logger: silent, execFileFn: execOk('u/clippervps-vlm-oracle has status: KernelWorkerStatus.RUNNING') });
+    expect(run.alive).toBe(true);
+    // Frasa menjebak 'not running' + COMPLETE -> harus MATI, bukan hidup.
+    const trap = await probeOracleKernelAlive({ env: envK, logger: silent, execFileFn: execOk('kernel is currently not running (COMPLETE)') });
+    expect(trap.alive).toBe(false);
+    // CLI error tanpa keluaran -> unknown (konservatif: JANGAN paksa launch).
+    const err = await probeOracleKernelAlive({ env: envK, logger: silent, execFileFn: (b, a, o, cb) => cb(new Error('boom'), '', '') });
+    expect(err.alive).toBe('unknown');
+    // User tak dikenal -> unknown (tak menyusun referensi kernel kosong).
+    const noUser = await probeOracleKernelAlive({ env: { KAGGLE_BIN: 'kg', HOME: '/nonexistent-zz' }, logger: silent, execFileFn: execOk('x') });
+    expect(noUser.alive).toBe('unknown');
   });
 
   it('waitForOracleOnline: heartbeat muncul di tengah tunggu -> ok:true', async () => {

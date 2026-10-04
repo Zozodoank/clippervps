@@ -21,8 +21,9 @@
 //     "skip live" di dalam script launcher itu sendiri.
 // Tidak pernah melempar: kegagalan launcher dikembalikan sebagai objek.
 // ─────────────────────────────────────────────────────────────────────────
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { oracleLastSeenMs } from '../store/jobStore.js';
 import { resolveOracleConfig } from './vlmOracleService.js';
@@ -47,6 +48,82 @@ export function isOracleAutoLaunchEnabled(env = process.env) {
   return v === '1' || v === 'true';
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// ZOMBIE-PROOF (regresi 2026-10-04): sejak Kaggle memangkas idle-exit menjadi
+// ~5 menit — sama persis dengan ambang 'notebook hidup' VLM_ORACLE_STALE_SEC
+// (300 dtk) — sebuah notebook yang BARU mati masih menyimpan heartbeat 'segar'.
+// Gerbang heartbeat saja salah menyimpulkan 'hidup' -> auto-launch dilewati ->
+// pre-flight enqueue batch -> tak pernah di-claim (kernel sebenarnya mati) ->
+// job mati 'never_claimed'. Ground truth sejati = status kernel Kaggle, jadi
+// kita probe `kaggle kernels status` untuk membongkar zombie tanpa membuat sesi
+// ganda (hanya menendang ulang bila kernel PASTI mati, bukan saat tak yakin).
+// ─────────────────────────────────────────────────────────────────────────
+const KERNEL_RUNNING_TOKENS = ['RUNNING', 'QUEUED', 'PROVISIONING', 'PULLING', 'STARTING'];
+const KERNEL_DEAD_TOKENS = ['COMPLETE', 'COMPLETED', 'STOPPED', 'SHUTDOWN', 'IDLE', 'FAILED', 'NONE', 'WITHDRAWN'];
+
+/** Ambil token status dari keluaran CLI (mis. 'KernelWorkerStatus.COMPLETE' -> 'COMPLETE'). */
+function parseKernelState(raw) {
+  const s = String(raw || '');
+  const m = s.match(/KernelWorkerStatus[._-]?([A-Za-z_]+)/);
+  const tok = (m ? m[1] : '').toUpperCase();
+  if (tok) return tok;
+  const up = s.toUpperCase();
+  // Cek keluarga MATI lebih dulu agar frasa 'not running' tidak keliru dibaca hidup.
+  if (KERNEL_DEAD_TOKENS.some((t) => up.includes(t))) return 'DEAD';
+  if (KERNEL_RUNNING_TOKENS.some((t) => up.includes(t))) return 'RUNNING';
+  return '';
+}
+
+/** User Kaggle: env > ~/.kaggle/kaggle.json (dipakai untuk menyusun referensi kernel). */
+function resolveKaggleUser(env = process.env) {
+  const u = String(env.KAGGLE_USER || env.KAGGLE_USERNAME || '').trim();
+  if (u) return u;
+  try {
+    const home = String(env.HOME || process.env.HOME || process.env.USERPROFILE || '').trim();
+    const p = home ? path.join(home, '.kaggle', 'kaggle.json') : '';
+    if (p && fs.existsSync(p)) {
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (j && j.username) return String(j.username).trim();
+    }
+  } catch { /* abaikan: hanya mempengaruhi probe, bukan jalur utama */ }
+  return '';
+}
+
+/**
+ * Probe read-only status kernel oracle Kaggle. TIDAK membuka/menutup sesi.
+ * Return { alive: true|false|'unknown', state, raw }. 'unknown' saat CLI tak ada
+ * / user tak dikenal / error / keluaran tak terurai -> pemanggil HARUS perlakukan
+ * konservatif (jangan paksa launch) agar kuota tidak terbakar oleh sesi ganda.
+ */
+export function probeOracleKernelAlive({ env = process.env, logger = console, execFileFn = null } = {}) {
+  return new Promise((resolve) => {
+    const user = resolveKaggleUser(env);
+    if (!user) {
+      logger?.log?.('[OracleAutoLaunch] probe kernel dilewati: user Kaggle tak dikenal (KAGGLE_USER/kaggle.json kosong) -> unknown.');
+      resolve({ alive: 'unknown', state: 'no_user', raw: '' });
+      return;
+    }
+    const ref = String(env.ORACLE_KERNEL_REF || '').trim() || `${user}/clippervps-vlm-oracle`;
+    const kbin = String(env.KAGGLE_BIN || '').trim() || 'kaggle';
+    const ef = execFileFn || execFile;
+    try {
+      ef(kbin, ['kernels', 'status', ref], { timeout: 20000, windowsHide: true }, (err, stdout, stderr) => {
+        const raw = `${stdout || ''}${stderr || ''}`.trim();
+        if (err && !raw) {
+          resolve({ alive: 'unknown', state: 'cli_error', raw: err.message });
+          return;
+        }
+        const tok = parseKernelState(raw);
+        if (!tok) resolve({ alive: 'unknown', state: 'unparsed', raw });
+        else if (KERNEL_DEAD_TOKENS.includes(tok) || tok === 'DEAD') resolve({ alive: false, state: tok, raw });
+        else resolve({ alive: true, state: tok, raw });
+      });
+    } catch (e) {
+      resolve({ alive: 'unknown', state: 'spawn_threw', raw: e.message });
+    }
+  });
+}
+
 /** Reset cooldown — HANYA untuk tes. */
 export function __resetAutoLaunchCooldown() {
   lastLaunchAtMs = 0;
@@ -58,16 +135,19 @@ export function __resetAutoLaunchCooldown() {
  * supaya bisa diuji tanpa menyentuh Kaggle sungguhan.
  * Return { triggered, reason, cmd?, waitMs?, error? }.
  */
-export function maybeAutoLaunchOracle({ env = process.env, logger = console, now = Date.now(), spawnFn = null } = {}) {
+export function maybeAutoLaunchOracle({ env = process.env, logger = console, now = Date.now(), spawnFn = null, force = false } = {}) {
   if (!isOracleAutoLaunchEnabled(env)) return { triggered: false, reason: 'flag_off' };
 
   const cfg = resolveOracleConfig(env);
   if (!cfg.enabled) return { triggered: false, reason: 'mode_not_oracle' };
   if (!String(env.API_ACCESS_TOKEN || '').trim()) return { triggered: false, reason: 'token_kosong' };
 
-  // Notebook masih berdenyut -> sesi sudah hidup; jangan buang kuota.
+  // Notebook masih berdenyut -> sesi sudah hidup; jangan buang kuota. KECUALI
+  // pemanggil sudah MEMBONGKAR zombie lewat probe status kernel (force=true):
+  // dalam kasus itu heartbeat 'segar' hanyalah sisa notebook yang baru idle-exit,
+  // jadi guard ini dilewati (cooldown di bawah tetap menahan thrashing).
   const last = oracleLastSeenMs();
-  if (last && now - last <= cfg.staleMs) return { triggered: false, reason: 'notebook_alive', lastSeenAt: last };
+  if (!force && last && now - last <= cfg.staleMs) return { triggered: false, reason: 'notebook_alive', lastSeenAt: last };
 
   // Cooldown: jangan push kernel tiap batch/frame. idle-exit notebook kini 5 mnt
   // (4 Okt 2026) — cooldown lama (25 mnt) akan memblokir restart job berikutnya
@@ -80,15 +160,18 @@ export function maybeAutoLaunchOracle({ env = process.env, logger = console, now
 
   const cmd = String(env.ORACLE_AUTO_LAUNCH_CMD || '').trim() || DEFAULT_CMD;
   const sp = spawnFn || spawn;
+  // force (zombie) -> beri '--force' supaya oracle-launch.sh MELONJAT skip-live-
+  // nya sendiri (juga berbasis heartbeat) dan benar-benar men-push sesi baru.
+  const argv = force ? [cmd, '--force'] : [cmd];
   try {
     // stdio 'ignore' + detached + unref: server TIDAK menggantung kalau CLI lambat;
     // launcher menulis log sendiri ke logs/oracle-launch.log.
-    const child = sp('bash', [cmd], { detached: true, stdio: 'ignore', cwd: REPO_ROOT });
+    const child = sp('bash', argv, { detached: true, stdio: 'ignore', cwd: REPO_ROOT });
     child.on('error', (e) => logger?.log?.(`[OracleAutoLaunch] spawn error: ${e.message}`));
     child.unref();
     lastLaunchAtMs = now;
-    logger?.log?.(`[OracleAutoLaunch] 🚀 Menyalakan sesi Kaggle via '${cmd}' (detached). Tunggu heartbeat...`);
-    return { triggered: true, reason: 'launched', cmd };
+    logger?.log?.(`[OracleAutoLaunch] 🚀 Menyalakan sesi Kaggle via '${cmd}'${force ? ' (force/zombie)' : ''} (detached). Tunggu heartbeat...`);
+    return { triggered: true, reason: 'launched', cmd, forced: !!force };
   } catch (e) {
     return { triggered: false, reason: 'spawn_failed', error: e.message };
   }
@@ -105,6 +188,7 @@ export async function waitForOracleOnline({
   waitMs = Math.max(15, Number(env.ORACLE_AUTO_LAUNCH_WAIT_SEC) || 300) * 1000,
   pollMs = 5000,
   deadline = Date.now(),
+  afterMs = 0,
   lastSeenFn = oracleLastSeenMs,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
@@ -113,7 +197,11 @@ export async function waitForOracleOnline({
   let tick = 0;
   while (Date.now() <= hardStop) {
     const last = lastSeenFn();
-    if (last && Date.now() - last <= cfg.staleMs) {
+    // 'afterMs' = baseline heartbeat SAAT launch dikirim. Heartbeat harus MAJU
+    // melampaui baseline (buktinya notebook BARU benar-benar memanggil API lagi),
+    // bukan sekadar masih 'segar'. Tanpa ini, zombie (heartbeat basi tapi < staleMs)
+    // membuat fungsi ini mengaku 'terhubung' seketika lalu pre-flight mati lagi.
+    if (last && last > afterMs && Date.now() - last <= cfg.staleMs) {
       logger?.log?.(`[OracleAutoLaunch] ✅ Notebook terlihat (${Math.round((Date.now() - last) / 1000)} dtk lalu). Lanjut kerja berat.`);
       return { ok: true, detail: 'connected', lastSeenAt: last, message: 'Oracle Kaggle terhubung (auto-launch).' };
     }

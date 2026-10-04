@@ -8,7 +8,7 @@ import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js'
 import { planSectionDownloads } from '../services/renderSections.js';
 import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled, isOraclePreflightEnabled, isLocalGatekeeperAdvisory } from '../config/runtimeFlags.js';
 import { applyOracleVeto, auditClipsWithOracle, preflightCandidatesWithOracle, orderCandidatesAfterPreflight, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
-import { maybeAutoLaunchOracle, waitForOracleOnline } from '../services/oracleLauncherService.js';
+import { maybeAutoLaunchOracle, waitForOracleOnline, probeOracleKernelAlive, isOracleAutoLaunchEnabled } from '../services/oracleLauncherService.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 // Pembungkus konteks job untuk pencatatan pemakaian AI (token/byte/biaya per job).
@@ -330,6 +330,25 @@ async function _runStage1Pipeline({
     // senyap. Kode legacy di service/store TIDAK dihapus (dorman) — tetapi tidak ada
     // satu pun jalur eksekusi produksinya.
     let oracleGate = assertOracleConnected({ logger: console });
+    // ZOMBIE-PROOF (regresi 2026-10-04): Kaggle kini idle-exit ~5 mnt = sama dengan
+    // ambang 'notebook hidup' (VLM_ORACLE_STALE_SEC=300 dtk). Notebook yang BARU mati
+    // masih menyimpan heartbeat 'segar' -> gerbang di atas salah bilang ONLINE ->
+    // auto-launch DILEWATI -> pipeline lanjut ke pre-flight -> batch tak pernah
+    // di-claim (kernel sebenarnya sudah COMPLETE) -> job mati 'never_claimed'.
+    // Bila perangkat ini punya auto-launch aktif (punya kaggle CLI + kredensial,
+    // yaitu Termux), cek status kernel SEJATI. Heartbeat segar + kernel mati = zombie
+    // -> paksa jalur offline agar sesi baru ditendang. Probe bersifat read-only dan
+    // konservatif ('unknown' saat CLI/error TIDAK memicu launch -> tak ada sesi ganda).
+    let zombieConfirmed = false;
+    if (oracleGate.ok && isOracleAutoLaunchEnabled(process.env)) {
+      const probe = await probeOracleKernelAlive({ logger: console });
+      if (probe.alive === false) {
+        const ageSec = oracleGate.lastSeenAt ? Math.round((Date.now() - oracleGate.lastSeenAt) / 1000) : null;
+        console.warn(`[OracleAutoLaunch] 🧟 Heartbeat masih segar${ageSec != null ? ` (${ageSec} dtk lalu)` : ''} TAPI kernel Kaggle = ${probe.state} (mati). Zombie pasca idle-exit -> pancing auto-launch sesi BARU alih-alih lanjut ke pre-flight yang pasti never_claimed.`);
+        zombieConfirmed = true;
+        oracleGate = { ok: false, detail: 'notebook_offline', lastSeenAt: oracleGate.lastSeenAt, message: 'Kernel Kaggle sudah mati meski heartbeat masih segar (zombie idle-exit) — menyalakan sesi baru.' };
+      }
+    }
     // AUTO-LAUNCH ORACLE (ORACLE_AUTO_LAUNCH=1, khusus perangkat yang punya
     // kaggle CLI + kredensial — Termux): notebook mati bukan lagi kegagalan, tapi
     // sinyal untuk menyalakan sesi Kaggle sendiri lewat 'kaggle kernels push'
@@ -337,9 +356,11 @@ async function _runStage1Pipeline({
     // ORACLE_AUTO_LAUNCH_WAIT_SEC (default 300 dtk) sebelum gerbang memutuskan.
     // Flag mati = perilaku lama persis: gagal seketika, tidak spawn apa pun.
     if (!oracleGate.ok && oracleGate.detail === 'notebook_offline') {
-      const launch = maybeAutoLaunchOracle({ logger: console });
+      const launch = maybeAutoLaunchOracle({ logger: console, force: zombieConfirmed });
       if (launch.triggered) {
-        oracleGate = await waitForOracleOnline({ logger: console });
+        // afterMs = baseline heartbeat zombie; menunggu heartbeat MAJU (sesi baru
+        // benar-benar memanggil API), bukan sekadar melihat yang basi jadi 'segar'.
+        oracleGate = await waitForOracleOnline({ logger: console, afterMs: oracleGate.lastSeenAt || 0 });
       } else if (launch.reason === 'cooldown') {
         console.log(`[OracleAutoLaunch] sesi terakhir berumur < cooldown — job tetap memakai gerbang lama (${Math.round(launch.waitMs / 60000)} mnt lagi boleh launch).`);
       }
