@@ -56,7 +56,15 @@ function requireOracleToken(req, res) {
 /** Path hanya boleh berada di bawah salah satu root yang dikenal. */
 export function isAllowedFramePath(filePath) {
   if (!filePath || typeof filePath !== 'string') return false;
-  const resolved = path.resolve(filePath);
+  // BUG LINTAS PLATFORM (terbukti di Tes vitest Termux 2026-10-04): di Linux backslash
+  // BUKAN pemisah, jadi 'C:\Users\lain\rahasia.jpg' dianggap satu nama file relatif dan
+  // resolve() menempelkannya ke CWD — yang kebetulan root yang diizinkan — dan LOLOS.
+  // Di Windows justru path dengan '/' yang lolos dari separator lokal. Normalisasi dulu:
+  // ganti '\' -> '/', lalu tolak mutlak path Windows-style (huruf drive 'X:' di segmen
+  // pertama) sebelum dibandingkan terhadap root POSIX/Windows asli.
+  const slashed = filePath.replace(/\\/g, '/');
+  if (/^[A-Za-z]:\//.test(slashed) && path.sep === '/') return false;
+  const resolved = path.resolve(process.platform === 'win32' ? filePath : slashed);
   return ALLOWED_FRAME_ROOTS.some((root) => {
     const withSep = root.endsWith(path.sep) ? root : root + path.sep;
     return resolved === root || resolved.startsWith(withSep);
