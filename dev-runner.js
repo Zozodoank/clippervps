@@ -169,11 +169,33 @@ async function startGatekeeperProcess() {
   });
 }
 
+let ngrokProcess = null;
+
+function startNgrokProcess(port) {
+  const ngrokUrl = 'unalleged-alysia-filar.ngrok-free.dev';
+  const ngrokCmd = `ngrok http ${port} --url ${ngrokUrl}`;
+  console.log(`\n🌐 Membuka Ngrok Tunnel: https://${ngrokUrl} (mengarah ke port ${port})`);
+  
+  ngrokProcess = spawn(ngrokCmd, {
+    stdio: 'ignore', // Abaikan log visual/UI ngrok agar tidak merusak console dev-runner
+    shell: true,
+  });
+
+  ngrokProcess.on('exit', (code) => {
+    if (!isShuttingDown) {
+      console.log(`[dev-runner] Ngrok berhenti dengan kode ${code}.`);
+    }
+  });
+}
+
 if (gatekeeperAutoStartEnabled()) {
   await startGatekeeperProcess();
 } else {
   console.log('🚫 AI Local Gatekeeper TIDAK dinyalakan (GATEKEEPER_AUTO_START!=1). Seluruh filter frame ditangani Qwen/Oracle Kaggle (mode advisory). Set GATEKEEPER_AUTO_START=1 untuk memakai AI lokal lagi.');
 }
+
+// Jalankan Ngrok secara otomatis
+startNgrokProcess(serverPort);
 startServerProcess();
 
 const clientCmd = `${npmCmd} run dev -- --host 0.0.0.0 --port ${CLIENT_PORT}`;
@@ -194,6 +216,9 @@ const cleanup = () => {
   if (serverProcess) serverProcess.kill();
   if (gatekeeperProcess) {
     try { gatekeeperProcess.kill(); } catch {}
+  }
+  if (ngrokProcess) {
+    try { ngrokProcess.kill(); } catch {}
   }
   clientProcess.kill();
   process.exit();
