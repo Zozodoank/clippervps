@@ -85,8 +85,15 @@ export function isVlmAvailable(env = process.env) {
  * Kenapa `productName` wajib diisi di jalur pre-flight: sebelum perluasan ini prompt
  * hanya tahu NICHE, tidak tahu PRODUK. Itulah sebabnya pemilihan kandidat tetap harus
  * dilakukan Gemini (yang dikasih foto produk), bukan oleh oracle.
+ *
+ * `localHints` (peran vonis lokal = advisory, mandate user 2026-10): ringkasan singkat
+ * kecurigaan AI Local Gatekeeper atas batch frame ini (mis. "2/5 frames suspected
+ * burned-in text"). Aturan lokal TIDAK lagi memotong adegan di perangkat — aturan itu
+ * justru DIAMBIL ALIH oleh Qwen: model besar diminta memeriksa sendiri element tersebut
+ * pada frame video download section terpilih, dan tetap bebas membersihkan tuduhan
+ * palsu. Tanpa nilai ini prompt menghasilkan teks IDENTIK dengan sebelumnya.
  */
-export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict', { productName = '', requireRanking = false } = {}) {
+export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict', { productName = '', requireRanking = false, localHints = '' } = {}) {
   const faceRule = facePolicy === 'presenter_only'
     ? 'Faces that belong to on-screen demo/activity are acceptable; REJECT only a presenter face filling the frame.'
     : 'REJECT if any human face is visible.';
@@ -100,6 +107,14 @@ export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict', {
     `Face policy: ${faceRule}`,
     'Hands and product demonstration are allowed.',
   ];
+  const hints = oneLineForPrompt(localHints, 300);
+  if (hints) {
+    // Disisipkan SEBELUM baris kontrak JSON: instruksi jawaban harus tetap menjadi baris
+    // terakhir yang dibaca model, kalau tidak Qwen mulai menulis prosa di luar JSON dan
+    // normalizeOracleVerdict menganggap vonisnya tidak sah.
+    lines.push(`Local CPU heuristics on the uploading device suspected (ADVISORY ONLY, they are often wrong): ${hints}.`);
+    lines.push('Check those specific elements yourself in the frames. If you do not actually see them, still answer safe=true; if you do see one, still answer with the same JSON object.');
+  }
   if (requireRanking) {
     const core = oneLineForPrompt(productName, 120);
     lines.push(`PRODUCT UNDER TEST: "${core}".`);

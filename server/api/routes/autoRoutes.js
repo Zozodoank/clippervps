@@ -91,6 +91,10 @@ import {
   getUsedKeywordsStats,
   clearUsedKeywords
 } from '../../services/discoveryService.js';
+import {
+  getRejectLedgerStats,
+  clearRejectLedger
+} from '../../services/productRejectLedger.js';
 import { getAllNiches, getNichePreset } from '../../config/nichePresets.js';
 import {
   buildProductFingerprint,
@@ -141,6 +145,28 @@ router.post('/auto/keywords/reset', (req, res) => {
   try {
     const result = clearUsedKeywords();
     res.json({ success: true, message: 'Riwayat kata kunci berhasil di-reset.', result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── LEDGER PRODUK DITOLAK (product_rejects.json) ──
+// "Produk mana yang sudah mati di filter konten, dan kenapa?" Riwayat job tidak
+// menjawab ini (job gagal tanpa media ikut dihapus), jadi ledger punya endpoint
+// sendiri. GET hanya membaca; POST reset dipakai untuk "riset ulang" setelah seed
+// keyword atau kebijakan filter diubah.
+router.get('/auto/rejected-products', (req, res) => {
+  try {
+    res.json(getRejectLedgerStats({ limit: Number(req.query.limit) || 15 }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/auto/rejected-products/reset', (req, res) => {
+  try {
+    const result = clearRejectLedger();
+    res.json({ success: true, message: 'Ledger produk ditolak berhasil dibersihkan.', result });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -165,6 +165,17 @@ const FLAG_NORMALIZERS = {
   SCENE_SAMPLE_FPS: (env) => Math.max(0.5, Number(env.SCENE_SAMPLE_FPS) || 1),
   // Jatah waktu VLM per frame (detik) untuk timeout subprocess llama-mtmd-cli. Default 10.
   GK_VLM_TIMEOUT_SEC_PER_FRAME: (env) => Math.max(1, Number(env.GK_VLM_TIMEOUT_SEC_PER_FRAME) || 10),
+  // PERAN VONIS AI LOCAL GATEKEEPER (MediaPipe/DBNet/MobileNet di :5050).
+  //   'strict'   = perilaku lama: frame/kandidat yang dituduh lokal LANGSUNG dibuang,
+  //                job bisa gagal dengan alasan "Ditolak AI Gatekeeper".
+  //   'advisory' = vonis lokal hanya jadi DUKUNGAN: frame tetap dikirim ke Oracle Kaggle
+  //                (Qwen) bersama ringkasan kecurigaan lokal, dan Qwen yang memutuskan.
+  // Mandate user 2026-10: model besar sering menyatakan frame bersih sementara filter
+  // lokal menolak — pemutus akhir harus tetap di tangan Qwen. Default 'advisory' HANYA
+  // saat oracle aktif (kalau tidak, tidak ada pemutus lain); mode legacy/smolvlm strict.
+  // SATU sumber parsing: localGatekeeperVetoMode() di bawah — jangan duplikasi logika
+  // di sini supaya snapshot dan pembaca runtime tidak bisa divergen.
+  GK_LOCAL_VETO: (env) => localGatekeeperVetoMode(env),
 };
 
 export const SNAPSHOT_FLAG_KEYS = Object.keys(FLAG_NORMALIZERS);
@@ -240,6 +251,9 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.SCENE_CLIP_DURATION_SEC === 'number') patch.SCENE_CLIP_DURATION_SEC = String(snapshot.SCENE_CLIP_DURATION_SEC);
   if (typeof snapshot.SCENE_SAMPLE_FPS === 'number') patch.SCENE_SAMPLE_FPS = String(snapshot.SCENE_SAMPLE_FPS);
   if (typeof snapshot.GK_VLM_TIMEOUT_SEC_PER_FRAME === 'number') patch.GK_VLM_TIMEOUT_SEC_PER_FRAME = String(snapshot.GK_VLM_TIMEOUT_SEC_PER_FRAME);
+  // Selalu ditulis: default 'advisory' bergantung mode oracle, retry wajib memakai peran
+  // vonis lokal yang sama persis dengan saat job pertama jalan.
+  if (typeof snapshot.GK_LOCAL_VETO === 'string') patch.GK_LOCAL_VETO = snapshot.GK_LOCAL_VETO;
   return patch;
 }
 
@@ -306,6 +320,27 @@ export function isOracleStrictMode(env = process.env) {
  */
 export function isOraclePreflightEnabled(env = process.env) {
   return isVlmOracleEnabled(env) && String(env.PREFLIGHT_ORACLE ?? '1').trim() !== '0';
+}
+
+/**
+ * Helper konsumen: apakah vonis AI Local Gatekeeper hanya jadi PENGARAH (advisory) dan
+ * bukan pemutus. Saat advisory: frame yang dituduh lokal TIDAK dibuang — tetap dikirim ke
+ * Oracle Kaggle beserta ringkasan kecurigaan agar Qwen memeriksa aturan itu sendiri
+ * (subtitle terbakar, watermark, wajah presenter, slideshow statis) pada frame video
+ * download section terpilih, lalu Qwen yang memvonis.
+ *
+ * Baca `GK_LOCAL_VETO` bila diisi eksplisit; kalau tidak: advisory selama oracle aktif
+ * (satu-satunya mode yang diizinkan menjalankan job), strict pada mode legacy/smolvlm.
+ */
+export function localGatekeeperVetoMode(env = process.env) {
+  const v = String(env.GK_LOCAL_VETO || '').trim().toLowerCase();
+  if (v === 'strict' || v === '1' || v === 'true') return 'strict';
+  if (v === 'advisory' || v === '0' || v === 'false') return 'advisory';
+  return isVlmOracleEnabled(env) ? 'advisory' : 'strict';
+}
+
+export function isLocalGatekeeperAdvisory(env = process.env) {
+  return localGatekeeperVetoMode(env) === 'advisory';
 }
 
 /**

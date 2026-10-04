@@ -438,6 +438,9 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
   const {
     jobId = '', niche = 'kitchen_tools', facePolicy = 'strict',
     logger = console, env = process.env, onProgress = null, outDir = null,
+    // Ringkasan kecurigaan AI Local Gatekeeper (peran advisory) yang ikut ditulis ke prompt,
+    // supaya Qwen memeriksa aturan lokal itu sendiri alih-alih menerima pemutusan model kecil.
+    localHints = '',
     strict = isOracleStrictMode(env),
   } = opts;
   const cfg = resolveOracleConfig(env);
@@ -470,7 +473,7 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
   result.resizeFailed = prepared.failed;
 
   const t0 = Date.now();
-  const prompt = buildVlmPrompt(niche, facePolicy);
+  const prompt = buildVlmPrompt(niche, facePolicy, { localHints });
   const deadline = t0 + cfg.totalTimeoutMs;
 
   for (let start = 0; start < sendable.length; start += cfg.batchSize) {
@@ -590,8 +593,8 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
  *
  * Mode oracle OFF -> `frames` dikembalikan utuh, tanpa efek samping apa pun.
  */
-export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', blacklisted = null, onProgress = null, logger = console, env = process.env, outDir = null, strict } = {}) {
-  const res = await sanitizePoolWithOracle(frames, { jobId, niche, facePolicy, onProgress, logger, env, outDir, strict });
+export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', blacklisted = null, onProgress = null, logger = console, env = process.env, outDir = null, localHints = '', strict } = {}) {
+  const res = await sanitizePoolWithOracle(frames, { jobId, niche, facePolicy, onProgress, logger, env, outDir, localHints, strict });
   if (!res.enabled) return { frames, ...res };
   if (res.blacklisted.length && blacklisted && typeof blacklisted.add === 'function') {
     for (const p of res.blacklisted) blacklisted.add(p);
@@ -623,6 +626,7 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
   const {
     jobId = '', niche = 'kitchen_tools', facePolicy = 'strict',
     logger = console, env = process.env, onProgress = null, outDir = null,
+    localHints = '',
     strict = isOracleStrictMode(env),
   } = opts;
   const cfg = resolveOracleConfig(env);
@@ -638,7 +642,7 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
 
   // Plafon total dibagi merata per klip; klip pendek tetap dapat minimal 2 titik.
   const perClipCap = Math.max(2, Math.floor(cfg.auditMaxFrames / list.length));
-  const prompt = buildVlmPrompt(niche, facePolicy);
+  const prompt = buildVlmPrompt(niche, facePolicy, { localHints });
   const t0 = Date.now();
   const deadline = t0 + cfg.totalTimeoutMs;
 

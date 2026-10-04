@@ -29,9 +29,10 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   fastProbeLocal,
+  mergeLocalSuspicion,
 } from '../services/videoFilterService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
-import { isVlmOracleEnabled } from '../config/runtimeFlags.js';
+import { isVlmOracleEnabled, isLocalGatekeeperAdvisory } from '../config/runtimeFlags.js';
 import { applyOracleVeto } from '../services/vlmOracleService.js';
 import { extractSourceAudio, transcribeAudio } from '../services/audioBeatService.js';
 import {
@@ -223,6 +224,9 @@ export async function runSourceAcquisitionV2(p) {
   } = p;
 
   const diagnostics = { screened: 0, gated: 0, verdictEligible: 0, transcribed: 0, oracleVetoed: 0 };
+  // Kecurigaan AI Local Gatekeeper per kandidat; dirangkum ke prompt Oracle (Qwen) supaya
+  // aturan lokal diperiksa model besar alih-alih memutuskan sendiri.
+  const localSuspicionNotes = [];
   if (!candidatePool.length) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
@@ -261,6 +265,7 @@ export async function runSourceAcquisitionV2(p) {
     });
     if (!preview?.filePath) continue;
     let probe;
+    let usableFrames = [];
     try {
       probe = await fastProbeLocal(preview.filePath, `${jobId}`, { onProgress: updateProgress, niche, durationSec: preview.actualDurationSec, sourceId: cand.sourceId });
     } catch (err) {
@@ -268,11 +273,43 @@ export async function runSourceAcquisitionV2(p) {
       continue;
     }
     if (!probe?.eligible || !Array.isArray(probe.cleanFrames) || probe.cleanFrames.length < 3) {
+      // PERAN VONIS LOKAL = ADVISORY (mandate user 2026-10): selama Oracle Kaggle aktif,
+      // tuduhan model kecil (MediaPipe/DBNet/MobileNet) BUKAN pemutus. Kandidat tetap
+      // dibawa ke Qwen memakai SELURUH frame probe, dan kecurigaan lokal dikirim sebagai
+      // bagian prompt agar Qwen memeriksa aturan itu sendiri pada frame. Hanya
+      // GK_LOCAL_VETO=strict yang masih membuang kandidat di sini (perilaku lama).
+      if (!isLocalGatekeeperAdvisory(process.env)) {
+        try { if (fs.existsSync(preview.filePath)) fs.unlinkSync(preview.filePath); } catch {}
+        continue; // frame kotor = vonis konten -> drop
+      }
+      if (probe?.localSuspicion) localSuspicionNotes.push(probe.localSuspicion);
+      // Pesan infrastruktur ("Gatekeeper tidak tersedia", "jumlah frame tidak mencukupi",
+      // "gagal mengekstrak frame") BUKAN tuduhan konten — jangan disematkan ke prompt
+      // Qwen sebagai aturan lokal (review putaran ke-2).
+      else if ((probe?.discardedFrames || []).some((f) => f && f.stage && f.stage !== 'io_error')) {
+        localSuspicionNotes.push(probe?.reason || 'frame dicurigai gatekeeper lokal');
+      }
+      console.log(`[Job ${jobId}] 🛰️ [V2][Vonis lokal => penasihat] ${probe?.reason || 'frame dicurigai'} — kandidat tetap dikirim ke Oracle Kaggle.`);
+      // Kirim SELURUH frame hasil probe (termasuk yang dituduh) supaya ada yang divisit Qwen.
+      usableFrames = (Array.isArray(probe?.frames) && probe.frames.length) ? probe.frames : (probe?.cleanFrames || []);
+    } else {
+      if (probe?.localSuspicion) localSuspicionNotes.push(probe.localSuspicion);
+      usableFrames = probe.cleanFrames;
+      // Kandidat dinyatakan layak tapi sebagian frame terbuang lokal: di mode advisory
+      // yang terbuang ikut ke Oracle, tidak hilang diam-diam (konsisten dgn stage1Render).
+      if (isLocalGatekeeperAdvisory(process.env)) {
+        const suspected = (probe.discardedFrames || []).filter((f) => f && f.filePath && f.stage !== 'io_error');
+        if (suspected.length) usableFrames = [...usableFrames, ...suspected];
+      }
+    }
+    if (!usableFrames.length) {
+      // Tidak ada satu frame pun yang berhasil diekstrak (preview rusak) - ini bukan vonis
+      // konten maupun infra, cukup lewati kandidat tanpa membakar antrean oracle.
       try { if (fs.existsSync(preview.filePath)) fs.unlinkSync(preview.filePath); } catch {}
-      continue; // frame kotor = vonis konten -> drop
+      continue;
     }
     diagnostics.gated++;
-    gatedCandidates.push({ ...cand, cleanFrames: probe.cleanFrames, clipPath: preview.filePath });
+    gatedCandidates.push({ ...cand, cleanFrames: usableFrames, clipPath: preview.filePath });
     if (gatedCandidates.length >= requireSources * 2) break;
   }
   if (!gatedCandidates.length) {
@@ -296,6 +333,7 @@ export async function runSourceAcquisitionV2(p) {
         niche,
         onProgress: updateProgress,
         logger: console,
+        localHints: mergeLocalSuspicion(localSuspicionNotes),
       });
       if (res.rejected > 0) {
         diagnostics.oracleVetoed = (diagnostics.oracleVetoed || 0) + res.rejected;

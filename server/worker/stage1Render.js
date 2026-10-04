@@ -6,7 +6,7 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled, isOraclePreflightEnabled } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled, isOraclePreflightEnabled, isLocalGatekeeperAdvisory } from '../config/runtimeFlags.js';
 import { applyOracleVeto, auditClipsWithOracle, preflightCandidatesWithOracle, orderCandidatesAfterPreflight, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
 import { maybeAutoLaunchOracle, waitForOracleOnline } from '../services/oracleLauncherService.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
@@ -58,6 +58,7 @@ import {
   sampleDenseClustersAroundCleanFrames,
   extractFastSnippetsForPreflight,
   fastProbeLocal,
+  mergeLocalSuspicion,
   sampleFramesForWindows
 } from '../services/videoFilterService.js';
 import { verifyScene as verifySceneWithVlm, isVlmAvailable } from '../services/vlmGateService.js';
@@ -582,6 +583,9 @@ async function _runStage1Pipeline({
     // Tahap 1: Metadata Pre-Filter (0 kuota video, 0 token AI)
     // Tahap 2: Sampling 30 frame langsung dari stream URL via FFmpeg & Analisa Lokal 9:16 (~2MB kuota, 0 token AI)
     // Tahap 3: Verifikasi AI Vision (Quality Assurance Final, detail: 'low')
+    // Catatan vonis lokal (advisory): kecurigaan AI Local Gatekeeper dikumpulkan di sini agar
+    // bisa disertakan sebagai arahan di prompt Oracle Kaggle (lihat applyOracleVeto di bawah).
+    const localSuspicionNotes = [];
     const evaluateCandidate = async (targetUrl, candidateLabel = '', candidateExtra = {}) => {
       const isManualOem = candidateExtra?.source === 'manual_oem';
       const complianceContext = isManualOem ? 'oem' : 'auto';
@@ -727,7 +731,10 @@ async function _runStage1Pipeline({
         durationSec: gatePreviewSec,
         sourceDurationSec: meta.duration
       });
-      if (!preview10s?.filePath) throw Object.assign(new Error(`Gagal download preview ${gatePreviewSec}s`), { isAiRejection: true });
+      // Kegagalan DOWNLOAD = infrastruktur, bukan vonis konten. Dulu flag-nya
+      // isAiRejection sehingga satu koneksi putus sempat masuk ledger sebagai "produk
+      // ditolak"; sejak ledger membaca flag ini (classifyFailure) isInfraError benar.
+      if (!preview10s?.filePath) throw Object.assign(new Error(`Gagal download preview ${gatePreviewSec}s`), { isInfraError: true });
 
       // ── TAHAP 3: WHISPER GATE (EARLY SPEECH CHECK) ──
       updateProgress({ step: 'whisper_gate', message: '🎧 Whisper mengecek keberadaan narasi...', progress: 20 });
@@ -753,13 +760,41 @@ async function _runStage1Pipeline({
         durationSec: preview10s.actualDurationSec,
         sourceId: targetUrl
       });
+      if (probe.localSuspicion) localSuspicionNotes.push(probe.localSuspicion);
       if (!probe.eligible) {
-        const err = new Error(`Frame kotor: ${probe.reason || `${probe.dirtyCount || '?'} dari 5 frame terdeteksi WM/wajah/logo`}`);
-        err.isAiRejection = true;
-        err.rejectionReason = probe.reason;
-        throw err;
+        // PERAN VONIS LOKAL = ADVISORY (default selama Oracle Kaggle aktif; mandate user
+        // 2026-10): model kecil di perangkat pernah menolak frame yang oleh Qwen dinyatakan
+        // bersih, dan kandidat gugur sebelum model besar sempat melihatnya. Jadi di mode ini
+        // vonis lokal TIDAK menghentikan kandidat: SEMUA frame hasil probe (bersih + yang
+        // dituduh) dipakai, kecurigaannya dicatat lalu dikirim sebagai bagian prompt Oracle
+        // supaya Qwen memeriksa aturan itu sendiri pada frame. 'strict' mengembalikan
+        // perilaku lama (lempar isAiRejection) bila operator mengisi GK_LOCAL_VETO=strict.
+        if (!isLocalGatekeeperAdvisory(process.env)) {
+          const err = new Error(`Frame kotor: ${probe.reason || `${probe.dirtyCount || '?'} dari 5 frame terdeteksi WM/wajah/logo`}`);
+          err.isAiRejection = true;
+          err.rejectionReason = probe.reason;
+          throw err;
+        }
+        // Catatan kecurigaan HANYA bila ada tuduhan per-frame yang nyata. probe.reason
+        // sering berisi pesan infrastruktur ("Gatekeeper tidak tersedia", "jumlah frame
+        // tidak mencukupi") — menyuntiknya ke prompt Qwen sebagai "aturan lokal"
+        // justru menipu model dengan tuduhan palsu.
+        const probeSuspicions = (probe.discardedFrames || []).filter((f) => f && f.stage && f.stage !== 'io_error');
+        if (!probe.localSuspicion && probeSuspicions.length) localSuspicionNotes.push(probe.reason || 'frame dicurigai filter lokal');
+        console.log(`[Job ${jobId}] 🛰️ [Vonis lokal => penasihat] ${probe.reason || 'frame dicurigai'} — diteruskan ke Oracle Kaggle sebagai arahan pemeriksaan, bukan penolakan.`);
       }
-      console.log(`[Job ${jobId}] ✅ [Fast Probe Lolos] 5 frame lokal bersih.`);
+      // KRITIS (mandate advisory): frame yang DITUDUH lokal harus benar-benar ikut ke
+      // pool Oracle, bukan hanya dibatalkan veto-nya. Tanpa ini cleanFrames tetap isi
+      // gatekeeper saja dan Qwen tidak pernah melihat frame yang dibuang — persis
+      // masalah yang user laporkan ("Qwen bilang bersih, filter lokal tetap menolak").
+      if (isLocalGatekeeperAdvisory(process.env) && Array.isArray(probe.discardedFrames) && probe.discardedFrames.length) {
+        const suspected = probe.discardedFrames.filter((f) => f && f.filePath && f.stage !== 'io_error');
+        if (suspected.length) {
+          probe.cleanFrames = [...(probe.cleanFrames || []), ...suspected];
+          console.log(`[Job ${jobId}] 🛰️ [Advisory] ${suspected.length} frame dituduh filter lokal ikut dikirim ke Oracle — Qwen yang memvonis.`);
+        }
+      }
+      console.log(`[Job ${jobId}] ✅ [Fast Probe Selesai] 5 frame lokal dinilai (vonis akhir oleh Oracle).`);
 
       // ── TAHAP 5: CONTEXT PREVIEW (25s) & WHISPER CONTEXT ──
       const contextDuration = Number(process.env.WHISPER_CONTEXT_DURATION_SEC) || 25;
@@ -789,8 +824,12 @@ async function _runStage1Pipeline({
       console.log(`[Job ${jobId}] ✅ [Whisper Context] Terpilih window: ${bestWindow.startSec}s - ${bestWindow.endSec}s`);
 
       // ── TAHAP 6: GEMINI PRODUCT VERIFY ──
-      // Gunakan frame bersih dari probe yang lulus
-      let verifiedCleanFrames = probe.cleanFrames;
+      // Gunakan frame bersih dari probe yang lulus. Saat vonis lokal hanya penasihat dan probe
+      // menyatakan "tidak layak", pool bersih bisa kosong/kurang — pakai SELURUH frame probe
+      // agar Qwen (pass oracle berikutnya) yang menentukan, bukan model kecil.
+      let verifiedCleanFrames = (probe.eligible && Array.isArray(probe.cleanFrames) && probe.cleanFrames.length)
+        ? probe.cleanFrames
+        : (Array.isArray(probe.frames) && probe.frames.length ? probe.frames : probe.cleanFrames || []);
       
       updateProgress({ step: 'product_verify', message: '🤖 Gemini memverifikasi produk dan narasi...', progress: 40 });
       if (!isManualOem) {
@@ -893,18 +932,42 @@ async function _runStage1Pipeline({
           failureReason: localCacheCheck.eligible ? '' : localCacheCheck.reason,
           meta: { origin: 'cached_raw_frames' },
         });
+        // Kecurigaan per-frame selalu dicatat (walau cache dinyatakan layak): beberapa frame
+        // terbuang lokal tidak boleh hilang dari pengetahuan Qwen.
+        if (localCacheCheck.localSuspicion) localSuspicionNotes.push(localCacheCheck.localSuspicion);
         if (!localCacheCheck.eligible || !Array.isArray(localCacheCheck.cleanFrames) || localCacheCheck.cleanFrames.length < 3) {
-          console.warn(`[Job ${jobId}] ⛔ [Cache Ditolak Lokal] ${rawVideoPath}: ${localCacheCheck.reason}`);
-          const localCacheErr = new Error(`Analisa lokal ditolak pada cache: ${localCacheCheck.reason}`);
-          localCacheErr.isAiRejection = true;
-          localCacheErr.rejectionReason = localCacheCheck.reason;
-          throw localCacheErr;
+          // Vonis lokal hanya penasihat (default selama oracle aktif): frame cache TIDAK
+          // dibuang lewat exception. Semua frame tetap dikirim ke AI storyboard dan Qwen
+          // yang memutuskan di pass oracle. GK_LOCAL_VETO=strict mengembalikan perilaku lama.
+          if (!isLocalGatekeeperAdvisory(process.env)) {
+            console.warn(`[Job ${jobId}] ⛔ [Cache Ditolak Lokal] ${rawVideoPath}: ${localCacheCheck.reason}`);
+            const localCacheErr = new Error(`Analisa lokal ditolak pada cache: ${localCacheCheck.reason}`);
+            localCacheErr.isAiRejection = true;
+            localCacheErr.rejectionReason = localCacheCheck.reason;
+            throw localCacheErr;
+          }
+          // Sama seperti TAHAP 4: jangan sematkan pesan infrastruktur ke prompt Qwen
+          // sebagai "kecurigaan konten" — hanya bila ada tuduhan per-frame nyata.
+          const cacheSuspicions = (localCacheCheck.discardedFrames || []).filter((f) => f && f.stage && f.stage !== 'io_error');
+          if (!localCacheCheck.localSuspicion && cacheSuspicions.length) localSuspicionNotes.push(localCacheCheck.reason || 'cache dicurigai filter lokal');
+          console.log(`[Job ${jobId}] 🛰️ [Vonis lokal => penasihat] cache: ${localCacheCheck.reason} — frame tetap dipakai, Qwen yang memvonis.`);
+        }
+
+        const cleanCacheFrames = (Array.isArray(localCacheCheck.cleanFrames) && localCacheCheck.cleanFrames.length >= 3)
+          ? localCacheCheck.cleanFrames
+          : null;
+        let cacheFrames = cleanCacheFrames || rawFrames;
+        // Mode advisory: frame cache yang dituduh lokal ikut diperiksa AI/Qwen, tidak
+        // dibuang diam-diam (jalur fallback <3 frame sudah mengirim SEMUA rawFrames).
+        if (cleanCacheFrames && isLocalGatekeeperAdvisory(process.env)) {
+          const suspected = (localCacheCheck.discardedFrames || []).filter((f) => f && f.filePath && f.stage !== 'io_error');
+          if (suspected.length) cacheFrames = [...cleanCacheFrames, ...suspected];
         }
 
         highlight = await selectHighlightWithAI({
           apiKey,
           aiProvider,
-          frames: localCacheCheck.cleanFrames,
+          frames: cacheFrames,
           videoPath: rawVideoPath,
           videoMetadata: videoMeta,
           productTitle,
@@ -929,9 +992,9 @@ async function _runStage1Pipeline({
         // terpakai bila aiService tidak ikut menempelkan visionEvidence pada hasilnya.
         noteVisionProvenance(highlight, {
           mode: 'evidence',
-          usableFrames: localCacheCheck.cleanFrames.length,
-          framesSent: localCacheCheck.cleanFrames.length,
-          framesRef: localCacheCheck.cleanFrames,
+          usableFrames: cacheFrames.length,
+          framesSent: cacheFrames.length,
+          framesRef: cacheFrames,
           origin: 'cached_raw_frames',
         });
       } catch (cacheEvalErr) {
@@ -1600,6 +1663,7 @@ async function _runStage1Pipeline({
           if (isVlmOracleEnabled(process.env)) {
             const veto = await applyOracleVeto(testPool, {
               jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
+              localHints: mergeLocalSuspicion(localSuspicionNotes),
             });
             testPool = veto.frames;
             if (veto.rejected > 0) {
@@ -1801,6 +1865,7 @@ async function _runStage1Pipeline({
           if (isVlmOracleEnabled(process.env)) {
             const veto = await applyOracleVeto(pooledFrames, {
               jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
+              localHints: mergeLocalSuspicion(localSuspicionNotes),
             });
             pooledFrames = veto.frames;
             if (veto.rejected > 0) {
@@ -2481,6 +2546,7 @@ async function _runStage1Pipeline({
         try {
           const audit = await auditClipsWithOracle(oracleClips, oracleFrameGroups, {
             jobId, niche: options.niche || 'kitchen_tools', onProgress: updateProgress,
+            localHints: mergeLocalSuspicion(localSuspicionNotes),
           });
           const dirtySlots = [];
           for (const [i, v] of audit.verdicts) {

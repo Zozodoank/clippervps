@@ -15,6 +15,7 @@ server/bin/
 server/jobs.json
 server/bandwidth_stats.json
 server/used_keywords.json
+server/product_rejects.json
 *.db
 *.db-wal
 *.db-shm

@@ -1478,6 +1478,44 @@ export function isChineseSocialOrForeignMedia(text = '') {
   return /\b(douyin|kuaishou|bilibili|xiaohongshu|weibo|mandarin|bahasa mandarin|chinese version|china version|cn version|chinesecooking)\b/i.test(norm);
 }
 
+// ─── GERBAH BAHASA/PASAR ASING (Latin script) ───────────────────────────────
+// hasNonLatinOrForeignScript hanya menangkap Hanzi/Devanagari/Thai/Arab/Cyrillic/
+// Hangul/Kana. Vietnam memakai huruf Latin dengan diakritik khas, jadi lolos
+// sepenuhnya. Teramati 4 Okt 2026 di Termux: dua produk mati BOTH 15-25 menit
+// kemudian hanya karena bahasanya —
+//   • "Nồi chiên không dầu G5 2.5L # Xiaomi LIVEN G-5 ..."  -> pre_flight: cuplikan tak cukup
+//   • "HARGA SOKANY HAND BLENDER 4 IN 1 DI BANGLADESH"      -> yt-dlp gagal
+// Aturan user sudah tegas: video WAJIB bahasa Indonesia atau Inggris. Gerbang ini
+// memindahkan penolakan ke SEBELUM kuota dibakar (saat riset produk, bukan setelah
+// 3 kandidat di-stream).
+const VIETNAMESE_SPECIFIC_CHARS = /[đơưạảấầẩẫậềểệốồổỗộờởỡợụủứừửữựỳỷỹỵĩ]/gi;
+
+// Pasar yang hasil kontennya bukan afiliasi Indonesia/Inggris. Kata AMBIGU sengaja
+// dibuang (review 2026-10-04): "turkey" = masakan ayam/kalkun
+// di niche kitchen, "india" muncul di baris pengiriman/"made in India". Cek pasar
+// ini HANYA dijalankan pada JUDUL (lihat detectForeignLanguageOrMarket) — deskripsi
+// YouTube memuat ratusan kata sponsor/link yang gampang menyentuh salah satu kata.
+const FOREIGN_MARKET_HINT_RE = /\b(bangladesh|pakistan|vietnam|vietnamese|philippines|tagalog|thailand|sri\s*lanka|nigeria|dubai|malaysia)\b/i;
+
+/**
+ * Deteksi teks (judul/desc) yang kemungkinan besar BUKAN konten Indonesia/Inggris.
+ * Return kode alasan ('vietnamese' | 'foreign_market') atau null bila lolos.
+ * Karakter yang dihitung HANYA huruf khas Vietnam (vokal bertanda nada + ơ/ư/đ);
+ * é/è/à/â/ô/ã sengaja TIDAK dipakai karena juga milik Prancis/Portugis/Spanyol —
+ * judul produk "Crème Brûlée" tidak boleh ikut terbuang.
+ * Aksara Vietnam dicek di judul+deskripsi (diacritics tidak ambigu), sedangkan
+ * nama pasar asing dicek HANYA di judul (kata tunggal gampang muncul di desc).
+ */
+export function detectForeignLanguageOrMarket(text = '', descText = '') {
+  const title = String(text || '');
+  const raw = `${title} ${String(descText || '')}`.trim();
+  if (!raw) return null;
+  const vietCount = (raw.match(VIETNAMESE_SPECIFIC_CHARS) || []).length;
+  if (vietCount >= 1) return 'vietnamese';
+  if (FOREIGN_MARKET_HINT_RE.test(title)) return 'foreign_market';
+  return null;
+}
+
 export const KNOWN_BRANDS = [
   // Brand Murah Viral Marketplace & Chinese OEM Direct-to-Consumer (Shopee, TikTok Shop, Tokopedia, Lazada):
   'Gaabor', 'Simplus', 'Samono', 'Deerma', 'Bear', 'Tjean', 'Daewoo', 'Konka', 'Joyoung',
@@ -2030,6 +2068,13 @@ export async function discoverBrandedShopeeProduct({
       // Per user requirement: Chinese brands are common, but videos must strictly be in Indonesian or English!
       if (hasNonLatinOrForeignScript(rawTitle)) return false;
       if (isChineseSocialOrForeignMedia(rawTitle) || isChineseSocialOrForeignMedia(rawDesc)) return false;
+      // Gerbang bahasa/pasar asing yang tetap memakai skrip Latin (Vietnam dll) —
+      // dibuang di sini supaya tidak menghabiskan 3 putaran stream + vonis Kaggle.
+      const foreignReason = detectForeignLanguageOrMarket(rawTitle, rawDesc);
+      if (foreignReason) {
+        console.log('[BrandedDiscovery] ⛔ Kandidat dibuang (bahasa/pasar asing: ' + foreignReason + '): ' + rawTitle.slice(0, 60));
+        return false;
+      }
 
       const text = normalizeText(rawTitle + ' ' + rawDesc);
       // HARD FILTER: Jika mode gadget, tolak video jika mengandung istilah laptop / PC

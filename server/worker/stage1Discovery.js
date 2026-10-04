@@ -86,6 +86,7 @@ import { heavyTaskQueue } from './queueManager.js';
 import { isValidHttpUrl, resolveOutputVideoPath, sanitizeCaptionText, isQuotaErrorMessage } from '../utils/jobHelpers.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../services/antiDupService.js';
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../services/quotaService.js';
+import { findProductRejection, recordProductRejection, getRejectCooldownDays, backfillFromJobs, classifyFailure } from '../services/productRejectLedger.js';
 
 import { tempDir, outputDir, uploadsDir, rejectedYunetDir, cookiesPath, serverRoot } from '../utils/paths.js';
 import { runStage1Pipeline } from './stage1Render.js';
@@ -93,8 +94,41 @@ import { runStage1Pipeline } from './stage1Render.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/**
+ * Seed ledger produk-ditolak SEKALI dari riwayat job yang tersimpan (SQLite jobs.db).
+ *
+ * Kenapa perlu: vonis konten yang TERTINGGAL di riwayat (mis. "Cooking Use Han River Air
+ * Fryer" ditolak ai_vision) tidak otomatis diketahui ledger baru, jadi run pertama setelah
+ * deploy akan membakar kuota lagi untuk produk yang sama. `backfillFromJobs` berhenti sendiri
+ * bila file ledger sudah punya `seededAt`, jadi aman dipanggil tiap run dimulai.
+ *
+ * Aturan penting (jebakan better-sqlite3): `activeJobs.entries()` adalah cursor yang hidup
+ * di atas satu koneksi. Memanggil `activeJobs.set()`/`delete()` selagi cursor terbuka
+ * melempar "This database connection is busy". Karena itu seluruh cursor DIHABISKAN dulu
+ * ke array (tanpa `break`), dan tulisannya hanya terjadi setelahnya (ke product_rejects.json,
+ * bukan ke SQLite).
+ */
+function seedRejectLedgerFromJobStore() {
+  try {
+    const errorJobs = [];
+    for (const [, job] of activeJobs.entries()) {
+      if (job && job.stage === 'error' && errorJobs.length < 400) errorJobs.push(job);
+    }
+    const result = backfillFromJobs(errorJobs);
+    if (result && result.seeded) {
+      console.log(`[Auto] 📕 Ledger produk-ditolak di-seed ${result.seeded} vonis konten dari riwayat job (cooldown ${getRejectCooldownDays()} hari).`);
+    }
+    return result;
+  } catch (err) {
+    // Seed hanyalah pengoptimalan; kegagalan apa pun di sini TIDAK boleh menghentikan Auto Mode.
+    console.warn('[Auto] Seed ledger produk-ditolak dilewati:', err.message);
+    return { seeded: 0, skipped: 'error' };
+  }
+}
+
 export async function runAutoStage1Worker(run) {
   try {
+    seedRejectLedgerFromJobStore();
     const isUnlimited = run.maxJobs === 'unlimited' || run.maxJobs === Infinity || !run.maxJobs;
     updateAutoRun(run, {
       status: 'running',
@@ -210,6 +244,28 @@ export async function runAutoStage1Worker(run) {
         continue;
       }
 
+      // ── LEDGER PRODUK DITOLAK (anti-burn kuota) ──
+      // Riwayat job TIDAK bisa dipakai sebagai memori: job gagal tanpa media ikut
+      // dihapus dari jobs.json (lihat deleteJobFiles/deletePersistedJob di catch bawah),
+      // jadi operator melihat "riwayat kosong" sementara produk yang sama dipilih ulang
+      // dan ditolak lagi. Ledger ini persisten (product_rejects.json) dan HANYA berisi
+      // vonis konten — kegagalan infrastruktur tidak pernah masuk.
+      const priorReject = findProductRejection({
+        brand,
+        productType,
+        model,
+        title: shopeeCandidate.title,
+      });
+      if (priorReject) {
+        run.skippedProducts++;
+        const daysAgo = Math.max(0, Math.round((Date.now() - Date.parse(priorReject.lastAt || 0)) / 86400000));
+        updateAutoRun(run, {
+          message: `[Auto] Skip "${searchKeyword}": pernah DITOLAK FILTER KONTEN ${daysAgo} hari lalu (${(priorReject.stages || []).join(',') || priorReject.productType || '?'}) — cooldown ${getRejectCooldownDays()} hari.`,
+        });
+        console.log(`[Auto] ⏭️ Skip produk "${searchKeyword}": entri ledger ${priorReject.identity} (percobaan ${priorReject.attempts}x, alasan: ${String(priorReject.lastReason || '').slice(0, 80)})`);
+        continue;
+      }
+
       const currentTargetIndex = run.successfulJobs + 1;
       const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${dailyStats.limit})`;
 
@@ -227,6 +283,9 @@ export async function runAutoStage1Worker(run) {
       let jobSuccess = false;
       let gaveUpOnProduct = false;
       let failedAttemptsForProduct = 0;
+      // Pesan kegagalan terakhir untuk produk ini — dipakai untuk memutuskan apakah
+      // layak masuk ledger (vonis konten) atau tidak (infrastruktur).
+      let lastProductFailure = null;
       for (let productAttempt = 1; productAttempt <= SAME_PRODUCT_MAX_ATTEMPTS; productAttempt++) {
       if (run.status === 'stopping' || run.status === 'stopped') break;
 
@@ -333,6 +392,28 @@ export async function runAutoStage1Worker(run) {
         break;
       } catch (err) {
         console.warn(`[Auto] Multi-video harvesting failed for ${keyword}:`, err.message);
+        const productFailure = {
+          message: err.message || String(err),
+          // err ikut disimpan: ledger mengklasifikasi DULU dari flag terstruktur
+          // (isInfraError/isAiRejection/isQuotaError/code) dan baru fallback ke pola
+          // pesan. `stage` sengaja TIDAK diisi err.code (mis. 'ORACLE_UNAVAILABLE')
+          // karena itu label kegagalan infra, bukan tahap pipeline; biarkan ledger
+          // menebaknya dari pesan.
+          err,
+          stage: err.stage || '',
+          reason: err.rejectionReason || '',
+          // currentCandidateTitle masih satu scope dengan catch ini (dalam iterasi
+          // loop percobaan), jadi judulnya bisa diselamatkan ke luar loop.
+          title: currentCandidateTitle,
+        };
+        // LATCH vonis konten (review 2026-10-04): percobaan ke-1 bisa gagal karena
+        // KONTEN dan percobaan ke-3 karena yt-dlp/infra. Kalau hanya kegagalan
+        // terakhir yang disimpan, produk yang memang layak diblokir lolos lagi dan
+        // membakar kuota di run berikutnya — persis skenario yang ledger ini bunuh.
+        const failureKind = classifyFailure({ err, message: productFailure.message, reason: productFailure.reason });
+        if (!lastProductFailure || failureKind === 'content') {
+          lastProductFailure = productFailure;
+        }
         
         const msg = (err.message || '').toLowerCase();
         const isMasterQcFailed = msg.includes('final_master_qc_failed');
@@ -460,6 +541,27 @@ export async function runAutoStage1Worker(run) {
       if (failedAttemptsForProduct > 0) {
         run.failedJobs++;
         console.warn(`[Auto] 🛑 Produk "${searchKeyword}" gagal setelah ${failedAttemptsForProduct}x percobaan merk+type yang sama (tidak lagi lompat prematur ke produk berbeda). Auto Mode "Self-Healing": baru lanjut ke produk lain.`);
+
+        // Catat ke ledger bila penyebabnya vonis konten. Return reason ditulis ke log
+        // supaya jelas kenapa produk tertentu TIDAK ikut diblokir (mis. 'infra').
+        const ledgerResult = recordProductRejection({
+          brand,
+          productType,
+          model,
+          title: lastProductFailure?.title || shopeeCandidate.title,
+          niche: run.niche || 'kitchen_tools',
+          jobId: run.currentJobId,
+          autoRunId: run.runId,
+          stage: lastProductFailure?.stage,
+          reason: lastProductFailure?.reason || '',
+          message: lastProductFailure?.message || '',
+          err: lastProductFailure?.err || null,
+        });
+        if (ledgerResult.recorded) {
+          console.log(`[Auto] 📕 Produk "${searchKeyword}" masuk ledger penolakan konten (cooldown ${getRejectCooldownDays()} hari).`);
+        } else if (ledgerResult.reason !== 'flag_off') {
+          console.log(`[Auto] 📕 Produk "${searchKeyword}" TIDAK diblokir (klasifikasi kegagalan: ${ledgerResult.reason}) — bukan salah kontennya.`);
+        }
       }
 
       if (run.currentJobId) {

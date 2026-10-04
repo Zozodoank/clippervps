@@ -11,6 +11,7 @@ import { extractCoreProductInfo, isTitleMatchingProduct } from './discoveryServi
 import { getSmartProxyArgs } from './downloader.js';
 import { classifyPipelineError } from './networkDiagnosticService.js';
 import { getNichePreset } from '../config/nichePresets.js';
+import { isLocalGatekeeperAdvisory } from '../config/runtimeFlags.js';
 import { getMinVideoDurationSec, getMaxVideoDurationSec } from '../config/videoLimits.js';
 import { hasRepairIntent, hasStrongRepairIntent, hasTutorialIntent } from '../config/forbiddenTerms.js';
 
@@ -1153,6 +1154,77 @@ export function resolveNicheFacePolicy(niche) {
 }
 
 /**
+ * Ringkas kecurigaan AI Local Gatekeeper menjadi satu kalimat untuk PROMPT Oracle Kaggle
+ * (Qwen). Ini bagian dari mandate user 2026-10: aturan filter lokal (wajah presenter,
+ * subtitle terbakar, watermark, overlay grafis, kartun/bumper, slide statis) tidak lagi
+ * MEMOTONG adegan di perangkat — aturan itu diserahkan ke model besar untuk diperiksa
+ * sendiri pada frame, sehingga tuduhan palsu model kecil tidak lagi membunuh produk bagus.
+ *
+ * `stage`/`reason` berasal dari server/gatekeeper/service.py (lihat keputusan per-frame).
+ * 'io_error' sengaja DIBUANG: frame gagal dibaca = masalah infrastruktur, bukan tuduhan
+ * konten, dan mengirimnya ke Qwen hanya mengecoh model.
+ *
+ * @param {Array<{status?:string, stage?:string, reason?:string}>} discardedFrames
+ * @param {number} totalFrames
+ * @returns {string} ringkasan pendek ('' bila tidak ada kecurigaan)
+ */
+export function summarizeLocalSuspicion(discardedFrames = [], totalFrames = 0) {
+  const LABELS = {
+    face: 'presenter or human face',
+    text: 'burned-in subtitle / on-screen text',
+    watermark: 'channel watermark or logo',
+    graphic_overlay: 'graphic overlay (arrow, sticker, banner)',
+    paper_manual: 'unboxing paperwork or manual page',
+    scene: 'cartoon, bumper or non-product scene',
+    static_frame: 'static slideshow or frozen frame',
+    uncertain_scene: 'possibly non-product scene',
+    orientation: 'wrong orientation / pillarbox',
+  };
+  const counts = new Map();
+  for (const f of discardedFrames || []) {
+    if (!f || f.status === 'clean') continue;
+    const stage = String(f.stage || '').trim().toLowerCase();
+    if (!stage || stage === 'passed' || stage === 'io_error') continue;
+    let label = LABELS[stage];
+    if (!label) {
+      // Stage baru di gatekeeper (belum terdaftar di LABELS) tetap terwakili: pakai reason
+      // mentah yang sudah dipotong, jangan diam-diam menghapus sinyal dari Qwen.
+      const reason = String(f.reason || stage).replace(/\s+/g, ' ').trim().slice(0, 60);
+      label = `suspected ${reason || stage}`;
+    }
+    // Watermark sering dilaporkan sebagai stage 'text' dengan reason menyebut watermark.
+    if (stage === 'text' && /watermark|logo/i.test(String(f.reason || ''))) label = LABELS.watermark;
+    counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  if (!counts.size) return '';
+  const total = Number(totalFrames) || (discardedFrames || []).length;
+  const parts = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([label, n]) => `${n}/${total} frame(s) suspected ${label}`);
+  return parts.join('; ');
+}
+
+/**
+ * Gabungkan ringkasan kecurigaan lokal dari beberapa kandidat menjadi satu teks prompt.
+ * Dedupe per fragmen (pemisah ';') karena kandidat dari channel yang sama hampir selalu
+ * menghasilkan tuduhan identik, dan prompt Qwen tidak boleh membengkak.
+ */
+export function mergeLocalSuspicion(values = [], maxLen = 280) {
+  const seen = new Set();
+  const parts = [];
+  for (const raw of values || []) {
+    for (const piece of String(raw || '').split(';')) {
+      const s = piece.trim();
+      if (!s || seen.has(s.toLowerCase())) continue;
+      seen.add(s.toLowerCase());
+      parts.push(s);
+    }
+  }
+  return parts.join('; ').slice(0, maxLen);
+}
+
+/**
  * ── TAHAP 2: INSPEKSI & FILTER FRAME LOKAL (AI GATEKEEPER + HEURISTIK FALLBACK) ──
  * Memeriksa frame visual yang telah disampel di server lokal sebelum mengirim ke AI utama.
  * Tahap 1: MediaPipe Face Detection (100% faceless).
@@ -1268,6 +1340,9 @@ export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allow
       cameraResultEligibleFrames,
       discardedFrames,
       reason: rejectReason || aiResult.reason,
+      // Ringkasan kecurigaan lokal untuk prompt Oracle (Qwen). Selalu dihitung, walau
+      // peran vonis lokal sedang 'strict' — pemanggil yang memutuskan memakai atau tidak.
+      localSuspicion: summarizeLocalSuspicion(discardedFrames, frames.length),
       verifiedSegments,
       discardedFaceTimestamps,
       discardedViolationTimestamps,
@@ -1704,24 +1779,44 @@ export async function filterCandidateFramesPerFrame(frames, { candidateIndex = 0
   });
 
   const clean = (result.cleanFrames || []).map(stampCandidate);
+  // PERAN VONIS LOKAL = ADVISORY (default selama Oracle Kaggle aktif, mandate user 2026-10):
+  // frame yang dituduh model kecil TIDAK dibuang. Mereka ikut ke bank footage dengan label
+  // `localSuspicion`, lalu Oracle (Qwen) yang memvonis di pass sanitasi pool — dengan prompt
+  // yang sudah memuat daftar kecurigaan lokal ini. Alasan praktis: Qwen sering menyatakan
+  // frame bersih sementara lokal menolak, dan yang dibuang lokal tidak pernah dilihat model besar.
+  const suspicious = isLocalGatekeeperAdvisory(process.env)
+    ? (result.discardedFrames || [])
+      .filter((f) => f && f.filePath && f.stage !== 'io_error')
+      .map((f) => ({
+        ...stampCandidate(f),
+        localSuspicion: String(f.reason || f.stage || 'flagged by local heuristics').slice(0, 160),
+      }))
+    : [];
+  const pooledFrames = [...clean, ...suspicious];
   // Pool terpisah: frame bebas-wajah-kreator tapi ada wajah konten (khusus niche dengan slot presenter_only)
   const eligibleCamera = (result.cameraResultEligibleFrames || []).map(f => ({
     ...stampCandidate(f),
     isCameraResultEligible: true,
   }));
 
-  const isEligible = clean.length > 0;
+  const isEligible = pooledFrames.length > 0;
   return {
     candidateIndex,
     candidate,
     eligible: isEligible,
-    cleanFrames: clean,
+    cleanFrames: pooledFrames,
     cameraResultEligibleFrames: eligibleCamera,
     verifiedSegments: result.verifiedSegments || [],
     discardedFaceTimestamps: result.discardedFaceTimestamps || [],
     discardedViolationTimestamps: result.discardedViolationTimestamps || [],
-    discardedCount: frames.length - clean.length,
+    // Yang benar-benar dibuang = tidak masuk pool. Di mode advisory frame curiga ikut
+    // pooled, jadi discardedCount harus dihitung dari pooled (bukan dari `clean` saja),
+    // kalau tidak discardedCount dan cleanFrames saling bertentangan bagi pemanggil.
+    discardedCount: Math.max(0, frames.length - pooledFrames.length),
     totalFrames: frames.length,
+    // Buat pemanggil: ringkasan kecurigaan lokal -> diteruskan ke prompt Oracle.
+    localSuspicion: result.localSuspicion || '',
+    localFrameCount: clean.length,
     reason: isEligible ? undefined : (result.reason || 'Tidak ada frame peragaan bersih yang terdeteksi.'),
   };
 }
