@@ -59,7 +59,7 @@ describe('buildVlmPrompt dengan localHints (aturan lokal diserahkan ke Qwen)', (
     expect(p).toContain('burned-in subtitle');
     // Baris terakhir wajib tetap kontrak jawaban; kalau tidak, Qwen balas prosa dan
     // vonisnya dianggap tidak sah oleh normalizeOracleVerdict.
-    expect(p.trim().endsWith('{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false}')).toBe(true);
+    expect(p.trim().endsWith('{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false,"reason":"very short"}')).toBe(true);
   });
 
   it('teks kecurigaan disanitasi (tanpa baris baru/kutip) agar tidak jadi injeksi instruksi', () => {

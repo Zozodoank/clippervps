@@ -125,7 +125,7 @@ export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict', {
     lines.push('{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false,"productMatch":true|false,"matchScore":0-100,"apparentQuality":0-100,"reason":"very short"}');
   } else {
     lines.push('Answer with ONLY a compact JSON object, no prose:');
-    lines.push('{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false}');
+    lines.push('{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false,"reason":"very short"}');
   }
   return lines.join('\n');
 }

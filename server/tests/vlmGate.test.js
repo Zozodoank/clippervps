@@ -68,7 +68,7 @@ describe('vlmGateService - fungsi murni', () => {
     'Face policy: REJECT if any human face is visible.',
     'Hands and product demonstration are allowed.',
     'Answer with ONLY a compact JSON object, no prose:',
-    '{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false}',
+    '{"safe":true|false,"face":true|false,"text":true|false,"watermark":true|false,"graphic":true|false,"reason":"very short"}',
   ].join('\n');
 
   it('buildVlmPrompt tanpa opsi = byte-identik dengan prompt lama (nol regresi)', () => {

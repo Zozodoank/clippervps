@@ -9,9 +9,11 @@
 // RANGKAIAN (keputusan user 1c/2b/3/4b):
 //   Pre-screen metadata (murah)  ->  ambil klip 15s crop 9:16  ->  GATEKEEPER
 //   PRE-FILTER lokal (1c, 0 token)  ->  VONIS BATCH Gemini (satu panggilan,
-//   produk + kebersihan)  ->  pilih >=2 sumber layak (4b)  ->  TRANKRIP WHISPER
-//   PENUH audio 5-15 mnt (3)  ->  AI TEKS pilih window + draf naskah  ->  ZIGZAG
-//   per window (2b).
+//   produk + kebersihan)  ->  pilih >=2 sumber layak (4b)  ->  WINDOW UNIFORM
+//   (tengah video)  ->  zigzag per window (2b).
+//
+// [PERUBAHAN] L3 transkrip Whisper penuh DIHAPUS — video YouTube tidak diwajibkan
+// memiliki voice-over. Window ditentukan dari tengah video secara uniform.
 //
 // Output: { sources, orderedWindows, scriptDraft, diagnostics } siap dipakai
 // tahap unduh-per-segmen (L4) & render (L6) yang ADA di stage1Render.
@@ -22,9 +24,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import path from 'path';
 import fs from 'fs';
-import { spawn } from 'child_process';
-import { getYtDlpPath, getFFmpegPath } from '../services/binaryChecker.js';
-import { findCookiesFile, extractVideoId } from '../services/downloader.js';
+import { extractVideoId } from '../services/downloader.js';
 import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
@@ -34,10 +34,8 @@ import {
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
 import { isVlmOracleEnabled, isLocalGatekeeperAdvisory } from '../config/runtimeFlags.js';
 import { applyOracleVeto } from '../services/vlmOracleService.js';
-import { extractSourceAudio, transcribeAudio } from '../services/audioBeatService.js';
 import {
   verdictCandidatesWithGemini,
-  selectAffiliateWindowsWithAIText,
 } from '../services/aiService.js';
 
 // ── HELPER MURNI (diuji terpisah, tanpa I/O/jaringan) ────────────────────────
@@ -139,57 +137,12 @@ export function buildLegacyStructuresFromV2(sources, orderedWindows) {
     bestWindow: clips.length
       ? { sourceId: clips[0].sourceId, startSec: clips[0].startSeconds, endSec: clips[clips.length - 1].endSeconds, durationSec: total }
       : null,
-    narration: { hasNarration: true, source: 'v2_full_transcribe' },
+    narration: { hasNarration: true, source: 'v2_visual_only' },
     pipelineVersion: 'v2_batch',
     productHook: null,
     isV2Flow: true,
   };
   return { hl, candidateResults };
-}
-
-// ── UNDIUH AUDIO SAJA (murah, untuk transkrip penuh L3) ──────────────────────
-async function downloadAudioTrack(url, outDir, jobId, { timeoutMs = 120000 } = {}) {
-  if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-  const ytDlpPath = await getYtDlpPath();
-  const outPath = path.join(outDir, `audio_${jobId}_${Date.now()}.m4a`);
-  const cookieFile = findCookiesFile();
-  const args = [
-    '--no-playlist',
-    '--js-runtimes', 'node',
-    '-f', 'bestaudio/best',
-    '--extract-audio', '--audio-format', 'm4a', '--audio-quality', '7',
-    ...(cookieFile ? ['--cookies', cookieFile] : []),
-    '-o', outPath,
-    url,
-  ];
-  return new Promise((resolve, reject) => {
-    const proc = spawn(ytDlpPath, args);
-    let done = false;
-    const timer = setTimeout(() => {
-      if (!done) {
-        done = true;
-        try { proc.kill('SIGKILL'); } catch {}
-        try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
-        reject(Object.assign(new Error(`Unduh audio timeout (${Math.round(timeoutMs / 1000)}s)`), { isInfraError: true }));
-      }
-    }, timeoutMs);
-    proc.on('close', (code) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      if (code === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 2048) resolve(outPath);
-      else {
-        try { if (fs.existsSync(outPath)) fs.unlinkSync(outPath); } catch {}
-        reject(Object.assign(new Error(`yt-dlp audio gagal (code ${code})`), { isInfraError: true }));
-      }
-    });
-    proc.on('error', (err) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      reject(Object.assign(err, { isInfraError: true }));
-    });
-  });
 }
 
 // ── ORKESTRATOR ──────────────────────────────────────────────────────────────
@@ -373,29 +326,42 @@ export async function runSourceAcquisitionV2(p) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
 
-  // (L3) transkrip WHISPER PENUH + AI teks pilih window per sumber layak.
+  // (L3) WINDOW DINAMIS TERSEBAR — Mengambil potongan kecil di banyak titik (meningkatkan variasi).
+  // Mengabaikan 10 detik awal dan akhir, mengambil 10 titik masing-masing 3 detik.
   const sourcesData = [];
   for (const cand of accepted) {
-    updateProgress({ step: 'full_transcribe', message: `🎧 [V2] Transkrip penuh audio kandidat (${cand.title || cand.sourceId})...`, progress: 30 });
-    let audioPath = null;
-    try {
-      audioPath = await downloadAudioTrack(cand.url, tempDir, `${jobId}_aud`);
-      const extracted = await extractSourceAudio({ videoPath: audioPath, outWav: null, logger: console });
-      if (!extracted.ok) throw Object.assign(new Error(`Ekstrak audio gagal: ${extracted.error}`), { isInfraError: !extracted.noAudio });
-      const transcribed = await transcribeAudio({ wavPath: extracted.wavPath, env: process.env });
-      try { if (extracted.wavPath && fs.existsSync(extracted.wavPath)) fs.unlinkSync(extracted.wavPath); } catch {}
-      if (!transcribed.ok) throw Object.assign(new Error(`Transkrip gagal: ${transcribed.error}`), { isInfraError: true });
-      diagnostics.transcribed++;
-
-      updateProgress({ step: 'text_window_select', message: `🧠 [V2] AI teks pilih window menarik (${cand.sourceId})...`, progress: 34 });
-      const { windows } = await selectAffiliateWindowsWithAIText({
-        apiKey, aiProvider, segments: transcribed.segments, targetDurationSec: targetClipDurationSec,
-        productTitle, niche, sourceId: cand.sourceId, onProgress: updateProgress,
-      });
-      if (windows.length) sourcesData.push({ sourceId: cand.sourceId, url: cand.url, meta: cand.meta, windows });
-    } finally {
-      try { if (audioPath && fs.existsSync(audioPath)) fs.unlinkSync(audioPath); } catch {}
+    updateProgress({ step: 'text_window_select', message: `📊 [V2] Menentukan 10 titik ekstraksi visual (${cand.title || cand.sourceId})...`, progress: 30 });
+    const vidDur = Number(cand.meta?.duration) || 60;
+    
+    // Abaikan 10 detik awal dan akhir (atau proporsional jika video pendek)
+    const safeStart = Math.min(10, Math.max(0, vidDur * 0.1));
+    const safeEnd = Math.max(safeStart + 3, vidDur - 10);
+    const usableDur = safeEnd - safeStart;
+    
+    const pointsCount = 10;
+    const windowDur = 3; // 3 detik per titik
+    
+    const windows = [];
+    if (usableDur <= pointsCount * windowDur) {
+      // Jika video pendek, potong berurutan saja
+      for (let t = safeStart; t + windowDur <= safeEnd; t += windowDur) {
+        windows.push({ startSec: Math.round(t * 10) / 10, endSec: Math.round((t + windowDur) * 10) / 10, scriptDraft: '' });
+      }
+    } else {
+      // Sebar merata di 10 titik
+      const step = (usableDur - windowDur) / (pointsCount - 1);
+      for (let i = 0; i < pointsCount; i++) {
+        const t = safeStart + (i * step);
+        windows.push({ startSec: Math.round(t * 10) / 10, endSec: Math.round((t + windowDur) * 10) / 10, scriptDraft: '' });
+      }
     }
+    
+    if (!windows.length) {
+      // Fallback minimal absolut
+      windows.push({ startSec: vidDur * 0.25, endSec: Math.min(vidDur * 0.75, vidDur * 0.25 + windowDur), scriptDraft: '' });
+    }
+    diagnostics.transcribed++;
+    sourcesData.push({ sourceId: cand.sourceId, url: cand.url, meta: cand.meta, windows });
   }
 
   // (L5) zigzag per window.

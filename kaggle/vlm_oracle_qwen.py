@@ -712,7 +712,7 @@ def verdict_batch(payload, model, processor, torch):
                 # Gagal parse = tidak tahu = jangan lepas veto. Tandai frame INI saja yang
                 # kotor supaya veto tidak merata ke seluruh batch karena satu frame saja.
                 entry = {"index": idx, "safe": False,
-                         "face": False, "text": False, "watermark": False, "graphic": False}
+                         "face": False, "text": False, "watermark": False, "graphic": False, "reason": "Gagal parse output model"}
                 if ranking:
                     # Umpama gagal parse pun, frame ini tidak boleh menyumbang skor: None,
                     # bukan 0, supaya median tidak menghukum kandidat karena satu frame rusak.
@@ -728,6 +728,7 @@ def verdict_batch(payload, model, processor, torch):
                 "text": bool(obj1.get("text", False)),
                 "watermark": bool(obj1.get("watermark", False)),
                 "graphic": bool(obj1.get("graphic", False)),
+                "reason": str(obj1.get("reason", ""))[:280],
             }
             if ranking:
                 frame_verdict["productMatch"] = bool(obj1.get("productMatch", True))
@@ -737,6 +738,9 @@ def verdict_batch(payload, model, processor, torch):
         if per_frame:
             out["perFrame"] = per_frame
             out["safe"] = all(f["safe"] for f in per_frame)
+            dirty_reasons = [f.get("reason", "") for f in per_frame if (not f["safe"] or f["face"] or f["text"] or f["watermark"] or f["graphic"]) and f.get("reason")]
+            if dirty_reasons:
+                out["reason"] = " | ".join(dirty_reasons)[:280]
             # Flag agregat diturunkan dari bukti per-frame, bukan tebakan satu panggilan.
             for k in ("face", "text", "watermark", "graphic"):
                 out[k] = any(f[k] for f in per_frame)

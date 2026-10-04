@@ -63,7 +63,7 @@ import {
 } from '../services/videoFilterService.js';
 import { verifyScene as verifySceneWithVlm, isVlmAvailable } from '../services/vlmGateService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
-import { analyzeNarrationAndSelectBestWindow } from '../services/whisperGateService.js';
+// [NOTE] whisperGateService dihapus — gerbang narasi & kewajiban voice-over tidak lagi digunakan.
 // BLUEPRINT ALUR BARU (ACQUISITION_FLOW=v2) — orkestrasi L2->L5 & penyusun zigzag.
 import { runSourceAcquisitionV2, buildLegacyStructuresFromV2 } from './sourceAcquisitionV2.js';
 import { interleaveBySource } from '../utils/clipOrdering.js';
@@ -427,52 +427,9 @@ async function _runStage1Pipeline({
           }
 
           if (rawVideoPath) {
-            const gatePreviewSec = Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 15;
-            // Pada arsitektur smolvlm, gerbang narasi Whisper DILEWATI (timing dari window
-            // Gemini + vonis SmolVLM2), jadi paritas cache tidak menuntut voice-over.
-            const bypassWhisper = isSmolvlmVerifyEnabled(process.env);
-            const cacheDurSec = Number(videoMeta?.duration) || (await getMediaDurationSec(rawVideoPath, getFFmpegPath())) || 0;
-            if (bypassWhisper) {
-              console.log(`[Job ${jobId}] ℹ️ [Cache] Mode smolvlm aktif -> gerbang narasi Whisper dilewati (paritas).`);
-            } else if (cacheDurSec > 0) {
-              const sliceStart = Math.max(0, Math.floor(cacheDurSec / 2 - gatePreviewSec / 2));
-              const narrationSlicePath = path.join(tempDir, `cache_gate_${jobId}_${Date.now()}.mp4`);
-              let sliceOk = false;
-              try {
-                await new Promise((res) => {
-                  const p = spawn(getFFmpegPath(), ['-y', '-ss', String(sliceStart), '-t', String(gatePreviewSec), '-i', rawVideoPath, '-c', 'copy', '-avoid_negative_ts', 'make_zero', narrationSlicePath]);
-                  p.on('close', (code) => { sliceOk = code === 0 && fs.existsSync(narrationSlicePath) && fs.statSync(narrationSlicePath).size > 1024; res(); });
-                  p.on('error', () => res());
-                });
-                if (sliceOk) {
-                  const cacheGate = await analyzeNarrationAndSelectBestWindow(narrationSlicePath, {
-                    minCoverage: Number(process.env.WHISPER_NARRATION_MIN_COVERAGE) || 0.3,
-                    targetDurationSec: gatePreviewSec,
-                    totalVideoDurationSec: gatePreviewSec,
-                    previewStartSec: sliceStart,
-                  });
-                  if (!cacheGate.hasNarration) {
-                    console.warn(`[Job ${jobId}] ⛔ [Cache] Gerbang narasi gagal paritas (slice ${sliceStart}s-${sliceStart + gatePreviewSec}s: ${cacheGate.reason}). Cache dibuang, evaluasi ulang online.`);
-                    try { fs.unlinkSync(rawVideoPath); } catch {}
-                    rawVideoPath = null;
-                  } else {
-                    console.log(`[Job ${jobId}] ✅ [Cache] Paritas gerbang lolos: narasi ada pada slice tengah ${gatePreviewSec}s.`);
-                  }
-                } else {
-                  console.warn(`[Job ${jobId}] ⚠️ [Cache] Gagal membuat slice narasi - gerbang narasi dilewati (film tetap diaudit frame).`);
-                }
-              } catch (gateErr) {
-                if (gateErr?.isInfraError) {
-                  // P1-5: whisper/gatekeeper tumbang BUKAN vonis konten - jangan hapus cache
-                  // (menghapus = menghukum unduhan 1080p yang mahal), lanjutkan audit frame.
-                  console.warn(`[Job ${jobId}] ⚠️ [Cache][Infra] Gerbang narasi tak selesai (${gateErr.message}) - lanjut ke audit frame.`);
-                } else {
-                  throw gateErr;
-                }
-              } finally {
-                try { if (fs.existsSync(narrationSlicePath)) fs.unlinkSync(narrationSlicePath); } catch {}
-              }
-            }
+            // [SIMPLIFIED] Gerbang narasi Whisper dihapus — video YouTube tidak diwajibkan
+            // memiliki voice-over. Cache langsung lolos ke audit frame tanpa cek narasi.
+            console.log(`[Job ${jobId}] ℹ️ [Cache] Gerbang narasi dilewati (voice-over tidak diwajibkan).`);
           }
         }
 
@@ -757,21 +714,11 @@ async function _runStage1Pipeline({
       // ditolak"; sejak ledger membaca flag ini (classifyFailure) isInfraError benar.
       if (!preview10s?.filePath) throw Object.assign(new Error(`Gagal download preview ${gatePreviewSec}s`), { isInfraError: true });
 
-      // ── TAHAP 3: WHISPER GATE (EARLY SPEECH CHECK) ──
-      updateProgress({ step: 'whisper_gate', message: '🎧 Whisper mengecek keberadaan narasi...', progress: 20 });
-      const gateCheck = await analyzeNarrationAndSelectBestWindow(preview10s.filePath, {
-        minCoverage: Number(process.env.WHISPER_NARRATION_MIN_COVERAGE) || 0.3,
-        targetDurationSec: gatePreviewSec, // Preview sepuas gerbang -> window = seluruh preview
-        totalVideoDurationSec: preview10s.actualDurationSec,
-        previewStartSec: preview10s.sourceStartSec,
-      });
-      if (!gateCheck.hasNarration) {
-        const err = new Error(`Video tidak memiliki narasi yang cukup (gate ${gatePreviewSec}s: ${gateCheck.reason}).`);
-        err.isAiRejection = true;
-        err.rejectionReason = 'Tidak ada narasi voice-over';
-        throw err;
-      }
-      console.log(`[Job ${jobId}] ✅ [Whisper Gate Lolos] Ada narasi pada preview ${gatePreviewSec}s.`);
+      // ── TAHAP 3: (GERBANG NARASI DIHAPUS) ──
+      // Kewajiban voice-over telah dihapus — video YouTube tidak perlu memiliki narasi.
+      // Preview sudah diunduh pada TAHAP 2 dan siap dipakai oleh probe frame berikutnya.
+      updateProgress({ step: 'frame_probe', message: '🔎 Melewati cek narasi — lanjut probe visual...', progress: 22 });
+      console.log(`[Job ${jobId}] ℹ️ [Gerbang Narasi] Dilewati — voice-over tidak diwajibkan.`);
 
       // ── TAHAP 4: FAST PROBE LOKAL (5 FRAME) ──
       updateProgress({ step: 'frame_probe', message: '🔎 Pemeriksaan visual cepat (5 frame)...', progress: 25 });
@@ -817,32 +764,26 @@ async function _runStage1Pipeline({
       }
       console.log(`[Job ${jobId}] ✅ [Fast Probe Selesai] 5 frame lokal dinilai (vonis akhir oleh Oracle).`);
 
-      // ── TAHAP 5: CONTEXT PREVIEW (25s) & WHISPER CONTEXT ──
-      const contextDuration = Number(process.env.WHISPER_CONTEXT_DURATION_SEC) || 25;
-      updateProgress({ step: 'context_preview', message: `⚡ Download konteks narasi ${contextDuration} detik...`, progress: 30 });
+      // ── TAHAP 5: CONTEXT PREVIEW (25s) — WINDOW DEFAULT (TANPA WHISPER) ──
+      // Whisper dihapus: window terbaik ditentukan dari tengah video (hemat kuota/CPU).
+      const targetWindowSec = Number(process.env.BEST_WINDOW_DURATION_SEC) || 25;
+      updateProgress({ step: 'context_preview', message: `⚡ Download konteks ${targetWindowSec} detik...`, progress: 30 });
       
       const contextPreview = await downloadQuickPreview(targetUrl, tempDir, jobId + '_ctx', {
         onProgress: updateProgress,
-        durationSec: contextDuration,
+        durationSec: targetWindowSec,
         sourceDurationSec: meta.duration
       });
       
-      updateProgress({ step: 'window_select', message: '🎧 Whisper memilih window terbaik...', progress: 35 });
-      const targetWindowSec = Number(process.env.BEST_WINDOW_DURATION_SEC) || 25;
-      const contextCheck = await analyzeNarrationAndSelectBestWindow(contextPreview.filePath, {
-        minCoverage: 0.1, // Minimal as it already passed gate
-        targetDurationSec: targetWindowSec,
-        totalVideoDurationSec: contextPreview.actualDurationSec,
-        previewStartSec: contextPreview.sourceStartSec,
-      });
-      
-      const bestWindow = contextCheck.bestWindow || {
+      // Window = seluruh context preview yang diunduh (sudah dipilih dari tengah video
+      // oleh downloadQuickPreview). Tidak ada analisis narasi — semua video diterima.
+      const bestWindow = {
         startSec: contextPreview.sourceStartSec,
-        endSec: contextPreview.sourceStartSec + targetWindowSec,
-        durationSec: targetWindowSec
+        endSec: contextPreview.sourceStartSec + (contextPreview.actualDurationSec || targetWindowSec),
+        durationSec: contextPreview.actualDurationSec || targetWindowSec
       };
       
-      console.log(`[Job ${jobId}] ✅ [Whisper Context] Terpilih window: ${bestWindow.startSec}s - ${bestWindow.endSec}s`);
+      console.log(`[Job ${jobId}] ✅ [Context Window] Window default: ${bestWindow.startSec}s - ${bestWindow.endSec}s (tanpa Whisper).`);
 
       // ── TAHAP 6: GEMINI PRODUCT VERIFY ──
       // Gunakan frame bersih dari probe yang lulus. Saat vonis lokal hanya penasihat dan probe
@@ -892,9 +833,9 @@ async function _runStage1Pipeline({
           endSec: bestWindow.endSec,
           durationSec: bestWindow.durationSec
         },
-        whisperSegments: contextCheck.whisperSegments || [],
-        narration: { hasNarration: true, coverage: contextCheck.coverage },
-        pipelineVersion: 'whisper_first_v1',
+        whisperSegments: [],
+        narration: { hasNarration: true, coverage: 1 },
+        pipelineVersion: 'visual_only_v2',
         productHook: null 
       };
 
@@ -1667,14 +1608,14 @@ async function _runStage1Pipeline({
           continue;
         }
 
-        if (bestVerified?.highlight?.pipelineVersion === 'whisper_first_v1') {
-          console.log(`[Job ${jobId}] ⚡ Whisper-First Pipeline: Menggabungkan ${preferredSoFar.length} kandidat lolos! Melewati AI Storyboard fallback...`);
+        if (bestVerified?.highlight?.pipelineVersion === 'whisper_first_v1' || bestVerified?.highlight?.pipelineVersion === 'visual_only_v2') {
+          console.log(`[Job ${jobId}] ⚡ Visual-Only Pipeline: Menggabungkan ${preferredSoFar.length} kandidat lolos! Melewati AI Storyboard fallback...`);
           hl = {
             clips: preferredSoFar.map(c => c.highlight.clips[0]),
             bestWindow: bestVerified.highlight.bestWindow,
-            whisperSegments: bestVerified.highlight.whisperSegments,
+            whisperSegments: [],
             narration: bestVerified.highlight.narration,
-            pipelineVersion: 'whisper_first_v1',
+            pipelineVersion: 'visual_only_v2',
             productHook: bestVerified.highlight.productHook
           };
           break;
@@ -2744,7 +2685,7 @@ async function _runStage1Pipeline({
         productTitle: (highlight.detectedProduct || productTitle || '').trim(),
         productDescription,
         shopeeLink,
-        whisperSegments: highlight.whisperSegments || [],
+        whisperSegments: [],
         productHook: highlight.productHook,
         segmentDuration: actualSilentDuration,
         sceneDuration,
