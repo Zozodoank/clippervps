@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from '../services/downloader.js';
-import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, getAutoKeywords, bingTitleRelevancePredicate } from '../services/discoveryService.js';
+import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, getAutoKeywords, bingTitleRelevancePredicate, buildDynamicProductSearchQueries } from '../services/discoveryService.js';
 import { buildNicheProductCriterion } from '../services/aiService.js';
 import { getNichePreset } from '../config/nichePresets.js';
 
@@ -29,6 +29,37 @@ describe('Kitchen Tools & Video-First Optimization', () => {
       const cleaned = buildCleanYouTubeQuery('olike rice cooker review indonesia');
       expect(cleaned).toContain('-servis');
       expect(cleaned).toContain('-cara');
+    });
+  });
+
+  // FIX 0/20 (A2): query "merk + tipe" POLOS tidak boleh dihujani operator negatif sampai 6
+  // (dulu cabang non-branded -> 6 operator -> YouTube 0 hasil). Identity pendek dijepit <= 3,
+  // tetapi operator prioritas berbahaya (-servis/-cara/-tutorial) tetap terkirim (bug 30 Sep).
+  describe('Query brand+tipe polos: pembatasan operator negatif (A2)', () => {
+    it('identity pendek (<= 4 kata) dijepit maksimal 3 operator namun tetap terproteksi', () => {
+      const cleaned = buildCleanYouTubeQuery('Coolpad Cool Dual');
+      const ops = (cleaned.match(/(?:^|\s)-\S+/g) || []);
+      expect(ops.length).toBeLessThanOrEqual(3);
+      expect(ops.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  // FIX 0/20 (A1): generator query utama WAJIB memulai dengan identitas polos, lalu
+  // "review" berkutip; varian longgar (review jujur, dll) hanya fallback, bukan yang pertama.
+  describe('Query utama = merk+tipe polos, "review" berkutip, sisanya fallback (A1)', () => {
+    it('indeks 0 identitas polos (tanpa suffix), indeks 1 diakhiri "review" berkutip', () => {
+      const qs = buildDynamicProductSearchQueries({ brand: 'Coolpad', model: 'Cool Dual', noun: 'smartphone' });
+      expect(qs.length).toBeGreaterThan(2);
+      expect(qs[0]).not.toMatch(/review|unboxing|demo|voice|jujur|indonesia/i);
+      expect(qs[1]).toMatch(/"review"$/);
+      const jujurIdx = qs.findIndex((q) => /review jujur/i.test(q));
+      expect(jujurIdx).toBeGreaterThan(1);
+    });
+
+    it('berlaku juga untuk niche alat dapur (brand + noun, tanpa model)', () => {
+      const qs = buildDynamicProductSearchQueries({ brand: 'Sokany', noun: 'hand blender' });
+      expect(qs[0]).not.toMatch(/review|unboxing|demo|voice|jujur|indonesia/i);
+      expect(qs[1]).toMatch(/"review"$/);
     });
   });
 

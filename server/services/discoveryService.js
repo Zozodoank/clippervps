@@ -4634,6 +4634,11 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
   const fallbackIdentity = String(identity || '').trim();
 
   if (exactIdentity) {
+    // ALUR BARU (fix 0/20): query PALING bersih = "merk + tipe" polos; bila perlu qualifier,
+    // pakai "review" BERKUTIP (phrase-match akurat, menekan listicle/reaction penuh wajah).
+    // Varian longgar (review jujur / indonesia / unboxing / demo) jadi FALLBACK, bukan utama.
+    add(`${exactIdentity}`);
+    add(`${exactIdentity} "review"`);
     add(`${exactIdentity} review jujur`);
     add(`${exactIdentity} review indonesia`);
     add(`${exactIdentity} voice over`);
@@ -4644,6 +4649,8 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
     add(`${exactIdentity} demo produk`);
     add(`unboxing ${exactIdentity}`);
   } else if (fallbackIdentity && !cleanBrand) {
+    add(`${fallbackIdentity}`);
+    add(`${fallbackIdentity} "review"`);
     add(`${fallbackIdentity} review jujur`);
     add(`${fallbackIdentity} review indonesia`);
     add(`${fallbackIdentity} voice over`);
@@ -4653,6 +4660,8 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
   }
 
   if (cleanBrand && cleanModel && normalizeText(cleanBrand) !== normalizeText(cleanModel)) {
+    add(`${cleanBrand} ${cleanModel}`);
+    add(`${cleanBrand} ${cleanModel} "review"`);
     add(`${cleanBrand} ${cleanModel} review jujur`);
     add(`${cleanBrand} ${cleanModel} review indonesia`);
     add(`${cleanBrand} ${cleanModel} unboxing`);
@@ -4661,6 +4670,8 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
   }
 
   if (cleanBrand && type && normalizeText(cleanBrand) !== normalizeText(type)) {
+    add(`${cleanBrand} ${type}`);
+    add(`${cleanBrand} ${type} "review"`);
     add(`${cleanBrand} ${type} review jujur`);
     add(`${cleanBrand} ${type} review indonesia`);
     add(`${cleanBrand} ${type} unboxing`);
@@ -4669,6 +4680,8 @@ export function buildDynamicProductSearchQueries({ title = '', noun = '', englis
   }
 
   if (cleanModel && type && normalizeText(cleanModel) !== normalizeText(type)) {
+    add(`${cleanModel} ${type}`);
+    add(`${cleanModel} ${type} "review"`);
     add(`${cleanModel} ${type} review indonesia`);
     add(`${cleanModel} ${type} unboxing`);
     add(`${cleanModel} ${type} review`);

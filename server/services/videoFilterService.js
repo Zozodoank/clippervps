@@ -2143,7 +2143,11 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
       // karena dipakai dua jalur pre-flight: MP4 untuk Gemini dan frame untuk Kaggle.
       const { streamUrl, startSec } = await resolvePreflightStream(url, { ytDlpPath, execAsync });
 
-      const ffmpegCmd = `"${ffmpegPath}" -y -user_agent "${PREFLIGHT_USER_AGENT}" -ss ${formatClock(startSec)} -i "${streamUrl}" -t 10 -c:v libx264 -preset veryfast -crf 28 -an "${snippetPath}"`;
+      // FFmpeg menerima pemisah header sebagai dua karakter `\r\n` literally (bukan byte CR/LF);
+      // sama seperti browserHeaders di sampleFramesFromStream. Byte CR/LF asli di dalam command
+      // string cmd.exe akan MEMOTONG perintah di tengah baris.
+      const headersForShell = PREFLIGHT_BROWSER_HEADERS.replace(/\r\n/g, '\\r\\n');
+      const ffmpegCmd = `"${ffmpegPath}" -y -user_agent "${PREFLIGHT_USER_AGENT}" -headers "${headersForShell}" -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 4 -ss ${formatClock(startSec)} -i "${streamUrl}" -t 10 -c:v libx264 -preset veryfast -crf 28 -an "${snippetPath}"`;
       await execAsync(ffmpegCmd);
 
       if (fs.existsSync(snippetPath) && fs.statSync(snippetPath).size > 0) {
@@ -2168,7 +2172,16 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
 // ---------------------------------------------------------------------------
 
 // User agent meniru browser: tanpa ini googlevideo menolak sebagian link langsung.
-const PREFLIGHT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+// DULU dipotong sampai "Win64; x64)" saja — sama tapi tanpa versi AppleWebKit/Chrome/Safari,
+// padahal googlevideo mengikat URL stream ke UA penuh yang dipakai yt-dlp saat resolve
+// (jalur lain di file ini, mis. sampleFramesFromStream, selalu kirim UA Chrome 133 utuh).
+// PARSIAL = 403 Forbidden "Error opening input files" di pre-flight (log 4 Okt 2026).
+const PREFLIGHT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36';
+
+// Header sesi yang sama dengan jalur ekstraksi lain. googlevideo menolak request yang hanya
+// membawa User-Agent (403 saat seek) bila Referer/Origin ke youtube.com tidak ikut terkirim.
+// SENGAJA tanpa cookies: pre-flight harus tetap jalan di desain tanpa-cookies user.
+const PREFLIGHT_BROWSER_HEADERS = 'Referer: https://www.youtube.com/\r\nOrigin: https://www.youtube.com/\r\nSec-Fetch-Mode: cors\r\nSec-Fetch-Site: cross-site\r\n';
 
 /** `150` -> `00:02:30` (format yang dipakai jalur lama). */
 function formatClock(totalSec) {
@@ -2235,6 +2248,18 @@ async function resolvePreflightStream(url, { ytDlpPath, execAsync }) {
 }
 
 /**
+ * Timeout ekstraksi frame pre-flight (ms). Dulu dipatok keras 90_000 yang di Termux/ARM +
+ * googlevideo lambat sering jebol (seek dalam + decode) -> kandidat "untested", gerbang murah
+ * Qwen mangkir. Default kini 120_000 dan dapat dinaikkan via env VLM_ORACLE_PREFLIGHT_TIMEOUT_MS.
+ * Clamp 30k..240k agar tidak pernah melewati deadline total job (deadline dicek di pemanggil).
+ */
+export function resolvePreflightTimeoutMs(env = process.env) {
+  const raw = Number(env && env.VLM_ORACLE_PREFLIGHT_TIMEOUT_MS);
+  const val = Number.isFinite(raw) && raw > 0 ? raw : 120_000;
+  return Math.max(30_000, Math.min(240_000, val));
+}
+
+/**
  * Jalankan FFmpeg tanpa shell (argv array). Dipakai jalur frame karena URL stream
  * dari yt-dlp berisi `&` dan `?` yang di dalam command-string adalah karakter hidup
  * di cmd.exe/POSIX shell; `spawn` menutup kelas bug itu sekaligus membuat timeout bisa
@@ -2242,9 +2267,20 @@ async function resolvePreflightStream(url, { ytDlpPath, execAsync }) {
  */
 function runFrameExtraction({ ffmpegPath, streamUrl, startSec, seconds, fps, height, pattern, timeoutMs }) {
   return new Promise((resolve) => {
+    // Opsi INPUT harus berada sebelum -i (ffmpeg menolak flag input pasca-input: "Invalid
+    // argument"). reconnect hanya valid untuk input http(s); flag ini menutup kelas kegagalan
+    // "timeout 90000ms dengan stderr hanya banner versi" — koneksi mobile terputus di
+    // tengah stream tanpa pernah menghasilkan satu frame pun (throttle/putus sementara).
+    const inputArgs = [
+      '-user_agent', PREFLIGHT_USER_AGENT,
+      '-headers', PREFLIGHT_BROWSER_HEADERS,
+    ];
+    if (/^https?:\/\//i.test(String(streamUrl || ''))) {
+      inputArgs.push('-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '4');
+    }
     const args = [
       '-y', '-nostdin',
-      '-user_agent', PREFLIGHT_USER_AGENT,
+      ...inputArgs,
       '-ss', formatClock(startSec),
       '-i', streamUrl,
       '-t', String(seconds),
@@ -2269,7 +2305,7 @@ function runFrameExtraction({ ffmpegPath, streamUrl, startSec, seconds, fps, hei
       settled = true;
       try { proc.kill('SIGKILL'); } catch {}
       resolve({ ok: false, error: `timeout ${timeoutMs}ms`, stderr });
-    }, Math.max(5000, Number(timeoutMs) || 90_000));
+    }, Math.max(5000, Number(timeoutMs) || resolvePreflightTimeoutMs()));
     proc.on('error', (err) => {
       if (settled) return;
       settled = true;
@@ -2302,7 +2338,9 @@ function runFrameExtraction({ ffmpegPath, streamUrl, startSec, seconds, fps, hei
  */
 export async function extractPreflightFramesForOracle(urls, outputDir, opts = {}) {
   const {
-    seconds = 15, fps = 1, height = 360, tag = Date.now(), timeoutMs = 90_000,
+    // timeoutMs default diambil dari env VLM_ORACLE_PREFLIGHT_TIMEOUT_MS (clamp 30k..240k) agar
+    // Termux/ARM punya ruang cukup untuk seek dalam; pemanggil boleh override lewat opts.
+    seconds = 15, fps = 1, height = 360, tag = Date.now(), timeoutMs = resolvePreflightTimeoutMs(),
   } = opts;
   if (!urls || !Array.isArray(urls) || urls.length === 0) return [];
   if (!outputDir) throw new Error('extractPreflightFramesForOracle: outputDir wajib ada');

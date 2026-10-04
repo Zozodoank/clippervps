@@ -859,6 +859,11 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
   // Sleep tidak pernah melewati deadline total job.
   const extraRetries = Math.max(0, Math.min(3, Number(env.VLM_ORACLE_PREFLIGHT_EXTRACT_RETRIES ?? 1)));
   const retryDelayMs = Math.max(0, Math.min(60000, Number(env.VLM_ORACLE_PREFLIGHT_RETRY_DELAY_MS ?? 9000)));
+  // Timeout ekstraksi diteruskan dari env (clamp sama seperti resolvePreflightTimeoutMs di
+  // videoFilterService). Dulu pemanggil tak mengirim timeoutMs -> ekstraktor selalu jatuh ke
+  // default lama. Disuntik inline (bukan impor silang) agar service ini tetap tak menyeret
+  // graph dependensi videoFilterService.
+  const preflightTimeoutMs = Math.max(30_000, Math.min(240_000, Number(env.VLM_ORACLE_PREFLIGHT_TIMEOUT_MS) || 120_000));
   let extracted = [];
   let lastExtractErr = null;
   for (let attempt = 0; attempt <= extraRetries; attempt++) {
@@ -873,6 +878,7 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
         // arti yang sama karena frame memang LAHIR dari skala FFmpeg, jadi 360 dipakai apa
         // adanya (ekstraktor sendiri mengurung nilainya ke 240..720).
         seconds: snippetSeconds, fps: 1, height: cfg.frameHeight || 360,
+        timeoutMs: preflightTimeoutMs,
         tag: `${safeJobSegment(jobId)}_${t0}${attempt ? `_r${attempt}` : ''}`,
       }) || [];
       lastExtractErr = null;

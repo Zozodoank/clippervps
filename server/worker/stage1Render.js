@@ -1226,6 +1226,12 @@ async function _runStage1Pipeline({
         const m = (info.model || options.model || '').trim();
         const p = (info.coreProductNoun || options.productType || '').trim();
         const fallbackQueries = [
+          // ALUR BARU (fix 0/20): merk+tipe polos dulu (paling bersih), lalu "review" berkutip;
+          // varian longgar di bawah ini hanya dipakai bila yang polos tidak menghasilkan kandidat.
+          b && m ? `${b} ${m}` : '',
+          b && m ? `${b} ${m} "review"` : '',
+          b && p ? `${b} ${p}` : '',
+          b && p ? `${b} ${p} "review"` : '',
           b && m ? `${b} ${m} review jujur` : '',
           b && m ? `${b} ${m} review indonesia` : '',
           b && m ? `${b} ${m} review` : '',
@@ -1307,6 +1313,11 @@ async function _runStage1Pipeline({
         const combinedBP = (b && p && normalizeText(b) !== normalizeText(p)) ? `${b} ${p}` : (p || b);
 
         const customQueries = [];
+        // ALUR BARU (fix 0/20): awali dengan merk+tipe polos + "review" berkutip (paling bersih),
+        // baru usulan AI & varian longgar di bawah sebagai fallback.
+        if (combinedBP) {
+          customQueries.push(combinedBP, `${combinedBP} "review"`);
+        }
         if (querySuggestions && Array.isArray(querySuggestions)) {
           customQueries.push(...querySuggestions);
         }

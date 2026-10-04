@@ -368,7 +368,14 @@ export function buildCleanYouTubeQuery(baseQuery) {
   const operatorPool = [...new Set(isBrandedOrReview
     ? [...priorityOperators, ...broadOperators.filter((op) => !priorityOperators.includes(op))]
     : [...priorityOperators, ...broadOperators])];
-  const maxOperators = isBrandedOrReview ? 3 : 6;
+  // ALUR BARU (fix 0/20): query utama kini "merk + tipe" POLOS (mis. "Coolpad Cool Dual") yang
+  // tidak memuat kata review/unboxing -> dulu jatuh ke cabang 6 operator. Kode ini sendiri sudah
+  // memperingatkan operator berlebih membuat YouTube/Bing mengembalikan 0 hasil, sehingga query
+  // polos malah sering mandul. Identity pendek (<= 4 kata) kini diperlakukan seperti query branded:
+  // dijepit 3 operator. priorityOperators (istilah berbahaya -servis/-cara/-tutorial/-matot)
+  // tetap PALING AWAL di kedua cabang operatorPool, jadi proteksi bug 30 Sep tidak berkurang.
+  const isShortIdentity = cleaned.split(/\s+/).filter(Boolean).length <= 4;
+  const maxOperators = (isBrandedOrReview || isShortIdentity) ? 3 : 6;
 
   const existingLower = cleaned.toLowerCase();
   const toAdd = operatorPool
