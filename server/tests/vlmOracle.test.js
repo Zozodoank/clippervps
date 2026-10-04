@@ -1365,6 +1365,15 @@ describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (man
     expect(calls).toHaveLength(0);
   });
 
+  it("ORACLE_AUTO_LAUNCH='true' (bukan cuma '1') -> TETAP aktif (regresi footgun .env Termux)", () => {
+    __resetAutoLaunchCooldown();
+    const calls = [];
+    const r = maybeAutoLaunchOracle({ env: { ...ENV_LAUNCH, ORACLE_AUTO_LAUNCH: 'true' }, logger: silent, now: Date.now() + 10 * 60000, spawnFn: mkSpawn(calls) });
+    expect(r).toMatchObject({ triggered: true, reason: 'launched', cmd: '/tmp/fake-launch.sh' });
+    expect(calls).toHaveLength(1);
+    __resetAutoLaunchCooldown();
+  });
+
   it('token kosong -> token_kosong walau flag ON', () => {
     const calls = [];
     const r = maybeAutoLaunchOracle({ env: { ...ENV_LAUNCH, API_ACCESS_TOKEN: '' }, logger: silent, spawnFn: mkSpawn(calls) });

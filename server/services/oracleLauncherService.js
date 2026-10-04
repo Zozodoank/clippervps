@@ -34,9 +34,17 @@ const DEFAULT_CMD = path.join(REPO_ROOT, 'kaggle', 'oracle-launch.sh');
 // Timestamp launch terakhir (module-scope; cukup untuk satu proses server).
 let lastLaunchAtMs = 0;
 
-/** Flag utama: fitur mati kecuali diaktifkan eksplisit lewat env. */
+/**
+ * Flag utama: fitur mati kecuali diaktifkan eksplisit lewat env.
+ * FIX 2026-10-04: dulu HANYA menerima '1'. Padahal nilai di .env Termux adalah
+ * 'true' (dan root .env menimpa server/.env saat boot), sehingga auto-launch diam-diam
+ * jadi flag_off -> kernel Kaggle tak pernah disentuh -> batch pre-flight tak diklaim ->
+ * job mati "oracle tidak terhubung". Kini ikut konvensi boolean proyek yang lain
+ * (lihat runtimeFlags GEMINI_SCENE_DISCOVERY): '1' ATAU 'true' (case-insensitive) = aktif.
+ */
 export function isOracleAutoLaunchEnabled(env = process.env) {
-  return String(env.ORACLE_AUTO_LAUNCH || '').trim() === '1';
+  const v = String(env.ORACLE_AUTO_LAUNCH || '').trim().toLowerCase();
+  return v === '1' || v === 'true';
 }
 
 /** Reset cooldown — HANYA untuk tes. */
