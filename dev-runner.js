@@ -88,6 +88,34 @@ function startServerProcess() {
 const GATEKEEPER_PORT = 5050;
 let gatekeeperProcess = null;
 
+// Baca KEY dari environment proses, lalu fallback ke file .env proyek
+// (server/.env lebih dulu, baru .env root). dev-runner TIDAK memuat dotenv, jadi
+// flag pengendali harus dibaca manual supaya bisa diset dari .env di PC/Termux.
+function readEnvFlagRaw(key) {
+  const fromProcess = String(process.env[key] || '').trim();
+  if (fromProcess) return fromProcess;
+  for (const f of [path.join(__dirname, 'server', '.env'), path.join(__dirname, '.env')]) {
+    try {
+      if (!fs.existsSync(f)) continue;
+      for (const line of fs.readFileSync(f, 'utf8').split(/\r?\n/)) {
+        const m = line.match(new RegExp('^\\s*' + key + '\\s*=\\s*(.*)$'));
+        if (m) return m[1].trim().replace(/^["']|["']$/g, '');
+      }
+    } catch { /* abaikan file yang tak terbaca */ }
+  }
+  return '';
+}
+
+// MANDEL user 2026-10: "saya tidak membutuhkan AI lokal lagi; filter frame
+// seluruhnya ditangani Qwen di Kaggle." Gatekeeper (:5050) kini TIDAK auto-start
+// kecuali flag GATEKEEPER_AUTO_START dinyalakan eksplisit ('1'/'true'). Aman karena
+// pipeline berjalan mode ADVISORY (videoFilterService meneruskan SEMUA frame ke
+// Oracle meski gatekeeper absent). Nyalakan lagi kapan pun: GATEKEEPER_AUTO_START=1.
+function gatekeeperAutoStartEnabled() {
+  const v = readEnvFlagRaw('GATEKEEPER_AUTO_START').toLowerCase();
+  return v === '1' || v === 'true';
+}
+
 async function startGatekeeperProcess() {
   const gatekeeperScript = path.join(__dirname, 'server', 'gatekeeper', 'service.py');
   if (!fs.existsSync(gatekeeperScript)) return;
@@ -141,7 +169,11 @@ async function startGatekeeperProcess() {
   });
 }
 
-await startGatekeeperProcess();
+if (gatekeeperAutoStartEnabled()) {
+  await startGatekeeperProcess();
+} else {
+  console.log('🚫 AI Local Gatekeeper TIDAK dinyalakan (GATEKEEPER_AUTO_START!=1). Seluruh filter frame ditangani Qwen/Oracle Kaggle (mode advisory). Set GATEKEEPER_AUTO_START=1 untuk memakai AI lokal lagi.');
+}
 startServerProcess();
 
 const clientCmd = `${npmCmd} run dev -- --host 0.0.0.0 --port ${CLIENT_PORT}`;
