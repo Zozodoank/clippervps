@@ -80,10 +80,10 @@ export function resolveOracleConfig(env = process.env) {
       return Number.isFinite(n) ? Math.max(0, n) : 120;
     })(),
     batchSize: Math.min(16, Math.max(1, Number(env.VLM_ORACLE_BATCH_SIZE) || 8)),
-    perBatchTimeoutMs: Math.max(5, sec('VLM_ORACLE_TIMEOUT_SEC', 180)) * 1000,
-    totalTimeoutMs: Math.max(10, sec('VLM_ORACLE_TOTAL_TIMEOUT_SEC', 600)) * 1000,
+    perBatchTimeoutMs: Math.max(5, sec('VLM_ORACLE_TIMEOUT_SEC', 400)) * 1000,
+    totalTimeoutMs: Math.max(10, sec('VLM_ORACLE_TOTAL_TIMEOUT_SEC', 1200)) * 1000,
     // Batas menunggu klaim PERTAMA notebook pada satu batch. Lewat = 'never_claimed'.
-    connectTimeoutMs: Math.max(10, sec('VLM_ORACLE_CONNECT_TIMEOUT_SEC', 120)) * 1000,
+    connectTimeoutMs: Math.max(10, sec('VLM_ORACLE_CONNECT_TIMEOUT_SEC', 180)) * 1000,
     pollMs: Math.max(250, Number(env.VLM_ORACLE_POLL_MS) || 2000),
     staleMs: Math.max(30, sec('VLM_ORACLE_STALE_SEC', 300)) * 1000,
     maxAttempts: Math.max(1, sec('VLM_ORACLE_MAX_ATTEMPTS', 2)),
