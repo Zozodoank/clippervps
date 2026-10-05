@@ -44,11 +44,11 @@ def get_source_hash():
     except Exception:
         return "unknown"
 SOURCE_HASH = get_source_hash()
-ORACLE_PROTOCOL_VERSION = "2026-10-05-v1"
-WORKER_ID = os.environ.get("KAGGLE_KERNEL_RUN_TYPE", "unknown") + "-" + str(os.getpid())
 
 
 import os
+ORACLE_PROTOCOL_VERSION = "2026-10-05-v1"
+WORKER_ID = os.environ.get("KAGGLE_KERNEL_RUN_TYPE", "unknown") + "-" + str(os.getpid())
 import re
 import shutil
 import subprocess
