@@ -389,7 +389,8 @@ export function buildCleanYouTubeQuery(baseQuery) {
     .filter(op => !existingLower.includes(op.toLowerCase().replace(/"/g, '')))
     .slice(0, maxOperators); // Operator berlebihan membuat YouTube/ Bing mengembalikan 0 hasil
 
-  const finalBaseQuery = `"${cleaned}"`;
+  // User request: tambahkan keyword "youtube", "video", "produk" dengan tanda kutip
+  const finalBaseQuery = `"${cleaned}" "youtube" "video" "produk"`;
   if (toAdd.length > 0) {
     return `${finalBaseQuery} ${toAdd.join(' ')}`.trim();
   }
