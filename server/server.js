@@ -226,7 +226,7 @@ function auditRealMotionFromFrames(framePaths = []) {
   return { checked: true, likelyStatic, similarities, median };
 }
 
-function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 4000) {
+function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 10000) {
   return new Promise((resolve) => {
     const ffmpegPath = getFFmpegPath();
     const proc = spawn(ffmpegPath, [

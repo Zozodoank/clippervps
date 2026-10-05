@@ -154,22 +154,37 @@ function auditRealMotionFromFrames(framePaths = []) {
   return { checked: true, likelyStatic, similarities, median };
 }
 
-function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 4000) {
+function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 10000) {
   return new Promise((resolve) => {
     const ffmpegPath = getFFmpegPath();
     const proc = spawn(ffmpegPath, [
       '-y', '-ss', String(timestampSec), '-i', videoPath,
       '-vframes', '1', '-q:v', '2', outputPath,
-    ], { stdio: 'ignore' });
+    ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    
+    let stderr = '';
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    
     const timer = setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch {}
+      console.warn(`[FrameExtract] ⚠️ Timeout (${timeoutMs}ms) mengekstrak frame dari ${path.basename(videoPath)} pada ${timestampSec}s. Stderr: ${stderr.slice(-300)}`);
       resolve(false);
     }, timeoutMs);
+    
     proc.on('close', (code) => {
       clearTimeout(timer);
-      resolve(code === 0 && fs.existsSync(outputPath));
+      if (code !== 0 || !fs.existsSync(outputPath)) {
+        console.warn(`[FrameExtract] ⚠️ Gagal (code ${code}) mengekstrak frame dari ${path.basename(videoPath)} pada ${timestampSec}s. Stderr: ${stderr.slice(-500)}`);
+        resolve(false);
+      } else {
+        resolve(true);
+      }
     });
-    proc.on('error', () => { clearTimeout(timer); resolve(false); });
+    proc.on('error', (err) => { 
+      clearTimeout(timer); 
+      console.warn(`[FrameExtract] ⚠️ Error memanggil ffmpeg: ${err.message}`);
+      resolve(false); 
+    });
   });
 }
 
