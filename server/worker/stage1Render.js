@@ -3457,8 +3457,16 @@ async function _runStage1Pipeline({
       console.error(`[Job ${jobId}] Stage 1 Pipeline Error:`, error);
     }
 
-    // Immediately clean up temporary files so disk storage is freed
-    deleteJobTempDirectory(jobId, tempDir);
+    // Keep manual-job source media and frame evidence when a run fails. Operators
+    // need those artifacts to diagnose a bad Oracle verdict or retry after fixing
+    // the source/model path; deleting them here made every content rejection
+    // impossible to inspect or recover. Auto jobs remain disposable and are
+    // cleaned below because they have no interactive recovery workflow.
+    if (isAuto) {
+      deleteJobTempDirectory(jobId, tempDir);
+    } else {
+      console.warn(`[Cleaner] Retaining failed manual job artifacts for ${jobId}: ${sessionTempDir}`);
+    }
 
     // KEBIJAKAN KAGGLE-ONLY: stop karena oracle bersifat TERMINAL untuk SEMUA kelas job
     // (manual DAN auto). Tanpa cabang ini, job manual yang sudah punya rawVideoPath akan
