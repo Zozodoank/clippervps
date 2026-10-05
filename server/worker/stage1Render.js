@@ -2480,7 +2480,7 @@ async function _runStage1Pipeline({
         if (!sampleOffsets.includes(endOffset)) {
           sampleOffsets.push(endOffset);
         }
-        const sampleTimestamps = sampleOffsets.map(offset => Math.max(0, Math.round(((c.startSeconds + offset) - cOffset) * 100) / 100));
+        const sampleTimestamps = sampleOffsets.map(offset => Math.max(0, Math.round(((Number(c.startSeconds) + offset) - cOffset) * 100) / 100));
 
         const frameExtractTasks = sampleTimestamps.map((ts, sIdx) => {
           const framePath = path.join(auditFramesDir, `clip_${cIdx}_s${sIdx}.jpg`);
