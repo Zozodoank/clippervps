@@ -394,9 +394,18 @@ export const HIGH_VARIATION_EXCLUDE_WORDS = [
   'serbet kain', 'lap piring', 'kain lap dapur'
 ];
 
-export function isHighVariationOrHardToMatchProduct(text = '') {
+export function isHighVariationOrHardToMatchProduct(text = '', options = {}) {
   const normalized = normalizeText(text);
   if (!normalized) return false;
+
+  // Pisau/pengasah dilarang pada discovery otomatis karena variasi produk sulit
+  // dicocokkan. Job manual sudah membawa produk dan sumber yang dipilih user,
+  // jadi kategori ini boleh diproses tanpa membuka filter auto.
+  const isKnifeProduct = /\b(?:pisau|knife|knives|cleaver|santoku|golok|chef\s+knife|paring\s+knife|utility\s+knife|carving\s+knife|boning\s+knife|bread\s+knife|pengasah|asahan|batu\s+asah|whetstone|sharpening\s+stone)\b/i.test(normalized);
+  if (isKnifeProduct) {
+    if (/\b(?:sparepart|cadangan|pengganti|mata\s+pisau\s+saja)\b/i.test(normalized)) return true;
+    return options.allowKnifeProducts !== true;
+  }
 
   // Izinkan alat dapur viral mekanik & praktis (dumpling maker, tamagoyaki pan, waffle maker, asahan pisau roll, gunting SK5, peeler, chopper)
   const isViralMechanicGadget = /\b(?:dumpling|pastel|tamagoyaki|waffle|takoyaki|roll\s+sharpener|batu\s+asah|asahan|sk5|chopper|slicer|peeler|garlic\s+press|sealer)\b/i.test(normalized);
@@ -625,7 +634,9 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
   }
 
   // 1E. Disqualify molds (cetakan), knives (pisau), sharpeners, and hard-to-match high-variation items
-  if (isHighVariationOrHardToMatchProduct(normalized)) {
+  if (isHighVariationOrHardToMatchProduct(normalized, {
+    allowKnifeProducts: options.allowKnifeProducts === true,
+  })) {
     return true;
   }
 

@@ -198,7 +198,10 @@ router.post('/generate', async (req, res) => {
   if (shopeeLink && !isValidHttpUrl(shopeeLink)) {
     return res.status(400).json({ error: 'Link produk harus berupa URL http/https yang valid.' });
   }
-  if (productTitle && isBulkyOrUnsuitableProduct(productTitle, { niche: resolvedNiche })) {
+  if (productTitle && isBulkyOrUnsuitableProduct(productTitle, {
+    niche: resolvedNiche,
+    allowKnifeProducts: true,
+  })) {
     return res.status(400).json({
       error: resolvedNiche === 'gadget_smartphone'
         ? `Niche Smartphone/Gadget: produk "${productTitle}" tidak sesuai kriteria kategori ini.`
