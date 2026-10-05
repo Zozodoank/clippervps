@@ -733,6 +733,7 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   }
 
   const isPreview = quality === 'preview' || quality === 'low' || quality === '240p';
+  const isManualBestAvailable = quality === 'manual_best';
   const finalExpectedPath = path.join(outputDir, `${prefix}_${videoId}.mp4`);
 
   // P1 OBSERVABILITY: argumen ke-3 (`videoId`) dipakai pemanggil pipeline sebagai jobId
@@ -765,10 +766,12 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
   const ffmpegPath = getFFmpegPath();
   const outputTemplate = path.join(outputDir, `${prefix}_${videoId}.%(ext)s`);
 
-  const qualityLabel = isPreview ? '360p Preview' : '1080p Full HD';
+  const qualityLabel = isPreview ? '360p Preview' : (isManualBestAvailable ? 'Manual best available' : '1080p Full HD');
   onProgress({
     step: 'download',
-    message: isPreview ? `Downloading preview (${qualityLabel})...` : `Downloading direct 1080p Full HD source video from YouTube...`,
+    message: isPreview
+      ? `Downloading preview (${qualityLabel})...`
+      : (isManualBestAvailable ? 'Downloading best available source quality for operator-approved manual video...' : 'Downloading direct 1080p Full HD source video from YouTube...'),
     progress: 10
   });
 
@@ -864,6 +867,12 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     // Resilient format selector: 360p preview untuk analisa AI vs HD render (di-cap & opsional video-only).
     const formatSelector = isPreview
       ? '18/bestvideo[height<=360]+bestaudio/best[height<=360]/bestvideo[height<=480]+bestaudio/best[height<=480]/worstvideo+worstaudio/worst/best'
+      : isManualBestAvailable
+        // Manual links are operator-approved: prefer muxed low-bandwidth formats
+        // (often the only accessible YouTube format on Termux), then fall back
+        // through higher resolutions and finally any available video format.
+        // This selects a usable stream; it never rejects a manual video by height.
+        ? 'b[height<=360]/b[height<=480]/b[height<=720]/b/bv+ba/bv/best'
       : renderFormats.join('/');
 
     const dlArgs = [
@@ -975,7 +984,7 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
         continue;
       }
       if (fs.existsSync(downloadedFile) && fs.statSync(downloadedFile).size > 100000) {
-        if (!isPreview) {
+        if (!isPreview && !isManualBestAvailable) {
           const dims = await getVideoDimensions(downloadedFile, ffmpegPath);
           if (dims) {
             console.log(`[Downloader] Video resolution: ${dims.width}x${dims.height} (1080p+: ${dims.is1080pOrHigher})`);
@@ -999,6 +1008,9 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
               continue;
             }
           }
+        } else if (isManualBestAvailable) {
+          const dims = await getVideoDimensions(downloadedFile, ffmpegPath);
+          console.log(`[Downloader] ✅ Video manual diterima tanpa ambang resolusi${dims ? ` (${dims.width}x${dims.height})` : ''}.`);
         }
         // VALIDASI DURASI FILE SECTION (--download-sections): yt-dlp + --force-keyframes-at-cuts
         // pernah menghasilkan file jauh lebih pendek dari rentang yang diminta (Termux

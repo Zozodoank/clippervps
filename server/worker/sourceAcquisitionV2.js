@@ -178,6 +178,7 @@ export async function runSourceAcquisitionV2(p) {
     jobId,
     updateProgress = () => {},
     interleave,
+    manualMode = false,
     requireSources = 2,
     targetClipDurationSec = 30,
     gatePreviewSec = Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 15,
@@ -336,14 +337,25 @@ export async function runSourceAcquisitionV2(p) {
     }
   }
 
-  // (L2c) VONIS BATCH Gemini — satu panggilan utk semua kandidat yang lolos gate.
-  const { verdicts } = await verdictCandidatesWithGemini({
-    apiKey, aiProvider, productImage, productTitle, productDescription, productFingerprint, niche,
-    candidates: gatedCandidates.map((c) => ({ sourceId: c.sourceId, frames: c.cleanFrames })),
-    onProgress: updateProgress,
-  });
-  diagnostics.verdictEligible = verdicts.filter((v) => v.eligible).length;
-  const accepted = pickEligibleSources(verdicts, gatedCandidates, requireSources);
+  // Operator-supplied manual sources are product-approved by the operator.
+  // Kaggle Oracle remains the frame-quality authority; don't ask Gemini to veto
+  // the manually selected product/source pair.
+  let accepted;
+  if (manualMode) {
+    accepted = gatedCandidates.slice(0, Math.max(1, Number(requireSources) || 1));
+    diagnostics.verdictEligible = accepted.length;
+    diagnostics.manualProductApproval = 'operator';
+    console.log(`[Job ${jobId}] [V2] Mode manual: melewati vonis produk Gemini; ${accepted.length} sumber memakai pilihan operator setelah audit frame Oracle.`);
+  } else {
+    // (L2c) VONIS BATCH Gemini — satu panggilan utk semua kandidat yang lolos gate.
+    const { verdicts } = await verdictCandidatesWithGemini({
+      apiKey, aiProvider, productImage, productTitle, productDescription, productFingerprint, niche,
+      candidates: gatedCandidates.map((c) => ({ sourceId: c.sourceId, frames: c.cleanFrames })),
+      onProgress: updateProgress,
+    });
+    diagnostics.verdictEligible = verdicts.filter((v) => v.eligible).length;
+    accepted = pickEligibleSources(verdicts, gatedCandidates, requireSources);
+  }
   diagnostics.acceptedSources = accepted.length;
   if (accepted.length < requiredSourceCount) {
     diagnostics.sourceShortfall = requiredSourceCount - accepted.length;
