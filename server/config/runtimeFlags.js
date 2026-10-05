@@ -362,3 +362,15 @@ export function describeConfigSnapshot(snapshot) {
     .concat([`niche=${snapshot.niche}`, `sourcePolicy=${snapshot.sourcePolicy || '-'}`])
     .join(' ');
 }
+
+/**
+ * Terapkan kembali setelan beku ke process.env saat ini (untuk sesi retry).
+ */
+export function applyConfigSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  for (const [k, v] of Object.entries(snapshot)) {
+    if (v !== undefined) {
+      process.env[k] = String(v);
+    }
+  }
+}

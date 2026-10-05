@@ -71,6 +71,7 @@ import {
   clearUsedKeywords
 } from '../services/discoveryService.js';
 import { getAllNiches, getNichePreset } from '../config/nichePresets.js';
+import { applyConfigSnapshot } from '../config/runtimeFlags.js';
 import {
   buildProductFingerprint,
   buildCreativeShotPlan,
@@ -187,9 +188,13 @@ export async function runAutoRetryWorker(jobId, run) {
           activeJobs.set(jobId, job);
           persistJob(jobId, job);
 
+          if (job.configSnapshot) {
+            console.log(`[AutoRetry ${jobId}] ♻️ Memulihkan configSnapshot dari job sebelumnya...`);
+            applyConfigSnapshot(job.configSnapshot);
+          }
+
           const effectiveAiProvider = job.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter');
-          await runStage1Pipeline({
-            jobId,
+          await runStage1Pipeline({            jobId,
             youtubeUrl: candidate.url,
             shopeeLink: job.shopeeLink,
             productTitle: targetTitle,
@@ -207,6 +212,9 @@ export async function runAutoRetryWorker(jobId, run) {
               ttsFallbackModel: run.ttsFallbackModel || job.ttsFallbackModel || process.env.GEMINI_TTS_FALLBACK_MODEL || DEFAULT_GEMINI_TTS_FALLBACK_MODEL,
               ttsVoice: run.ttsVoice || job.ttsVoice || process.env.GEMINI_TTS_VOICE || DEFAULT_GEMINI_TTS_VOICE,
               geminiApiKey: run.geminiApiKey || job.geminiApiKey || process.env.GEMINI_API_KEY,
+            },
+            extraJobMeta: {
+              configSnapshot: job.configSnapshot,
             },
             requireCleanGeminiPlan: true,
             onProgress: (p) => updateJobProgress(jobId, {
