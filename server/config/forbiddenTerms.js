@@ -29,11 +29,11 @@ export const REPAIR_TERMS = [
   // 'fix' ikut dibuang dari query (stripForbiddenTerms), jadi operator negatif, dan
   // menolak judul produk/kandidat reparasi di semua konsumen satu-sumber ini.
   'servis', 'service', 'reparasi', 'repair', 'fix', 'fixes',
-  'perbaikan', 'memperbaiki', 'rusak', 'kerusakan',
-  'mati total', 'matot', 'korslet', 'konslet', 'gelek',
+  'perbaikan', 'memperbaiki', 'perbaiki', 'rusak', 'kerusakan',
+  'mati total', 'matot', 'mati', 'korslet', 'konslet', 'gelek',
   'bongkar', 'membongkar', 'disassembly', 'teardown', 'turun mesin',
   'ganti', 'mengganti', 'pergantian', 'penggantian',
-  'spare part', 'sparepart', 'jas servis',
+  'benerin', 'error', 'spare part', 'sparepart', 'jas servis',
 ];
 
 // Jargon reparasi tingkat lanjut. HANYA dipakai pada niche gadget karena di
@@ -49,6 +49,7 @@ export const TUTORIAL_TERMS = [
   'cara', 'tutorial', 'diy', 'do it yourself', 'how to', 'howto',
   'cara membuat', 'cara bikin', 'cara memakai', 'cara pakai', 'cara mengoperasikan',
   'langkah langkah', 'step by step', 'kerajinan', 'prakarya', 'daur ulang',
+  'vlog', 'daily', 'daily vlog',
 ];
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
