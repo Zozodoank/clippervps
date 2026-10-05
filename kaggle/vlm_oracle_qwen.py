@@ -199,7 +199,7 @@ MAX_SIDE = int(_cfg("ORACLE_MAX_SIDE", default="1024") or 1024)         # turun 
 # 200 (bukan 160): kontrak ranking kini membawa satu kunci tambahan (apparentQuality) -
 # JSON terpotong = extract_json gagal = vonis invalid = job STRICT mati. Kepala murah,
 # buntung mahal.
-MAX_NEW_TOKENS = int(_cfg("ORACLE_MAX_NEW_TOKENS", default="200") or 200)
+MAX_NEW_TOKENS = int(_cfg("ORACLE_MAX_NEW_TOKENS", default="128") or 128)
 AUTO_INSTALL = _cfg("ORACLE_AUTO_INSTALL", default="1") == "1"
 # Set 1 untuk menguji sambungan (claim/report) TANPA memuat model - berguna untuk
 # memvalidasi tunnel + token sebelum menghabiskan kuota GPU.
@@ -521,6 +521,20 @@ def prep_image(src_path, dst_dir, idx):
     return out
 
 
+def looks_degenerate(text):
+    if not text:
+        return True
+    stripped = text.strip()
+    if len(stripped) < 2:
+        return True
+    unique = len(set(stripped))
+    if unique <= 2 and len(stripped) >= 20:
+        return True
+    if "{" not in stripped:
+        return True
+    return False
+
+
 def extract_json(text):
     r"""Model kadang menambah prolog walau dilarang. Ambil objek JSON pertama yang sah.
 
@@ -628,7 +642,9 @@ def ask(model, processor, torch, image_paths, prompt):
     raw = processor.batch_decode(trimmed, skip_special_tokens=True,
                                  clean_up_tokenization_spaces=False)[0].strip()
     del inputs, gen, trimmed
-    return raw, extract_json(raw)
+    degenerate = looks_degenerate(raw)
+    obj = extract_json(raw) if not degenerate else None
+    return raw, obj, degenerate
 
 
 def fetch_frames_raw(payload):
@@ -677,10 +693,65 @@ def verdict_batch(payload, model, processor, torch):
 
     prompt = payload.get("prompt") or "Inspect ALL frames. Answer ONLY JSON {\"safe\":true|false}"
     t0 = time.time()
-    raw_txt, obj = ask(model, processor, torch, [p for _, p in paths], prompt)
-    dt = time.time() - t0
+    
+    frame_indexes = [str(idx) for idx, _ in paths]
+    log("[Oracle][Batch] batchId=%s frames=%d indexes=[%s]" % (payload["batchId"], len(paths), ",".join(frame_indexes)))
+
+    # ATTEMPT A: Normal
+    raw_txt, obj, deg = ask(model, processor, torch, [p for _, p in paths], prompt)
+    log("[Oracle][Generation] batchId=%s rawLength=%d uniqueCharCount=%d degenerate=%s parseSuccess=%s" % 
+        (payload["batchId"], len(raw_txt), len(set(raw_txt)), deg, obj is not None))
+    
     if obj is None:
-        raise RuntimeError("output model tidak bisa di-parse: %r" % raw_txt[:200])
+        log("[Oracle][Recovery] batchId=%s strategy=prompt_retry attempt=1" % payload["batchId"])
+        compact_prompt = "Return ONLY valid JSON. No markdown. No explanations.\n{\"safe\":true,\"face\":false,\"text\":false,\"watermark\":false,\"graphic\":false"
+        if wants_ranking(prompt):
+            compact_prompt += ",\"productMatch\":true,\"matchScore\":80,\"apparentQuality\":80}"
+        else:
+            compact_prompt += "}"
+        raw_txt, obj, deg = ask(model, processor, torch, [p for _, p in paths], compact_prompt)
+        log("[Oracle][Generation] batchId=%s rawLength=%d uniqueCharCount=%d degenerate=%s parseSuccess=%s" % 
+            (payload["batchId"], len(raw_txt), len(set(raw_txt)), deg, obj is not None))
+            
+    if obj is None and len(paths) >= 2:
+        log("[Oracle][Recovery] batchId=%s strategy=split2 attempt=2" % payload["batchId"])
+        obj = {"safe": True, "face": False, "text": False, "watermark": False, "graphic": False}
+        if wants_ranking(prompt):
+            obj.update({"productMatch": True, "matchScore": 80, "apparentQuality": 80})
+            
+        chunks = [paths[i:i + 2] for i in range(0, len(paths), 2)]
+        all_success = True
+        chunk_objs = []
+        for chunk in chunks:
+            raw_c, c_obj, deg_c = ask(model, processor, torch, [p for _, p in chunk], prompt)
+            log("[Oracle][Generation] batchId=%s chunkLen=%d rawLength=%d uniqueCharCount=%d degenerate=%s parseSuccess=%s" % 
+                (payload["batchId"], len(chunk), len(raw_c), len(set(raw_c)), deg_c, c_obj is not None))
+            if c_obj is None:
+                all_success = False
+                break
+            chunk_objs.append(c_obj)
+            
+        if all_success:
+            obj["safe"] = all(c.get("safe", True) for c in chunk_objs)
+            for k in VERDICT_KEYS:
+                if k != "safe":
+                    obj[k] = any(c.get(k, False) for c in chunk_objs)
+            if wants_ranking(prompt):
+                obj["productMatch"] = any(c.get("productMatch", True) for c in chunk_objs)
+                obj["matchScore"] = median_int([c.get("matchScore") for c in chunk_objs])
+                obj["apparentQuality"] = median_int([c.get("apparentQuality") for c in chunk_objs])
+            reasons = [str(c.get("reason", "")) for c in chunk_objs if c.get("reason")]
+            if reasons:
+                obj["reason"] = " | ".join(reasons)
+        else:
+            obj = None
+            
+    if obj is None:
+        log("[Oracle][Recovery] batchId=%s strategy=single_frame attempt=3" % payload["batchId"])
+        # We don't raise RuntimeError yet! We just create a dummy dirty object so per-frame runs!
+        obj = {"safe": False, "reason": "Recovery to single-frame", "face": True}
+
+    dt = time.time() - t0
 
     out = {k: bool(obj.get(k, False)) for k in VERDICT_KEYS}
     out["safe"] = bool(obj.get("safe", True))
@@ -719,7 +790,7 @@ def verdict_batch(payload, model, processor, torch):
     if (not out["safe"] or any_flag) and len(paths) > 1:
         per_frame = []
         for idx, one in paths:
-            _, obj1 = ask(model, processor, torch, [one], prompt)
+            raw1, obj1, deg1 = ask(model, processor, torch, [one], prompt)
             if obj1 is None:
                 # Gagal parse = tidak tahu = jangan lepas veto. Tandai frame INI saja yang
                 # kotor supaya veto tidak merata ke seluruh batch karena satu frame saja.
@@ -748,6 +819,8 @@ def verdict_batch(payload, model, processor, torch):
                 frame_verdict["apparentQuality"] = clamp_score(obj1.get("apparentQuality"))
             per_frame.append(frame_verdict)
         if per_frame:
+            if all(f.get("reason") == "Gagal parse output model" for f in per_frame):
+                raise RuntimeError("Seluruh recovery inferensi gagal (output degeneratif/tidak bisa diparse).")
             out["perFrame"] = per_frame
             out["safe"] = all(f["safe"] for f in per_frame)
             dirty_reasons = [f.get("reason", "") for f in per_frame if (not f["safe"] or f["face"] or f["text"] or f["watermark"] or f["graphic"]) and f.get("reason")]

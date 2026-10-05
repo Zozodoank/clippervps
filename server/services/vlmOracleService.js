@@ -504,7 +504,7 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
       enqueueOracleBatch({
         id, jobId,
         sceneIdx: Math.floor(start / cfg.batchSize),
-        frames: batchFrames.map((f, i) => ({ index: i, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
+        frames: batchFrames.map((f, i) => ({ index: start + i, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
         niche, facePolicy, prompt,
       });
       const waited = await waitForOracleVerdict(id, {
@@ -689,7 +689,7 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
         enqueueOracleBatch({
           id, jobId,
           sceneIdx: 10000 + i * 100 + Math.floor(start / cfg.batchSize),
-          frames: batchFrames.map((f, idx) => ({ index: idx, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
+          frames: batchFrames.map((f, idx) => ({ index: start + idx, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
           niche, facePolicy, prompt,
         });
         const waited = await waitForOracleVerdict(id, {
