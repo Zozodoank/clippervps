@@ -788,16 +788,27 @@ def post_result(batch_id, attempt=0, verdict=None, error=""):
         body["verdict"] = verdict
     if error:
         body["error"] = error[:400]
-    r = requests.post(BASE_URL + "/api/vlm-oracle/result", json=body,
-                      headers={"x-api-token": TOKEN, "ngrok-skip-browser-warning": "69420"}, timeout=60)
-    if r.status_code == 409:
-        log("batch %s sudah kadaluarsa di sisi worker - vonis tidak dipakai (normal saat jaringan lambat)." % batch_id)
-    elif r.status_code == 404:
-        log("batch %s sudah di-prune worker." % batch_id)
-    elif r.status_code >= 400:
-        log("REPORT GAGAL %s: %s" % (r.status_code, r.text[:200]))
-    return r.status_code
-
+    for i in range(5):
+        try:
+            r = requests.post(BASE_URL + "/api/vlm-oracle/result", json=body,
+                              headers={"x-api-token": TOKEN, "ngrok-skip-browser-warning": "69420"}, timeout=60)
+            if r.status_code == 409:
+                log("batch %s sudah kadaluarsa di sisi worker - vonis tidak dipakai (normal saat jaringan lambat)." % batch_id)
+                return r.status_code
+            elif r.status_code == 404:
+                log("batch %s sudah di-prune worker." % batch_id)
+                return r.status_code
+            elif r.status_code >= 400:
+                log("REPORT GAGAL %s: %s (percobaan %d)" % (r.status_code, r.text[:200], i + 1))
+                if r.status_code in (502, 503, 504):
+                    time.sleep(3 + i * 2)
+                    continue
+                return r.status_code
+            return r.status_code
+        except Exception as e:
+            log("REPORT exception: %s (percobaan %d)" % (e, i + 1))
+            time.sleep(3 + i * 2)
+    return 500
 
 def shutdown_kernel_session():
     """Matikan kernel Jupyter yang inang worker supaya Kaggle berhenti menghitung waktu GPU.
