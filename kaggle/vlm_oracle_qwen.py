@@ -900,6 +900,7 @@ def main():
     # daripada kernel membunuh audit yang akan datang).
     server_busy = False
     idle_exited = False
+    consecutive_errors = 0
     while (time.time() - START) / 60.0 < MAX_MINUTES:
         if IDLE_EXIT_MIN > 0 and not server_busy and (time.time() - last_work) / 60.0 >= IDLE_EXIT_MIN:
             idle_exited = True
@@ -917,10 +918,13 @@ def main():
                 continue
             if r.status_code >= 400:
                 log("CLAIM error %s: %s" % (r.status_code, r.text[:200]))
-                server_busy = False # User mandate: mati jika server down / force stopped
+                consecutive_errors += 1
+                if r.status_code not in (502, 504) or consecutive_errors > 5:
+                    server_busy = False # User mandate: mati jika server down / force stopped
                 time.sleep(idle)
                 continue
             data = r.json()
+            consecutive_errors = 0
             if not data.get("claimed"):
                 aj = data.get("activeJobs")
                 server_busy = int(data.get("pending") or 0) > 0 or (int(aj or 0) > 0 if aj is not None else True)
@@ -966,7 +970,9 @@ def main():
         except Exception as err:  # jangan matikan looping untuk satu batch rusak
             failed += 1
             log("batch gagal: %s" % err)
-            server_busy = False # User mandate: mati jika server down / connection error
+            consecutive_errors += 1
+            if consecutive_errors > 5:
+                server_busy = False # User mandate: mati jika server down / connection error
             if bid:
                 try:
                     post_result(bid, attempt=data.get("attempt", 0), verdict=None, error=str(err))
