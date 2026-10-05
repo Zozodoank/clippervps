@@ -622,9 +622,16 @@ const heartbeatSeenSelect = db.prepare('SELECT MAX(last_seen_at) AS seen FROM or
 const claimedSeenSelect = db.prepare('SELECT MAX(claimed_at) AS seen FROM vlm_oracle_batches');
 
 /** Catat "notebook ini masih hidup". Idempoten; tidak pernah melempar untuk kesalahan sepele. */
-export function touchOracleHeartbeat(workerId = 'kaggle', now = Date.now()) {
+
+// In-memory cache for protocol and hash
+let inMemoryOracleInfo = { workerId: '', protocolVersion: '', sourceHash: '' };
+export function oracleHeartbeatInfo() {
+  return inMemoryOracleInfo;
+}
+export function touchOracleHeartbeat(workerId = 'kaggle', protocolVersion = '', sourceHash = '', now = Date.now()) {
   const id = String(workerId || 'kaggle').slice(0, 120) || 'kaggle';
   heartbeatUpsert.run(id, now);
+  inMemoryOracleInfo = { workerId: id, protocolVersion: String(protocolVersion || ''), sourceHash: String(sourceHash || '') };
   return { workerId: id, lastSeenAt: now };
 }
 
