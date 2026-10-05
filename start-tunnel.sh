@@ -174,15 +174,13 @@ start_ngrok() {
   probe="$(timeout 8 ngrok http "$PORT" --url "$NGROK_URL_RESOLVED" 2>&1 \
     | grep -Ei 'err_ngrok|authentication failed|forwarding|session status' | head -4)"
   [ -n "$probe" ] && printf '%s\n' "$probe"
-  case "$probe" in
-    *rr_NGROK*|*uthentication\ failed*)
-      echo "Tunnel TIDAK didaftarkan ke PM2 karena sesi ngrok menolak."
-      echo "Isi authtoken langsung di perangkat - JANGAN kirim token ke chat dan JANGAN taruh di .env:"
-      echo "  ngrok config add-authtoken TOKEN_ASLI_ANDA      # tanpa tanda kurung siku sama sekali"
-      echo "(tutorial: ngrok.md bagian 2 dan 3)"
-      return 1
-      ;;
-  esac
+  if printf '%s\n' "$probe" | grep -Eiq 'ERR_NGROK|authentication failed'; then
+    echo "Tunnel TIDAK didaftarkan ke PM2 karena sesi ngrok menolak."
+    echo "Isi authtoken langsung di perangkat - JANGAN kirim token ke chat dan JANGAN taruh di .env:"
+    echo "  ngrok config add-authtoken TOKEN_ASLI_ANDA      # tanpa tanda kurung siku sama sekali"
+    echo "(tutorial: ngrok.md bagian 2 dan 3)"
+    return 1
+  fi
   # Sesi pra-uji tadi memegang dev domain; ngrok menolak sesi kedua yang memakai domain
   # sama selama sesi lama belum dilepas, jadi beri jeda sebelum PM2 mengambil alih.
   sleep 3
@@ -274,7 +272,10 @@ case "${1:-auto}" in
   cloudflared) start_cloudflared ;;
   auto)
     if resolve_ngrok_url 2>/dev/null && have ngrok; then
-      start_ngrok
+      if ! start_ngrok; then
+        echo "Ngrok gagal diklaim; beralih ke Cloudflare quick tunnel dengan URL khusus perangkat ini."
+        start_cloudflared
+      fi
     else
       if resolve_ngrok_url 2>/dev/null; then
         echo "URL ngrok terkonfigurasi ($NGROK_URL_RESOLVED) tapi biner ngrok belum ada -> memakai cloudflared."
