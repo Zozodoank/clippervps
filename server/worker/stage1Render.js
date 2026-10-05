@@ -2482,12 +2482,13 @@ async function _runStage1Pipeline({
         }
         const sampleTimestamps = sampleOffsets.map(offset => Math.max(0, Math.round(((Number(c.startSeconds) + offset) - cOffset) * 100) / 100));
 
-        const frameExtractTasks = sampleTimestamps.map((ts, sIdx) => {
+        const testFrames = [];
+        for (let sIdx = 0; sIdx < sampleTimestamps.length; sIdx++) {
+          const ts = sampleTimestamps[sIdx];
           const framePath = path.join(auditFramesDir, `clip_${cIdx}_s${sIdx}.jpg`);
-          return extractSingleFrameAsync(clipVid, ts, framePath).then(ok => (ok ? { filePath: framePath, timestamp: ts } : null));
-        });
-
-        const testFrames = (await Promise.all(frameExtractTasks)).filter(Boolean);
+          const ok = await extractSingleFrameAsync(clipVid, ts, framePath);
+          if (ok) testFrames.push({ filePath: framePath, timestamp: ts });
+        }
 
         // HARD MOTION GATE: a valid affiliate clip must contain real physical motion.
         // Reject still photos with zoom/pan effects before any AI Gatekeeper result can
