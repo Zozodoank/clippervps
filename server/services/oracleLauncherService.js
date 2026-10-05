@@ -185,7 +185,7 @@ export function maybeAutoLaunchOracle({ env = process.env, logger = console, now
 export async function waitForOracleOnline({
   env = process.env,
   logger = console,
-  waitMs = Math.max(15, Number(env.ORACLE_AUTO_LAUNCH_WAIT_SEC) || 300) * 1000,
+  waitMs = Math.max(15, Number(env.ORACLE_AUTO_LAUNCH_WAIT_SEC) || 900) * 1000,
   pollMs = 5000,
   deadline = Date.now(),
   afterMs = 0,
