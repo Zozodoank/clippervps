@@ -1362,11 +1362,24 @@ async function _runStage1Pipeline({
       // Men-set `hl` + `candidateResults` lalu menaikkan streamedCount sehingga loop `while`
       // legacy di bawah TIDAK berjalan; aliran jatuh ke blok unduh-per-segmen (L4) & render
       // (L6) yang SUDAH ADA dan membaca hl.clips[].candidateIndex. Default legacy = tak tersentuh.
-      if (isNewFlowEnabled() && !hl) {
-        const poolForV2 = [
+      if (!hl) {
+        const poolForV2Raw = [
           ...(currentYoutubeUrl ? [{ url: currentYoutubeUrl, title: productTitle }] : []),
           ...candidatePool.filter((c) => c && (c.url || typeof c === 'string')).map((c) => (typeof c === 'string' ? { url: c } : c)),
         ];
+        const seenV2Sources = new Set();
+        const poolForV2 = poolForV2Raw.filter((c) => {
+          const url = String(c?.url || '');
+          const key = extractVideoId(url) || url;
+          if (!key || seenV2Sources.has(key)) return false;
+          seenV2Sources.add(key);
+          return true;
+        });
+        // Multi-URL manual jobs must use the multi-source zigzag assembler even when
+        // ACQUISITION_FLOW is left at its legacy default. A single explicit source keeps
+        // the configured path; two or more user-provided sources are interleaved.
+        const useV2 = isNewFlowEnabled() || (explicitOnly && poolForV2.length >= 2);
+        if (useV2) {
         updateProgress({ step: 'acquisition_v2_start', message: `🧩 [V2] Akuisisi alur baru atas ${poolForV2.length} kandidat (vonis batch + transkrip penuh + zigzag)...`, progress: 14 });
         const v2 = await runSourceAcquisitionV2({
           candidatePool: poolForV2,
@@ -1393,9 +1406,15 @@ async function _runStage1Pipeline({
         const mapped = buildLegacyStructuresFromV2(v2.sources, v2.orderedWindows);
         hl = mapped.hl;
         candidateResults = mapped.candidateResults;
+        // Keep V2's verified preview frames as the recovery bank too. Without this,
+        // the legacy ClipAudit recovery branch sees an empty `pooledFrames` array and
+        // cannot replace rejected windows even when both selected sources had clean
+        // frames. Timestamps are mapped to the original source timeline by the V2 mapper.
+        pooledFrames = candidateResults.flatMap((candidate) => candidate.cleanFrames || []);
         rawVoiceScript = v2.scriptDraft || null;
         streamedCount = maxStreamVideos; // Lewati loop panen legacy.
         console.log(`[Job ${jobId}] ✅ [V2] ${hl.clips.length} window zigzag dari ${v2.sources.length} sumber siap -> lanjut unduh segmen 1080p.`);
+        }
       }
 
       while (streamedCount < maxStreamVideos) {
@@ -2627,9 +2646,11 @@ async function _runStage1Pipeline({
           // USER MANDATE: Jika klip terpilih terbuang sebagian/seluruhnya pada audit, JANGAN buang video!
           // Gabungkan klip bersih yang ada dengan frame peragaan bersih di pooledFrames dari video yang sama!
           console.warn(`[ClipAudit] ⚠️ Klip bersih tersisa (${cleanAuditedClips.length}) kurang dari 3. Memulihkan klip dari frame bersih alternatif pada video yang sama...`);
-          const recoveryFrames = (pooledFrames || [])
+          const recoveryFrames = interleaveBySource((pooledFrames || [])
             .filter(f => f && Number(f.timestamp) > 0)
-            .filter(f => f.candidateIndex !== undefined && f.candidateIndex !== null);
+            .filter(f => f.candidateIndex !== undefined && f.candidateIndex !== null), {
+              getKey: (f) => f.candidateIndex,
+            });
 
           const recoveryClips = [...cleanAuditedClips];
           const usedRecoveryKeys = new Set(cleanAuditedClips.map(c => `${c.candidateIndex}:${Math.round(c.startSeconds * 10) / 10}`));

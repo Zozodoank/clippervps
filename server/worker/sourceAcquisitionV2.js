@@ -113,7 +113,14 @@ export function buildLegacyStructuresFromV2(sources, orderedWindows) {
     candidateIndex: i,
     candidate: { url: s.url, id: s.sourceId, duration: s.meta?.duration, title: s.meta?.title },
     videoMeta: s.meta,
-    cleanFrames: s.cleanFrames || [],
+    // These frames come from the center preview, so convert preview-relative timestamps
+    // back to the original YouTube timeline. ClipAudit recovery uses them to build
+    // alternative full-resolution sections after a selected window is rejected.
+    cleanFrames: (s.cleanFrames || []).map((f) => ({
+      ...f,
+      candidateIndex: i,
+      timestamp: (Number(f.timestamp) || 0) + (Number(s.previewStartSec) || 0),
+    })),
     productVerification: { verified: true, confidence: 1, reason: 'V2 vonis batch' },
     highlight: { pipelineVersion: 'v2_batch' },
   }));
@@ -188,6 +195,7 @@ export async function runSourceAcquisitionV2(p) {
   updateProgress({ step: 'acquisition_v2_screen', message: '🧹 [V2] Pre-screen metadata & urutkan durasi menengah...', progress: 12 });
   const ordered = rankByMidDuration(candidatePool);
   const screened = [];
+  const seenSourceIds = new Set();
   for (const cand of ordered) {
     if (screened.length >= requireSources * 2 + 2) break; // buffer utk gate+verdict (4b)
     if (!cand?.url) continue;
@@ -196,7 +204,10 @@ export async function runSourceAcquisitionV2(p) {
       const compliance = checkVideoMetadataCompliance(meta, productTitle, { ...options, isVisualSearch: Boolean(productImage), productImage, imageUrl: productImage });
       diagnostics.screened++;
       if (!compliance.eligible) continue; // vonis konten metadata -> drop tanpa throw
-      screened.push({ url: cand.url, meta, sourceId: extractVideoId(cand.url) || cand.url, title: meta.title });
+      const sourceId = extractVideoId(cand.url) || cand.url;
+      if (seenSourceIds.has(sourceId)) continue;
+      seenSourceIds.add(sourceId);
+      screened.push({ url: cand.url, meta, sourceId, title: meta.title });
     } catch (err) {
       if (err?.isInfraError) throw err; // gangguan -> serahkan ke master loop (jangan blacklist)
       // metadata tak terbaca = kandidat buruk, lanjut.
@@ -262,7 +273,12 @@ export async function runSourceAcquisitionV2(p) {
       continue;
     }
     diagnostics.gated++;
-    gatedCandidates.push({ ...cand, cleanFrames: usableFrames, clipPath: preview.filePath });
+    gatedCandidates.push({
+      ...cand,
+      cleanFrames: usableFrames,
+      clipPath: preview.filePath,
+      previewStartSec: Number(preview.sourceStartSec) || 0,
+    });
     if (gatedCandidates.length >= requireSources * 2) break;
   }
   if (!gatedCandidates.length) {
@@ -361,7 +377,14 @@ export async function runSourceAcquisitionV2(p) {
       windows.push({ startSec: vidDur * 0.25, endSec: Math.min(vidDur * 0.75, vidDur * 0.25 + windowDur), scriptDraft: '' });
     }
     diagnostics.transcribed++;
-    sourcesData.push({ sourceId: cand.sourceId, url: cand.url, meta: cand.meta, windows });
+    sourcesData.push({
+      sourceId: cand.sourceId,
+      url: cand.url,
+      meta: cand.meta,
+      previewStartSec: cand.previewStartSec || 0,
+      cleanFrames: cand.cleanFrames || [],
+      windows,
+    });
   }
 
   // (L5) zigzag per window.

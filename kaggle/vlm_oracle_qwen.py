@@ -792,9 +792,10 @@ def verdict_batch(payload, model, processor, torch):
         for idx, one in paths:
             raw1, obj1, deg1 = ask(model, processor, torch, [one], prompt)
             if obj1 is None:
-                # Gagal parse = tidak tahu = jangan lepas veto. Tandai frame INI saja yang
-                # kotor supaya veto tidak merata ke seluruh batch karena satu frame saja.
-                entry = {"index": idx, "safe": False,
+                # Gagal parse bukan bukti konten kotor. Tandai sebagai belum terverifikasi
+                # dan abaikan frame ini dalam agregat keselamatan; jangan sampai satu
+                # keluaran JSON cacat membuat seluruh klip/video dibuang.
+                entry = {"index": idx, "safe": True, "verified": False,
                          "face": False, "text": False, "watermark": False, "graphic": False, "reason": "Gagal parse output model"}
                 if ranking:
                     # Umpama gagal parse pun, frame ini tidak boleh menyumbang skor: None,

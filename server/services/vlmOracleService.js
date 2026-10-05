@@ -235,15 +235,34 @@ export function normalizeOracleVerdict(verdict, { expectedFrames = 0, fallbackEr
   // di daftar yang sudah difilter. Sebelum 2026-10-03 pernah ditulis filter-then-map dan
   // hasilnya salah geser: perFrame=[bersih,kotor] -> [0] (yang diveto justru yang bersih).
   // Pasangan { f, i } di bawah ada supaya urutan bisa dibaca jelas TANPA mengorbankan i.
+  const isUnparsed = (f) => f && (f.verified === false || /gagal parse output model|failed to parse model output/i.test(String(f.reason || '')));
+  const unknownFrames = perFrame
+    .map((f, i) => ({ f, i }))
+    .filter(({ f }) => isUnparsed(f))
+    .map(({ f, i }) => Number.isInteger(Number(f.index)) && Number(f.index) >= 0 ? Number(f.index) : i);
+  const observedFrames = perFrame.filter((f) => f && !isUnparsed(f));
   const dirtyFrames = perFrame
     .map((f, i) => ({ f, i }))
-    .filter(({ f }) => f && (f.safe === false || f.safe === 'false' || f.safe === 0))
+    .filter(({ f }) => f && !isUnparsed(f) && (
+      f.safe === false || f.safe === 'false' || f.safe === 0 ||
+      ['face', 'text', 'watermark', 'graphic'].some((k) => bool(f[k]))
+    ))
     .map(({ f, i }) => {
       const idx = Number(f && f.index);
       return Number.isInteger(idx) && idx >= 0 ? idx : i;
     });
-  const anyFlag = ['face', 'text', 'watermark', 'graphic'].some((k) => bool(verdict[k]));
-  const safe = hasSafe ? bool(verdict.safe) : (perFrame.length > 0 && dirtyFrames.length === 0);
+  // Per-frame findings supersede aggregate flags: one malformed model response must
+  // not turn the entire batch into a false positive. Keep aggregate behavior for older
+  // notebooks that do not send perFrame at all.
+  const anyFlag = perFrame.length
+    ? observedFrames.some((f) => ['face', 'text', 'watermark', 'graphic'].some((k) => bool(f[k])))
+    : ['face', 'text', 'watermark', 'graphic'].some((k) => bool(verdict[k]));
+  const safe = perFrame.length
+    ? (observedFrames.length > 0 && dirtyFrames.length === 0)
+    : (hasSafe ? bool(verdict.safe) : false);
+  if (perFrame.length > 0 && observedFrames.length === 0) {
+    return { ok: false, available: true, infraError: true, error: 'Seluruh frame tidak terverifikasi: output model gagal diparse.' };
+  }
   // Skor kecocokan produk: agregat dari notebook lebih dipercaya; kalau hilang (mis.
   // notebook belum di-update, atau satu panggilan batch tidak mengirimkannya),
   // turunkan dari median per-frame. null = "tidak ada informasi", BUKAN "skor 0".
@@ -268,10 +287,10 @@ export function normalizeOracleVerdict(verdict, { expectedFrames = 0, fallbackEr
     ok: true,
     available: true,
     safe,
-    face: bool(verdict.face),
-    text: bool(verdict.text),
-    watermark: bool(verdict.watermark),
-    graphic: bool(verdict.graphic),
+    face: perFrame.length ? observedFrames.some((f) => bool(f.face)) : bool(verdict.face),
+    text: perFrame.length ? observedFrames.some((f) => bool(f.text)) : bool(verdict.text),
+    watermark: perFrame.length ? observedFrames.some((f) => bool(f.watermark)) : bool(verdict.watermark),
+    graphic: perFrame.length ? observedFrames.some((f) => bool(f.graphic)) : bool(verdict.graphic),
     productMatch: 'productMatch' in verdict ? bool(verdict.productMatch) : null,
     matchScore,
     apparentQuality,
@@ -279,6 +298,7 @@ export function normalizeOracleVerdict(verdict, { expectedFrames = 0, fallbackEr
     reason: String(verdict.reason || '').slice(0, 300),
     model: String(verdict.model || '').slice(0, 80),
     dirtyFrameIndexes: dirtyFrames,
+    unverifiedFrameIndexes: unknownFrames,
     // Aggregate flag boleh salah nol; `safe:false` saja sudah cukup untuk memveto.
     // `productMatch:false` SENGAJA tidak ikut di sini: veto untuk kebersihan harus tetap
     // bisa bekerja saat prompt tidak membawa konteks produk (matchScore/productMatch null).
@@ -707,6 +727,9 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
         if (waited.status === 'done') {
           const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
           summary.checked += paths.length;
+          if (v.ok && v.unverifiedFrameIndexes?.length) {
+            logger.warn(`[Oracle] ${clipLabel}: ${v.unverifiedFrameIndexes.length}/${paths.length} frame tidak terverifikasi (output gagal diparse); tidak dipakai sebagai bukti kotor.`);
+          }
           if (v.ok && v.vetoTriggered) {
             const dirtySent = (v.dirtyFrameIndexes || []).map((k) => paths[k]).filter(Boolean);
             const dirtyOrig = (dirtySent.length > 0 ? dirtySent : paths).map((p) => backToOriginal.get(p) || p);
