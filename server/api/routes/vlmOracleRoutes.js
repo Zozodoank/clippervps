@@ -136,7 +136,7 @@ router.post('/vlm-oracle/result', resultLimiter, (req, res) => {
   // Observability Log Server
   const vType = typeof verdict;
   const vKeys = verdict && vType === 'object' && !Array.isArray(verdict) ? Object.keys(verdict).join(',') : '';
-  logger.log(`[Oracle Result] batchId=${batchId} workerId=${workerId} attempt=${attempt} protocolVersion=${protocolVersion} verdictType=${vType} verdictKeys=${vKeys} httpStatus=200`);
+  console.log(`[Oracle Result] batchId=${batchId} workerId=${workerId} attempt=${attempt} protocolVersion=${protocolVersion} verdictType=${vType} verdictKeys=${vKeys} httpStatus=200`);
 
   if (!batchId || typeof batchId !== 'string') {
     return res.status(400).json({ success: false, error: 'batchId wajib ada.' });
