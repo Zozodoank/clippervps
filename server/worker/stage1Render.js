@@ -764,9 +764,9 @@ async function _runStage1Pipeline({
       }
       console.log(`[Job ${jobId}] ✅ [Fast Probe Selesai] 5 frame lokal dinilai (vonis akhir oleh Oracle).`);
 
-      // ── TAHAP 5: CONTEXT PREVIEW (25s) — WINDOW DEFAULT (TANPA WHISPER) ──
+      // ── TAHAP 5: CONTEXT PREVIEW (15s) — WINDOW DEFAULT (TANPA WHISPER) ──
       // Whisper dihapus: window terbaik ditentukan dari tengah video (hemat kuota/CPU).
-      const targetWindowSec = Number(process.env.BEST_WINDOW_DURATION_SEC) || 25;
+      const targetWindowSec = Number(process.env.BEST_WINDOW_DURATION_SEC) || 15;
       updateProgress({ step: 'context_preview', message: `⚡ Download konteks ${targetWindowSec} detik...`, progress: 30 });
       
       const contextPreview = await downloadQuickPreview(targetUrl, tempDir, jobId + '_ctx', {
