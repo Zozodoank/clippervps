@@ -897,6 +897,7 @@ def main():
                 continue
             if r.status_code >= 400:
                 log("CLAIM error %s: %s" % (r.status_code, r.text[:200]))
+                server_busy = False # User mandate: mati jika server down / force stopped
                 time.sleep(idle)
                 continue
             data = r.json()
@@ -945,6 +946,7 @@ def main():
         except Exception as err:  # jangan matikan looping untuk satu batch rusak
             failed += 1
             log("batch gagal: %s" % err)
+            server_busy = False # User mandate: mati jika server down / connection error
             if bid:
                 try:
                     post_result(bid, None, error=str(err))
