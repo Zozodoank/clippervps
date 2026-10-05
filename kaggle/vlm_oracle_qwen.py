@@ -36,6 +36,15 @@
 # ============================================================================
 import glob
 import json
+import hashlib
+def get_source_hash():
+    try:
+        with open(__file__, "rb") as fh:
+            return hashlib.md5(fh.read()).hexdigest()
+    except Exception:
+        return "unknown"
+SOURCE_HASH = get_source_hash()
+
 import os
 import re
 import shutil
@@ -763,8 +772,15 @@ def verdict_batch(payload, model, processor, torch):
     return out
 
 
-def post_result(batch_id, verdict=None, error=""):
-    body = {"batchId": batch_id}
+def post_result(batch_id, attempt=0, verdict=None, error=""):
+    if verdict is not None:
+        if not isinstance(verdict, dict):
+            error = "Vonis bukan dict/object: %s" % str(type(verdict))
+            verdict = None
+        elif "safe" not in verdict and "perFrame" not in verdict:
+            error = "Vonis dict tidak memiliki safe/perFrame: %s" % list(verdict.keys())
+            verdict = None
+    body = {"batchId": batch_id, "attempt": attempt, "workerId": WORKER_ID, "protocolVersion": ORACLE_PROTOCOL_VERSION}
     if verdict is not None:
         body["verdict"] = verdict
     if error:
@@ -889,7 +905,7 @@ def main():
         try:
             bid = None
             r = requests.post(BASE_URL + "/api/vlm-oracle/claim",
-                              json={"workerId": "kaggle-notebook"},
+                              json={"workerId": WORKER_ID, "protocolVersion": ORACLE_PROTOCOL_VERSION, "sourceHash": SOURCE_HASH},
                               headers={"x-api-token": token, "ngrok-skip-browser-warning": "69420"}, timeout=60)
             if r.status_code == 503:
                 raise SystemExit("Server menolak (503): API_ACCESS_TOKEN belum diset di server/.env. Set lalu restart server.")
@@ -921,16 +937,16 @@ def main():
                     kb = sum(b for _, b in got) / 1024.0
                     log("  dry-run: %d/%d frame diunduh, total %.0f KB (rata-rata %.0f KB/frame)"
                         % (len(got), len(data["frames"]), kb, (kb / max(1, len(got)))))
-                    post_result(bid, {"safe": True, "model": "dry-run"})
+                    post_result(bid, attempt=data.get("attempt", 0), verdict={"safe": True, "model": "dry-run"})
                 except Exception as dl_err:
                     log("  dry-run GAGAL unduh frame: %s" % dl_err)
-                    post_result(bid, None, error=str(dl_err))
+                    post_result(bid, attempt=data.get("attempt", 0), verdict=None, error=str(dl_err))
                     failed += 1
                 done += 1
                 last_work = time.time()
                 continue
             v = verdict_batch(data, model, processor, torch)
-            post_result(bid, v)
+            post_result(bid, attempt=data.get("attempt", 0), verdict=v)
             done += 1
             # Jam idle dimulai ulang setelah vonis SELESAI, bukan saat diklaim: batch
             # besar + refine per-frame di tunnel lambat bisa memakan >= IDLE_EXIT_MIN dan
@@ -950,7 +966,7 @@ def main():
             server_busy = False # User mandate: mati jika server down / connection error
             if bid:
                 try:
-                    post_result(bid, None, error=str(err))
+                    post_result(bid, attempt=data.get("attempt", 0), verdict=None, error=str(err))
                 except Exception:
                     pass
                 shutil.rmtree(os.path.join(TMP_ROOT, bid), ignore_errors=True)

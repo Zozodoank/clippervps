@@ -515,9 +515,16 @@ export function claimOracleBatch({ workerId = '', staleMs = 300_000, maxAttempts
  * yang datang setelah worker menyerah ('expired') sengaja DITOLAK agar worker yang
  * sudah lanjut tidak tiba-tiba punya vonis menggantung.
  */
-export function submitOracleResult({ batchId, verdict, lastError = '', now = Date.now() } = {}) {
+export function submitOracleResult({ batchId, verdict, lastError = '', attempt, workerId, now = Date.now() } = {}) {
   const b = getOracleBatch(batchId);
   if (!b) return { ok: false, status: 'unknown' };
+  
+  if (workerId && b.workerId && b.workerId !== workerId) {
+    return { ok: false, status: 'worker_mismatch', error: 'Result dari worker yang berbeda.' };
+  }
+  if (attempt !== undefined && b.attempts !== undefined && attempt !== b.attempts) {
+    return { ok: false, status: 'attempt_mismatch', error: 'Result dari attempt yang sudah kadaluarsa.' };
+  }
   if (b.status === 'done') return { ok: true, status: 'done', batch: b, duplicate: true };
   if (b.status === 'expired') return { ok: false, status: 'expired' };
   const updated = saveOracleBatch({
@@ -557,7 +564,7 @@ export async function waitForOracleVerdict(id, { timeoutMs = 180_000, pollMs = 2
     const b = getOracleBatch(id);
     if (!b) return { status: 'unknown', lastStatus, batch: null };
     observe(b.status);
-    if (b.status === 'done') return { status: 'done', lastStatus, batch: b, verdict: b.verdict };
+    if (b.status === 'done') return { status: 'done', lastStatus, batch: b, verdict: b.verdict, error: b.lastError };
     if (b.status === 'expired') return { status: 'expired', lastStatus, batch: b };
     if (now() >= deadline) return { status: 'timeout', lastStatus, batch: b };
     await sleep(Math.min(pollMs, Math.max(50, deadline - now())));

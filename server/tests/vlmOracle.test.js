@@ -82,7 +82,7 @@ async function serveBatchAny(jobId, verdictFor) {
     const batch = claimOracleBatch({ workerId: 'nb-' + jobId });
     if (batch) {
       if (batch.jobId !== jobId) { expireOracleBatch(batch.id, 'bukan batch tes'); continue; }
-      submitOracleResult({ batchId: batch.id, verdict: verdictFor(batch) });
+      submitOracleResult({ batchId: batch.id, verdict: verdictFor(batch), attempt: batch.attempts, workerId: batch.workerId });
       served += 1;
       return served;
     }
@@ -138,7 +138,7 @@ describe('resolveOracleConfig', () => {
     expect(cfg.batchSize).toBe(8);            // 0 -> default
     const off = resolveOracleConfig(ENV_OFF);
     expect(off.enabled).toBe(false);
-    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle' }).connectTimeoutMs).toBe(120000); // default
+    expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle' }).connectTimeoutMs).toBe(180000); // default
     // 0 eksplisit dihormati (bukan diam-diam 120) - gerbang strict yang menolak job.
     expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_MAX_FRAMES: '0' }).maxFrames).toBe(0);
     expect(resolveOracleConfig({ VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_MAX_FRAMES: '' }).maxFrames).toBe(120);
@@ -174,6 +174,20 @@ describe('normalizeOracleVerdict', () => {
       expect(v.ok, `input ${JSON.stringify(bad)} harus ditolak`).toBe(false);
       expect(v.infraError).toBe(true);
     }
+  });
+
+  
+  it('verdict string JSON valid dapat dinormalisasi (compatibility parser)', () => {
+    const v = normalizeOracleVerdict('{"safe":false,"perFrame":[{"index":0,"safe":false}]}', { expectedFrames: 1 });
+    expect(v.ok).toBe(true);
+    expect(v.vetoTriggered).toBe(true);
+    expect(v.dirtyFrameIndexes).toEqual([0]);
+  });
+
+  it('verdict string prosa ditolak (jangan jadi verdict valid)', () => {
+    const v = normalizeOracleVerdict('klip terlihat bersih', { expectedFrames: 1 });
+    expect(v.ok).toBe(false);
+    expect(v.infraError).toBe(true);
   });
 
   it('mengerti bentuk agregat dan bentuk per-frame', () => {
@@ -268,12 +282,12 @@ describe('jobStore oracle queue', () => {
   });
 
   it('submit lalu tunggu -> done dengan verdict utuh; submit ulang = duplicate', async () => {
-    const out = submitOracleResult({ batchId: 'q_atomic', verdict: { safe: false, face: true } });
+    const out = submitOracleResult({ batchId: 'q_atomic', verdict: { safe: false, face: true }, attempt: 1, workerId: 'nb1' });
     expect(out.ok).toBe(true);
     const waited = await waitForOracleVerdict('q_atomic', { timeoutMs: 50, pollMs: 10 });
     expect(waited.status).toBe('done');
     expect(waited.verdict.safe).toBe(false);
-    expect(submitOracleResult({ batchId: 'q_atomic', verdict: { safe: true } }).duplicate).toBe(true);
+    expect(submitOracleResult({ batchId: 'q_atomic', verdict: { safe: true }, attempt: 1, workerId: 'nb1' }).duplicate).toBe(true);
     expect(getOracleBatch('q_atomic').verdict.safe).toBe(false); // tidak boleh tertimpa
   });
 
@@ -287,7 +301,7 @@ describe('jobStore oracle queue', () => {
     // Attempts sudah mentok -> tidak diklaim lagi, ditandai expired.
     expect(claimOracleBatch({ workerId: 'nb3', staleMs: 1000, maxAttempts: 2, now: 30000 })).toBe(null);
     expect(getOracleBatch('q_stale').status).toBe('expired');
-    expect(submitOracleResult({ batchId: 'q_stale', verdict: { safe: false } }).ok).toBe(false);
+    expect(submitOracleResult({ batchId: 'q_stale', verdict: { safe: false }, attempt: 2, workerId: 'nb2' }).ok).toBe(false);
   });
 
   it('worker menyerah -> expire, dan vonis setelah itu ditolak', async () => {
@@ -296,7 +310,7 @@ describe('jobStore oracle queue', () => {
     expireOracleBatch('q_give', 'timeout');
     const waited = await waitForOracleVerdict('q_give', { timeoutMs: 50, pollMs: 10 });
     expect(waited.status).toBe('expired');
-    expect(submitOracleResult({ batchId: 'q_give', verdict: { safe: true } }).status).toBe('expired');
+    expect(submitOracleResult({ batchId: 'q_give', verdict: { safe: true }, attempt: 1, workerId: 'nb1' }).status).toBe('expired');
   });
 
   it('timeout menunggu menghasilkan status timeout (bukan vonis bersih)', async () => {
@@ -335,7 +349,7 @@ describe('sanitizePoolWithOracle / applyOracleVeto', () => {
       if (batch) {
         // Batch yatim dari tes lain (created_at lebih tua) dibersihkan, bukan dipakai.
         if (batch.jobId !== jobId) { expireOracleBatch(batch.id, 'bukan batch tes'); continue; }
-        submitOracleResult({ batchId: batch.id, verdict: verdictFor(batch) });
+        submitOracleResult({ batchId: batch.id, verdict: verdictFor(batch), attempt: batch.attempts, workerId: batch.workerId });
         return batch;
       }
       await new Promise((r) => setTimeout(r, 25));
@@ -644,7 +658,7 @@ describe('auditClipsWithOracle (pass klip final, frame 2,5 fps yang sudah ada)',
       const batch = claimOracleBatch({ workerId: 'nb-' + jobId });
       if (!batch) { await new Promise((r) => setTimeout(r, 20)); continue; }
       if (batch.jobId !== jobId) { expireOracleBatch(batch.id, 'bukan batch tes'); continue; }
-      submitOracleResult({ batchId: batch.id, verdict: verdictFor(batch) });
+      submitOracleResult({ batchId: batch.id, verdict: verdictFor(batch), attempt: batch.attempts, workerId: batch.workerId });
       served += 1;
     }
     return served;
@@ -1299,7 +1313,7 @@ describe('jobStore - heartbeat notebook & lastStatus (fondasi gerbang koneksi)',
     // di-refactor; perbarui regex ini bersama routes-nya.
     const src = fs.readFileSync(path.resolve(__dirname, '..', 'api/routes/vlmOracleRoutes.js'), 'utf8');
     expect(src).toMatch(/touchOracleHeartbeat/);
-    expect(src.indexOf("router.post('/vlm-oracle/claim'")).toBeLessThan(src.indexOf('touchOracleHeartbeat(workerId)'));
+    expect(src.indexOf("router.post('/vlm-oracle/claim'")).toBeLessThan(src.indexOf('touchOracleHeartbeat(workerId, protocolVersion, sourceHash)'));
   });
 
   it('wiring idle-exit: respons klaim KOSONG wajib membawa activeJobs (cek source, pola yang sama)', () => {

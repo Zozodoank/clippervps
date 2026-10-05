@@ -213,7 +213,13 @@ function medianScore(values = []) {
 }
 
 export function normalizeOracleVerdict(verdict, { expectedFrames = 0, fallbackError = '' } = {}) {
-  if (!verdict || typeof verdict !== 'object') {
+  if (typeof verdict === 'string') {
+    try {
+      const parsed = JSON.parse(verdict);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) verdict = parsed;
+    } catch (e) {}
+  }
+  if (!verdict || typeof verdict !== 'object' || Array.isArray(verdict)) {
     return { ok: false, available: true, infraError: true, error: fallbackError || 'Vonis oracle bukan objek JSON.' };
   }
   const bool = (v) => v === true || v === 'true' || v === 1;
@@ -512,7 +518,7 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
       });
       status = waited.status;
       if (waited.status === 'done') {
-        const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error });
+        const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
         result.checked += paths.length;
         if (v.ok && v.vetoTriggered) {
           // Veto per-frame bila notebook mengirim perFrame; kalau hanya agregat,
@@ -693,7 +699,7 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
           pollMs: cfg.pollMs, sleep,
         });
         if (waited.status === 'done') {
-          const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error });
+          const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
           summary.checked += paths.length;
           if (v.ok && v.vetoTriggered) {
             const dirtySent = (v.dirtyFrameIndexes || []).map((k) => paths[k]).filter(Boolean);
@@ -950,7 +956,7 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
       });
       if (waited.status === 'timeout') expireOracleBatch(id, 'Pre-flight menyerah sebelum vonis tiba.');
       if (waited.status === 'done') {
-        const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error });
+        const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
         if (v.ok) {
           entry = {
             index: pos,

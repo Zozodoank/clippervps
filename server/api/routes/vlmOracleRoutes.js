@@ -21,6 +21,7 @@ import fs from 'fs';
 import path from 'path';
 import express from 'express';
 import {
+  oracleHeartbeatInfo,
   claimOracleBatch,
   submitOracleResult,
   getOracleBatch,
@@ -29,11 +30,16 @@ import {
   pruneOracleBatches,
   touchOracleHeartbeat,
 } from '../../store/jobStore.js';
-import { resolveOracleConfig } from '../../services/vlmOracleService.js';
-import { isOracleStrictMode } from '../../config/runtimeFlags.js';
-import { createRateLimiter, recordAuditEvent } from '../../utils/security.js';
-import { getApiAccessToken } from '../middleware/tokenAuth.js';
-import { serverRoot, outputDir, tempDir, rejectedYunetDir } from '../../utils/paths.js';
+import {
+  oracleHeartbeatInfo, resolveOracleConfig } from '../../services/vlmOracleService.js';
+import {
+  oracleHeartbeatInfo, isOracleStrictMode } from '../../config/runtimeFlags.js';
+import {
+  oracleHeartbeatInfo, createRateLimiter, recordAuditEvent } from '../../utils/security.js';
+import {
+  oracleHeartbeatInfo, getApiAccessToken } from '../middleware/tokenAuth.js';
+import {
+  oracleHeartbeatInfo, serverRoot, outputDir, tempDir, rejectedYunetDir } from '../../utils/paths.js';
 
 const router = express.Router();
 
@@ -80,11 +86,13 @@ router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
   if (!requireOracleToken(req, res)) return undefined;
   const cfg = resolveOracleConfig(process.env);
   const workerId = String((req.body && req.body.workerId) || req.headers['x-oracle-worker'] || 'kaggle').slice(0, 120);
+  const protocolVersion = String((req.body && req.body.protocolVersion) || '');
+  const sourceHash = String((req.body && req.body.sourceHash) || '');
   // HEARTBEAT: setiap claim yang lewat — termasuk polling kosong (claimed:false) — adalah
   // bukti notebook HIDUP. Satu-satunya sinyal koneksi yang jujur, karena arah panggilan
   // dipaksa fisika jaringan (Kaggle tidak punya inbound). Dibaca gerbang stage1Render via
   // oracleLastSeenMs(): tanpa heartbeat segar, job baru langsung dihentikan.
-  touchOracleHeartbeat(workerId);
+  touchOracleHeartbeat(workerId, protocolVersion, sourceHash);
   const batch = claimOracleBatch({ workerId, staleMs: cfg.staleMs, maxAttempts: cfg.maxAttempts });
   if (!batch) {
     // 200 (bukan 204) karena tetap mengirim ikhtisar antrean; 204 tidak boleh berbadan.
@@ -99,6 +107,7 @@ router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
     success: true,
     claimed: true,
     batchId: batch.id,
+    attempt: batch.attempts,
     jobId: batch.jobId,
     sceneIdx: batch.sceneIdx,
     niche: batch.niche,
@@ -121,11 +130,24 @@ router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
  */
 router.post('/vlm-oracle/result', resultLimiter, (req, res) => {
   if (!requireOracleToken(req, res)) return undefined;
-  const { batchId, verdict, error } = req.body || {};
+  const { batchId, attempt, workerId, protocolVersion, verdict, error } = req.body || {};
+  const expectedProtocol = '2026-10-05-v1';
+  
+  if (protocolVersion !== expectedProtocol) {
+    recordAuditEvent({ req, action: "vlm-oracle-result-rejected", detail: `batch=${batchId} reason=protocol_mismatch expected=${expectedProtocol} got=${protocolVersion}` });
+    return res.status(426).json({ success: false, error: 'Protocol version mismatch. Kaggle worker obsolete.' });
+  }
+
+  // Observability Log Server
+  const vType = typeof verdict;
+  const vKeys = verdict && vType === 'object' && !Array.isArray(verdict) ? Object.keys(verdict).join(',') : '';
+  logger.log(`[Oracle Result] batchId=${batchId} workerId=${workerId} attempt=${attempt} protocolVersion=${protocolVersion} verdictType=${vType} verdictKeys=${vKeys} httpStatus=200`);
+
   if (!batchId || typeof batchId !== 'string') {
     return res.status(400).json({ success: false, error: 'batchId wajib ada.' });
   }
-  const out = submitOracleResult({ batchId: batchId.slice(0, 120), verdict, lastError: error || '' });
+  const out = submitOracleResult({ batchId: batchId.slice(0, 120), verdict, lastError: error || '', attempt, workerId });
+  if (!out.ok && (out.status === 'worker_mismatch' || out.status === 'attempt_mismatch')) { return res.status(409).json({ success: false, status: out.status, error: out.error }); }
   if (!out.ok && out.status === 'unknown') {
     return res.status(404).json({ success: false, error: `Batch ${batchId} tidak dikenal (mungkin sudah di-prune).` });
   }
@@ -183,6 +205,7 @@ router.get('/vlm-oracle/status', (req, res) => {
       connected,
       lastSeenAt,
       lastSeenAgeMs: lastSeenAt ? Date.now() - lastSeenAt : null,
+      workerInfo: oracleHeartbeatInfo(),
       maxFrames: cfg.maxFrames,
       batchSize: cfg.batchSize,
       perBatchTimeoutSec: Math.round(cfg.perBatchTimeoutMs / 1000),
