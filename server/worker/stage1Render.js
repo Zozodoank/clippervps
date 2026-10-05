@@ -155,6 +155,19 @@ function auditRealMotionFromFrames(framePaths = []) {
   return { checked: true, likelyStatic, similarities, median };
 }
 
+// Label jujur per sebab penolakan ClipAudit (Warning review 2026-10-05): pesan lama
+// hardcode "teks overlay promosi, bumper statis, atau wajah" untuk SEMUA sebab —
+// termasuk vonis SSIM lokal — sehingga operator menyalahkan DBNet/wajah yang bahkan
+// offline, padahal sebab nyata berbeda. Sebab struktural disimpan, diringkas di log.
+const CLIP_AUDIT_REASON_LABELS = {
+  STATIC_PHOTO_OR_KEN_BURNS: 'foto statis/slideshow/Ken Burns (SSIM lokal)',
+  ORACLE_DIRTY: 'teks overlay/wajah/bumper (vonis Oracle Kaggle)',
+};
+function summarizeClipAuditReasons(discarded = []) {
+  const labels = [...new Set((discarded || []).map((d) => CLIP_AUDIT_REASON_LABELS[d?.reason] || d?.reason || 'sebab tidak diketahui'))];
+  return labels.join(' + ') || 'sebab tidak diketahui';
+}
+
 function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs = 10000) {
   return new Promise((resolve) => {
     const ffmpegPath = getFFmpegPath();
@@ -2505,16 +2518,26 @@ async function _runStage1Pipeline({
         // HARD MOTION GATE: a valid affiliate clip must contain real physical motion.
         // Reject still photos with zoom/pan effects before any AI Gatekeeper result can
         // accidentally classify the moving pixels as a legitimate video.
+        // ADVISORY (mandate 2026-10 + regresi review 2026-10-05, kasus kk5h0ug1): vonis
+        // SSIM lokal TIDAK BOLEH final selama Oracle aktif — mode advisory yang sudah
+        // benar di jalur fastProbe (L~756) & cache (L~923) dulu belum dipasang di sini,
+        // sehingga hero-shot kitchen tools yang nyaris diam dibuang tanpa Qwen pernah
+        // melihatnya. Di advisory: kecurigaan dicatat sebagai arahan prompt Oracle.
+        // GK_LOCAL_VETO=strict mengembalikan pembuangan keras seperti perilaku lama.
         const motionAudit = auditRealMotionFromFrames(testFrames.map(f => f.filePath));
-        if (motionAudit.likelyStatic) {
+        if (motionAudit.likelyStatic && !isLocalGatekeeperAdvisory(process.env)) {
           console.warn(
-            `[ClipAudit] ⛔ Segment klip #${cIdx + 1} ditolak: kemungkinan foto/slideshow/Ken Burns (SSIM median=${motionAudit.median?.toFixed(4)}).`
+            `[ClipAudit] ⛔ [strict] Segment klip #${cIdx + 1} ditolak: kemungkinan foto/slideshow/Ken Burns (SSIM median=${motionAudit.median?.toFixed(4)}).`
           );
           discardedDirtyClips.push({
             clip: c,
             reason: 'STATIC_PHOTO_OR_KEN_BURNS',
           });
           continue;
+        }
+        if (motionAudit.likelyStatic) {
+          localSuspicionNotes.push(`klip #${cIdx + 1} diduga foto/slideshow/Ken Burns statis (SSIM median=${motionAudit.median?.toFixed(4)})`);
+          console.log(`[ClipAudit] 🛰️ [Vonis lokal => penasihat] Klip #${cIdx + 1} dicurigai foto statis (SSIM median=${motionAudit.median?.toFixed(4)}) — tetap dikirim ke Oracle Kaggle, Qwen yang memvonis.`);
         }
 
         // ─── CLIP AUDIT: GERBANG LOKAL HANYA MENOLAK FOTO STATIS / KEN BURNS ───
@@ -2572,7 +2595,7 @@ async function _runStage1Pipeline({
       }
 
       if (discardedDirtyClips.length > 0) {
-        console.log(`[ClipAudit] Berhasil membuang ${discardedDirtyClips.length} klip kotor (teks overlay/wajah/bumper). Tersisa ${cleanAuditedClips.length} klip bersih.`);
+        console.log(`[ClipAudit] Berhasil membuang ${discardedDirtyClips.length} klip kotor (sebab: ${summarizeClipAuditReasons(discardedDirtyClips)}). Tersisa ${cleanAuditedClips.length} klip bersih.`);
 
         // 1. Pastikan Slot 1 (Visual Produk Utuh) tetap ada!
         const hasSlot1 = cleanAuditedClips.some(c => c.storyboardSlot === 1);
@@ -2651,14 +2674,18 @@ async function _runStage1Pipeline({
             console.log(`[ClipAudit] 🛡️ Memulihkan ${highlight.clips.length} klip unik tanpa duplikasi (total ${highlight.duration.toFixed(1)}s - min 18s).`);
           } else {
             console.warn(`[ClipAudit] Tidak ditemukan klip bersih tersisa pada video.`);
-            const auditErr = new Error('Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi, bumper statis, atau wajah.');
+            // Warning review 2026-10-05: sebab final dirangkai dari reason TERKUMPUL,
+            // bukan string hardcode — operator bisa melihat apakah yang menolak adalah
+            // SSIM lokal (strict) atau Qwen Oracle.
+            const reasonText = summarizeClipAuditReasons(discardedDirtyClips);
+            const auditErr = new Error(`Video ditolak pada audit pasca-download: seluruh bagian video ditolak (${reasonText}).`);
             auditErr.isAiRejection = true;
-            auditErr.rejectionReason = 'Mengandung teks overlay promosi, bumper statis, atau wajah manusia.';
+            auditErr.rejectionReason = `Seluruh bagian video ditolak pada audit: ${reasonText}.`;
             throw auditErr;
           }
         }
       } else {
-        console.log(`[ClipAudit] ✅ Seluruh ${highlight.clips.length} klip terverifikasi 100% bersih bebas teks overlay, bumper statis, dan wajah.`);
+        console.log(`[ClipAudit] ✅ Seluruh ${highlight.clips.length} klip lolos audit${isVlmOracleEnabled(process.env) ? ' (motion lokal + vonis Oracle Kaggle)' : ' (gerbang motion lokal — Oracle nonaktif, vonis akhir di pass lain)'}.`);
       }
     }
 

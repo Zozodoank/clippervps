@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 // "Filter AI lokal tidak boleh lagi memveto apa yang Qwen setujui" (mandate user 2026-10).
 // Yang diuji di sini adalah tiga bagian MURNI dari perubahan itu: peran vonis lokal
@@ -133,5 +136,27 @@ describe('mergeLocalSuspicion — gabungan antar kandidat untuk satu prompt', ()
   it('nilai kosong/null aman', () => {
     expect(mergeLocalSuspicion([])).toBe('');
     expect(mergeLocalSuspicion([null, '', undefined])).toBe('');
+  });
+});
+
+// SOURCE LOCK (regresi review 2026-10-05, kasus kk5h0ug1): gerbang motion SSIM di
+// ClipAudit pasca-download dulu membuang klip TANPA mempedulikan GK_LOCAL_VETO=advisory
+// dan tanpa pernah bertanya ke Oracle — video manual yang bersih ditolak oleh filter
+// lokal "sesat". Eksekusi blok ini butuh pipeline penuh, jadi kunci lewat source lock.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const stage1Src = fs.readFileSync(path.resolve(__dirname, '..', 'worker', 'stage1Render.js'), 'utf8').replace(/\r/g, '');
+
+describe('ClipAudit source lock — vonis SSIM lokal wajib menghormati advisory', () => {
+  it('pembuangan keras hanya saat !isLocalGatekeeperAdvisory (mode strict)', () => {
+    expect(stage1Src).toContain('if (motionAudit.likelyStatic && !isLocalGatekeeperAdvisory(process.env)) {');
+  });
+
+  it('mode advisory: kecurigaan statis masuk localSuspicionNotes (arahan prompt Oracle), bukan discarded', () => {
+    expect(stage1Src).toMatch(/if \(motionAudit\.likelyStatic\) \{\n\s*localSuspicionNotes\.push\(/);
+  });
+
+  it('pesan penolakan dirangkai dari reason terkumpul — string hardcode overlay/wajah/bumper harus hilang', () => {
+    expect(stage1Src).not.toContain("Video ditolak pada audit pasca-download: seluruh bagian video mengandung teks overlay promosi");
+    expect(stage1Src).toContain('summarizeClipAuditReasons(discardedDirtyClips)');
   });
 });
