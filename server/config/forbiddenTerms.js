@@ -33,7 +33,7 @@ export const REPAIR_TERMS = [
   'mati total', 'matot', 'mati', 'korslet', 'konslet', 'gelek',
   'bongkar', 'membongkar', 'disassembly', 'teardown', 'turun mesin',
   'ganti', 'mengganti', 'pergantian', 'penggantian',
-  'benerin', 'error', 'spare part', 'sparepart', 'jas servis',
+  'benerin', 'error', 'spare part', 'sparepart', 'jas servis', 'second', 'seken',
 ];
 
 // Jargon reparasi tingkat lanjut. HANYA dipakai pada niche gadget karena di
@@ -49,7 +49,7 @@ export const TUTORIAL_TERMS = [
   'cara', 'tutorial', 'diy', 'do it yourself', 'how to', 'howto',
   'cara membuat', 'cara bikin', 'cara memakai', 'cara pakai', 'cara mengoperasikan',
   'langkah langkah', 'step by step', 'kerajinan', 'prakarya', 'daur ulang',
-  'vlog', 'daily', 'daily vlog',
+  'vlog', 'daily', 'daily vlog', 'acara', 'live', 'life',
 ];
 
 const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

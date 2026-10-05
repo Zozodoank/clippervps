@@ -389,10 +389,11 @@ export function buildCleanYouTubeQuery(baseQuery) {
     .filter(op => !existingLower.includes(op.toLowerCase().replace(/"/g, '')))
     .slice(0, maxOperators); // Operator berlebihan membuat YouTube/ Bing mengembalikan 0 hasil
 
+  const finalBaseQuery = `"${cleaned}"`;
   if (toAdd.length > 0) {
-    cleaned = `${cleaned} ${toAdd.join(' ')}`;
+    return `${finalBaseQuery} ${toAdd.join(' ')}`.trim();
   }
-  return cleaned.trim();
+  return finalBaseQuery.trim();
 }
 
 // ── Google YouTube Data API v3 Search Helper ───────────────────────────────
