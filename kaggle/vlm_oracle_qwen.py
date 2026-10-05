@@ -630,7 +630,7 @@ def fetch_frames_raw(payload):
     batch_dir = os.path.join(TMP_ROOT, payload["batchId"])
     os.makedirs(batch_dir, exist_ok=True)
     sess = requests.Session()
-    sess.headers.update({"x-api-token": TOKEN})
+    sess.headers.update({"x-api-token": TOKEN, "ngrok-skip-browser-warning": "69420"})
     got = []
     for fr in payload["frames"]:
         r = sess.get(BASE_URL + fr["url"], timeout=120)
@@ -652,7 +652,7 @@ def verdict_batch(payload, model, processor, torch):
     os.makedirs(batch_dir, exist_ok=True)
     paths = []
     sess = requests.Session()
-    sess.headers.update({"x-api-token": TOKEN})
+    sess.headers.update({"x-api-token": TOKEN, "ngrok-skip-browser-warning": "69420"})
     for fr in payload["frames"]:
         url = BASE_URL + fr["url"]
         r = sess.get(url, timeout=120)
@@ -769,7 +769,7 @@ def post_result(batch_id, verdict=None, error=""):
     if error:
         body["error"] = error[:400]
     r = requests.post(BASE_URL + "/api/vlm-oracle/result", json=body,
-                      headers={"x-api-token": TOKEN}, timeout=60)
+                      headers={"x-api-token": TOKEN, "ngrok-skip-browser-warning": "69420"}, timeout=60)
     if r.status_code == 409:
         log("batch %s sudah kadaluarsa di sisi worker - vonis tidak dipakai (normal saat jaringan lambat)." % batch_id)
     elif r.status_code == 404:
@@ -889,7 +889,7 @@ def main():
             bid = None
             r = requests.post(BASE_URL + "/api/vlm-oracle/claim",
                               json={"workerId": "kaggle-notebook"},
-                              headers={"x-api-token": token}, timeout=60)
+                              headers={"x-api-token": token, "ngrok-skip-browser-warning": "69420"}, timeout=60)
             if r.status_code == 503:
                 raise SystemExit("Server menolak (503): API_ACCESS_TOKEN belum diset di server/.env. Set lalu restart server.")
             if r.status_code == 429:
