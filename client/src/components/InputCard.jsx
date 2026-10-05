@@ -100,6 +100,8 @@ export default function InputCard({
 
   const detectedNoun = getDetectedProductNoun(formData.productTitle);
   const oemUrls = Array.isArray(formData.oemUrls) ? formData.oemUrls : [''];
+  const suppliedSourceCount = [formData.youtubeUrl, ...oemUrls]
+    .flatMap((value) => String(value || '').split(/[\s,;]+/).filter(Boolean)).length;
 
   const updateOemUrl = (index, value) => {
     const next = [...oemUrls];
@@ -254,10 +256,10 @@ export default function InputCard({
           <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
             <span className="flex items-center gap-1.5">
               <Link2 className="w-4 h-4 text-cyan-400" />
-              URL OEM / Video Tambahan
+              URL Video Tambahan
               <span className="text-[10px] font-normal normal-case text-slate-500">(opsional)</span>
             </span>
-            <span className="text-[11px] font-normal text-cyan-300">Video langsung digabung (tanpa filter AI)</span>
+            <span className="text-[11px] font-normal text-cyan-300">Semua sumber diaudit; klip disusun zigzag</span>
           </label>
           <div className="space-y-2">
             {oemUrls.map((url, index) => (
@@ -267,7 +269,7 @@ export default function InputCard({
                 </span>
                 <input
                   type="url"
-                  placeholder={`https://www.youtube.com/watch?v=... (OEM ${index + 1})`}
+                  placeholder={`https://www.youtube.com/watch?v=... (Video tambahan ${index + 1})`}
                   value={url}
                   onChange={(e) => updateOemUrl(index, e.target.value)}
                   className="flex-1 bg-slate-900/90 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500 transition-all font-mono"
@@ -290,7 +292,7 @@ export default function InputCard({
             ))}
           </div>
           <p className="mt-1.5 text-xs text-slate-500">
-            Tambahkan sampai 2 URL OEM jika video utama kurang panjang. Video dari link OEM akan digabungkan secara langsung.
+            URL terisi: {suppliedSourceCount}. Isi minimal 2 URL berbeda untuk variasi zigzag. Setiap sumber tetap melewati audit visual Oracle; sumber yang tidak lolos tidak dipakai.
           </p>
         </div>
 

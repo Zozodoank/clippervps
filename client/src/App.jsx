@@ -247,6 +247,8 @@ export default function App() {
           productTitle: currentForm.productTitle,
           productDescription: currentForm.productDescription,
           oemUrls: (Array.isArray(currentForm.oemUrls) ? currentForm.oemUrls : []).map((url) => String(url || '').trim()).filter(Boolean),
+          youtubeUrls: [currentForm.youtubeUrl, ...(Array.isArray(currentForm.oemUrls) ? currentForm.oemUrls : [])]
+            .flatMap((value) => String(value || '').split(/[\s,;]+/).map((url) => url.trim()).filter(Boolean)),
           aiProvider: settings.aiProvider || engineStatus?.activeAiEngine || 'gemini',
           niche: currentForm.niche || 'kitchen_tools',
           options: {
@@ -273,6 +275,11 @@ export default function App() {
       // !accepted, itu error sinkron (validasi/kuota): job TIDAK memulai di background.
       if (!response.ok || !data.accepted) {
         throw new Error(data.error || 'Gagal memulai Tahap 1.');
+      }
+      if (Number.isFinite(Number(data.sourceCount))) {
+        toast.success(data.sourceCount >= 2
+          ? `${data.sourceCount} sumber YouTube diterima; alur zigzag aktif.`
+          : '1 sumber YouTube diterima. Isi URL video tambahan untuk hasil zigzag dua sumber.');
       }
 
       // Diterima: pipeline jalan di latar belakang. JANGAN set result, JANGAN tutup SSE,

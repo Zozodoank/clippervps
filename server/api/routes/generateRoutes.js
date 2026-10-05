@@ -140,6 +140,7 @@ router.post('/generate', async (req, res) => {
     oemUrl1,
     oemUrl2,
     oemUrls,
+    youtubeUrls,
   } = req.body;
 
   if (aiProvider) {
@@ -159,26 +160,39 @@ router.post('/generate', async (req, res) => {
 
   // OEM manual URLs are optional. They can be used when automatic discovery
   // does not provide enough visual variety. At least one source is required.
-  const manualOemUrls = Array.from(new Set([
-    ...(Array.isArray(oemUrls) ? oemUrls : []),
-    oemUrl1,
-    oemUrl2,
-    ...(Array.isArray(options.oemUrls) ? options.oemUrls : []),
-    options.oemUrl1,
-    options.oemUrl2,
-  ].map(v => String(v || '').trim()).filter(Boolean)));
+  const splitSourceInputs = (values) => values.flatMap((value) =>
+    String(value || '').split(/[\s,;]+/).map((part) => part.trim()).filter(Boolean)
+  );
+  const requestedPrimary = splitSourceInputs([youtubeUrl])[0] || splitSourceInputs(Array.isArray(youtubeUrls) ? youtubeUrls : [youtubeUrls])[0] || '';
+  const sourceCandidates = [
+    requestedPrimary,
+    ...splitSourceInputs(Array.isArray(youtubeUrls) ? youtubeUrls : [youtubeUrls]),
+    ...splitSourceInputs(Array.isArray(oemUrls) ? oemUrls : [oemUrls]),
+    ...splitSourceInputs([oemUrl1, oemUrl2]),
+    ...splitSourceInputs(Array.isArray(options.oemUrls) ? options.oemUrls : [options.oemUrls]),
+    ...splitSourceInputs([options.oemUrl1, options.oemUrl2]),
+  ].filter(Boolean);
+  const seenManualSourceIds = new Set();
+  const allManualSources = sourceCandidates.filter((url) => {
+    const sourceId = extractVideoId(url) || url;
+    if (seenManualSourceIds.has(sourceId)) return false;
+    seenManualSourceIds.add(sourceId);
+    return true;
+  });
+  const primaryYoutubeUrl = requestedPrimary || allManualSources[0] || '';
+  const manualOemUrls = allManualSources.filter((url) => url !== primaryYoutubeUrl);
+  const manualSourceCount = allManualSources.length;
 
   options.oemUrls = manualOemUrls;
+  options.sourceUrls = allManualSources;
+  console.log(`[Job ${clientJobId || 'generate'}] Sumber YouTube manual diterima: ${manualSourceCount} URL unik.`);
 
-  if (!youtubeUrl && manualOemUrls.length === 0) {
+  if (!primaryYoutubeUrl && manualOemUrls.length === 0) {
     return res.status(400).json({ error: 'YouTube Video URL atau minimal satu URL OEM manual diperlukan.' });
   }
-  if (youtubeUrl && (!isValidHttpUrl(youtubeUrl) || !extractVideoId(youtubeUrl))) {
-    return res.status(400).json({ error: 'URL YouTube tidak valid. Gunakan URL youtube.com atau youtu.be yang berisi video ID.' });
-  }
-  for (const oemUrl of manualOemUrls) {
-    if (!isValidHttpUrl(oemUrl) || !extractVideoId(oemUrl)) {
-      return res.status(400).json({ error: `OEM URL tidak valid: ${oemUrl}. Gunakan URL YouTube/youtu.be yang berisi video ID.` });
+  for (const sourceUrl of allManualSources) {
+    if (!isValidHttpUrl(sourceUrl) || !extractVideoId(sourceUrl)) {
+      return res.status(400).json({ error: `URL YouTube tidak valid: ${sourceUrl}. Gunakan URL youtube.com atau youtu.be yang berisi video ID.` });
     }
   }
   if (shopeeLink && !isValidHttpUrl(shopeeLink)) {
@@ -242,7 +256,7 @@ router.post('/generate', async (req, res) => {
     // 'completed'/'awaiting_voiceover'/'error' dan mencatat jejak gagal ke riwayat job.
     runStage1Pipeline({
       jobId,
-      youtubeUrl,
+      youtubeUrl: primaryYoutubeUrl,
       shopeeLink,
       productTitle,
       productDescription,
@@ -259,6 +273,7 @@ router.post('/generate', async (req, res) => {
       accepted: true,
       jobId,
       status: 'started',
+      sourceCount: manualSourceCount,
       message: 'Tahap 1 diterima & berjalan di latar belakang. Pantau progres via SSE.',
     });
   } catch (error) {

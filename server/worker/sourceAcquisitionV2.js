@@ -184,6 +184,12 @@ export async function runSourceAcquisitionV2(p) {
   } = p;
 
   const diagnostics = { screened: 0, gated: 0, verdictEligible: 0, transcribed: 0, oracleVetoed: 0 };
+  const sourceKeys = new Set((candidatePool || []).map((cand) => {
+    const url = String(cand?.url || (typeof cand === 'string' ? cand : '')).trim();
+    return url ? (extractVideoId(url) || url) : '';
+  }).filter(Boolean));
+  const requiredSourceCount = Math.min(Math.max(1, Number(requireSources) || 1), sourceKeys.size);
+  diagnostics.requiredSources = requiredSourceCount;
   // Kecurigaan AI Local Gatekeeper per kandidat; dirangkum ke prompt Oracle (Qwen) supaya
   // aturan lokal diperiksa model besar alih-alih memutuskan sendiri.
   const localSuspicionNotes = [];
@@ -338,7 +344,10 @@ export async function runSourceAcquisitionV2(p) {
   });
   diagnostics.verdictEligible = verdicts.filter((v) => v.eligible).length;
   const accepted = pickEligibleSources(verdicts, gatedCandidates, requireSources);
-  if (!accepted.length) {
+  diagnostics.acceptedSources = accepted.length;
+  if (accepted.length < requiredSourceCount) {
+    diagnostics.sourceShortfall = requiredSourceCount - accepted.length;
+    console.warn(`[Job ${jobId}] [V2] Hanya ${accepted.length}/${requiredSourceCount} sumber lolos semua gerbang; tidak membuat storyboard satu sumber diam-diam.`);
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
 

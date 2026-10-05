@@ -303,6 +303,9 @@ async function _runStage1Pipeline({
     productDescription: productDescription || '',
     productImage: effectiveProductImage || '',
     youtubeUrl: youtubeUrl || '',
+    sourceUrls: Array.isArray(options.sourceUrls) && options.sourceUrls.length
+      ? [...options.sourceUrls]
+      : [youtubeUrl, ...(Array.isArray(options.oemUrls) ? options.oemUrls : [])].filter(Boolean),
     shopeeLink: shopeeLink || '',
     // INPUT MANUAL PENTING: persist agar retry/re-generate memakai data yang sama.
     // Tanpa ini, retry job kehilangan niche (jatuh ke preset kitchen) & OEM urls (berujung pencarian video lain).
