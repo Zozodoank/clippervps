@@ -2228,7 +2228,9 @@ const PREFLIGHT_FORMAT_SELECTOR = 'bv*[ext=mp4][protocol=https][height<=360]/bv*
  * @returns {Promise<{streamUrl: string, startSec: number, durationSec: number}>}
  */
 async function resolvePreflightStream(url, { ytDlpPath, execAsync }) {
-  const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" --js-runtimes node --print "%(url)s|%(duration)s" -f "${PREFLIGHT_FORMAT_SELECTOR}" "${url}"`);
+  const baseArgs = getYtDlpBaseArgs();
+  const argsStr = baseArgs.map(a => `"${a.replace(/"/g, '\\"')}"`).join(' ');
+  const { stdout: streamInfoRaw } = await execAsync(`"${ytDlpPath}" ${argsStr} --print "%(url)s|%(duration)s" -f "${PREFLIGHT_FORMAT_SELECTOR}" "${url}"`);
   const lines = String(streamInfoRaw || '').trim().split('\n').filter(Boolean);
   // Ambil baris TERAKHIR: yt-dlp kadang menulis peringatan ke stdout sebelum baris data.
   const lastLine = lines[lines.length - 1];
