@@ -623,8 +623,7 @@ def ask(model, processor, torch, image_paths, prompt):
                        return_tensors="pt").to(model.device)
     with torch.inference_mode():
         gen = model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS,
-                             do_sample=False, temperature=None, top_p=None,
-                             repetition_penalty=1.05)
+                             do_sample=False, temperature=None, top_p=None)
     trimmed = gen[:, inputs["input_ids"].shape[1]:]
     raw = processor.batch_decode(trimmed, skip_special_tokens=True,
                                  clean_up_tokenization_spaces=False)[0].strip()
