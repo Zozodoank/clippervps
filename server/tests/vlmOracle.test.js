@@ -402,8 +402,10 @@ describe('sanitizePoolWithOracle / applyOracleVeto', () => {
     });
     const batch = await serveBatch('kotor', (b) => {
       for (const f of b.frames) expect(fs.existsSync(f.filePath)).toBe(true);
-      // Dalam batch, index selalu 0..n-1 (dinomisasi ulang oleh service). Frame ke-2
-      // divonis kotor; frame pertama bersih.
+      // Dalam batch, index selalu 0..n-1 (dinomisasi ulang oleh service). Fix 2026-10-05:
+      // sebelum ini sanitizePool/auditClips mengirim index ABSOLUT (start+i) sehingga vonis
+      // kotor batch ke-2 dst jatuh di luar jangkauan array `paths` dan fallback
+      // mem-blacklist satu batch penuh. Frame ke-2 divonis kotor; frame pertama bersih.
       return { model: 'Qwen2.5-VL-7B', reason: 'subtitle terbakar di satu frame', perFrame: b.frames.map((f) => ({ index: f.index, safe: f.index !== 1 })) };
     });
     const res = await run;
@@ -420,6 +422,60 @@ describe('sanitizePoolWithOracle / applyOracleVeto', () => {
     expect(res.frames).toHaveLength(4);
     expect(res.frames.map((f) => f.filePath)).not.toContain(frameFiles[2].filePath);
     expect(res.blacklisted).not.toContain(MISSING);
+  }, 25000);
+
+  // REGRESI fix 2026-10-05 (index batch-relatif). Sebelum fix, tes di atas LULUS hanya
+  // karena fixtures satu batch (absolut == relatif). Di sini frame kotor berada di
+  // batch KEDUA — dengan index absolut, paths[2+1] tidak ada -> fallback mem-blacklist
+  // seluruh batch. Setelah fix, hanya frame yang benar-benar divonis Qwen yang dibuang.
+  it('multi-batch: frame kotor di batch ke-2 hanya mem-blacklist SATU frame itu', async () => {
+    const frames = makeFrames(5);
+    const env = { ...ENV_ON, VLM_ORACLE_MAX_FRAMES: '5', VLM_ORACLE_BATCH_SIZE: '2' };
+    const run = sanitizePoolWithOracle(frames, { jobId: 'multibatch', env, logger: silent });
+    // Layani ketiga batch ([0,1],[2,3],[4]): batch yang memuat frames[3] memvonis kotor
+    // posisi 1 dalam batch itu (index ECHO dari field frame — harus sudah batch-relatif).
+    const served = [];
+    for (let guard = 0; guard < 160 && served.length < 3; guard++) {
+      const batch = claimOracleBatch({ workerId: 'nb-multibatch' });
+      if (!batch) { await new Promise((r) => setTimeout(r, 25)); continue; }
+      if (batch.jobId !== 'multibatch') { expireOracleBatch(batch.id, 'bukan batch tes'); continue; }
+      for (const f of batch.frames) {
+        expect(f.index, 'index dalam batch harus 0..n-1 (batch-relatif)').toBeLessThan(batch.frames.length);
+      }
+      const target = batch.frames.some((f) => f.filePath === frames[3].filePath);
+      const verdict = { model: 'Qwen2.5-VL-7B', reason: target ? 'watermark di satu frame' : 'bersih', perFrame: batch.frames.map((f) => ({ index: f.index, safe: !(target && f.index === 1) })) };
+      submitOracleResult({ batchId: batch.id, verdict, attempt: batch.attempts, workerId: batch.workerId });
+      served.push(batch);
+    }
+    expect(served, 'ketiga batch harus sempat dilayani').toHaveLength(3);
+    const res = await run;
+    expect(res.checked).toBe(5);
+    expect(res.rejected).toBe(1);
+    expect(res.blacklisted).toEqual([frames[3].filePath]);
+  }, 25000);
+
+  it('audit klip multi-batch: satu frame kotor di batch kedua = dirtyFrames satu frame (bukan seluruh klip)', async () => {
+    const frames = makeFrames(5);
+    const env = { ...ENV_ON, VLM_ORACLE_BATCH_SIZE: '2', VLM_ORACLE_AUDIT_MAX_FRAMES: '5' };
+    const clips = [{ duration: 5, startSeconds: 0 }];
+    const run = auditClipsWithOracle(clips, [frames], { jobId: 'auditmb', env, logger: silent });
+    const served = [];
+    for (let guard = 0; guard < 160 && served.length < 2; guard++) {
+      const batch = claimOracleBatch({ workerId: 'nb-auditmb' });
+      if (!batch) { await new Promise((r) => setTimeout(r, 25)); continue; }
+      if (batch.jobId !== 'auditmb') { expireOracleBatch(batch.id, 'bukan batch tes'); continue; }
+      const target = batch.frames.some((f) => f.filePath === frames[3].filePath);
+      const verdict = { model: 'Qwen2.5-VL-7B', reason: target ? 'teks terbakar' : 'bersih', perFrame: batch.frames.map((f) => ({ index: f.index, safe: !(target && f.index === 1) })) };
+      submitOracleResult({ batchId: batch.id, verdict, attempt: batch.attempts, workerId: batch.workerId });
+      served.push(batch);
+    }
+    expect(served.length, 'batch kotor harus sempat dilayani').toBeGreaterThanOrEqual(2);
+    const out = await run;
+    const v = out.verdicts.get(0);
+    expect(v && v.dirty).toBe(true);
+    // Sebelum fix: frame kotor tidak terpetakan -> seluruh paths batch ikut tercatat dirty.
+    expect(v.dirtyFrames).toEqual([frames[3].filePath]);
+    expect(out.rejectedClips).toBe(1);
   }, 25000);
 
   it('vonis agregat tanpa per-frame -> seluruh batch diveto (konservatif); onProgress yang melempar aman', async () => {

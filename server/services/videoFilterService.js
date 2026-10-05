@@ -1234,7 +1234,12 @@ export function mergeLocalSuspicion(values = [], maxLen = 280) {
  */
 export async function inspectFramesLocally(frames, { aspectRatio = '9:16', allowPartialClean = false, onProgress = () => {}, niche = 'kitchen_tools', facePolicy = null } = {}) {
   if (!Array.isArray(frames) || frames.length < 5) {
-    return { eligible: false, cleanFrames: [], cameraResultEligibleFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.' };
+    // SENTINEL gatekeeperBackend='unavailable' (fix 2026-10-05): frame kurang biasanya berarti
+    // EKSTRAKSI FFmpeg gagal (masalah infrastruktur), BUKAN vonis konten. Tanpa sentinel ini,
+    // fastProbeLocal lanjut dengan 0-4 frame dan inspeksi "lolos" diam-diam — rangkaian
+    // gejala "frame tidak pernah benar-benar sampai ke Oracle". Pemanggil lain hanya membaca
+    // eligible/reason/cleanFrames, jadi penambahan field ini aman.
+    return { eligible: false, cleanFrames: [], cameraResultEligibleFrames: [], discardedFrames: [], reason: 'Jumlah frame visual tidak mencukupi untuk dianalisa.', gatekeeperBackend: 'unavailable', isInfra: true };
   }
 
   // Policy diturunkan dari preset niche (data-driven) kecuali caller eksplisit mengirim nilai lain
@@ -2433,6 +2438,7 @@ export async function fastProbeLocal(videoFilePath, jobId, {
     const outPath = path.join(tmpDir, `frame_${i}.jpg`);
     
     const args = [
+      '-nostdin', // jangan pernah membaca stdin — risiko hang di Termux (pola runResize)
       '-ss', ts.toString(),
       '-i', videoFilePath,
       '-vframes', '1',
@@ -2442,13 +2448,19 @@ export async function fastProbeLocal(videoFilePath, jobId, {
       outPath
     ];
 
+    // FIX 2026-10-05: dulu exit-code DIBUANG (proc.on('close', resolve)) dan frame diterima
+    // hanya dengan fs.existsSync. Dengan -y, FFmpeg membuat/memotong file output SEBELUM
+    // encoder gagal ("code 234 / Could not open encoder before EOF") -> file 0-byte diterima
+    // sebagai frame "valid" lalu base64 kosong dikirim ke Gatekeeper/Oracle. Qwen menerima
+    // gambar rusak — itulah mekanisme di balik "frame tidak pernah benar-benar ke Kaggle".
+    let exitCode = -1;
     await new Promise((resolve) => {
       const proc = spawn(ffmpegPath, args);
-      proc.on('close', resolve);
+      proc.on('close', (code) => { exitCode = code; resolve(); });
       proc.on('error', resolve);
     });
 
-    if (fs.existsSync(outPath)) {
+    if (exitCode === 0 && fs.existsSync(outPath) && fs.statSync(outPath).size > 1024) {
       frames.push({
         candidateUrl: sourceId || 'local_probe',
         sourceId: sourceId || 'local_probe',
@@ -2456,11 +2468,18 @@ export async function fastProbeLocal(videoFilePath, jobId, {
         timestamp: ts,
         timestampSec: ts
       });
+    } else if (fs.existsSync(outPath)) {
+      // Sampah 0-byte/kecil dari FFmpeg yang gagal — bersihkan agar tidak ikut terbaca.
+      try { fs.unlinkSync(outPath); } catch {}
     }
   }
 
+  if (frames.length < timestamps.length) {
+    console.warn(`[fastProbeLocal] ⚠️ Hanya ${frames.length}/${timestamps.length} frame terekstrak dari preview (ekstraksi FFmpeg ada yang gagal).`);
+  }
+
   // Lakukan inspeksi lokal dengan Gatekeeper (memerlukan min 5 frame)
-  onProgress({ step: 'frame_probe', message: 'Mengirim 5 frame ke Gatekeeper...', progress: 28 });
+  onProgress({ step: 'frame_probe', message: `Mengirim ${frames.length} frame ke Gatekeeper...`, progress: 28 });
   const inspection = await inspectFramesLocally(frames, { niche, facePolicy, onProgress });
   
   // P1-5 + fix 2026-10-04: deteksi kegagalan gerbang lokal lewat SENTINEL gatekeeperBackend,

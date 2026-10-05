@@ -71,7 +71,7 @@ import {
   clearUsedKeywords
 } from '../services/discoveryService.js';
 import { getAllNiches, getNichePreset } from '../config/nichePresets.js';
-import { applyConfigSnapshot } from '../config/runtimeFlags.js';
+import { applyConfigSnapshot, describeConfigSnapshot } from '../config/runtimeFlags.js';
 import {
   buildProductFingerprint,
   buildCreativeShotPlan,
@@ -189,12 +189,15 @@ export async function runAutoRetryWorker(jobId, run) {
           persistJob(jobId, job);
 
           if (job.configSnapshot) {
-            console.log(`[AutoRetry ${jobId}] ♻️ Memulihkan configSnapshot dari job sebelumnya...`);
+            // Format log disamakan dengan retry manual (jobsRoutes) supaya forensik "job ini
+            // jalan dalam config apa" identik di kedua jalur.
+            console.log(`[AutoRetry ${jobId}] ♻️ Memulihkan configSnapshot beku (dibuat ${job.configSnapshot._frozenAt || '?'}): ${describeConfigSnapshot(job.configSnapshot)}`);
             applyConfigSnapshot(job.configSnapshot);
           }
 
           const effectiveAiProvider = job.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter');
-          await runStage1Pipeline({            jobId,
+          await runStage1Pipeline({
+            jobId,
             youtubeUrl: candidate.url,
             shopeeLink: job.shopeeLink,
             productTitle: targetTitle,

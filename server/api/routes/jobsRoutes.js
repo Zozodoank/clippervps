@@ -112,7 +112,7 @@ import { loadedEnvFiles, cleanEnvValue, isPlaceholderEnvValue, reloadEnvironment
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../../services/quotaService.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../../services/antiDupService.js';
 import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from '../../utils/jobHelpers.js';
-import { configSnapshotToEnvPatch, describeConfigSnapshot } from '../../config/runtimeFlags.js';
+import { applyConfigSnapshot, describeConfigSnapshot } from '../../config/runtimeFlags.js';
 import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover } from '../../worker/pipelineWorker.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -245,8 +245,7 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
       // sehingga retry mereproduksi perilaku awal walau operator sudah mengubah flag. Snapshot
       // job tidak pernah diubah di sini — hanya dibaca & ditulis ulang ke process.env.
       if (job.configSnapshot) {
-        const envPatch = configSnapshotToEnvPatch(job.configSnapshot);
-        for (const [k, v] of Object.entries(envPatch)) process.env[k] = v;
+        applyConfigSnapshot(job.configSnapshot);
         console.log(`[Retry ${jobId}] 🧊 Memakai configSnapshot beku (dibuat ${job.configSnapshot._frozenAt || '?'}): ${describeConfigSnapshot(job.configSnapshot)}`);
       } else {
         console.warn(`[Retry ${jobId}] ⚠️ Job lama tanpa configSnapshot — retry memakai process.env saat ini (hasil mungkin tidak identik dengan render awal).`);

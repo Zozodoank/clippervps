@@ -504,7 +504,12 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
       enqueueOracleBatch({
         id, jobId,
         sceneIdx: Math.floor(start / cfg.batchSize),
-        frames: batchFrames.map((f, i) => ({ index: start + i, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
+        // Index HARUS batch-relatif (0..n-1), sama seperti jalur preflight: notebook
+        // meng-echo index ini di perFrame dan konsumen di bawah mengindeks array `paths`
+        // milik batch ini. Dulu dikirim index absolut (start + i) -> untuk batch ke-2 dst
+        // semua vonis kotor jatuh di luar jangkauan -> fallback mem-blacklist SATU BATCH
+        // penuh padahal Qwen hanya menandai satu frame.
+        frames: batchFrames.map((f, i) => ({ index: i, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
         niche, facePolicy, prompt,
       });
       const waited = await waitForOracleVerdict(id, {
@@ -689,7 +694,8 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
         enqueueOracleBatch({
           id, jobId,
           sceneIdx: 10000 + i * 100 + Math.floor(start / cfg.batchSize),
-          frames: batchFrames.map((f, idx) => ({ index: start + idx, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
+          // Batch-relatif — lihat komentar di sanitizePoolWithOracle (regresi index absolut).
+          frames: batchFrames.map((f, idx) => ({ index: idx, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
           niche, facePolicy, prompt,
         });
         const waited = await waitForOracleVerdict(id, {

@@ -3,6 +3,8 @@ import {
   buildConfigSnapshot,
   configSnapshotToEnvPatch,
   describeConfigSnapshot,
+  applyConfigSnapshot,
+  isOraclePreflightEnabled,
   SNAPSHOT_FLAG_KEYS,
 } from '../config/runtimeFlags.js';
 
@@ -107,6 +109,85 @@ describe('configSnapshotToEnvPatch — retry dapat mereproduksi setelan', () => 
     expect(patch.RENDER_DOWNLOAD_SECTIONS).toBe('0');
     expect(patch.AUDIO_DRIVEN_SCENES).toBe('false');
     expect(patch.FINAL_AI_QC).toBe('true'); // default aktif
+  });
+});
+
+describe('applyConfigSnapshot — jalur retry auto (regresi fix 2026-10-05)', () => {
+  // Dulu applyConfigSnapshot menulis String(boolean) -> 'true'/'false' yang justru
+  // MEMBALIKKAN flag yang dibaca `=== '1'` / `!== '0'`. Tes ini memakai process.env
+  // sungguhan (bukan objek sintetis) supaya bug serialisasi tidak bisa sembunyi lagi.
+  const TOUCHED_KEYS = [...SNAPSHOT_FLAG_KEYS, 'niche', 'sourcePolicy', '_frozenAt'];
+  const withSavedEnv = (fn) => {
+    const saved = {};
+    for (const k of TOUCHED_KEYS) saved[k] = Object.prototype.hasOwnProperty.call(process.env, k) ? process.env[k] : undefined;
+    try { return fn(); } finally {
+      for (const k of TOUCHED_KEYS) {
+        if (saved[k] === undefined) delete process.env[k];
+        else process.env[k] = saved[k];
+      }
+    }
+  };
+
+  it('boolean beku ditulis sebagai nilai kanonik konsumen (true -> "1", false -> "0")', () => {
+    withSavedEnv(() => {
+      const snap = buildConfigSnapshot({
+        RENDER_DOWNLOAD_SECTIONS: '1',
+        RENDER_NO_FULL_DOWNLOAD: '1',
+        RENDER_VIDEO_ONLY: '0',
+        PREFLIGHT_ORACLE: '0',
+      }, { niche: 'gadget_smartphone' });
+      // env saat ini "bergeser" — retry wajib mengembalikannya ke nilai beku.
+      process.env.RENDER_DOWNLOAD_SECTIONS = '0';
+      process.env.RENDER_VIDEO_ONLY = '1';
+      process.env.PREFLIGHT_ORACLE = '1';
+      applyConfigSnapshot(snap);
+      expect(process.env.RENDER_DOWNLOAD_SECTIONS).toBe('1');   // BUKAN 'true'
+      expect(process.env.RENDER_NO_FULL_DOWNLOAD).toBe('1');
+      expect(process.env.RENDER_VIDEO_ONLY).toBe('0');           // 'false' akan berarti ON
+      expect(isOraclePreflightEnabled(process.env)).toBe(false); // PREFLIGHT_ORACLE beku mati
+    });
+  });
+
+  it('key non-flag (niche/sourcePolicy/_frozenAt) TIDAK bocor ke process.env', () => {
+    withSavedEnv(() => {
+      const snap = buildConfigSnapshot({}, { niche: 'gadget_smartphone', sourcePolicy: 'explicit_only' });
+      applyConfigSnapshot(snap);
+      expect(process.env.niche).toBeUndefined();
+      expect(process.env.sourcePolicy).toBeUndefined();
+      expect(process.env._frozenAt).toBeUndefined();
+    });
+  });
+
+  it('round-trip terhadap process.env sungguhan: snapshot setelah apply == snapshot asal', () => {
+    withSavedEnv(() => {
+      const snap = buildConfigSnapshot({
+        RENDER_DOWNLOAD_SECTIONS: '1',
+        AUDIO_DRIVEN_SCENES: 'true',
+        SAMPLE_MAX_FRAMES: '320',
+        GK_MAX_BATCH_FRAMES: '300',
+        FINAL_AI_QC: 'false',
+        VLM_ORACLE_BATCH_SIZE: '8',
+      });
+      // Kosongkan dulu seperti mesin yang .env-nya sudah berubah total.
+      for (const k of SNAPSHOT_FLAG_KEYS) delete process.env[k];
+      applyConfigSnapshot(snap);
+      const resnap = buildConfigSnapshot(process.env);
+      for (const k of SNAPSHOT_FLAG_KEYS) {
+        expect(resnap[k], `flag ${k} harus identik setelah apply`).toEqual(snap[k]);
+      }
+      // AUDIO_DRIVEN_SCENES true -> 'true' (normalizer membaca lowercase 'true').
+      expect(process.env.AUDIO_DRIVEN_SCENES).toBe('true');
+    });
+  });
+
+  it('snapshot tidak valid -> tidak menulis apa pun (tidak melempar)', () => {
+    withSavedEnv(() => {
+      const before = process.env.RENDER_DOWNLOAD_SECTIONS;
+      applyConfigSnapshot(null);
+      applyConfigSnapshot(undefined);
+      applyConfigSnapshot('bukan-objek');
+      expect(process.env.RENDER_DOWNLOAD_SECTIONS).toBe(before);
+    });
   });
 });
 

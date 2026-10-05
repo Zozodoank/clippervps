@@ -4,7 +4,7 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
 export { getYtDlpPath, getFFmpegPath };
-import { getVideoDimensions } from './videoRenderer.js';
+import { getVideoDimensions, getMediaDurationSec } from './videoRenderer.js';
 import { trackBandwidth } from './bandwidthTracker.js';
 import { recordStageEvent } from './observabilityService.js';
 import { isAudioDrivenEnabled } from './audioBeatService.js';
@@ -963,6 +963,25 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
               lastDownloadError = `Resolusi video (${dims.width}x${dims.height}) di bawah standar 480p. Wajib minimal 480p/720p/1080p ke atas.`;
               continue;
             }
+          }
+        }
+        // VALIDASI DURASI FILE SECTION (--download-sections): yt-dlp + --force-keyframes-at-cuts
+        // pernah menghasilkan file jauh lebih pendek dari rentang yang diminta (Termux
+        // 2026-10-05: section 22s jadi ~2s, lolos cek ukuran 0.45 MB). Tanpa validasi ini,
+        // tahap audit klip mencari timestamp di luar akhir file -> rentetan FFmpeg
+        // "code 234 / Could not open encoder before EOF" dan vonis Oracle atas klip cacat.
+        // Probe gagal (null) TIDAK menolak file — hindari false-fail saat build ffmpeg/ffprobe
+        // Termux berbeda.
+        if (section && Number.isFinite(section.startSec) && Number.isFinite(section.endSec)) {
+          const expectedSec = section.endSec - section.startSec;
+          const fileDur = await getMediaDurationSec(downloadedFile, ffmpegPath);
+          if (fileDur && fileDur > 0 && expectedSec > 0 && fileDur < expectedSec * 0.8) {
+            console.warn(`[Downloader] ⚠️ Section terpotong: file ${fileDur.toFixed(1)}s < rencana ${expectedSec.toFixed(1)}s (${path.basename(downloadedFile)}).`);
+            try { fs.unlinkSync(downloadedFile); } catch {}
+            lastDownloadError = `Section download terpotong (${fileDur.toFixed(1)}s dari ${expectedSec.toFixed(1)}s yang diminta)`;
+            continue;
+          } else if (!fileDur) {
+            console.warn(`[Downloader] ⚠️ Durasi file section tidak terprobe — lanjut tanpa validasi durasi (${path.basename(downloadedFile)}).`);
           }
         }
         const videoSize = fs.statSync(downloadedFile).size;

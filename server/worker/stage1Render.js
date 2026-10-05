@@ -67,6 +67,7 @@ import { downloadQuickPreview } from '../services/quickPreviewService.js';
 // BLUEPRINT ALUR BARU (ACQUISITION_FLOW=v2) — orkestrasi L2->L5 & penyusun zigzag.
 import { runSourceAcquisitionV2, buildLegacyStructuresFromV2 } from './sourceAcquisitionV2.js';
 import { interleaveBySource } from '../utils/clipOrdering.js';
+import { buildAuditSampleTimestamps } from '../utils/clipAuditSampling.js';
 // AUDIO-DRIVEN SCENE PLANNING (Fase 1 & 2) - percobaan, di-guard flag AUDIO_DRIVEN_SCENES.
 import { analyzeSourceAudioForBeats, isAudioDrivenEnabled, resolveAudioWindow } from '../services/audioBeatService.js';
 import { paraphraseBeats, beatsToScript } from '../services/antiPlagiarismService.js';
@@ -158,7 +159,7 @@ function extractSingleFrameAsync(videoPath, timestampSec, outputPath, timeoutMs 
   return new Promise((resolve) => {
     const ffmpegPath = getFFmpegPath();
     const proc = spawn(ffmpegPath, [
-      '-y', '-ss', String(timestampSec), '-i', videoPath,
+      '-nostdin', '-y', '-ss', String(timestampSec), '-i', videoPath,
       '-vframes', '1', '-q:v', '2', outputPath,
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
     
@@ -777,7 +778,10 @@ async function _runStage1Pipeline({
           console.log(`[Job ${jobId}] 🛰️ [Advisory] ${suspected.length} frame dituduh filter lokal ikut dikirim ke Oracle — Qwen yang memvonis.`);
         }
       }
-      console.log(`[Job ${jobId}] ✅ [Fast Probe Selesai] 5 frame lokal dinilai (vonis akhir oleh Oracle).`);
+      // FIX 2026-10-05: jumlah frame NYATA, bukan hardcoded '5' — dan log ini dicetak SEBELUM
+      // Oracle dipanggil (pass pool/audit klip masih jauh di hilir), jadi jangan klaim
+      // "vonis akhir" di titik yang belum melakukan panggilan Kaggle sama sekali.
+      console.log(`[Job ${jobId}] ✅ [Fast Probe Selesai] ${(probe.frames || []).length} frame lokal dikumpulkan (vonis akhir oleh Oracle terjadi di pass pool/audit klip).`);
 
       // ── TAHAP 5: CONTEXT PREVIEW (15s) — WINDOW DEFAULT (TANPA WHISPER) ──
       // Whisper dihapus: window terbaik ditentukan dari tengah video (hemat kuota/CPU).
@@ -2434,9 +2438,9 @@ async function _runStage1Pipeline({
       persistJob(jobId, updatedMeta);
     }
 
-    // ── AUDIT WAJAH MULTI-TITIK PASCA-DOWNLOAD (ANTI-WAJAH 1 DETIK) ──
-    // Mengekstrak 2 frame per klip (t+0.8s dan t+2.2s) dari video 1080p yang sudah diunduh
-    // untuk memverifikasi kualitas klip (bebas teks overlay/animasi promosi, wajah manusia, dan bumper grafis).
+    // ── AUDIT MULTI-TITIK PASCA-DOWNLOAD (2,5 FPS PER KLIP, ANTI-TEKS & ANTI-WAJAH) ──
+    // Mengekstrak frame tiap 0,40s dari file section/1080p yang baru diunduh untuk gerbang
+    // motion lokal (foto statis/Ken Burns), lalu vonis akhir teks/wajah oleh Oracle Kaggle.
     if (Array.isArray(highlight.clips) && highlight.clips.length > 0) {
       updateProgress({
         step: 'clip_audit',
@@ -2468,19 +2472,23 @@ async function _runStage1Pipeline({
         }
 
         const dur = Math.max(1.5, Number(c.duration || 3.3));
-        // High-density temporal audit (2.5 FPS across entire clip span)
-        // Eliminates temporal blind spots where watermarks, creator logos, or faces flash in between snapshots
-        const sampleStepSec = 0.40; // Every 400ms (2.5 fps)
-        const sampleOffsets = [];
-        for (let offset = 0.20; offset <= Math.max(0.20, dur - 0.20); offset += sampleStepSec) {
-          sampleOffsets.push(Math.round(offset * 100) / 100);
+        // Probe durasi NYATA file SEKALI per klip (ffprobe murah vs rentetan spawn ffmpeg
+        // yang pasti gagal kalau file terpotong). File --download-sections pernah jadi ~2s
+        // untuk rencana 22s (gejala Termux 2026-10-05: "code 234 / Could not open encoder
+        // before EOF" di tiap timestamp sesudahnya). Terpotong = MASALAH INFRASTRUKTUR
+        // (isInfraError, bukan vonis konten produk) supaya retry bisa terjadi.
+        const auditFileDur = await getMediaDurationSec(clipVid) || 0;
+        if (auditFileDur > 0 && auditFileDur < dur * 0.8) {
+          throw Object.assign(new Error(`[ClipAudit] File section #${cIdx + 1} terpotong (${auditFileDur.toFixed(1)}s < rencana ${dur.toFixed(1)}s) — ekstraksi frame mustahil valid`), { isInfraError: true });
         }
-        // Always include near the end of the clip to catch closing subtitles or logos
-        const endOffset = Math.round(Math.max(0.20, dur - 0.20) * 100) / 100;
-        if (!sampleOffsets.includes(endOffset)) {
-          sampleOffsets.push(endOffset);
-        }
-        const sampleTimestamps = sampleOffsets.map(offset => Math.max(0, Math.round(((Number(c.startSeconds) + offset) - cOffset) * 100) / 100));
+        // High-density temporal audit (2,5 fps) dengan clamp ke durasi nyata file —
+        // pure & terkunci unit test (utils/clipAuditSampling.js).
+        const sampleTimestamps = buildAuditSampleTimestamps({
+          plannedDur: dur,
+          fileDur: auditFileDur,
+          startSeconds: c.startSeconds,
+          sourceOffsetSec: cOffset,
+        });
 
         const testFrames = [];
         for (let sIdx = 0; sIdx < sampleTimestamps.length; sIdx++) {

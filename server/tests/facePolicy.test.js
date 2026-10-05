@@ -171,6 +171,16 @@ describe('Face Policy (Fase 3) - videoFilterService', () => {
         if (prevHeur !== undefined) process.env.GK_ALLOW_HEURISTIC_FALLBACK = prevHeur;
       }
     });
+
+    it('frame <5 (ekstraksi FFmpeg gagal) -> sentinel unavailable + isInfra (fix 2026-10-05, bukan vonis konten)', async () => {
+      // Regresi BUG 4: dulu early-return ini TANPA gatekeeperBackend, sehingga fastProbeLocal
+      // tidak melempar isInfraError dan lanjut dengan 0-4 frame (sering file 0-byte) ke Oracle.
+      const frames = makeTempFrameFiles(2);
+      const res = await inspectFramesLocally(frames, { niche: 'kitchen_tools' });
+      expect(res.eligible).toBe(false);
+      expect(res.gatekeeperBackend).toBe('unavailable');
+      expect(res.isInfra).toBe(true);
+    });
   });
 
   describe('poolMultiCandidateFrames - includeEligible default false', () => {

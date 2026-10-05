@@ -365,12 +365,15 @@ export function describeConfigSnapshot(snapshot) {
 
 /**
  * Terapkan kembali setelan beku ke process.env saat ini (untuk sesi retry).
+ * DELEGASI ke configSnapshotToEnvPatch — SATU sumber kebenaran normalisasi. Dulu fungsi
+ * ini menulis String(v) langsung, padahal konsumen membaca `=== '1'` / `!== '0'`:
+ * boolean true -> 'true' justru MEMATIKAN RENDER_DOWNLOAD_SECTIONS (auto-retry mengunduh
+ * video penuh = boros kuota Termux), dan false -> 'false' justru MENGAKTIFKAN
+ * RENDER_VIDEO_ONLY/PREFLIGHT_ORACLE. Key non-flag (niche/sourcePolicy/_frozenAt)
+ * ikut tersaring oleh patch — tidak lagi bocor ke namespace process.env.
  */
 export function applyConfigSnapshot(snapshot) {
-  if (!snapshot || typeof snapshot !== 'object') return;
-  for (const [k, v] of Object.entries(snapshot)) {
-    if (v !== undefined) {
-      process.env[k] = String(v);
-    }
+  for (const [k, v] of Object.entries(configSnapshotToEnvPatch(snapshot))) {
+    process.env[k] = v;
   }
 }
