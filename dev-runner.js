@@ -194,8 +194,18 @@ if (gatekeeperAutoStartEnabled()) {
   console.log('🚫 AI Local Gatekeeper TIDAK dinyalakan (GATEKEEPER_AUTO_START!=1). Seluruh filter frame ditangani Qwen/Oracle Kaggle (mode advisory). Set GATEKEEPER_AUTO_START=1 untuk memakai AI lokal lagi.');
 }
 
-// Jalankan Ngrok secara otomatis
-startNgrokProcess(serverPort);
+// Tunnel dikelola terpisah oleh start-tunnel.sh/PM2 di Termux. Menyalakan ngrok
+// kedua dari dev-runner merebut domain yang sama; Oracle pun melihat tunnel lama
+// atau tidak tersambung. Jalur standalone (npm run dev) tetap auto-tunnel secara
+// default. Override eksplisit tersedia untuk operator.
+const runnerIsManaged = process.env.pm_id !== undefined || process.env.NODE_APP_INSTANCE !== undefined;
+const autoTunnel = process.env.DEV_RUNNER_AUTO_TUNNEL === '1' ||
+  (process.env.DEV_RUNNER_AUTO_TUNNEL !== '0' && !runnerIsManaged);
+if (autoTunnel) {
+  startNgrokProcess(serverPort);
+} else {
+  console.log('[dev-runner] Tunnel tidak dimulai di dalam PM2; gunakan start-tunnel.sh untuk mengelola satu tunnel.');
+}
 startServerProcess();
 
 const clientCmd = `${npmCmd} run dev -- --host 0.0.0.0 --port ${CLIENT_PORT}`;
