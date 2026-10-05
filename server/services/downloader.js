@@ -139,6 +139,13 @@ function getYtDlpArgs(clientSpoof = null) {
   // Enable Node.js JS runtime to solve YouTube n-token signature challenges without throttle
   args.push('--js-runtimes', 'node');
 
+  args.push(
+    '--add-header', 'Referer:https://www.youtube.com/',
+    '--add-header', 'Origin:https://www.youtube.com/',
+    '--add-header', 'Sec-Fetch-Mode:cors',
+    '--add-header', 'Sec-Fetch-Site:cross-site'
+  );
+
   // Standard Chrome desktop User-Agent to mimic browser / IDM
   if (clientSpoof && (clientSpoof.startsWith('android') || clientSpoof.includes('mweb'))) {
     args.push('--user-agent', 'Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro Build/UQ1A.240205.004) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36');
