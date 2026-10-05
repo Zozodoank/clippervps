@@ -394,6 +394,8 @@ export const HIGH_VARIATION_EXCLUDE_WORDS = [
   'serbet kain', 'lap piring', 'kain lap dapur'
 ];
 
+const KNIFE_PRODUCT_RE = /\b(?:pisau|knife|knives|cleaver|santoku|golok|chef\s+knife|paring\s+knife|utility\s+knife|carving\s+knife|boning\s+knife|bread\s+knife|pengasah|asahan|batu\s+asah|whetstone|sharpening\s+stone)\b/i;
+
 export function isHighVariationOrHardToMatchProduct(text = '', options = {}) {
   const normalized = normalizeText(text);
   if (!normalized) return false;
@@ -401,8 +403,7 @@ export function isHighVariationOrHardToMatchProduct(text = '', options = {}) {
   // Pisau/pengasah dilarang pada discovery otomatis karena variasi produk sulit
   // dicocokkan. Job manual sudah membawa produk dan sumber yang dipilih user,
   // jadi kategori ini boleh diproses tanpa membuka filter auto.
-  const isKnifeProduct = /\b(?:pisau|knife|knives|cleaver|santoku|golok|chef\s+knife|paring\s+knife|utility\s+knife|carving\s+knife|boning\s+knife|bread\s+knife|pengasah|asahan|batu\s+asah|whetstone|sharpening\s+stone)\b/i.test(normalized);
-  if (isKnifeProduct) {
+  if (KNIFE_PRODUCT_RE.test(normalized)) {
     if (/\b(?:sparepart|cadangan|pengganti|mata\s+pisau\s+saja)\b/i.test(normalized)) return true;
     return options.allowKnifeProducts !== true;
   }
@@ -606,6 +607,13 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
   // bypass, ganti lcd) tetap khusus gadget karena di niche lain bisa jadi nama produk.
   if (hasRepairIntent(normalized, { includeGadgetJargon: isGadget })) {
     return true;
+  }
+
+  // Pisau dan pengasah hanya boleh lolos lewat override job manual eksplisit.
+  // Terapkan sebelum cabang niche agar auto mode gadget juga tetap memblokirnya.
+  if (KNIFE_PRODUCT_RE.test(normalized)) {
+    if (/\b(?:sparepart|cadangan|pengganti|mata\s+pisau\s+saja)\b/i.test(normalized)) return true;
+    if (options.allowKnifeProducts !== true) return true;
   }
 
   // 1C. Heavy machinery / agricultural machinery (bukan alat rumah tangga praktis)
