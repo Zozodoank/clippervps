@@ -1285,9 +1285,9 @@ describe('orderCandidatesAfterPreflight (kontrak fail-open pemanggil)', () => {
 describe('jobStore - heartbeat notebook & lastStatus (fondasi gerbang koneksi)', () => {
   it('touchOracleHeartbeat idempoten dan terbaca di oracleLastSeenMs + oracleQueueStats', () => {
     const t = Date.now();
-    expect(touchOracleHeartbeat('nb-hb', t)).toMatchObject({ workerId: 'nb-hb', lastSeenAt: t });
+    expect(touchOracleHeartbeat('nb-hb', '', '', t)).toMatchObject({ workerId: 'nb-hb', lastSeenAt: t });
     expect(oracleLastSeenMs()).toBeGreaterThanOrEqual(t);
-    touchOracleHeartbeat('nb-hb', t + 5000); // worker yang sama HANYA menaikkan umur, bukan duplikat baris
+    touchOracleHeartbeat('nb-hb', '', '', t + 5000); // worker yang sama HANYA menaikkan umur, bukan duplikat baris
     expect(oracleLastSeenMs()).toBe(t + 5000);
     expect(oracleQueueStats().lastSeenAt).toBe(t + 5000);
   });
@@ -1357,7 +1357,7 @@ describe('assertOracleConnected - gerbang "Kaggle terhubung" sebelum kerja berat
   });
 
   it('mode oracle + token + heartbeat segar -> ok:true connected', () => {
-    touchOracleHeartbeat('nb-gate', Date.now());
+    touchOracleHeartbeat('nb-gate', '', '', Date.now());
     const r = assertOracleConnected({ logger: silent, env: { ...ENV_ON, API_ACCESS_TOKEN: 'token-tes' } });
     expect(r.ok).toBe(true);
     expect(r.detail).toBe('connected');
@@ -1396,7 +1396,7 @@ describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (man
   });
 
   it('heartbeat masih segar -> notebook_alive, tidak ada sesi ganda', () => {
-    touchOracleHeartbeat('nb-launch', Date.now());
+    touchOracleHeartbeat('nb-launch', '', '', Date.now());
     const calls = [];
     const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), spawnFn: mkSpawn(calls) });
     expect(r).toMatchObject({ triggered: false, reason: 'notebook_alive' });
@@ -1426,7 +1426,7 @@ describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (man
   // ─── ZOMBIE-PROOF (regresi idle-exit ~5 mnt = staleMs, 2026-10-04) ───
   it('force=true (zombie dikonfirmasi) -> TETAP launch walau heartbeat segar + args dapat --force', () => {
     __resetAutoLaunchCooldown();
-    touchOracleHeartbeat('nb-zombie', Date.now()); // heartbeat sengaja SEGAR
+    touchOracleHeartbeat('nb-zombie', '', '', Date.now()); // heartbeat sengaja SEGAR
     const calls = [];
     const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), force: true, spawnFn: mkSpawn(calls) });
     expect(r).toMatchObject({ triggered: true, reason: 'launched', cmd: '/tmp/fake-launch.sh', forced: true });
@@ -1437,7 +1437,7 @@ describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (man
 
   it('force=false + heartbeat segar -> notebook_alive (guard lama UTUH, tak berubah)', () => {
     __resetAutoLaunchCooldown();
-    touchOracleHeartbeat('nb-segar', Date.now());
+    touchOracleHeartbeat('nb-segar', '', '', Date.now());
     const calls = [];
     const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), spawnFn: mkSpawn(calls) });
     expect(r).toMatchObject({ triggered: false, reason: 'notebook_alive' });
