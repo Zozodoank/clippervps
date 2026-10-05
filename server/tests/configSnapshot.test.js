@@ -110,6 +110,46 @@ describe('configSnapshotToEnvPatch — retry dapat mereproduksi setelan', () => 
     expect(patch.AUDIO_DRIVEN_SCENES).toBe('false');
     expect(patch.FINAL_AI_QC).toBe('true'); // default aktif
   });
+
+  it('regresi review 2026-10-05: SETIAP flag beku masuk env patch (safety-net per tipe)', () => {
+    // Dulu 5 flag (EVIDENCE_MIN_FRAMES_PER_SOURCE, RENDER_SAMPLE_INTERVAL_SEC,
+    // ORACLE_AUTO_LAUNCH + WAIT_SEC + COOLDOWN_MIN) tidak punya aturan eksplisit dan
+    // hilang diam-diam saat retry. Safety-net wajib menutupi semua FLAG_NORMALIZERS.
+    const snap = buildConfigSnapshot({
+      EVIDENCE_MIN_FRAMES_PER_SOURCE: '4',
+      RENDER_SAMPLE_INTERVAL_SEC: '2.5',
+      ORACLE_AUTO_LAUNCH: '1',
+      ORACLE_AUTO_LAUNCH_WAIT_SEC: '120',
+      ORACLE_AUTO_LAUNCH_COOLDOWN_MIN: '3',
+    });
+    const patch = configSnapshotToEnvPatch(snap);
+    for (const k of SNAPSHOT_FLAG_KEYS) {
+      if (typeof snap[k] === 'string' && snap[k] === '') continue; // string kosong emang tidak ditulis
+      expect(k in patch, `snapshot key ${k} hilang dari env patch`).toBe(true);
+    }
+  });
+
+  it('5 flag yang dulu hilang kini round-trip dengan nilai TIDAK default', () => {
+    const snap = buildConfigSnapshot({
+      EVIDENCE_MIN_FRAMES_PER_SOURCE: '4',
+      RENDER_SAMPLE_INTERVAL_SEC: '2.5',
+      ORACLE_AUTO_LAUNCH: '1',
+      ORACLE_AUTO_LAUNCH_WAIT_SEC: '120',
+      ORACLE_AUTO_LAUNCH_COOLDOWN_MIN: '3',
+    });
+    const patch = configSnapshotToEnvPatch(snap);
+    expect(patch.EVIDENCE_MIN_FRAMES_PER_SOURCE).toBe('4');
+    expect(patch.RENDER_SAMPLE_INTERVAL_SEC).toBe('2.5');
+    expect(patch.ORACLE_AUTO_LAUNCH).toBe('1');
+    expect(patch.ORACLE_AUTO_LAUNCH_WAIT_SEC).toBe('120');
+    expect(patch.ORACLE_AUTO_LAUNCH_COOLDOWN_MIN).toBe('3');
+    const resnap = buildConfigSnapshot({ ...patch });
+    expect(resnap.EVIDENCE_MIN_FRAMES_PER_SOURCE).toBe(4);
+    expect(resnap.RENDER_SAMPLE_INTERVAL_SEC).toBe(2.5);
+    expect(resnap.ORACLE_AUTO_LAUNCH).toBe(true);
+    expect(resnap.ORACLE_AUTO_LAUNCH_WAIT_SEC).toBe(120);
+    expect(resnap.ORACLE_AUTO_LAUNCH_COOLDOWN_MIN).toBe(3);
+  });
 });
 
 describe('applyConfigSnapshot — jalur retry auto (regresi fix 2026-10-05)', () => {
@@ -177,6 +217,17 @@ describe('applyConfigSnapshot — jalur retry auto (regresi fix 2026-10-05)', ()
       }
       // AUDIO_DRIVEN_SCENES true -> 'true' (normalizer membaca lowercase 'true').
       expect(process.env.AUDIO_DRIVEN_SCENES).toBe('true');
+    });
+  });
+
+  it('auto-launch yang dibekukan OFF tetap OFF setelah apply — tidak ikut env operator (=1)', () => {
+    // Regresi review 2026-10-05: ORACLE_AUTO_LAUNCH dulu hilang dari patch, sehingga
+    // retry job lama bisa menyalakan GPU Kaggle yang sedang tidak diinginkan.
+    withSavedEnv(() => {
+      const snap = buildConfigSnapshot({ ORACLE_AUTO_LAUNCH: '0' });
+      process.env.ORACLE_AUTO_LAUNCH = '1'; // operator menyalakan AFTER job dibuat
+      applyConfigSnapshot(snap);
+      expect(process.env.ORACLE_AUTO_LAUNCH).toBe('0');
     });
   });
 

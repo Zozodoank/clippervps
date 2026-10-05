@@ -9,6 +9,7 @@ import { trackBandwidth } from './bandwidthTracker.js';
 import { recordStageEvent } from './observabilityService.js';
 import { isAudioDrivenEnabled } from './audioBeatService.js';
 import { stripForbiddenTerms, coreNegativeOperators } from '../config/forbiddenTerms.js';
+import { classifyDownloadFailure } from '../utils/downloadFailureClass.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -807,7 +808,13 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     'web_safari',
   ];
 
-  let lastDownloadError = '';
+  // C2 fix (review 2026-10-05): SIMPAN SEMUA penyebab kegagalan per attempt, bukan hanya
+  // yang terakhir. Dulu stderr attempt-4 (dinding format/PoToken) menimpa penolakan
+  // truncation attempt-1 sehingga job melaporkan diagnosis yang salah secara faktual.
+  const failureCauses = [];
+  // W6: truncation bersifat stream/GOP, bukan client profile — rotasi penuh untuk file
+  // terpotong hanya membakar bandwidth. Beri toleransi 1 rotasi (stream bisa beda), lalu berhenti.
+  let truncatedRejects = 0;
 
   for (let attempt = 0; attempt < clientProfiles.length; attempt++) {
     const clientType = clientProfiles[attempt];
@@ -939,6 +946,34 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
         }
       }
 
+      // W5 fix (review 2026-10-05): validasi durasi/ukuran dulu duduk DI BELAKANG syarat
+      // size > 100000, sehingga file terpotong <100KB lolos tanpa probe dan job berakhir
+      // dengan pesan absurd "Download video gagal: Exit code 0". Kini keduanya ditolak
+      // lebih dulu dengan penyebabnya sendiri (dicatat sebagai keluarga truncation).
+      if (!fs.existsSync(downloadedFile)) {
+        console.warn(`[Downloader] ⚠️ yt-dlp selesai (exit 0) tetapi file hasil tidak ditemukan (${path.basename(finalExpectedPath)}).`);
+        failureCauses.push('File hasil tidak ditemukan setelah yt-dlp selesai (exit 0)');
+        continue;
+      }
+      if (fs.statSync(downloadedFile).size <= 100000) {
+        const smallKB = Math.max(1, Math.round(fs.statSync(downloadedFile).size / 1024));
+        console.warn(`[Downloader] ⚠️ File hasil terlalu kecil (${smallKB} KB) — dicurigai terpotong, ditolak (${path.basename(downloadedFile)}).`);
+        try { fs.unlinkSync(downloadedFile); } catch {}
+        truncatedRejects++;
+        failureCauses.push(`File section terpotong: hasil terlalu kecil (${smallKB} KB)`);
+        recordStageEvent({
+          jobId: videoId,
+          stage: 'download',
+          provider: `yt-dlp:${clientType}`,
+          failureReason: `File terpotong (hasil hanya ${smallKB} KB)`,
+          meta: { quality, attempt: attempt + 1 },
+        });
+        if (truncatedRejects >= 2) {
+          console.warn(`[Downloader] ⛔ Truncation berulang ${truncatedRejects}x — rotasi profil dihentikan (truncation sifatnya stream/GOP, bukan client profile).`);
+          break;
+        }
+        continue;
+      }
       if (fs.existsSync(downloadedFile) && fs.statSync(downloadedFile).size > 100000) {
         if (!isPreview) {
           const dims = await getVideoDimensions(downloadedFile, ffmpegPath);
@@ -960,7 +995,7 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
                 failureReason: `Resolusi ${dims.width}x${dims.height} di bawah 480p`,
                 meta: { quality, attempt: attempt + 1 },
               });
-              lastDownloadError = `Resolusi video (${dims.width}x${dims.height}) di bawah standar 480p. Wajib minimal 480p/720p/1080p ke atas.`;
+              failureCauses.push(`Resolusi video (${dims.width}x${dims.height}) di bawah standar 480p. Wajib minimal 480p/720p/1080p ke atas.`);
               continue;
             }
           }
@@ -978,7 +1013,20 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
           if (fileDur && fileDur > 0 && expectedSec > 0 && fileDur < expectedSec * 0.8) {
             console.warn(`[Downloader] ⚠️ Section terpotong: file ${fileDur.toFixed(1)}s < rencana ${expectedSec.toFixed(1)}s (${path.basename(downloadedFile)}).`);
             try { fs.unlinkSync(downloadedFile); } catch {}
-            lastDownloadError = `Section download terpotong (${fileDur.toFixed(1)}s dari ${expectedSec.toFixed(1)}s yang diminta)`;
+            truncatedRejects++;
+            const truncCause = `Section download terpotong (file ${fileDur.toFixed(1)}s dari ${expectedSec.toFixed(1)}s yang diminta)`;
+            failureCauses.push(truncCause);
+            recordStageEvent({
+              jobId: videoId,
+              stage: 'download',
+              provider: `yt-dlp:${clientType}`,
+              failureReason: truncCause,
+              meta: { quality, attempt: attempt + 1 },
+            });
+            if (truncatedRejects >= 2) {
+              console.warn(`[Downloader] ⛔ Truncation berulang ${truncatedRejects}x — rotasi profil dihentikan (truncation sifatnya stream/GOP, bukan client profile; hemat bandwidth).`);
+              break;
+            }
             continue;
           } else if (!fileDur) {
             console.warn(`[Downloader] ⚠️ Durasi file section tidak terprobe — lanjut tanpa validasi durasi (${path.basename(downloadedFile)}).`);
@@ -1014,36 +1062,20 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
       }
     }
 
-    lastDownloadError = downloadResult.stderr || `Exit code ${downloadResult.code}`;
-    console.warn(`[Downloader] Profile ${clientType} failed: ${lastDownloadError.slice(-200)}`);
+    const attemptCause = (downloadResult.stderr || '').trim() || `Exit code ${downloadResult.code}`;
+    failureCauses.push(attemptCause);
+    console.warn(`[Downloader] Profile ${clientType} failed: ${attemptCause.slice(-200)}`);
   }
 
 
-  // Format clean human-readable error with actionable advice for IP block / bot detection
-  const lowerErr = (lastDownloadError || '').toLowerCase();
-  const isBotOrIpBlock =
-    lowerErr.includes('sign in to confirm') ||
-    lowerErr.includes('automated queries') ||
-    lowerErr.includes('http error 429') ||
-    lowerErr.includes('status: 429');
-
-  if (isBotOrIpBlock) {
-    const botBlockMsg =
-      `YouTube membatasi/memblokir IP Anda sementara (Bot Detection/HTTP 429).\n` +
-      `Solusi cepat:\n` +
-      `1. Aktifkan Mode Pesawat (Airplane Mode) di HP selama 5 detik lalu matikan lagi untuk mendapatkan IP operator seluler baru.\n` +
-      `2. Atau letakkan file cookies.txt dari browser YouTube ke folder project.`;
-    traceDownloadFailure(`Bot/IP block setelah ${clientProfiles.length} profile: ${lastDownloadError.slice(-160)}`);
-    throw new Error(botBlockMsg);
+  // C2 fix (review 2026-10-05): klasifikasi dilakukan atas SEMUA penyebab yang terkumpul.
+  // Kelas 'truncated' menang atas 'noHd' (gejala turunan dari retry profil setelah
+  // truncation) dan membawa isInfraError — kegagalan infrastruktur, bukan salah konten
+  // produk (ledger tidak boleh memblokir produk 14 hari karena GOP stream).
+  const verdict = classifyDownloadFailure(failureCauses, { qualityLabel });
+  traceDownloadFailure(`[${verdict.kind}] setelah ${clientProfiles.length} profile: ${(verdict.cause || '').slice(-160)}`);
+  if (verdict.kind === 'botBlock') {
+    console.warn(`[Downloader] 🤖 ${verdict.message.split('\n')[0]}`);
   }
-
-  if (lowerErr.includes('standar hd 720p') || lowerErr.includes('requested format is not available') || lowerErr.includes('only images are available')) {
-    const noHdMsg = `Video sumber tidak memiliki format HD 720p/1080p yang valid di YouTube (hanya tersedia resolusi rendah).`;
-    traceDownloadFailure(`Format HD tidak tersedia: ${lastDownloadError.slice(-160)}`);
-    throw new Error(noHdMsg);
-  }
-
-  const finalErrMsg = `Download video gagal (${qualityLabel}): ${lastDownloadError.slice(-400)}`;
-  traceDownloadFailure(finalErrMsg.slice(-240));
-  throw new Error(finalErrMsg);
+  throw Object.assign(new Error(verdict.message), verdict.isInfraError ? { isInfraError: true } : {});
 }

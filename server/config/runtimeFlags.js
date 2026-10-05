@@ -254,6 +254,21 @@ export function configSnapshotToEnvPatch(snapshot) {
   // Selalu ditulis: default 'advisory' bergantung mode oracle, retry wajib memakai peran
   // vonis lokal yang sama persis dengan saat job pertama jalan.
   if (typeof snapshot.GK_LOCAL_VETO === 'string') patch.GK_LOCAL_VETO = snapshot.GK_LOCAL_VETO;
+  // SAFETY NET (regresi review 2026-10-05): daftar eksplisit di atas dulu TIDAK memuat
+  // EVIDENCE_MIN_FRAMES_PER_SOURCE / RENDER_SAMPLE_INTERVAL_SEC / ORACLE_AUTO_LAUNCH*
+  // sehingga 5 flag hilang diam-diam saat retry (mis. auto-launch yang dibekukan OFF
+  // ikut ulang env operator -> GPU Kaggle menyala lagi). Setiap flag beku tanpa aturan
+  // eksplisit kini tetap dipulihkan lewat serialisasi default per tipe: boolean -> '1'/'0'
+  // kanonik (konsumen proyek membaca === '1' / '1'|'true'), number -> String, string -> apa adanya.
+  // CATATAN: flag baru yang konsumennya membaca 'true' literal wajib diberi aturan eksplisit
+  // di atas agar tidak terserialisasi '1' — kelengkapan dijaga test configSnapshot.test.js.
+  for (const key of SNAPSHOT_FLAG_KEYS) {
+    if (key in patch) continue;
+    const v = snapshot[key];
+    if (typeof v === 'boolean') patch[key] = v ? '1' : '0';
+    else if (typeof v === 'number' && Number.isFinite(v)) patch[key] = String(v);
+    else if (typeof v === 'string' && v !== '') patch[key] = v;
+  }
   return patch;
 }
 

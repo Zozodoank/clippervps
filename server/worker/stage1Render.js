@@ -2138,6 +2138,10 @@ async function _runStage1Pipeline({
                 }
               } catch (secErr) {
                 allClustersOk = false;
+                // C2 fix (review 2026-10-05): dulu error segmen ditelan tanpa disimpan, jadi
+                // lemparan final hanya menampilkan pesan generik dan penyebab nyata (section
+                // terpotong / IP block / infra) hilang dari laporan job.
+                if (!lastDlError) lastDlError = secErr;
                 console.warn(`[Job ${jobId}] ⚠️ Gagal unduh segmen #${k} kandidat #${candIdx + 1}: ${secErr.message}`);
               }
             }
