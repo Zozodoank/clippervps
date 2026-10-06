@@ -19,6 +19,8 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(s.RENDER_NO_FULL_DOWNLOAD).toBe(false);
     expect(s.SAMPLE_MAX_FRAMES).toBe(500);            // Math.max(20, Number(undefined)||500)
     expect(s.GK_MAX_BATCH_FRAMES).toBe(240);
+    expect(s.ORACLE_OFFLINE_CALIBRATION).toBe(false);
+    expect(s.VLM_ORACLE_GRID).toBe(2);
     expect(s.AUDIO_DRIVEN_SCENES).toBe(false);        // 'true' lowercase
     expect(s.FINAL_AI_QC).toBe(true);                 // !== 'false'
     expect(s.FINAL_AI_QC_STRICT).toBe(false);         // === 'true'
@@ -31,6 +33,15 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: '1' }).RENDER_DOWNLOAD_SECTIONS).toBe(true);
     expect(buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: 'true' }).RENDER_DOWNLOAD_SECTIONS).toBe(false);
     expect(buildConfigSnapshot({ RENDER_NO_FULL_DOWNLOAD: '1' }).RENDER_NO_FULL_DOWNLOAD).toBe(true);
+  });
+
+  it('VLM_ORACLE_GRID mendukung grid 2x2 dan fallback frame tunggal, lalu ikut snapshot', () => {
+    expect(buildConfigSnapshot({}).VLM_ORACLE_GRID).toBe(2);
+    expect(buildConfigSnapshot({ VLM_ORACLE_GRID: '1' }).VLM_ORACLE_GRID).toBe(1);
+    expect(buildConfigSnapshot({ VLM_ORACLE_GRID: '0' }).VLM_ORACLE_GRID).toBe(0);
+    expect(buildConfigSnapshot({ VLM_ORACLE_GRID: '9' }).VLM_ORACLE_GRID).toBe(2);
+    const snapshot = buildConfigSnapshot({ VLM_ORACLE_GRID: '0' });
+    expect(configSnapshotToEnvPatch(snapshot).VLM_ORACLE_GRID).toBe('0');
   });
 
   it('frame budgets memakai floor 20 & parse number (bukan NaN)', () => {

@@ -6,7 +6,7 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled, isOraclePreflightEnabled, isLocalGatekeeperAdvisory } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, buildOracleCalibrationMeta, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled, isOraclePreflightEnabled, isLocalGatekeeperAdvisory, isOracleOfflineCalibration } from '../config/runtimeFlags.js';
 import { applyOracleVeto, auditClipsWithOracle, preflightCandidatesWithOracle, orderCandidatesAfterPreflight, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
 import { maybeAutoLaunchOracle, waitForOracleOnline, probeOracleKernelAlive, isOracleAutoLaunchEnabled } from '../services/oracleLauncherService.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
@@ -293,6 +293,7 @@ async function _runStage1Pipeline({
     } catch {}
   }
 
+  const calibrationMeta = buildOracleCalibrationMeta(process.env);
   const jobMeta = {
     jobId,
     stage: 'running',
@@ -321,6 +322,7 @@ async function _runStage1Pipeline({
     // P5: bekukan konfigurasi runtime saat create agar retry memakai setelan yang sama,
     // walau operator sudah mengubah .env. Dibaca ulang (bukan ditulis lagi) oleh jalur retry.
     configSnapshot: buildConfigSnapshot(process.env, { niche: options.niche, sourcePolicy: options.sourcePolicy }),
+    ...(calibrationMeta ? { oracleCalibration: calibrationMeta } : {}),
     createdAt: new Date().toISOString(),
     isOrphan: false,
     ...extraJobMeta,
@@ -377,7 +379,7 @@ async function _runStage1Pipeline({
     // -> paksa jalur offline agar sesi baru ditendang. Probe bersifat read-only dan
     // konservatif ('unknown' saat CLI/error TIDAK memicu launch -> tak ada sesi ganda).
     let zombieConfirmed = false;
-    if (oracleGate.ok && isOracleAutoLaunchEnabled(process.env)) {
+    if (!isOracleOfflineCalibration(process.env) && oracleGate.ok && isOracleAutoLaunchEnabled(process.env)) {
       const probe = await probeOracleKernelAlive({ logger: console });
       if (probe.alive === false) {
         const ageSec = oracleGate.lastSeenAt ? Math.round((Date.now() - oracleGate.lastSeenAt) / 1000) : null;
@@ -392,7 +394,7 @@ async function _runStage1Pipeline({
     // (oracle-launch.sh; tanpa PC/browser). Job lalu MENUNGGU heartbeat sampai
     // ORACLE_AUTO_LAUNCH_WAIT_SEC (default 300 dtk) sebelum gerbang memutuskan.
     // Flag mati = perilaku lama persis: gagal seketika, tidak spawn apa pun.
-    if (!oracleGate.ok && oracleGate.detail === 'notebook_offline') {
+    if (!isOracleOfflineCalibration(process.env) && !oracleGate.ok && oracleGate.detail === 'notebook_offline') {
       const launch = maybeAutoLaunchOracle({ logger: console, force: zombieConfirmed });
       if (launch.triggered) {
         // afterMs = baseline heartbeat zombie; menunggu heartbeat MAJU (sesi baru
@@ -406,7 +408,14 @@ async function _runStage1Pipeline({
       throw new OracleUnavailableError(`⛔ Job dihentikan (kebijakan Kaggle-only): ${oracleGate.message}`, { reason: oracleGate.detail, jobId });
     }
     // Jejak forensik: gerbang pernah lolos dan melihat heartbeat kapan.
-    jobMeta.oraclePreflight = { ok: true, lastSeenAt: oracleGate.lastSeenAt, checkedAt: new Date().toISOString() };
+    if (isOracleOfflineCalibration(process.env)) {
+      jobMeta.oracleCalibration = { ...jobMeta.oracleCalibration, ...buildOracleCalibrationMeta(process.env), gatekeeperVeto: 'strict' };
+      persistJob(jobId, jobMeta);
+      console.warn(`[Job ${jobId}] MODE KALIBRASI LOKAL — Kaggle DIMATIKAN; Gatekeeper menjadi pemutus strict. Hasil tidak sah sebagai bukti produksi.`);
+      recordStageEvent({ jobId, stage: 'oracle_calibration', message: 'MODE KALIBRASI LOKAL — Kaggle DIMATIKAN', meta: jobMeta.oracleCalibration });
+    } else {
+      jobMeta.oraclePreflight = { ok: true, lastSeenAt: oracleGate.lastSeenAt, checkedAt: new Date().toISOString() };
+    }
 
     const existingVideoInTemp = (() => {
       try {
@@ -3613,4 +3622,3 @@ export function runStage1Pipeline(args) {
   // async diwarisi ke seluruh await turunan hanya jika scope-nya dimulai di sini.
   return heavyTaskQueue(() => withAiUsageJob(args?.jobId, () => _runStage1Pipeline(args)));
 }
-

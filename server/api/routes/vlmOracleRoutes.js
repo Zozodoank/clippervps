@@ -30,7 +30,7 @@ import {
   pruneOracleBatches,
   touchOracleHeartbeat,
 } from '../../store/jobStore.js';
-import { resolveOracleConfig } from '../../services/vlmOracleService.js';
+import { resolveOracleConfig, ORACLE_GRID_PROTOCOL } from '../../services/vlmOracleService.js';
 import { isOracleStrictMode } from '../../config/runtimeFlags.js';
 import { createRateLimiter, recordAuditEvent } from '../../utils/security.js';
 import { getApiAccessToken } from '../middleware/tokenAuth.js';
@@ -112,6 +112,7 @@ router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
       index: f.index,
       url: `/api/vlm-oracle/frames/${encodeURIComponent(batch.id)}/${Number(f.index) || 0}`,
       timestampMs: f.timestampMs ?? null,
+      ...(Array.isArray(f.cells) ? { cells: f.cells } : {}),
     })),
   });
   return undefined;
@@ -126,10 +127,10 @@ router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
 router.post('/vlm-oracle/result', resultLimiter, (req, res) => {
   if (!requireOracleToken(req, res)) return undefined;
   const { batchId, attempt, workerId, protocolVersion, verdict, error } = req.body || {};
-  const expectedProtocol = '2026-10-05-v1';
+  const supportedProtocols = new Set(['2026-10-05-v1', ORACLE_GRID_PROTOCOL]);
   
-  if (protocolVersion !== expectedProtocol) {
-    recordAuditEvent({ req, action: "vlm-oracle-result-rejected", detail: `batch=${batchId} reason=protocol_mismatch expected=${expectedProtocol} got=${protocolVersion}` });
+  if (!supportedProtocols.has(protocolVersion)) {
+    recordAuditEvent({ req, action: "vlm-oracle-result-rejected", detail: `batch=${batchId} reason=protocol_mismatch got=${protocolVersion}` });
     return res.status(426).json({ success: false, error: 'Protocol version mismatch. Kaggle worker obsolete.' });
   }
 

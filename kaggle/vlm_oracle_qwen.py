@@ -47,7 +47,7 @@ SOURCE_HASH = get_source_hash()
 
 
 import os
-ORACLE_PROTOCOL_VERSION = "2026-10-05-v1"
+ORACLE_PROTOCOL_VERSION = "2026-10-06-grid-v1"
 WORKER_ID = os.environ.get("KAGGLE_KERNEL_RUN_TYPE", "unknown") + "-" + str(os.getpid())
 import re
 import shutil
@@ -692,6 +692,8 @@ def verdict_batch(payload, model, processor, torch):
         paths.append((int(fr["index"]), prep_image(raw, batch_dir, int(fr["index"]))))
 
     prompt = payload.get("prompt") or "Inspect ALL frames. Answer ONLY JSON {\"safe\":true|false}"
+    grid_mode = any(isinstance(fr.get("cells"), list) and fr["cells"] for fr in payload.get("frames", []))
+    grid_cell_ids = [int(cell["index"]) for fr in payload.get("frames", []) for cell in (fr.get("cells") or []) if isinstance(cell, dict) and str(cell.get("index", "")).lstrip("-").isdigit()]
     t0 = time.time()
     
     frame_indexes = [str(idx) for idx, _ in paths]
@@ -787,7 +789,25 @@ def verdict_batch(payload, model, processor, torch):
     # divonis bersih oleh gatekeeper lokal ikut tertolak). Biaya tambahan hanya untuk batch
     # yang memang dicurigai: <= N inferensi satu-frame.
     any_flag = any(out[k] for k in ("face", "text", "watermark", "graphic"))
-    if (not out["safe"] or any_flag) and len(paths) > 1:
+    if grid_mode:
+        # A contact sheet is one image but represents several original source frames.
+        # Trust only explicit per-cell entries from the model; the server rejects missing cells.
+        reported = obj.get("perFrame") if isinstance(obj.get("perFrame"), list) else []
+        out["perFrame"] = [entry for entry in reported if isinstance(entry, dict)]
+        reported_ids = {int(entry["index"]) for entry in out["perFrame"] if str(entry.get("index", "")).lstrip("-").isdigit()}
+        log("[Oracle][Grid] batchId=%s expectedCells=%d reportedCells=%d missing=%s" % (
+            payload["batchId"], len(grid_cell_ids), len(reported_ids), sorted(set(grid_cell_ids) - reported_ids)))
+        if out["perFrame"]:
+            for key in ("safe", "face", "text", "watermark", "graphic"):
+                if key == "safe":
+                    out[key] = all(bool(entry.get(key, False)) for entry in out["perFrame"])
+                else:
+                    out[key] = any(bool(entry.get(key, False)) for entry in out["perFrame"])
+            if ranking:
+                out["productMatch"] = any(bool(entry.get("productMatch", False)) for entry in out["perFrame"])
+                out["matchScore"] = median_int([entry.get("matchScore") for entry in out["perFrame"]])
+                out["apparentQuality"] = median_int([entry.get("apparentQuality") for entry in out["perFrame"]])
+    elif (not out["safe"] or any_flag) and len(paths) > 1:
         per_frame = []
         for idx, one in paths:
             raw1, obj1, deg1 = ask(model, processor, torch, [one], prompt)

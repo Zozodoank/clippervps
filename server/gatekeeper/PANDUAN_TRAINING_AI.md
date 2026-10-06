@@ -144,3 +144,17 @@ Ketika ClipperVPS memproses video affiliate:
 - **`server/gatekeeper/train_scene_filter.py`**: Skrip PyTorch transfer learning MobileNetV3-Small & ONNX exporter opset 12.
 - **`server/gatekeeper/train_scene_filter.ipynb`**: Notebook Google Colab 1-klik siap pakai.
 - **`server/gatekeeper/PANDUAN_TRAINING_AI.md`**: Buku panduan lengkap pelatihan model AI.
+
+---
+
+## Distilasi classifier zona teks (opsional)
+
+Backend tetap `GK_TEXT_BACKEND=dbnet` sampai artifact ONNX ini selesai ditinjau dan diukur. Pipeline ini menyalin pola DBNet ke MobileNetV3-Small dengan enam label sigmoid: subtitle bawah, overlay atas, dan empat sudut watermark.
+
+1. Pastikan `models/ch_PP-OCRv4_det.onnx` tersedia dan dataset berisi gambar pada split `train/` serta `val/`.
+2. Jalankan `python make_zone_text_dataset.py`. Skrip menulis pseudo-label ke `dataset/zone_text_distilled/manifest.csv`; ia tidak menimpa gambar sumber.
+3. Tinjau manual setidaknya 200 pasangan frame/label secara acak. Koreksi atau hapus pseudo-label yang salah sebelum training.
+4. Jalankan `python train_zone_text.py`. Hasilnya `models/zonetext_v1.onnx` dengan output berurutan `bottom, top, TL, TR, BL, BR`.
+5. Ukur ulang latency dan recall terhadap DBNet. Aktifkan `GK_TEXT_BACKEND=zonemob` hanya setelah hasil lulus; DBNet dan Sobel tetap dapat dipilih.
+
+Gambar input dataset tidak disimpan di repository saat ini. Jika folder dataset hanya berisi datasheet JSON, siapkan gambar terlebih dahulu; generator akan berhenti dengan pesan jelas saat tidak menemukan gambar.

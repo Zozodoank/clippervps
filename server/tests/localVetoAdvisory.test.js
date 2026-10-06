@@ -36,6 +36,11 @@ describe('GK_LOCAL_VETO — peran vonis AI Local Gatekeeper', () => {
     expect(localGatekeeperVetoMode({ GK_LOCAL_VETO: 'advisory', VISION_VERIFY_MODE: 'oracle' })).toBe('advisory');
   });
 
+  it('kalibrasi offline selalu memaksa Gatekeeper strict walau env meminta advisory', () => {
+    expect(localGatekeeperVetoMode({ ORACLE_OFFLINE_CALIBRATION: '1', GK_LOCAL_VETO: 'advisory' })).toBe('strict');
+    expect(isLocalGatekeeperAdvisory({ ORACLE_OFFLINE_CALIBRATION: 'true' })).toBe(false);
+  });
+
   it('beku di configSnapshot dan dipulihkan saat retry', async () => {
     // Snapshot harus ikut membekukan peran vonis lokal, kalau tidak retry setelah .env
     // diubah diam-diam kembali ke model kecil sebagai pemutus.

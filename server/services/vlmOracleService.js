@@ -34,13 +34,17 @@ import { spawn } from 'child_process';
 import { buildVlmPrompt } from './vlmGateService.js';
 import { getFFmpegPath } from './binaryChecker.js';
 import { tempDir } from '../utils/paths.js';
-import { isVlmOracleEnabled, isOraclePreflightEnabled, isOracleStrictMode } from '../config/runtimeFlags.js';
+import { planGrids, mapGridVerdictToFrames } from '../utils/frameGrid.js';
+import { isVlmOracleEnabled, isOraclePreflightEnabled, isOracleStrictMode, isOracleOfflineCalibration } from '../config/runtimeFlags.js';
 import {
   enqueueOracleBatch,
   waitForOracleVerdict,
   expireOracleBatch,
   oracleLastSeenMs,
+  oracleHeartbeatInfo,
 } from '../store/jobStore.js';
+
+export const ORACLE_GRID_PROTOCOL = '2026-10-06-grid-v1';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -69,7 +73,12 @@ export function resolveOracleConfig(env = process.env) {
     return Number.isFinite(v) && v > 0 ? v : fallback;
   };
   return {
-    enabled: isVlmOracleEnabled(env),
+    enabled: isVlmOracleEnabled(env) && !isOracleOfflineCalibration(env),
+    grid: (() => {
+      const raw = env.VLM_ORACLE_GRID;
+      const n = raw === undefined || String(raw).trim() === '' ? 2 : Number(raw);
+      return Number.isFinite(n) ? Math.min(2, Math.max(0, Math.round(n))) : 2;
+    })(),
     // 0 EKSPISIT dihormati (bukan dikonversi diam-diam ke 120): di jalur strict nilai 0
     // berarti "tidak ada yang divisit" dan GERBANG STRICT menolak job (OracleUnavailableError).
     // unset/kosong/NaN -> 120, sama seperti normalizer configSnapshot.
@@ -125,6 +134,9 @@ export function resolveOracleConfig(env = process.env) {
  */
 export function assertOracleConnected({ logger = console, env = process.env } = {}) {
   const cfg = resolveOracleConfig(env);
+  if (isOracleOfflineCalibration(env)) {
+    return { ok: true, detail: 'offline_calibration', lastSeenAt: null, message: 'Kalibrasi lokal aktif; Oracle Kaggle dilewati.' };
+  }
   if (!cfg.enabled) {
     const mode = String(env.VISION_VERIFY_MODE || 'oracle').trim().toLowerCase();
     return {
@@ -449,6 +461,119 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
   return out;
 }
 
+function runGridCompose(inputFrames, dstPath, labels, timeoutMs = 30000) {
+  return new Promise((resolve) => {
+    let ffmpeg = '';
+    try { ffmpeg = getFFmpegPath(); } catch {}
+    if (!ffmpeg) return resolve(false);
+    const args = ['-y', '-nostdin'];
+    for (const frame of inputFrames) args.push('-loop', '1', '-framerate', '1', '-i', frame);
+    for (let i = inputFrames.length; i < 4; i++) args.push('-f', 'lavfi', '-i', 'color=c=black:s=426x240:r=1');
+    const filters = [];
+    for (let i = 0; i < 4; i++) {
+      filters.push(`[${i}:v]scale=426:240:force_original_aspect_ratio=decrease,pad=426:240:(ow-iw)/2:(oh-ih)/2[s${i}]`);
+    }
+    filters.push('[s0][s1][s2][s3]xstack=inputs=4:layout=0_0|426_0|0_240|426_240:fill=black[grid]');
+    let output = '[grid]';
+    if (labels) {
+      const font = process.platform === 'win32'
+        ? 'C\\:/Windows/Fonts/arial.ttf'
+        : '/system/fonts/Roboto-Regular.ttf';
+      const labelFilters = inputFrames.map((_, i) => {
+        const x = (i % 2) * 426 + 8;
+        const y = Math.floor(i / 2) * 240 + 8;
+        return `drawtext=fontfile='${font}':text='${i + 1}':x=${x}:y=${y}:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.75`;
+      });
+      filters.push(`[grid]${labelFilters.join(',')}[out]`);
+      output = '[out]';
+    }
+    args.push('-filter_complex', filters.join(';'), '-map', output, '-frames:v', '1', '-q:v', '3', dstPath);
+    let proc;
+    let done = false;
+    const finish = (ok) => { if (done) return; done = true; clearTimeout(timer); resolve(ok && fs.existsSync(dstPath)); };
+    const timer = setTimeout(() => { try { proc?.kill('SIGKILL'); } catch {} finish(false); }, timeoutMs);
+    try { proc = spawn(ffmpeg, args, { stdio: 'ignore' }); }
+    catch { finish(false); return; }
+    proc.on('error', () => finish(false));
+    proc.on('close', (code) => finish(code === 0));
+  });
+}
+
+/** Compose 2x2 contact sheets. Labels are best-effort; row-major order is the contract. */
+export async function composeGridImages(frames = [], { jobId = '', outDir = null, logger = console, gridSize = 2 } = {}) {
+  const size = Math.max(1, Math.min(2, Math.round(Number(gridSize) || 2)));
+  const cellsPerGrid = size * size;
+  const groups = planGrids(frames, cellsPerGrid);
+  const root = path.join(outDir || path.join(tempDir, 'oracle_frames'), `${safeJobSegment(jobId)}_grids`);
+  fs.mkdirSync(root, { recursive: true });
+  const result = [];
+  for (const group of groups) {
+    const inputs = group.frames.map((f) => f.filePath);
+    const dstPath = path.join(root, `grid_${String(group.index).padStart(4, '0')}.jpg`);
+    let ok = await runGridCompose(inputs, dstPath, true);
+    if (!ok) {
+      try { fs.rmSync(dstPath, { force: true }); } catch {}
+      ok = await runGridCompose(inputs, dstPath, false);
+      if (ok && logger?.warn) logger.warn('[Oracle] FFmpeg tidak menyediakan drawtext/font; grid dibuat tanpa label, urutan row-major tetap berlaku.');
+    }
+    if (!ok) throw new Error(`FFmpeg gagal menyusun grid Oracle #${group.index}.`);
+    result.push({ index: group.index, filePath: dstPath, timestampMs: group.cells[0]?.timestampMs ?? null, cells: group.cells, frames: group.frames });
+  }
+  return result;
+}
+
+function oracleGridAvailable(cfg) {
+  return cfg.grid === 2 && oracleHeartbeatInfo().protocolVersion === ORACLE_GRID_PROTOCOL;
+}
+
+function gridPrompt(prompt, grids) {
+  const manifest = grids.map((grid) =>
+    `IMAGE ${grid.index}: 2x2 row-major cells ${grid.cells.map((cell, pos) => `${pos + 1}=frame index ${cell.index}`).join('; ')}`
+  ).join('\n');
+  return `${prompt}\n\nGRID INSTRUCTIONS: Each image is a 2x2 grid read row-major (top-left, top-right, bottom-left, bottom-right). Inspect every listed cell independently. Return a perFrame entry for EVERY listed source frame index; use that original index, never the image index. Missing cell verdicts are not verified.\n${manifest}\nRequired perFrame schema: [{"index":0,"safe":true,"face":false,"text":false,"watermark":false,"graphic":false,"reason":"..."}]`;
+}
+
+function sourceFramesForOracleBatch(batchFrames, gridMode) {
+  return gridMode
+    ? batchFrames.flatMap((grid) => grid.cells.map((cell) => ({ ...grid.frames[cell.cell], index: cell.index })))
+    : batchFrames;
+}
+
+function queueFramesForOracleBatch(batchFrames, gridMode) {
+  return batchFrames.map((frame, i) => ({
+    index: i, filePath: frame.filePath, timestampMs: frame.timestampMs ?? null,
+    ...(gridMode ? { cells: frame.cells } : {}),
+  }));
+}
+
+async function prepareOracleSubmission(frames, { cfg, jobId, outDir, logger, strict = true }) {
+  if (!oracleGridAvailable(cfg)) return { frames, gridMode: false };
+  try {
+    return { frames: await composeGridImages(frames, { jobId, outDir, logger, gridSize: cfg.grid }), gridMode: true };
+  } catch (err) {
+    if (strict) {
+      throw new OracleUnavailableError(`FFmpeg gagal menyusun grid Oracle: ${err.message}`, { reason: 'infra', jobId });
+    }
+    logger.warn(`[Oracle] Grid tidak dapat disusun (${err.message}); mode non-strict mengirim frame satu per satu.`);
+    return { frames, gridMode: false, note: 'komposisi grid gagal; fallback ke frame terpisah' };
+  }
+}
+
+export function normalizeGridVerdict(verdict, sourceFrames, fallbackError = '') {
+  const mapped = mapGridVerdictToFrames(verdict, sourceFrames);
+  if (mapped.unknownCellIndexes.length) {
+    return { ok: false, available: true, infraError: true, error: `Vonis Oracle memuat index sel tak dikenal: ${mapped.unknownCellIndexes.join(', ')}` };
+  }
+  if (mapped.perFrame.some((entry) => entry.verified === false)) {
+    return { ok: false, available: true, infraError: true, error: `Vonis Oracle tidak mencakup seluruh sel grid (${mapped.perFrame.filter((entry) => entry.verified === false).length} sel belum terverifikasi).` };
+  }
+  const normalized = normalizeOracleVerdict(mapped, { expectedFrames: sourceFrames.length, fallbackError });
+  if (normalized.ok && normalized.unverifiedFrameIndexes?.length) {
+    return { ok: false, available: true, infraError: true, error: `Vonis Oracle memiliki ${normalized.unverifiedFrameIndexes.length} sel grid yang gagal diverifikasi.` };
+  }
+  return normalized;
+}
+
 /**
  * SANITASI POOL: tahap yang dipanggil stage1Render sebelum storyboard Gemini.
  * Mengembalikan daftar filePath yang divonis KOTOR oleh oracle — pemanggil
@@ -501,9 +626,13 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
   const t0 = Date.now();
   const prompt = buildVlmPrompt(niche, facePolicy, { localHints });
   const deadline = t0 + cfg.totalTimeoutMs;
+  const gridMode = oracleGridAvailable(cfg);
+  const submission = await prepareOracleSubmission(sendable, { cfg, jobId, outDir, logger, strict });
+  const submitted = submission.frames;
+  if (cfg.grid === 2 && !gridMode) result.note = 'Notebook Kaggle belum mendukung grid; memakai pengiriman frame terpisah.';
 
-  for (let start = 0; start < sendable.length; start += cfg.batchSize) {
-    const batchFrames = sendable.slice(start, start + cfg.batchSize);
+  for (let start = 0; start < submitted.length; start += cfg.batchSize) {
+    const batchFrames = submitted.slice(start, start + cfg.batchSize);
     if (Date.now() > deadline) {
       if (strict) {
         throw new OracleUnavailableError(
@@ -517,6 +646,8 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
     }
 
     const paths = batchFrames.map((f) => f.filePath);
+    const sourceFrames = sourceFramesForOracleBatch(batchFrames, gridMode);
+    const sourcePaths = sourceFrames.map((f) => f.filePath);
     const originalOf = (p) => backToOriginal.get(p) || p;
     const id = makeBatchId(jobId, Math.floor(start / cfg.batchSize), paths);
     let status = 'timeout';
@@ -529,8 +660,8 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
         // milik batch ini. Dulu dikirim index absolut (start + i) -> untuk batch ke-2 dst
         // semua vonis kotor jatuh di luar jangkauan -> fallback mem-blacklist SATU BATCH
         // penuh padahal Qwen hanya menandai satu frame.
-        frames: batchFrames.map((f, i) => ({ index: i, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
-        niche, facePolicy, prompt,
+        frames: queueFramesForOracleBatch(batchFrames, gridMode),
+        niche, facePolicy, prompt: gridMode ? gridPrompt(prompt, batchFrames) : prompt,
       });
       const waited = await waitForOracleVerdict(id, {
         // Math.max(1, ...) memastikan waitForOracleVerdict selalu sempat polling SATU kali
@@ -543,14 +674,16 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
       });
       status = waited.status;
       if (waited.status === 'done') {
-        const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
-        result.checked += paths.length;
+        const v = gridMode
+          ? normalizeGridVerdict(waited.verdict, sourceFrames, waited.error || (waited.batch && waited.batch.lastError))
+          : normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
+        result.checked += sourceFrames.length;
         if (v.ok && v.vetoTriggered) {
           // Veto per-frame bila notebook mengirim perFrame; kalau hanya agregat,
           // seluruh frame batch dianggap tidak bersih (konservatif: jangan publish
           // potongan yang model besar curigai).
-          const dirty = (v.dirtyFrameIndexes || []).map((i) => paths[i]).filter(Boolean);
-          const toBlacklist = (dirty.length > 0 ? dirty : paths).map(originalOf);
+          const dirty = (v.dirtyFrameIndexes || []).map((i) => sourcePaths[i]).filter(Boolean);
+          const toBlacklist = (dirty.length > 0 ? dirty : sourcePaths).map(originalOf);
           for (const p of toBlacklist) if (!result.blacklisted.includes(p)) result.blacklisted.push(p);
           result.rejected += toBlacklist.length;
           logger.log(`[Oracle] ⛔ batch ${id} divonis KOTOR (${toBlacklist.length}/${paths.length} frame) ${v.reason ? `— ${v.reason}` : ''} [${v.model || 'model=?'}]`);
@@ -703,20 +836,25 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
     const prepared = await prepareOracleFrames(picked, { height: cfg.frameHeight, jobId, outDir, logger, env });
     summary.converted += prepared.converted;
     const sendable = prepared.sent;
+    const submission = await prepareOracleSubmission(sendable, { cfg, jobId, outDir, logger, strict });
+    const submitted = submission.frames;
+    const gridMode = submission.gridMode;
     const backToOriginal = prepared.originalBySent;
     const clipLabel = `klip #${i + 1}`;
 
-    for (let start = 0; start < sendable.length; start += cfg.batchSize) {
-      const batchFrames = sendable.slice(start, start + cfg.batchSize);
+    for (let start = 0; start < submitted.length; start += cfg.batchSize) {
+      const batchFrames = submitted.slice(start, start + cfg.batchSize);
       const paths = batchFrames.map((f) => f.filePath);
+      const sourceFrames = sourceFramesForOracleBatch(batchFrames, gridMode);
+      const sourcePaths = sourceFrames.map((f) => f.filePath);
       const id = makeBatchId(jobId, i, paths);
       try {
         enqueueOracleBatch({
           id, jobId,
           sceneIdx: 10000 + i * 100 + Math.floor(start / cfg.batchSize),
           // Batch-relatif — lihat komentar di sanitizePoolWithOracle (regresi index absolut).
-          frames: batchFrames.map((f, idx) => ({ index: idx, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
-          niche, facePolicy, prompt,
+          frames: queueFramesForOracleBatch(batchFrames, gridMode),
+          niche, facePolicy, prompt: gridMode ? gridPrompt(prompt, batchFrames) : prompt,
         });
         const waited = await waitForOracleVerdict(id, {
           // Math.max(1, ...) sama seperti di sanitizePoolWithOracle: pastikan satu polling terjadi.
@@ -725,14 +863,16 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
           pollMs: cfg.pollMs, sleep,
         });
         if (waited.status === 'done') {
-          const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
-          summary.checked += paths.length;
+          const v = gridMode
+            ? normalizeGridVerdict(waited.verdict, sourceFrames, waited.error || (waited.batch && waited.batch.lastError))
+            : normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
+          summary.checked += sourceFrames.length;
           if (v.ok && v.unverifiedFrameIndexes?.length) {
             logger.warn(`[Oracle] ${clipLabel}: ${v.unverifiedFrameIndexes.length}/${paths.length} frame tidak terverifikasi (output gagal diparse); tidak dipakai sebagai bukti kotor.`);
           }
           if (v.ok && v.vetoTriggered) {
-            const dirtySent = (v.dirtyFrameIndexes || []).map((k) => paths[k]).filter(Boolean);
-            const dirtyOrig = (dirtySent.length > 0 ? dirtySent : paths).map((p) => backToOriginal.get(p) || p);
+            const dirtySent = (v.dirtyFrameIndexes || []).map((k) => sourcePaths[k]).filter(Boolean);
+            const dirtyOrig = (dirtySent.length > 0 ? dirtySent : sourcePaths).map((p) => backToOriginal.get(p) || p);
             verdicts.set(i, {
               dirty: true,
               dirtyFrames: dirtyOrig,
@@ -972,11 +1112,15 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
     out.framesSent += paths.length;
     let entry = { index: pos, answered: false, clean: false, productMatch: null, matchScore: null, apparentQuality: null, lowQuality: null, qualityBlocked: false, reason: '', dirtyFrames: 0 };
     try {
+      const submission = await prepareOracleSubmission(chosen, { cfg, jobId, outDir: workDir, logger, strict });
+      const batchFrames = submission.frames;
+      const gridMode = submission.gridMode;
+      const sourceFrames = sourceFramesForOracleBatch(batchFrames, gridMode);
       enqueueOracleBatch({
         id, jobId,
         sceneIdx: PREFLIGHT_SCENE_BASE + pos,
-        frames: chosen.map((f) => ({ index: f.index, filePath: f.filePath, timestampMs: f.timestampMs ?? null })),
-        niche, facePolicy, prompt,
+        frames: queueFramesForOracleBatch(batchFrames, gridMode),
+        niche, facePolicy, prompt: gridMode ? gridPrompt(prompt, batchFrames) : prompt,
       });
       const waited = await waitForOracleVerdict(id, {
         // Kandidat PERTAMA dibatasi connectTimeoutMs (sinyal "notebook terhubung").
@@ -985,7 +1129,9 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
       });
       if (waited.status === 'timeout') expireOracleBatch(id, 'Pre-flight menyerah sebelum vonis tiba.');
       if (waited.status === 'done') {
-        const v = normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
+        const v = gridMode
+          ? normalizeGridVerdict(waited.verdict, sourceFrames, waited.error || (waited.batch && waited.batch.lastError))
+          : normalizeOracleVerdict(waited.verdict, { expectedFrames: paths.length, fallbackError: waited.error || (waited.batch && waited.batch.lastError) });
         if (v.ok) {
           entry = {
             index: pos,

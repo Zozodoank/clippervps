@@ -2,7 +2,7 @@
 """
 AI Local Frame Gatekeeper Service for ClipperVPS.
 Lightweight real-time CPU vision pipeline to reject dirty video frames before reaching main LLM:
-- Stage 1: MediaPipe & YuNet Face Detection (100% faceless in 9:16 crop & full frame)
+- Stage 1: SCRFD Face Detection (default; YuNet/MediaPipe remain selectable fallbacks)
 - Stage 2: DBNet Text, Subtitle & 4-Corner Watermark Detection + Temporal Watermark Aggregation
 - Stage 3: MobileNetV3 3-State Scene Classifier (CLEAN >= 0.78, UNCERTAIN 0.62-0.78, REJECT < 0.62)
 - Stage 4: Clean Temporal Segment Validation (Continuous clean windows, min 3 consecutive frames / >=4.0s)
@@ -616,6 +616,35 @@ def apply_temporal_presenter_track(single_verdicts, iou_thresh=0.55, min_hits=PR
 # ─────────────────────────────────────────────────────────────────────────────
 # 2. TAHAP 2: TEXT, SUBTITLE & CORNER WATERMARK DETECTOR (DBNet PP-OCRv4 ONNX)
 # ─────────────────────────────────────────────────────────────────────────────
+def format_zonemob_verdict(probabilities):
+    """Convert six model probabilities to the established TextGatekeeper tuple."""
+    if hasattr(probabilities, "reshape"):
+        values = probabilities.reshape(-1).tolist()
+    else:
+        values = list(probabilities)
+        while len(values) == 1 and isinstance(values[0], (list, tuple)):
+            values = list(values[0])
+    if len(values) != 6:
+        raise ValueError(f"model harus memberi enam probabilitas zona, mendapat {len(values)}")
+    values = [float(value) for value in values]
+    if not all(math.isfinite(value) for value in values):
+        raise ValueError("model zonemob mengembalikan nilai non-finite")
+    values = [max(0.0, min(1.0, value)) for value in values]
+    bottom, top, tl, tr, bl, br = values
+    corners = {"TL": round(tl, 4), "TR": round(tr, 4), "BL": round(bl, 4), "BR": round(br, 4)}
+    active = [name for name, value in corners.items() if value >= 0.5]
+    suspicious = bottom >= 0.5 or top >= 0.5 or bool(active)
+    if bottom >= 0.5:
+        reason = f"Subtitle terbakar terdeteksi zonemob ({bottom:.2f})"
+    elif top >= 0.5:
+        reason = f"Overlay headline terdeteksi zonemob ({top:.2f})"
+    elif active:
+        reason = f"Watermark terdeteksi zonemob di sudut {', '.join(active)}"
+    else:
+        reason = "Enam zona teks bersih (zonemob)"
+    return suspicious, max(values), bottom, reason, corners
+
+
 class TextGatekeeper:
     """
     Deteksi teks, watermark pojok, subtitle terbakar, dan promo banner.
@@ -626,10 +655,31 @@ class TextGatekeeper:
         self.max_total_coverage = max_total_coverage
         self.max_bottom_coverage = max_bottom_coverage
         self.ort_session = None
+        self.zone_session = None
         self.backend = "none"
+        requested_backend = str(os.environ.get("GK_TEXT_BACKEND", "dbnet")).strip().lower()
+        if requested_backend not in ("dbnet", "zonemob", "sobel"):
+            print(f"  [TextGatekeeper] ⚠️ GK_TEXT_BACKEND={requested_backend!r} tidak dikenal; memakai dbnet.")
+            requested_backend = "dbnet"
+
+        if requested_backend == "zonemob":
+            zone_path = os.path.join(MODELS_DIR, "zonetext_v1.onnx")
+            if HAS_ORT and os.path.exists(zone_path):
+                try:
+                    opts = ort.SessionOptions()
+                    opts.intra_op_num_threads = 2
+                    opts.inter_op_num_threads = 1
+                    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+                    self.zone_session = ort.InferenceSession(zone_path, sess_options=opts, providers=["CPUExecutionProvider"])
+                    self.backend = "zonemob_onnx"
+                    print("  [TextGatekeeper] ✅ MobileNetV3 zone-text ONNX aktif (6 sigmoid zones).")
+                except Exception as e:
+                    print(f"  [TextGatekeeper] ⚠️ Gagal memuat zonetext_v1.onnx: {e}; mencoba DBNet.")
+            else:
+                print("  [TextGatekeeper] ⚠️ GK_TEXT_BACKEND=zonemob tetapi zonetext_v1.onnx belum tersedia; mencoba DBNet.")
 
         model_path = os.path.join(MODELS_DIR, "ch_PP-OCRv4_det.onnx")
-        if HAS_ORT and os.path.exists(model_path):
+        if not self.zone_session and requested_backend != "sobel" and HAS_ORT and os.path.exists(model_path):
             try:
                 opts = ort.SessionOptions()
                 opts.intra_op_num_threads = 2
@@ -645,7 +695,9 @@ class TextGatekeeper:
             except Exception as e:
                 print(f"  [TextGatekeeper] ⚠️ Gagal memuat DBNet ONNX: {e}")
 
-        if not self.ort_session:
+        if self.zone_session:
+            pass
+        elif requested_backend == "sobel" or not self.ort_session:
             self.backend = "gradient_fallback"
             print("  [TextGatekeeper] ℹ️ Menggunakan fallback Sobel horizontal edge 4-corner text density.")
 
@@ -654,6 +706,20 @@ class TextGatekeeper:
         crop_area = float(h * w)
         if crop_area < 100:
             return False, 0.0, 0.0, "Frame terlalu kecil", {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
+
+        if self.zone_session:
+            try:
+                resized = cv2.resize(crop_bgr, (224, 224), interpolation=cv2.INTER_AREA)
+                rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+                std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+                blob = np.transpose((rgb - mean) / std, (2, 0, 1))[np.newaxis, ...]
+                input_name = self.zone_session.get_inputs()[0].name
+                verdict = format_zonemob_verdict(self.zone_session.run(None, {input_name: blob})[0])
+                # Return shape sama dengan DBNet: total/bottom coverage + corner activations.
+                return verdict
+            except Exception as e:
+                print(f"  [TextGatekeeper] ⚠️ zonemob inference gagal, lanjut ke DBNet/Sobel: {e}")
 
         # ── Deteksi Kotak Banner Berlatar Warna / Badge Spesifikasi / Teks Statis ──
         try:

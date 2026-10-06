@@ -107,7 +107,7 @@ if [ "$FORCE" != 1 ] && [ "$SKIP_LIVE" = 1 ]; then
     # Fallback to python if md5sum is missing
     [ -z "$local_hash" ] && local_hash="$(python3 -c 'import hashlib,sys; print(hashlib.md5(open(sys.argv[1],"rb").read()).hexdigest())' "$script_dir/vlm_oracle_qwen.py" 2>/dev/null)"
   fi
-  expected_proto="2026-10-05-v1"
+  expected_proto="2026-10-06-grid-v1"
 
   if [ -n "$seen" ] && [ -n "$local_hash" ]; then
     age=$(( ( $(date +%s) * 1000 - seen ) / 1000 ))

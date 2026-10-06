@@ -102,25 +102,26 @@ try {
     }
   }
 
-  # [5/6] Salin bobot VLM (GGUF SmolVLM2) ke Termux agar TIDAK perlu download ulang di perangkat.
-  # Sumber: server/gatekeeper/models/ di PC (diunduh sekali). Hanya dikirim file .gguf agar hemat.
-  Write-Host "[5/6] Menyalin bobot VLM (*.gguf) ke Termux..." -ForegroundColor Yellow
+  # [5/6] Salin bobot VLM (.gguf) dan model Gatekeeper ONNX hasil training ke Termux.
+  Write-Host "[5/6] Menyalin bobot VLM + Gatekeeper (*.gguf, *.onnx) ke Termux..." -ForegroundColor Yellow
   $gkModels = Join-Path $RepoRoot 'server\gatekeeper\models'
   if (Test-Path $gkModels) {
-    $ggufs = @(Get-ChildItem $gkModels -Filter *.gguf -File -ErrorAction SilentlyContinue)
-    if ($ggufs.Count -gt 0) {
-      Write-Host "   mengirim $($ggufs.Count) file .gguf ($([math]::Round((($ggufs | Measure-Object -Property Length -Sum).Sum / 1MB), 1)) MB)..." -ForegroundColor DarkGray
+    $modelFiles = @(Get-ChildItem $gkModels -File -ErrorAction SilentlyContinue | Where-Object { $_.Extension -in '.gguf', '.onnx' })
+    if ($modelFiles.Count -gt 0) {
+      $totalMb = [math]::Round((($modelFiles | Measure-Object -Property Length -Sum).Sum / 1MB), 1)
+      Write-Host "   mengirim $($modelFiles.Count) model ($totalMb MB)..." -ForegroundColor DarkGray
       & ssh @sshArgs $dest "mkdir -p '${rel}/gatekeeper/models'"
-      & scp @scpArgs (Join-Path $gkModels '*.gguf') "${dest}:${rel}/gatekeeper/models/"
-      if ($LASTEXITCODE -ne 0) { throw "scp model VLM gagal." }
-      Write-Host "   ✅ bobot VLM terkirim" -ForegroundColor DarkGray
+      foreach ($modelFile in $modelFiles) {
+        & scp @scpArgs $modelFile.FullName "${dest}:${rel}/gatekeeper/models/"
+        if ($LASTEXITCODE -ne 0) { throw "scp model gagal: $($modelFile.Name)" }
+      }
+      Write-Host "   bobot VLM + ONNX terkirim" -ForegroundColor DarkGray
     } else {
-      Write-Host "   (tidak ada .gguf di server/gatekeeper/models - dilewati; unduh dulu di PC)" -ForegroundColor DarkGray
+      Write-Host "   (tidak ada .gguf/.onnx di server/gatekeeper/models - dilewati; unduh atau latih di PC)" -ForegroundColor DarkGray
     }
   } else {
     Write-Host "   (folder server/gatekeeper/models tidak ada - dilewati)" -ForegroundColor DarkGray
   }
-
   # [6/6] Restart pm2 Termux agar riwayat & video langsung tampil.
   Write-Host "[6/6] Merestart service Termux (pm2 restart clipper gatekeeper)..." -ForegroundColor Yellow
   & ssh @sshArgs $dest "bash -lc 'command -v pm2 >/dev/null && pm2 restart clipper gatekeeper >/dev/null 2>&1 </dev/null || true; command -v pm2 >/dev/null && pm2 save >/dev/null 2>&1 </dev/null || true'"

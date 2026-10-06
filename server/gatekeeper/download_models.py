@@ -13,6 +13,7 @@ import os
 import sys
 import urllib.request
 import urllib.error
+import argparse
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(CURRENT_DIR, "models")
@@ -63,6 +64,14 @@ MODELS = [
         "urls": [
             "https://huggingface.co/onnx-community/mobilenetv3_small_100.lamb_in1k/resolve/main/onnx/model.onnx"
         ]
+    }, {
+        # Model hasil training lokal; tidak memiliki URL publik bawaan. Operator yang
+        # meng-host artifact dapat menyediakan GK_ZONETEXT_MODEL_URL atau --zone-model-url.
+        "name": "MobileNetV3 Zone Text Student (opsional, hasil train_zone_text.py)",
+        "filename": "zonetext_v1.onnx",
+        "min_size": 500_000,
+        "optional": True,
+        "urls": [os.environ.get("GK_ZONETEXT_MODEL_URL", "").strip()] if os.environ.get("GK_ZONETEXT_MODEL_URL", "").strip() else [],
     }
 ]
 
@@ -114,6 +123,10 @@ def _download_items(items):
             print(f"  ✅ {item['name']} ({os.path.basename(filepath)}) sudah tersedia ({os.path.getsize(filepath) // 1024} KB).")
             continue
 
+        if item.get("optional") and not item.get("urls"):
+            print(f"  ℹ️ {item['filename']} belum tersedia; distilasi dengan make_zone_text_dataset.py lalu train_zone_text.py (opsional).")
+            continue
+
         print(f"  ⬇️ Mengunduh {item['name']}...")
         downloaded = False
         for url in item["urls"]:
@@ -161,11 +174,19 @@ def unduh_vlm_models():
     return all_ok
 
 if __name__ == "__main__":
-    import argparse
     parser = argparse.ArgumentParser(description="Gatekeeper model downloader")
     parser.add_argument("--download-vlm", action="store_true", help="Unduh GGUF SmolVLM2 (opsional)")
+    parser.add_argument("--zone-model-url", default="", help="URL artifact zonetext_v1.onnx hasil training (opsional)")
     args = parser.parse_args()
-    if args.download_vlm:
+    if args.zone_model_url:
+        ok = _download_items([{
+            "name": "MobileNetV3 Zone Text Student",
+            "filename": "zonetext_v1.onnx",
+            "min_size": 500_000,
+            "urls": [args.zone_model_url],
+        }])
+        sys.exit(0 if ok else 1)
+    elif args.download_vlm:
         unduh_vlm_models()
     else:
         check_and_download_models()

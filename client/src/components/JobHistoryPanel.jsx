@@ -715,6 +715,11 @@ export default function JobHistoryPanel({ onSelectJob, onRetryJob, currentJobId,
                     {/* Stage badge */}
                     <div className="mt-2 flex items-center gap-2 flex-wrap">
                       <StageBadge stage={job.stage} />
+                      {job.oracleCalibration?.enabled && (
+                        <span title="Kaggle dilewati; keputusan Gatekeeper lokal. Hasil ini bukan bukti produksi." className="text-[10px] text-amber-200 font-bold bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/40">
+                          Kalibrasi lokal · tanpa Kaggle
+                        </span>
+                      )}
                       {isAutoRetryingThis && (
                         <span className="text-[10px] text-amber-300 font-bold bg-amber-500/20 px-2 py-0.5 rounded-full border border-amber-500/40 flex items-center gap-1 animate-pulse">
                           <Zap className="w-2.5 h-2.5 fill-current text-amber-400" />

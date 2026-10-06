@@ -19,6 +19,14 @@
 
 // Setiap entri: (env) => nilai efektif, meniru PERSIS cara konsumen membaca flag.
 const FLAG_NORMALIZERS = {
+  // Mode kalibrasi eksplisit: Gatekeeper lokal menjadi pemutus dan Oracle Kaggle dilewati.
+  ORACLE_OFFLINE_CALIBRATION: (env) => String(env.ORACLE_OFFLINE_CALIBRATION || '').trim() === '1' || String(env.ORACLE_OFFLINE_CALIBRATION || '').trim().toLowerCase() === 'true',
+  VLM_ORACLE_GRID: (env) => {
+    const raw = env.VLM_ORACLE_GRID;
+    if (raw === undefined || String(raw).trim() === '') return 2;
+    const n = Number(raw);
+    return Number.isFinite(n) ? Math.min(2, Math.max(0, Math.round(n))) : 2;
+  },
   // stage1Render: process.env.RENDER_DOWNLOAD_SECTIONS === '1'
   RENDER_DOWNLOAD_SECTIONS: (env) => env.RENDER_DOWNLOAD_SECTIONS === '1',
   // stage1Render: process.env.RENDER_NO_FULL_DOWNLOAD === '1'
@@ -311,6 +319,7 @@ export function isGeminiSceneDiscoveryEnabled(env = process.env) {
  * yang mematikan — dan dua nilai itu pun kini ditolak gerbang stage1Render sebelum job jalan.
  */
 export function isVlmOracleEnabled(env = process.env) {
+  if (isOracleOfflineCalibration(env)) return false;
   const v = String(env.VISION_VERIFY_MODE || '').trim().toLowerCase();
   return v !== 'legacy' && v !== 'smolvlm';
 }
@@ -348,10 +357,28 @@ export function isOraclePreflightEnabled(env = process.env) {
  * (satu-satunya mode yang diizinkan menjalankan job), strict pada mode legacy/smolvlm.
  */
 export function localGatekeeperVetoMode(env = process.env) {
+  if (isOracleOfflineCalibration(env)) return 'strict';
   const v = String(env.GK_LOCAL_VETO || '').trim().toLowerCase();
   if (v === 'strict' || v === '1' || v === 'true') return 'strict';
   if (v === 'advisory' || v === '0' || v === 'false') return 'advisory';
   return isVlmOracleEnabled(env) ? 'advisory' : 'strict';
+}
+
+/** Kalibrasi lokal hanya boleh diaktifkan secara eksplisit oleh operator. */
+export function isOracleOfflineCalibration(env = process.env) {
+  const value = String(env.ORACLE_OFFLINE_CALIBRATION || '').trim().toLowerCase();
+  return value === '1' || value === 'true';
+}
+
+export function buildOracleCalibrationMeta(env = process.env, now = new Date()) {
+  if (!isOracleOfflineCalibration(env)) return null;
+  return {
+    enabled: true,
+    skippedAt: now.toISOString(),
+    gatekeeperBackend: 'local-strict',
+    detectorBackend: String(env.GK_FACE_BACKEND || 'scrfd'),
+    productionEligible: false,
+  };
 }
 
 export function isLocalGatekeeperAdvisory(env = process.env) {
