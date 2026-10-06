@@ -30,6 +30,7 @@ gk.detect_synthetic_graphic_overlay = lambda crop: (False, "")
 class CountingFace:
     def __init__(self):
         self.calls = 0
+        self.backend = "scrfd"
 
     def detect(self, image_bgr, niche="kitchen_tools"):
         self.calls += 1
@@ -171,9 +172,11 @@ def main():
         failures += check("bench: rejectsByStage ada", isinstance(bm.get("rejectsByStage"), dict), str(bm.get("rejectsByStage")))
         sc = bm.get("stageCounts", {})
         failures += check("bench: frames_in == 12", sc.get("frames_in") == 12, f"({sc.get('frames_in')})")
-        failures += check("bench: yunet_crop & dbnet & mobilenet tercatat",
-                          sc.get("yunet_crop_calls", 0) > 0 and sc.get("dbnet_calls", 0) > 0 and sc.get("mobilenet_calls", 0) > 0,
-                          f"(crop={sc.get('yunet_crop_calls')} dbnet={sc.get('dbnet_calls')} scene={sc.get('mobilenet_calls')})")
+        failures += check("bench: backend wajah aktual (scrfd_crop), dbnet & mobilenet tercatat",
+                          sc.get("scrfd_crop_calls", 0) > 0 and sc.get("dbnet_calls", 0) > 0 and sc.get("mobilenet_calls", 0) > 0,
+                          f"(crop={sc.get('scrfd_crop_calls')} dbnet={sc.get('dbnet_calls')} scene={sc.get('mobilenet_calls')})")
+        failures += check("bench: pemeriksaan full-frame SCRFD tercatat",
+                          sc.get("scrfd_full_calls", 0) > 0, f"({sc.get('scrfd_full_calls', 0)})")
         failures += check("bench: face_caught_by_full_only nihil (stub tanpa wajah)",
                           sc.get("face_caught_by_full_only", 0) == 0, f"({sc.get('face_caught_by_full_only', 0)})")
         # bench instance lokal -> dua batch berurutan TIDAK boleh menumpuk (bukti anti-race).

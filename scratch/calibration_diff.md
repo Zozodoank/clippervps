@@ -55,3 +55,8 @@ False negative lokal (wajah/subtitle yang lolos lokal tetapi ditolak Kaggle): be
 - [ ] Tidak ada wajah/subtitle yang lolos lokal tetapi ditolak Kaggle.
 - [ ] Sedikitnya 200 sampel zona teks ditinjau manual sebelum training zonemob.
 - [ ] Output grid dan mapping `perFrame[].index` cocok untuk seluruh sel yang dikirim.
+
+## Follow-up audit (2026-10-06)
+
+- The old baseline recorded `yunet_*` stage labels while Gatekeeper health reported SCRFD. The benchmark label now follows `face_gate.backend`; a fresh Termux run should report `scrfd_crop` and `scrfd_full`. Historical timing values above are unchanged and have not been remeasured.
+- Grid remains disabled because the acceptance checklist above is incomplete. The Windows workspace has no DBNet model and the local dataset contains datasheet JSON rather than source image frames, so zonemob distillation/training cannot be completed from the current local inputs.

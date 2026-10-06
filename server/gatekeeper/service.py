@@ -1169,6 +1169,9 @@ class FrameGatekeeper:
             }
 
         crop = self.crop_9_16(img)
+        face_backend = str(getattr(self.face_gate, "backend", "face") or "face").strip().lower()
+        if not face_backend.replace("_", "").isalnum():
+            face_backend = "face"
 
         # ── TAHAP 0B: Pemeriksaan Buku Panduan / Dokumen Kertas ──
         has_manual, manual_reason = detect_paper_manual(crop)
@@ -1202,7 +1205,7 @@ class FrameGatekeeper:
                     }
                 content_faces.append({**f, "region": "crop"})
         else:
-            has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = _bench_time(bench, "yunet_crop", self.face_gate.detect, crop, niche=niche)
+            has_face_crop, face_conf_crop, face_box_crop, face_reason_crop = _bench_time(bench, f"{face_backend}_crop", self.face_gate.detect, crop, niche=niche)
             if has_face_crop:
                 return {
                     "filePath": file_path,
@@ -1243,7 +1246,7 @@ class FrameGatekeeper:
                     }
                 content_faces.append({**f, "region": "full"})
         else:
-            has_face_full, face_conf_full, face_box_full, face_reason_full = _bench_time(bench, "yunet_full", self.face_gate.detect, img, niche=niche)
+            has_face_full, face_conf_full, face_box_full, face_reason_full = _bench_time(bench, f"{face_backend}_full", self.face_gate.detect, img, niche=niche)
             if has_face_full and face_box_full:
                 bx, by, bw, bh = face_box_full
                 face_overlaps_crop = not (bx + bw < x_start or bx > x_end)
