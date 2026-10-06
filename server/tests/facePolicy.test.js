@@ -30,6 +30,7 @@ function mockGatekeeperResponse(allFrames, extra = {}) {
 
 afterEach(() => {
   delete global.fetch;
+  vi.unstubAllEnvs();
 });
 
 describe('Face Policy (Fase 3) - videoFilterService', () => {
@@ -64,6 +65,26 @@ describe('Face Policy (Fase 3) - videoFilterService', () => {
       const body = JSON.parse(impl.mock.calls[0][1].body);
       expect(body.niche).toBe('gadget_smartphone');
       expect(body.facePolicy).toBe('presenter_only');
+    });
+
+    it('mengaktifkan jalur face cepat hanya saat Oracle advisory aktif', async () => {
+      const frames = makeTempFrameFiles(3);
+      const impl = mockGatekeeperResponse([]);
+      vi.stubEnv('VISION_VERIFY_MODE', 'oracle');
+      vi.stubEnv('GK_LOCAL_VETO', 'advisory');
+      vi.stubEnv('ORACLE_OFFLINE_CALIBRATION', '0');
+      await callAIGatekeeperMicroservice(frames, {});
+      expect(JSON.parse(impl.mock.calls[0][1].body).gatekeeperMode).toBe('advisory');
+    });
+
+    it('memaksa jalur face strict saat kalibrasi offline', async () => {
+      const frames = makeTempFrameFiles(3);
+      const impl = mockGatekeeperResponse([]);
+      vi.stubEnv('VISION_VERIFY_MODE', 'oracle');
+      vi.stubEnv('GK_LOCAL_VETO', 'advisory');
+      vi.stubEnv('ORACLE_OFFLINE_CALIBRATION', '1');
+      await callAIGatekeeperMicroservice(frames, {});
+      expect(JSON.parse(impl.mock.calls[0][1].body).gatekeeperMode).toBe('strict');
     });
   });
 

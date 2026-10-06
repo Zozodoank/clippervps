@@ -307,6 +307,9 @@ class FaceGatekeeper:
                     self.scrfd = _ScrfdDetector(scrfd_path, input_size=scrfd_inp)
                     self.backend = "scrfd"
                     print(f"  [FaceGatekeeper] \u2705 SCRFD AKTIF (pengganti YuNet) input={self.scrfd.input_size} use_kps={self.scrfd.use_kps}.")
+                    requested = max(64, (scrfd_inp // 32) * 32)
+                    if self.scrfd.input_size != (requested, requested):
+                        print(f"  [FaceGatekeeper] \u2139\ufe0f GK_SCRFD_INPUT={requested} diabaikan karena model ONNX mengunci input {self.scrfd.input_size}.")
                     return
                 except Exception as e:
                     print(f"  [FaceGatekeeper] \u26a0\ufe0f SCRFD init error: {e} \u2192 fallback ke YuNet/MediaPipe.")
@@ -1115,6 +1118,7 @@ class FrameGatekeeper:
 
     def process_single_frame(self, file_path, timestamp=0.0, niche="kitchen_tools", face_policy="strict",
                              image_bgr=None, run_text_check=True, inherited_text=None, bench=None,
+                             gatekeeper_mode="strict",
                              presenter_min_area_ratio=PRESENTER_MIN_AREA_RATIO,
                              presenter_upper_half_y=PRESENTER_UPPER_HALF_Y,
                              presenter_min_hits=PRESENTER_MIN_HITS):
@@ -1245,6 +1249,12 @@ class FrameGatekeeper:
                         "decision": "REJECT"
                     }
                 content_faces.append({**f, "region": "full"})
+        elif gatekeeper_mode == "advisory":
+            # Oracle receives this candidate frame pool and owns its final verdict in advisory mode.
+            # The crop pass inspects exactly the pixels retained by the 9:16 render;
+            # the second full-frame pass only recovers faces cut by the crop boundary.
+            if bench is not None:
+                bench.inc("face_full_skipped_advisory")
         else:
             has_face_full, face_conf_full, face_box_full, face_reason_full = _bench_time(bench, f"{face_backend}_full", self.face_gate.detect, img, niche=niche)
             if has_face_full and face_box_full:
@@ -1349,6 +1359,7 @@ class FrameGatekeeper:
 
     def process_batch(self, frame_items, niche="kitchen_tools",
                       min_consecutive_clean=3, min_clean_duration=4.0, face_policy="strict",
+                      gatekeeper_mode="strict",
                       presenter_min_area_ratio=PRESENTER_MIN_AREA_RATIO,
                       presenter_upper_half_y=PRESENTER_UPPER_HALF_Y,
                       presenter_min_hits=PRESENTER_MIN_HITS):
@@ -1462,7 +1473,7 @@ class FrameGatekeeper:
                 v = self.process_single_frame(
                     path, ts, niche=niche, face_policy=face_policy,
                     image_bgr=img, run_text_check=run_text_check, inherited_text=last_text_result,
-                    bench=bench,
+                    bench=bench, gatekeeper_mode=gatekeeper_mode,
                     presenter_min_area_ratio=presenter_min_area_ratio,
                     presenter_upper_half_y=presenter_upper_half_y,
                     presenter_min_hits=presenter_min_hits
@@ -1780,6 +1791,9 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                 face_policy = str(payload.get("facePolicy", "strict")).strip().lower()
                 if face_policy not in ("strict", "presenter_only"):
                     face_policy = "strict"
+                gatekeeper_mode = str(payload.get("gatekeeperMode", "strict")).strip().lower()
+                if gatekeeper_mode not in ("strict", "advisory"):
+                    gatekeeper_mode = "strict"
                 min_consec = int(payload.get("minConsecutiveClean", 2))
                 min_dur = float(payload.get("minCleanDuration", 1.5))
 
@@ -1803,6 +1817,7 @@ class GatekeeperHTTPHandler(BaseHTTPRequestHandler):
                     min_consecutive_clean=min_consec,
                     min_clean_duration=min_dur,
                     face_policy=face_policy,
+                    gatekeeper_mode=gatekeeper_mode,
                     presenter_min_area_ratio=presenter_min_area_ratio,
                     presenter_upper_half_y=presenter_upper_half_y,
                     presenter_min_hits=presenter_min_hits

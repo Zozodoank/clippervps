@@ -136,6 +136,24 @@ def main():
         failures += check("bergerak: bersih lolos sebagai clean", len(res2["cleanFrames"]) > 0,
                           f"({len(res2['cleanFrames'])} clean)")
 
+        # Mode advisory memeriksa crop yang akan dirender, tetapi melewati inferensi
+        # full-frame kedua karena Oracle memeriksa pool frame lengkap.
+        gate2a = make_gate()
+        res2a = gate2a.process_batch(items2, niche="kitchen_tools", face_policy="strict", gatekeeper_mode="advisory")
+        sc2a = res2a["benchmarks"]["stageCounts"]
+        failures += check("advisory: satu face pass per frame",
+                          gate2a.face_gate.calls == 12 and sc2a.get("scrfd_full_calls", 0) == 0,
+                          f"(face={gate2a.face_gate.calls}, full={sc2a.get('scrfd_full_calls', 0)})")
+        failures += check("advisory: full pass yang dilewati terukur",
+                          sc2a.get("face_full_skipped_advisory", 0) == 12,
+                          f"({sc2a.get('face_full_skipped_advisory', 0)})")
+
+        gate2p = make_gate()
+        resp = gate2p.process_batch(items2, niche="gadget_smartphone", face_policy="presenter_only", gatekeeper_mode="advisory")
+        failures += check("advisory presenter_only: pass full tetap berjalan",
+                          gate2p.face_gate.calls == 24 and resp["benchmarks"]["stageCounts"].get("face_full_skipped_advisory", 0) == 0,
+                          f"(face={gate2p.face_gate.calls}, skipped={resp['benchmarks']['stageCounts'].get('face_full_skipped_advisory', 0)})")
+
         # ── 3. Watermark persisten: frame yang DBNet-nya di-skip tetap DIBUANG (warisan) ──
         gate3 = make_gate()
         gate3.text_gate = CountingText(always_dirty=True)

@@ -1025,12 +1025,14 @@ export async function callAIGatekeeperMicroservice(frames, { timeoutSec = 300, o
   }
   // Audit trail: parameter yang DIPILIH untuk job ini, supaya tuning (24/96/6) bisa dinilai dari
   // data nyata alih-alih asumsi. runtimeCores = core AKTIF online (bukan spek hardware).
-  console.log(`[Gatekeeper] config: runtimeCores=${gkCores} GK_CHUNK_SIZE=${GK_CHUNK_SIZE} chunks=${chunks.length} frames=${validFrames.length} GK_TIMEOUT_SEC_PER_FRAME=${perFrameSec} GK_CHUNK_RETRIES=${GK_CHUNK_RETRIES}`);
+  const activeGatekeeperMode = isLocalGatekeeperAdvisory(process.env) ? 'advisory' : 'strict';
+  console.log(`[Gatekeeper] config: mode=${activeGatekeeperMode} runtimeCores=${gkCores} GK_CHUNK_SIZE=${GK_CHUNK_SIZE} chunks=${chunks.length} frames=${validFrames.length} GK_TIMEOUT_SEC_PER_FRAME=${perFrameSec} GK_CHUNK_RETRIES=${GK_CHUNK_RETRIES}`);
 
   const sendChunk = async (chunk) => {
     const payload = JSON.stringify({
       niche,
       facePolicy,
+      gatekeeperMode: activeGatekeeperMode,
       minConsecutiveClean: GATEKEEPER_CONFIG.MIN_CONSECUTIVE_CLEAN_FRAMES,
       minCleanDuration: GATEKEEPER_CONFIG.MIN_CLEAN_DURATION_SEC,
       presenterMinAreaRatio: GATEKEEPER_CONFIG.PRESENTER_MIN_AREA_RATIO,
@@ -2626,4 +2628,3 @@ export async function sampleFramesForWindows(streamUrl, windows, { outDir, fps =
   }
   return scenes;
 }
-
