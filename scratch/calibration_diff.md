@@ -37,6 +37,7 @@ Status: Run A dan audit Oracle Run B selesai untuk kandidat `m-unxJ6icHc`. Run B
 - Waktu inferensi Oracle dari batch: 21.105 ms + 13.044 ms = 34,1 detik
 - Vonis batch: 2/2 `safe=true`; kandidat diteruskan ke render. Gatekeeper mencatat pemeriksaan awal 5 frame advisory dan tidak memveto.
 - Hasil Stage 1: 4 scenes, voiceover Gemini 15,92 detik, video silent 6 detik (2.493.337 byte).
+- Salinan preview untuk review di PC: `scratch/runB-silent-preview.mp4` (file lokal, tidak dimasukkan Git).
 - Render final: ditahan karena durasi gabungan 18,0 detik di bawah minimum 20 detik; status `awaiting_voiceover`, `hasFinalVideo=false`.
 - Catatan kualitas: satu still pada detik ke-1 menampilkan produk sedang didemokan dan tidak memperlihatkan subtitle/wajah. Ini bukan review seluruh klip atau sampel 200 frame.
 
