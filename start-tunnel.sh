@@ -196,22 +196,26 @@ start_ngrok() {
 }
 
 start_cloudflared() {
-  local logf url="" i
+  local out_log err_log out_lines=0 err_lines=0 url="" i
   if ! have cloudflared; then
     echo "cloudflared tidak ada di PATH (di perangkat ini biasanya /usr/local/bin/cloudflared)."
     return 1
   fi
   need_pm2 || return 1
   pm2 delete tunnel >/dev/null 2>&1 || true
+  out_log="${HOME}/.pm2/logs/tunnel-out.log"
+  err_log="${HOME}/.pm2/logs/tunnel-error.log"
+  [ -f "$out_log" ] && out_lines="$(wc -l < "$out_log")"
+  [ -f "$err_log" ] && err_lines="$(wc -l < "$err_log")"
   pm2 start cloudflared --name tunnel -- tunnel --url "http://localhost:$PORT" >/dev/null 2>&1 || {
     echo "pm2 gagal men-start cloudflared. Cek: pm2 logs tunnel"
     return 1
   }
   pm2 save >/dev/null 2>&1 || true
-  logf="${HOME}/.pm2/logs/tunnel-out.log"
-  # Quick tunnel mencetak URL-nya sendiri; tanpa menunggu, kita tidak tahu namanya.
+  # cloudflared writes its startup URL to stderr under PM2 on Termux. Search both
+  # streams, but only lines appended by this start so a stale tunnel URL is not reused.
   for i in $(seq 1 30); do
-    url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$logf" 2>/dev/null | tail -1)"
+    url="$( { tail -n +$((out_lines + 1)) "$out_log" 2>/dev/null; tail -n +$((err_lines + 1)) "$err_log" 2>/dev/null; } | grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1)"
     [ -n "$url" ] && break
     sleep 1
   done
