@@ -60,3 +60,10 @@ False negative lokal (wajah/subtitle yang lolos lokal tetapi ditolak Kaggle): be
 
 - The old baseline recorded `yunet_*` stage labels while Gatekeeper health reported SCRFD. The benchmark label now follows `face_gate.backend`; a fresh Termux run should report `scrfd_crop` and `scrfd_full`. Historical timing values above are unchanged and have not been remeasured.
 - Grid remains disabled because the acceptance checklist above is incomplete. The Windows workspace has no DBNet model and the local dataset contains datasheet JSON rather than source image frames, so zonemob distillation/training cannot be completed from the current local inputs.
+
+## Post-fix Termux sample benchmark (2026-10-07)
+
+- Gatekeeper was updated to commit `97dbffd` and verified online at `/health` with SCRFD + DBNet ONNX + MobileNetV3.
+- A 24-frame subset sampled across the existing 273-frame benchmark set completed in 48.94 seconds (2.039 seconds/frame), with 8 clean frames. Projection: about 8.5 minutes per 250 frames; the 5-minute target remains unmet.
+- Gatekeeper regression checks passed on Termux: `test_phase1_efficiency.py`, `test_face_policy.py` (29 passed), and `test_zone_text_backend.py` (2 passed).
+- This is a performance subset only; it does not establish false-negative parity against Kaggle. Keep grid disabled until the full acceptance checklist is verified.
