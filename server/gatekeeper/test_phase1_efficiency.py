@@ -36,7 +36,7 @@ class CountingFace:
         self.calls += 1
         return False, 0.0, None, "stub: tanpa wajah"
 
-    def detect_faces(self, image_bgr, min_score=0.60):
+    def detect_faces(self, image_bgr, min_score=0.60, **kwargs):
         self.calls += 1
         return []
 
