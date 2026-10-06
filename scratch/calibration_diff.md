@@ -35,7 +35,7 @@ Status: Run A dan audit Oracle Run B selesai untuk kandidat `m-unxJ6icHc`. Run B
 - Model Kaggle: `qwen2.5-vl-3b-instruct`, Tesla T4 / float16
 - Frame/grid divisit: 15 frame, 2 batch per-image (8 + 7); tidak memakai grid
 - Waktu inferensi Oracle dari batch: 21.105 ms + 13.044 ms = 34,1 detik
-- Vonis batch: 2/2 `safe=true`; kandidat diteruskan ke render. Gatekeeper mencatat pemeriksaan awal 5 frame advisory dan tidak memveto.
+- Vonis batch: 2/2 `safe=true`; kandidat diteruskan ke render. Petunjuk Gatekeeper ikut masuk ke prompt: 2/5 frame dicurigai watermark/logo dan 1/5 subtitle/teks; Qwen diminta memeriksa sendiri, bukan mengikuti veto lokal.
 - Hasil Stage 1: 4 scenes, voiceover Gemini 15,92 detik, video silent 6 detik (2.493.337 byte).
 - Salinan preview untuk review di PC: `scratch/runB-silent-preview.mp4` (file lokal, tidak dimasukkan Git).
 - Render final: ditahan karena durasi gabungan 18,0 detik di bawah minimum 20 detik; status `awaiting_voiceover`, `hasFinalVideo=false`.
@@ -43,7 +43,7 @@ Status: Run A dan audit Oracle Run B selesai untuk kandidat `m-unxJ6icHc`. Run B
 
 ## Perbedaan dan review manual
 
-| Kandidat yang sama (cakupan frame tidak identik) | Strict Run A menolak: teks/watermark 3/5 frame | Advisory Run B tidak memveto; Qwen menerima 2/2 batch | Satu still memperlihatkan demonstrasi produk; overlap frame penuh belum diverifikasi | Perbedaan gerbang; belum cukup bukti untuk menyebut false positive/negative |
+| Kandidat yang sama (cakupan frame tidak identik) | Strict Run A menolak: teks/watermark 3/5 frame | Gatekeeper mengirim kecurigaan 2 watermark + 1 teks; Qwen menerima 2/2 batch `safe=true` | Satu still memperlihatkan demonstrasi produk; overlap frame penuh belum diverifikasi | Perbedaan gerbang; belum cukup bukti untuk menyebut false positive/negative |
 
 False positive lokal: belum terkonfirmasi.
 
