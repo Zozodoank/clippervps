@@ -67,3 +67,12 @@ False negative lokal (wajah/subtitle yang lolos lokal tetapi ditolak Kaggle): be
 - A 24-frame subset sampled across the existing 273-frame benchmark set completed in 48.94 seconds (2.039 seconds/frame), with 8 clean frames. Projection: about 8.5 minutes per 250 frames; the 5-minute target remains unmet.
 - Gatekeeper regression checks passed on Termux: `test_phase1_efficiency.py`, `test_face_policy.py` (29 passed), and `test_zone_text_backend.py` (2 passed).
 - This is a performance subset only; it does not establish false-negative parity against Kaggle. Keep grid disabled until the full acceptance checklist is verified.
+
+## Live advisory sample + tunnel recovery (2026-10-07)
+
+- The Termux Gatekeeper rechecked the same 24 spread-out images (`f0001.jpg` through `f0254.jpg`, every 11th frame) using `gatekeeperMode=advisory`, strict face policy, SCRFD crop-only, and DBNet advisory target 480.
+- Result: 24 frames in 24.17 s (1.007 s/frame; projected 4.20 min/250). Five frames were locally rejected: three letterbox/orientation, one bottom-left text badge, and one dominant-text frame. The other 19 were locally clean.
+- A live Oracle grid submission reached Kaggle, but its image request returned HTTP 403 because the one-off PRoot runner stored temporary frames outside the API process's allowed frame root. This is a harness/runtime-path failure, not a model verdict; it provides no Gatekeeper-vs-Kaggle parity evidence. Do not count it as either a false positive or a false negative.
+- The same 24-frame Oracle comparison must be rerun through the API process's own runtime/root so the staged images pass the route allowlist. The 2x2 unit tests pass, but keep `VLM_ORACLE_GRID=0` until a live full-cell mapping run succeeds.
+- Tunnel recovery: ngrok rejected a second session with `ERR_NGROK_334`; the Cloudflare quick tunnel fallback connected. `start-tunnel.sh` previously searched only PM2 stdout even though cloudflared wrote the URL to stderr. Commit `ac06c55` fixes URL discovery using only new lines from both streams. The replacement tunnel returned HTTP 200 for `/api/health`, and the Kaggle worker loaded the updated private config and heartbeated.
+- Grid tests: `npm test -- --run tests/vlmOracleGrid.test.js tests/vlmOracle.test.js` passed 109/109. These cover software mapping behavior, not the blocked live image-fetch path.
