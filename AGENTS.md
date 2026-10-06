@@ -23,7 +23,7 @@ Aplikasi dijalankan langsung di perangkat user (bukan di-hosting remote):
    * FFmpeg, yt-dlp, dan integrasi Google Gemini / OpenRouter AI.
 2. **Gatekeeper (`server/gatekeeper/service.py`, port `5050`):**
    * AI Local Frame Gatekeeper. Dip-auto-start-kan oleh `dev-runner.js`.
-   * Pipeline CPU vision: SCRFD default untuk wajah (MediaPipe/YuNet masih opsi fallback), DBNet PP-OCRv4 ONNX default untuk teks (Sobel tersedia sebagai fallback; zonemob eksperimental), dan MobileNetV3 untuk klasifikasi adegan. Saat Oracle aktif dalam mode advisory, Gatekeeper cukup menjalankan deteksi wajah pada crop yang akan dirender; pemeriksaan full-frame tetap aktif pada mode strict/kalibrasi.
+   * Pipeline CPU vision: SCRFD default untuk wajah (MediaPipe/YuNet masih opsi fallback), DBNet PP-OCRv4 ONNX default untuk teks (Sobel tersedia sebagai fallback; zonemob eksperimental), dan MobileNetV3 untuk klasifikasi adegan. Saat Oracle aktif dalam mode advisory, Gatekeeper cukup menjalankan deteksi wajah pada crop yang akan dirender dan memakai target DBNet lebih ringan; pass full-frame serta DBNet 736px tetap aktif pada mode strict/kalibrasi.
 3. **Termux (opsional):** bisa dijalankan via **PM2** lewat `menu-vps.sh` untuk mode background + log real-time. Ini murni PM2 **di perangkat Termux itu sendiri**, bukan remote.
 
 ### Kolaborasi Gatekeeper + Kaggle

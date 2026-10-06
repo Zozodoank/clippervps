@@ -50,15 +50,17 @@ class CountingText:
         self._sentinel = sentinel
         self.sentinel_calls = 0
         self.backend = "dbnet_onnx_stub"  # TextGatekeeper asli punya atribut ini
+        self.target_sizes = []
 
     def needs_full_text_check(self, crop_bgr):
         """Stub sentinel Sobel murah (versi asli ada di TextGatekeeper)."""
         self.sentinel_calls += 1
         return self._sentinel
 
-    def detect(self, crop_bgr, niche="kitchen_tools"):
+    def detect(self, crop_bgr, niche="kitchen_tools", target_size=None):
         n = self.calls
         self.calls += 1
+        self.target_sizes.append(target_size)
         corners = {"TL": 0.0, "TR": 0.0, "BL": 0.0, "BR": 0.0}
         dirty = self.always_dirty or (self.dirty_at is not None and n == self.dirty_at) \
             or (self.dirty_indices is not None and n in self.dirty_indices)
@@ -147,6 +149,9 @@ def main():
         failures += check("advisory: full pass yang dilewati terukur",
                           sc2a.get("face_full_skipped_advisory", 0) == 12,
                           f"({sc2a.get('face_full_skipped_advisory', 0)})")
+        failures += check("advisory: DBNet memakai resolusi lebih rendah",
+                          set(gate2a.text_gate.target_sizes) == {gk.DBNET_ADVISORY_TARGET_SIZE},
+                          f"({sorted(set(gate2a.text_gate.target_sizes))})")
 
         gate2p = make_gate()
         resp = gate2p.process_batch(items2, niche="gadget_smartphone", face_policy="presenter_only", gatekeeper_mode="advisory")

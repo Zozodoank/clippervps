@@ -96,6 +96,17 @@ MODELS_DIR = os.path.join(CURRENT_DIR, "models")
 # terakhir. Set GK_TEXT_CHECK_STRIDE=1 untuk mengembalikan perilaku lama (DBNet tiap frame).
 TEXT_CHECK_STRIDE = max(1, int(os.environ.get("GK_TEXT_CHECK_STRIDE", "3") or 3))
 
+def _clamp_dbnet_target_size(value, default=736):
+    try:
+        size = int(value)
+    except (TypeError, ValueError):
+        size = default
+    return max(320, min(736, (size // 32) * 32))
+
+
+DBNET_STRICT_TARGET_SIZE = 736
+DBNET_ADVISORY_TARGET_SIZE = _clamp_dbnet_target_size(os.environ.get("GK_DBNET_ADVISORY_TARGET_SIZE", "480"))
+
 # P3.1 SATU SUMBER AMBANG PRESENTER (fallback). Node mengirim nilai ini lewat payload
 # /filter-frames (presenterMinAreaRatio/presenterUpperHalfY/presenterMinHits); bila payload
 # tidak menyertainya, service memakai konstanta di bawah. Dulu angka 0.06/0.55/1 di-hardcode
@@ -704,7 +715,7 @@ class TextGatekeeper:
             self.backend = "gradient_fallback"
             print("  [TextGatekeeper] ℹ️ Menggunakan fallback Sobel horizontal edge 4-corner text density.")
 
-    def detect(self, crop_bgr, niche="kitchen_tools"):
+    def detect(self, crop_bgr, niche="kitchen_tools", target_size=None):
         h, w = crop_bgr.shape[:2]
         crop_area = float(h * w)
         if crop_area < 100:
@@ -750,7 +761,7 @@ class TextGatekeeper:
         # ── Jalur 1: DBNet PP-OCRv4 ONNX Inference (High-Res 736px, Aspect-Preserved) ──
         if self.ort_session:
             try:
-                target_size = 736
+                target_size = _clamp_dbnet_target_size(target_size, DBNET_STRICT_TARGET_SIZE) if target_size is not None else DBNET_STRICT_TARGET_SIZE
                 scale = target_size / max(h, w)
                 target_w = max(32, int(round(w * scale / 32.0)) * 32)
                 target_h = max(32, int(round(h * scale / 32.0)) * 32)
@@ -1279,7 +1290,10 @@ class FrameGatekeeper:
 
         # ── TAHAP 2: Text & 4-Corner Watermark Detection (DBNet = stage termahal) ──
         if run_text_check:
-            has_text, total_cov, bottom_cov, text_reason, corner_acts = _bench_time(bench, "dbnet", self.text_gate.detect, crop, niche=niche)
+            text_target_size = DBNET_ADVISORY_TARGET_SIZE if gatekeeper_mode == "advisory" else None
+            has_text, total_cov, bottom_cov, text_reason, corner_acts = _bench_time(
+                bench, "dbnet", self.text_gate.detect, crop, niche=niche, target_size=text_target_size
+            )
         else:
             # Warisi hasil DBNet frame sebelumnya. Watermark/subtitle bersifat persisten,
             # jadi frame yang dilewati TIDAK bisa lolos dari deteksi hanya karena di-skip.
