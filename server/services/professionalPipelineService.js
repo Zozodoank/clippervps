@@ -149,7 +149,10 @@ export function distributeTotal(rawDurations, total, mins, maxs) {
 
 export function conformClipsToVoiceover({ clips = [], script = '', audioDurationSec = 0, creativePlan = {}, niche = 'kitchen_tools' } = {}) {
   if (!Array.isArray(clips) || clips.length === 0) return [];
-  const MIN_CONFORM_DURATION = 18.0;
+  // Keep conform output aligned with videoRenderer.normalizeRenderClips(), which
+  // rejects auto-mode output below 20s. The old 18s floor produced audio/visual
+  // retries that could never pass that downstream gate.
+  const MIN_CONFORM_DURATION = 20.0;
   const audioDuration = Math.max(MIN_CONFORM_DURATION, Number(audioDurationSec) || clips.reduce((s, c) => s + (Number(c.duration) || 3), 0));
   const starts = extractScriptSceneStarts(script);
   const planShots = Array.isArray(creativePlan.shots) ? creativePlan.shots : [];

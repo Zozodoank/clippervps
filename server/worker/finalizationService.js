@@ -568,6 +568,7 @@ async function _processJobVoiceover(jobId, customScript = null, options = {}) {
       ttsProvider: ttsResult.provider || activeTtsProvider,
       ttsModel: ttsResult.modelId || ttsModelToUse,
       ttsFallbackModel: ttsFallbackModelToUse,
+      voiceoverScript: scriptToUse,
       cleanScript: ttsResult.cleanScript,
       lexicon: effectiveLexicon,
       wordBoundaries: ttsResult.wordBoundaries || [],
@@ -740,4 +741,3 @@ async function _retryJobSubtitles(jobId, options = {}) {
 export function retryJobSubtitles(jobId, options) {
   return heavyTaskQueue(() => _retryJobSubtitles(jobId, options));
 }
-
