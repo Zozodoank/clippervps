@@ -12,11 +12,25 @@ import shutil
 
 import cv2
 import numpy as np
-import onnxruntime as ort
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 ZONE_NAMES = ("bottom", "top", "TL", "TR", "BL", "BR")
+
+
+def split_group_key(relative_path):
+    parts = [p.lower() for p in relative_path.replace("\\", "/").split("/")]
+    # Raw candidate frames are temporally adjacent samples from one source job.
+    # Keep every candidate/frame in that job together to avoid validation leakage.
+    if "raw_frames" in parts:
+        raw_frames_index = parts.index("raw_frames")
+        if raw_frames_index > 0:
+            return parts[raw_frames_index - 1]
+    # A directory of frames is one source group; a flat collection falls back to
+    # per-file hashing so unrelated examples can still populate both splits.
+    if len(parts) > 1:
+        return "/".join(parts[:-1])
+    return parts[0]
 
 
 def split_for(relative_path):
@@ -24,7 +38,19 @@ def split_for(relative_path):
     for name in ("train", "val", "valid", "validation"):
         if name in parts:
             return "val" if name in ("val", "valid", "validation") else "train"
-    return "val" if int(hashlib.sha1(relative_path.encode()).hexdigest()[:8], 16) % 5 == 0 else "train"
+    group_key = split_group_key(relative_path)
+    return "val" if int(hashlib.sha1(group_key.encode()).hexdigest()[:8], 16) % 5 == 0 else "train"
+
+
+def write_manifest(path, rows):
+    if not rows:
+        return
+    temporary_path = path + ".tmp"
+    with open(temporary_path, "w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+    os.replace(temporary_path, path)
 
 
 def detect_zones(session, image):
@@ -51,16 +77,27 @@ def detect_zones(session, image):
 
 
 def main():
+    import onnxruntime as ort
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", default=os.path.join(HERE, "dataset"))
     parser.add_argument("--dbnet", default=os.path.join(HERE, "models", "ch_PP-OCRv4_det.onnx"))
     parser.add_argument("--output", default=os.path.join(HERE, "dataset", "zone_text_distilled"))
+    parser.add_argument("--checkpoint-every", type=int, default=100, help="Simpan manifest setiap N frame agar run panjang dapat dilanjutkan.")
     args = parser.parse_args()
     if not os.path.isfile(args.dbnet):
         raise SystemExit(f"DBNet model tidak ada: {args.dbnet}; jalankan download_models.py lebih dulu.")
     os.makedirs(args.output, exist_ok=True)
     session = ort.InferenceSession(args.dbnet, providers=["CPUExecutionProvider"])
+    manifest = os.path.join(args.output, "manifest.csv")
     rows = []
+    completed_sources = set()
+    if os.path.isfile(manifest):
+        with open(manifest, newline="", encoding="utf-8") as stream:
+            rows = list(csv.DictReader(stream))
+        completed_sources = {row["source"].replace("\\", "/") for row in rows}
+        print(f"Melanjutkan manifest: {len(rows)} frame sudah tersimpan.")
+    processed_since_checkpoint = 0
     out_abs = os.path.abspath(args.output)
     for root, dirs, files in os.walk(args.source):
         dirs[:] = [d for d in dirs if os.path.abspath(os.path.join(root, d)) != out_abs]
@@ -69,6 +106,9 @@ def main():
             if os.path.splitext(name)[1].lower() not in IMAGE_EXTS:
                 continue
             relative = os.path.relpath(src, args.source)
+            normalized_relative = relative.replace("\\", "/")
+            if normalized_relative in completed_sources:
+                continue
             image = cv2.imread(src)
             if image is None or image.size == 0:
                 print(f"[skip] gambar tidak terbaca: {relative}")
@@ -80,17 +120,19 @@ def main():
             os.makedirs(os.path.dirname(destination), exist_ok=True)
             crop = cv2.resize(image, (224, 224), interpolation=cv2.INTER_AREA)
             cv2.imwrite(destination, crop, [cv2.IMWRITE_JPEG_QUALITY, 92])
-            row = {"image": os.path.relpath(destination, args.output).replace("\\", "/"), "source": relative, "split": split}
+            row = {"image": os.path.relpath(destination, args.output).replace("\\", "/"), "source": normalized_relative, "split": split}
             row.update({name: labels[i] for i, name in enumerate(ZONE_NAMES)})
             row.update({name + "_coverage": round(coverage[i], 6) for i, name in enumerate(ZONE_NAMES)})
             rows.append(row)
+            completed_sources.add(normalized_relative)
+            processed_since_checkpoint += 1
+            if args.checkpoint_every > 0 and processed_since_checkpoint >= args.checkpoint_every:
+                write_manifest(manifest, rows)
+                processed_since_checkpoint = 0
+                print(f"[checkpoint] {len(rows)} frame tersimpan; lanjut distilasi.")
     if not rows:
         raise SystemExit(f"Tidak ada gambar untuk distilasi di {args.source}. Tambahkan gambar train/val terlebih dahulu.")
-    manifest = os.path.join(args.output, "manifest.csv")
-    with open(manifest, "w", newline="", encoding="utf-8") as stream:
-        writer = csv.DictWriter(stream, fieldnames=list(rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(rows)
+    write_manifest(manifest, rows)
     print(f"Selesai: {len(rows)} frame berlabel DBNet; train={sum(r['split']=='train' for r in rows)}, val={sum(r['split']=='val' for r in rows)}")
     print(f"Manifest: {manifest}")
 

@@ -152,7 +152,7 @@ Ketika ClipperVPS memproses video affiliate:
 Backend tetap `GK_TEXT_BACKEND=dbnet` sampai artifact ONNX ini selesai ditinjau dan diukur. Pipeline ini menyalin pola DBNet ke MobileNetV3-Small dengan enam label sigmoid: subtitle bawah, overlay atas, dan empat sudut watermark.
 
 1. Pastikan `models/ch_PP-OCRv4_det.onnx` tersedia dan dataset berisi gambar pada split `train/` serta `val/`.
-2. Jalankan `python make_zone_text_dataset.py`. Skrip menulis pseudo-label ke `dataset/zone_text_distilled/manifest.csv`; ia tidak menimpa gambar sumber.
+2. Jalankan `python make_zone_text_dataset.py`. Skrip menulis pseudo-label ke `dataset/zone_text_distilled/manifest.csv`; ia tidak menimpa gambar sumber. Untuk path `job_*/raw_frames/...`, seluruh frame dalam satu job selalu masuk split yang sama agar video berurutan tidak bocor antara train dan validation. Folder `train/` dan `val/` yang sudah ada tetap dihormati. Manifest disimpan tiap 100 frame secara atomik, dan run berikutnya dapat melanjutkan dari manifest yang sama.
 3. Tinjau manual setidaknya 200 pasangan frame/label secara acak. Koreksi atau hapus pseudo-label yang salah sebelum training.
 4. Jalankan `python train_zone_text.py`. Hasilnya `models/zonetext_v1.onnx` dengan output berurutan `bottom, top, TL, TR, BL, BR`.
 5. Ukur ulang latency dan recall terhadap DBNet. Aktifkan `GK_TEXT_BACKEND=zonemob` hanya setelah hasil lulus; DBNet dan Sobel tetap dapat dipilih.
