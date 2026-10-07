@@ -7,7 +7,6 @@ import statistics
 import time
 
 import numpy as np
-import onnxruntime as ort
 from PIL import Image
 import torch
 from torchvision import models
@@ -59,6 +58,8 @@ def main():
     session = None
     model = None
     if args.model:
+        import onnxruntime as ort
+
         options = ort.SessionOptions()
         options.intra_op_num_threads = max(1, args.threads)
         options.inter_op_num_threads = 1
@@ -95,7 +96,8 @@ def main():
     fn = int(np.logical_and(y, ~pred).sum())
     print(f"manual_holdout_rows={len(samples)} positives={positives_n} negatives={negatives_n} threshold={args.threshold:.3f}")
     print(f"TL_recall={tp / max(1, positives_n):.3f} ({tp}/{positives_n}) false_positive_rate={fp / max(1, negatives_n):.3f} ({fp}/{negatives_n}) FP={fp} FN={fn}")
-    print(f"onnx_inference_ms median={statistics.median(elapsed_ms):.3f} p95={float(np.percentile(elapsed_ms, 95)):.3f}")
+    timing_name = "onnx_inference_ms" if session else "checkpoint_pytorch_inference_ms"
+    print(f"{timing_name} median={statistics.median(elapsed_ms):.3f} p95={float(np.percentile(elapsed_ms, 95)):.3f}")
     for job in sorted(set(jobs)):
         selected = np.asarray([item == job for item in jobs])
         jy, jp = y[selected], pred[selected]
