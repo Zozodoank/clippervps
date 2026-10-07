@@ -141,3 +141,11 @@ The live Windows `server/.env` matches the intended cooperative Oracle setup and
 - `VISION_VERIFY_MODE=oracle`, `ORACLE_OFFLINE_CALIBRATION=0`, `VLM_ORACLE_GRID=2`, and `GATEKEEPER_AUTO_START=1`.
 - `RENDER_SAMPLE_INTERVAL_SEC=1.2`, `VLM_ORACLE_FRAME_HEIGHT=240`, `VLM_ORACLE_MAX_FRAMES=500`, `VLM_ORACLE_AUDIT_MAX_FRAMES=240`, `SAMPLE_MAX_FRAMES=500`, `VLM_ORACLE_TOTAL_TIMEOUT_SEC=1800`, and `VLM_ORACLE_TIMEOUT_SEC=300`.
 - `GK_MAX_BATCH_FRAMES=240` is retained based on measured advisory CPU cost and the documented recommendation in this plan to cap local Gatekeeper work; Kaggle retains the 500-frame Oracle ceiling. Advisory execution uses crop-only SCRFD and a lighter DBNet size, while strict/calibration retains full-frame face and 736px DBNet passes.
+
+## Cooperative runtime recheck (2026-10-07)
+
+- After the Termux SSH service returned, pulled commit `9605e18` and the follow-up validation record to `/root/clippervps`, preserving the two pre-existing local edits in `server/services/downloader.js` and `server/worker/stage1Render.js`.
+- Started the local Termux API + Vite UI with `DEV_RUNNER_AUTO_TUNNEL=0`; LAN probes returned HTTP 200 on ports 5000 and 3000. Gatekeeper `/health` returned online with SCRFD, DBNet ONNX, and MobileNetV3.
+- Restarted the configured ngrok tunnel via `start-tunnel.sh auto`; its public `/api/health` probe passed with HTTP 200. Authenticated `/api/vlm-oracle/status` then reported `enabled=true`, `mode=oracle`, `connected=true`, protocol `2026-10-06-grid-v1`, and zero pending/claimed batches.
+- Pushed the Kaggle worker/config from Termux using the existing `oracle-launch.sh`, with a five-minute self-stop cap. Kaggle booted Qwen2.5-VL-3B on Tesla T4 and loaded the mounted model, but no job arrived during this recheck (`vonis=0`, `gagal=0`); the worker ended at its five-minute cap and Kaggle reports `KernelWorkerStatus.COMPLETE`. This verifies tunnel, API, authentication and worker startup together, but is not a new frame-verdict acceptance run. The earlier 24-frame live advisory-to-grid acceptance remains the frame-level proof.
+- A later runtime check confirmed the Kaggle heartbeat had expired, as expected after its capped session. The API/UI and Gatekeeper remained online on Termux. No new video frames were submitted in this runtime recheck.
