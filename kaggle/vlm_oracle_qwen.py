@@ -582,6 +582,33 @@ def extract_json(text):
 VERDICT_KEYS = ("safe", "face", "text", "watermark", "graphic")
 
 
+def resolve_grid_cell_verdicts(expected_by_id, reported, infer_missing):
+    """Return one explicit verdict per source cell; never infer missing cells clean."""
+    verdict_by_id = {}
+    for entry in reported if isinstance(reported, list) else []:
+        if not isinstance(entry, dict) or not str(entry.get("index", "")).lstrip("-").isdigit():
+            continue
+        cell_id = int(entry["index"])
+        if cell_id in expected_by_id and cell_id not in verdict_by_id:
+            verdict_by_id[cell_id] = dict(entry)
+    for cell_id in sorted(set(expected_by_id) - set(verdict_by_id)):
+        try:
+            entry = infer_missing(cell_id, expected_by_id[cell_id])
+            if not isinstance(entry, dict):
+                raise TypeError("single-cell inference did not return an object")
+            entry = dict(entry)
+            entry["index"] = cell_id
+            entry.setdefault("verified", True)
+            verdict_by_id[cell_id] = entry
+        except Exception as err:
+            verdict_by_id[cell_id] = {
+                "index": cell_id, "safe": True, "verified": False,
+                "face": False, "text": False, "watermark": False,
+                "graphic": False, "reason": ("Cell belum terverifikasi: %s" % str(err))[:280],
+            }
+    return [verdict_by_id[cell_id] for cell_id in sorted(expected_by_id)]
+
+
 def wants_ranking(prompt):
     """Prompt dari server (buildVlmPrompt requireRanking=True) satu-satunya tempat
     kata 'matchScore' muncul. Deteksinya string, jadi notebook dan server boleh
@@ -693,7 +720,6 @@ def verdict_batch(payload, model, processor, torch):
 
     prompt = payload.get("prompt") or "Inspect ALL frames. Answer ONLY JSON {\"safe\":true|false}"
     grid_mode = any(isinstance(fr.get("cells"), list) and fr["cells"] for fr in payload.get("frames", []))
-    grid_cell_ids = [int(cell["index"]) for fr in payload.get("frames", []) for cell in (fr.get("cells") or []) if isinstance(cell, dict) and str(cell.get("index", "")).lstrip("-").isdigit()]
     t0 = time.time()
     
     frame_indexes = [str(idx) for idx, _ in paths]
@@ -790,23 +816,72 @@ def verdict_batch(payload, model, processor, torch):
     # yang memang dicurigai: <= N inferensi satu-frame.
     any_flag = any(out[k] for k in ("face", "text", "watermark", "graphic"))
     if grid_mode:
-        # A contact sheet is one image but represents several original source frames.
-        # Trust only explicit per-cell entries from the model; the server rejects missing cells.
+        # Qwen often returns a batch-level answer without the requested per-cell
+        # entries. A grid may never be treated as verified on that basis: crop every
+        # missing cell back to its own source image and ask for an explicit verdict.
+        # The server remains strict and rejects any cell whose crop verdict cannot parse.
+        from PIL import Image
         reported = obj.get("perFrame") if isinstance(obj.get("perFrame"), list) else []
-        out["perFrame"] = [entry for entry in reported if isinstance(entry, dict)]
-        reported_ids = {int(entry["index"]) for entry in out["perFrame"] if str(entry.get("index", "")).lstrip("-").isdigit()}
+        expected_by_id = {int(cell["index"]): (frame, cell) for frame in payload["frames"]
+                          for cell in (frame.get("cells") or [])
+                          if isinstance(cell, dict) and str(cell.get("index", "")).lstrip("-").isdigit()}
+        raw_by_grid = {int(fr["index"]): os.path.join(batch_dir, "raw%03d.jpg" % int(fr["index"]))
+                       for fr in payload["frames"]}
         log("[Oracle][Grid] batchId=%s expectedCells=%d reportedCells=%d missing=%s" % (
-            payload["batchId"], len(grid_cell_ids), len(reported_ids), sorted(set(grid_cell_ids) - reported_ids)))
-        if out["perFrame"]:
-            for key in ("safe", "face", "text", "watermark", "graphic"):
-                if key == "safe":
-                    out[key] = all(bool(entry.get(key, False)) for entry in out["perFrame"])
-                else:
-                    out[key] = any(bool(entry.get(key, False)) for entry in out["perFrame"])
+            payload["batchId"], len(expected_by_id), len({int(e["index"]) for e in reported
+                if isinstance(e, dict) and str(e.get("index", "")).lstrip("-").isdigit()
+                and int(e["index"]) in expected_by_id}), sorted(set(expected_by_id) - {
+                int(e["index"]) for e in reported if isinstance(e, dict)
+                and str(e.get("index", "")).lstrip("-").isdigit() and int(e["index"]) in expected_by_id})))
+
+        def infer_grid_cell(cell_id, location):
+            grid_index, cell = location
+            raw_grid = raw_by_grid.get(grid_index)
+            if not raw_grid or not os.path.isfile(raw_grid):
+                raise RuntimeError("file grid sumber tidak ditemukan")
+            with Image.open(raw_grid) as grid_image:
+                grid_image = grid_image.convert("RGB")
+                w, h = grid_image.size
+                col, row = int(cell.get("cell", 0)) % 2, int(cell.get("cell", 0)) // 2
+                left, top = col * (w // 2), row * (h // 2)
+                right = (col + 1) * (w // 2) if col == 0 else w
+                bottom = (row + 1) * (h // 2) if row == 0 else h
+                crop_path = os.path.join(batch_dir, "cell_%03d.jpg" % cell_id)
+                grid_image.crop((left, top, right, bottom)).save(crop_path, "JPEG", quality=92)
+            single_prompt = prompt.split("\nGRID INSTRUCTIONS:", 1)[0]
+            single_prompt += ("\nInspect this ONE cropped source frame independently. ")
+            single_prompt += ("Respond with one JSON object containing safe, face, text, watermark, graphic, and reason. ")
+            single_prompt += ("Do not infer this frame's verdict from neighboring frames.")
+            _, cell_obj, cell_degenerate = ask(model, processor, torch, [crop_path], single_prompt)
+            if cell_obj is None:
+                raise RuntimeError("output crop tidak dapat diparse (degenerate=%s)" % cell_degenerate)
+            frame_verdict = {
+                "index": cell_id,
+                "safe": bool(cell_obj.get("safe", True)),
+                "face": bool(cell_obj.get("face", False)),
+                "text": bool(cell_obj.get("text", False)),
+                "watermark": bool(cell_obj.get("watermark", False)),
+                "graphic": bool(cell_obj.get("graphic", False)),
+                "reason": str(cell_obj.get("reason", ""))[:280],
+            }
             if ranking:
-                out["productMatch"] = any(bool(entry.get("productMatch", False)) for entry in out["perFrame"])
-                out["matchScore"] = median_int([entry.get("matchScore") for entry in out["perFrame"]])
-                out["apparentQuality"] = median_int([entry.get("apparentQuality") for entry in out["perFrame"]])
+                frame_verdict.update({
+                    "productMatch": bool(cell_obj.get("productMatch", True)),
+                    "matchScore": clamp_score(cell_obj.get("matchScore")),
+                    "apparentQuality": clamp_score(cell_obj.get("apparentQuality")),
+                })
+            log("[Oracle][Grid] batchId=%s cell=%d verified by individual crop" % (payload["batchId"], cell_id))
+            return frame_verdict
+
+        out["perFrame"] = resolve_grid_cell_verdicts(expected_by_id, reported, infer_grid_cell)
+
+        out["safe"] = all(bool(entry.get("safe", True)) for entry in out["perFrame"])
+        for key in ("face", "text", "watermark", "graphic"):
+            out[key] = any(bool(entry.get(key, False)) for entry in out["perFrame"])
+        if ranking:
+            out["productMatch"] = any(bool(entry.get("productMatch", False)) for entry in out["perFrame"])
+            out["matchScore"] = median_int([entry.get("matchScore") for entry in out["perFrame"]])
+            out["apparentQuality"] = median_int([entry.get("apparentQuality") for entry in out["perFrame"]])
     elif (not out["safe"] or any_flag) and len(paths) > 1:
         per_frame = []
         for idx, one in paths:
