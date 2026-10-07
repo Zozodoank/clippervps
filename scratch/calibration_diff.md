@@ -93,7 +93,7 @@ False negative lokal (wajah/subtitle yang lolos lokal tetapi ditolak Kaggle): be
 - Kaggle worker heartbeat identified protocol `2026-10-06-grid-v1` and source hash `bf1da02600ed94f9a134097cbe4fd817`.
 - All 3 grid batches completed; server returned `checked=24`, `timedOut=0`, `rejected=0`, and no blacklisted frames in 44.2 seconds. This proves complete live grid cell mapping and confirms Kaggle remained final decision maker even for Gatekeeper findings.
 - Set Windows `server/.env` to `VLM_ORACLE_GRID=2` after this full live acceptance. `VISION_VERIFY_MODE=oracle` and `ORACLE_OFFLINE_CALIBRATION=0` remain in force. Termux runtime leaves the grid variable unset, which resolves to the same grid default (`2`).
-- Interpretation: Gatekeeper's 7 flags were advisory signals; Qwen accepted all 24 after inspection. This comparison is not ground-truth proof that the 7 flags are false positives, and it does not replace the separate 200-sample review required before training ZoneMob.
+- Interpretation: Gatekeeper's 7 flags were advisory signals; Qwen accepted all 24 after inspection. This comparison is not ground-truth proof that the 7 flags are false positives. ZoneText's separate 200-frame manual review is now recorded in `server/gatekeeper/ZONE_TEXT_DISTILLATION_AUDIT.md`; that review found additional TL pseudo-label misses, so it does not clear the training quality gate.
 
 ## ZoneText distillation audit (2026-10-07)
 
@@ -113,8 +113,9 @@ False negative lokal (wajah/subtitle yang lolos lokal tetapi ditolak Kaggle): be
 
 - Added `server/gatekeeper/requirements-runtime.txt` and `setup-windows.ps1`; `dev-runner.js` now prefers the Gatekeeper virtual environment when present. `download_models.py` uses the certifi trust bundle when installed, preserving TLS verification.
 - Created `server/gatekeeper/.venv`, installed OpenCV/NumPy/ONNX Runtime/certifi, and downloaded SCRFD, DBNet, and MobileNetV3 model assets (ignored by Git).
-- Windows service startup test confirmed the service responds, but health reports `yunet`, `gradient_fallback`, and `entropy_variance`. ONNX Runtime cannot import because this Windows installation lacks the MSVC runtime DLLs `MSVCP140_1.dll` and `VCRUNTIME140_1.dll` in System32. I stopped the fallback-only test process; this does not alter the running Termux Gatekeeper.
-- Setup script now reports the exact Microsoft x64 Redistributable prerequisite. System installation requires an administrator/UAC action; until resolved, Windows does not meet the intended SCRFD+DBNet model configuration. Termux health remains SCRFD + DBNet ONNX + MobileNetV3.
+- Initial Windows startup used `yunet`, `gradient_fallback`, and `entropy_variance` because Python 3.8+ did not search the venv's app-local MSVC DLL directory when loading ONNX Runtime. The required runtime DLLs were already present in `.venv/Scripts`; system-wide installation was unnecessary.
+- `service.py` now registers the venv `Scripts` directory with `os.add_dll_directory()` before importing native packages, and `setup-windows.ps1` performs the same app-local runtime check. A Windows smoke startup on port 5051 loaded SCRFD, DBNet PP-OCRv4 ONNX, and MobileNetV3; `/health` returned `online` with `scrfd`, `dbnet_onnx`, and `mobilenetv3_imagenet`. The temporary process was stopped after the health check.
+- This proves the Windows Gatekeeper can use the intended local models. It is a startup/health check, not a full Windows frame-quality or performance benchmark; the live advisory-to-Kaggle acceptance remains the production decision-path evidence.
 
 ## Full advisory benchmark of retained 273-frame sample (2026-10-07)
 

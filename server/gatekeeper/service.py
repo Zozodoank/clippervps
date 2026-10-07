@@ -11,6 +11,18 @@ Lightweight real-time CPU vision pipeline to reject dirty video frames before re
 import os
 import sys
 
+# Windows Python 3.8+ does not search PATH for native extension dependencies.
+# The isolated Gatekeeper venv can carry the Microsoft CRT beside its interpreter,
+# so register that app-local directory before importing OpenCV/ONNX Runtime.
+_DLL_DIRECTORY_HANDLES = []
+if sys.platform == "win32" and hasattr(os, "add_dll_directory"):
+    _venv_dll_dir = os.path.join(sys.prefix, "Scripts")
+    if os.path.isdir(_venv_dll_dir):
+        try:
+            _DLL_DIRECTORY_HANDLES.append(os.add_dll_directory(_venv_dll_dir))
+        except OSError:
+            pass
+
 # Ensure UTF-8 output on Windows console to prevent UnicodeEncodeError with emojis
 if sys.platform == "win32":
     try:
