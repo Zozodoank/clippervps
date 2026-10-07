@@ -33,13 +33,48 @@ def split_group_key(relative_path):
     return parts[0]
 
 
-def split_for(relative_path):
-    parts = [p.lower() for p in relative_path.replace("\\", "/").split("/")]
-    for name in ("train", "val", "valid", "validation"):
-        if name in parts:
-            return "val" if name in ("val", "valid", "validation") else "train"
-    group_key = split_group_key(relative_path)
-    return "val" if int(hashlib.sha1(group_key.encode()).hexdigest()[:8], 16) % 5 == 0 else "train"
+def assign_group_splits(relative_paths, val_fraction=0.2):
+    """Assign whole source groups to a balanced, deterministic train/val split."""
+    explicit = {}
+    groups = {}
+    for relative_path in relative_paths:
+        normalized = relative_path.replace("\\", "/")
+        parts = [part.lower() for part in normalized.split("/")]
+        explicit_split = next(
+            ("val" if name in ("val", "valid", "validation") else "train"
+             for name in ("train", "val", "valid", "validation") if name in parts),
+            None,
+        )
+        if explicit_split:
+            explicit[normalized] = explicit_split
+        else:
+            groups.setdefault(split_group_key(normalized), []).append(normalized)
+
+    if len(groups) < 2:
+        return {**explicit, **{path: "train" for paths in groups.values() for path in paths}}
+
+    total = sum(len(paths) for paths in groups.values())
+    target = max(1, min(total - 1, int(round(total * val_fraction))))
+    # Subset-sum keeps whole jobs intact while approaching the requested val size.
+    ordered_groups = sorted(groups, key=lambda key: hashlib.sha1(key.encode()).hexdigest())
+    sums = {0: ()}
+    for group in ordered_groups:
+        group_size = len(groups[group])
+        for current, chosen in list(sums.items()):
+            new_total = current + group_size
+            if new_total >= total or new_total in sums:
+                continue
+            sums[new_total] = chosen + (group,)
+    best_total = min(
+        (size for size in sums if 0 < size < total),
+        key=lambda size: (abs(size - target), size > target, size),
+    )
+    val_groups = set(sums[best_total])
+    assigned = dict(explicit)
+    for group, paths in groups.items():
+        split = "val" if group in val_groups else "train"
+        assigned.update({path: split for path in paths})
+    return assigned
 
 
 def write_manifest(path, rows):
@@ -104,6 +139,7 @@ def main():
         print(f"Melanjutkan manifest: {len(rows)} frame sudah tersimpan.")
     processed_since_checkpoint = 0
     out_abs = os.path.abspath(args.output)
+    source_files = []
     for root, dirs, files in os.walk(args.source):
         dirs[:] = [d for d in dirs if os.path.abspath(os.path.join(root, d)) != out_abs]
         for name in files:
@@ -112,29 +148,49 @@ def main():
                 continue
             relative = os.path.relpath(src, args.source)
             normalized_relative = relative.replace("\\", "/")
-            if normalized_relative in completed_sources:
-                continue
-            image = cv2.imread(src)
-            if image is None or image.size == 0:
-                print(f"[skip] gambar tidak terbaca: {relative}")
-                continue
-            labels, coverage = detect_zones(session, image)
-            split = split_for(relative)
-            file_id = hashlib.sha1(relative.encode("utf-8")).hexdigest()[:16] + ".jpg"
-            destination = os.path.join(args.output, "images", split, file_id)
-            os.makedirs(os.path.dirname(destination), exist_ok=True)
-            crop = cv2.resize(image, (224, 224), interpolation=cv2.INTER_AREA)
-            cv2.imwrite(destination, crop, [cv2.IMWRITE_JPEG_QUALITY, 92])
-            row = {"image": os.path.relpath(destination, args.output).replace("\\", "/"), "source": normalized_relative, "split": split}
-            row.update({name: labels[i] for i, name in enumerate(ZONE_NAMES)})
-            row.update({name + "_coverage": round(coverage[i], 6) for i, name in enumerate(ZONE_NAMES)})
-            rows.append(row)
-            completed_sources.add(normalized_relative)
-            processed_since_checkpoint += 1
-            if args.checkpoint_every > 0 and processed_since_checkpoint >= args.checkpoint_every:
-                write_manifest(manifest, rows)
-                processed_since_checkpoint = 0
-                print(f"[checkpoint] {len(rows)} frame tersimpan; lanjut distilasi.")
+            source_files.append((src, normalized_relative))
+
+    split_by_source = assign_group_splits([relative for _, relative in source_files])
+    # Repair older manifests made with per-frame hashing without repeating DBNet.
+    for row in rows:
+        normalized_source = row["source"].replace("\\", "/")
+        desired_split = split_by_source.get(normalized_source, row["split"])
+        if desired_split != row["split"]:
+            old_image = os.path.join(args.output, row["image"])
+            new_relative = os.path.join("images", desired_split, os.path.basename(old_image)).replace("\\", "/")
+            new_image = os.path.join(args.output, new_relative)
+            os.makedirs(os.path.dirname(new_image), exist_ok=True)
+            if os.path.exists(old_image):
+                os.replace(old_image, new_image)
+            row["image"] = new_relative
+            row["split"] = desired_split
+    if rows:
+        write_manifest(manifest, rows)
+
+    for src, normalized_relative in source_files:
+        if normalized_relative in completed_sources:
+            continue
+        image = cv2.imread(src)
+        if image is None or image.size == 0:
+            print(f"[skip] gambar tidak terbaca: {normalized_relative}")
+            continue
+        labels, coverage = detect_zones(session, image)
+        split = split_by_source[normalized_relative]
+        file_id = hashlib.sha1(normalized_relative.encode("utf-8")).hexdigest()[:16] + ".jpg"
+        destination = os.path.join(args.output, "images", split, file_id)
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        crop = cv2.resize(image, (224, 224), interpolation=cv2.INTER_AREA)
+        cv2.imwrite(destination, crop, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        row = {"image": os.path.relpath(destination, args.output).replace("\\", "/"), "source": normalized_relative, "split": split}
+        row.update({name: labels[i] for i, name in enumerate(ZONE_NAMES)})
+        row.update({name + "_coverage": round(coverage[i], 6) for i, name in enumerate(ZONE_NAMES)})
+        rows.append(row)
+        completed_sources.add(normalized_relative)
+        processed_since_checkpoint += 1
+        if args.checkpoint_every > 0 and processed_since_checkpoint >= args.checkpoint_every:
+            write_manifest(manifest, rows)
+            processed_since_checkpoint = 0
+            print(f"[checkpoint] {len(rows)} frame tersimpan; lanjut distilasi.")
     if not rows:
         raise SystemExit(f"Tidak ada gambar untuk distilasi di {args.source}. Tambahkan gambar train/val terlebih dahulu.")
     write_manifest(manifest, rows)

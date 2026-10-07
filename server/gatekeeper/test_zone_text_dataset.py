@@ -13,23 +13,40 @@ import make_zone_text_dataset as dataset
 
 class ZoneTextSplitTest(unittest.TestCase):
     def test_explicit_train_and_validation_directories_are_preserved(self):
-        self.assertEqual(dataset.split_for("train/job_a/frame_001.jpg"), "train")
-        self.assertEqual(dataset.split_for("validation/job_b/frame_001.jpg"), "val")
+        paths = [
+            "train/job_a/frame_001.jpg",
+            "validation/job_b/frame_001.jpg",
+            "job_auto_a/raw_frames/cand_1/frame_001.jpg",
+            "job_auto_b/raw_frames/cand_1/frame_001.jpg",
+        ]
+        split = dataset.assign_group_splits(paths)
+        self.assertEqual(split[paths[0]], "train")
+        self.assertEqual(split[paths[1]], "val")
 
     def test_all_raw_frames_from_one_job_share_a_group_and_split(self):
-        first = "job_auto_a/raw_frames/cand_1/frame_001.jpg"
-        second = "job_auto_a/raw_frames/cand_6/frame_499.jpg"
-        other_job = "job_auto_b/raw_frames/cand_1/frame_001.jpg"
-        self.assertEqual(dataset.split_group_key(first), dataset.split_group_key(second))
-        self.assertNotEqual(dataset.split_group_key(first), dataset.split_group_key(other_job))
-        self.assertEqual(dataset.split_for(first), dataset.split_for(second))
-        self.assertEqual(dataset.split_for(first), dataset.split_for(first))
+        paths = [
+            f"job_{job}/raw_frames/cand_{candidate}/frame_{frame:03d}.jpg"
+            for job in range(10)
+            for candidate in range(2)
+            for frame in range(5)
+        ]
+        split = dataset.assign_group_splits(paths)
+        for job in range(10):
+            job_paths = [path for path in paths if path.startswith(f"job_{job}/")]
+            self.assertEqual(len({split[path] for path in job_paths}), 1)
+        self.assertEqual(split, dataset.assign_group_splits(paths))
+        self.assertEqual(sum(value == "val" for value in split.values()), 20)
 
     def test_frames_in_a_source_folder_remain_together(self):
         self.assertEqual(
             dataset.split_group_key("candidate_1/frame_001.jpg"),
             dataset.split_group_key("candidate_1/frame_002.jpg"),
         )
+
+    def test_single_source_group_does_not_leak_adjacent_frames(self):
+        paths = [f"only_job/raw_frames/cand_1/frame_{frame:03d}.jpg" for frame in range(20)]
+        split = dataset.assign_group_splits(paths)
+        self.assertEqual(set(split.values()), {"train"})
 
     def test_manifest_checkpoint_is_written_atomically(self):
         row = {"image": "images/train/one.jpg", "source": "job_a/raw_frames/cand_1/one.jpg", "split": "train"}
