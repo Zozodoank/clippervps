@@ -72,7 +72,7 @@ def main():
         model.classifier[3] = nn.Linear(model.classifier[3].in_features, 6)
         model.load_state_dict(checkpoint["best_model"])
         model.eval()
-    labels, predictions, elapsed_ms, jobs = [], [], [], []
+    labels, scores, elapsed_ms, jobs = [], [], [], []
     for job, label, crop in samples:
         tensor = load_tensor(crop)
         started = time.perf_counter()
@@ -86,10 +86,11 @@ def main():
         if values.size != 6 or not np.isfinite(values).all():
             raise SystemExit(f"Expected six finite probabilities from model; got {values}")
         labels.append(label)
-        predictions.append(int(values[2] >= args.threshold))  # LABELS order: bottom, top, TL, TR, BL, BR
+        scores.append(float(values[2]))  # LABELS order: bottom, top, TL, TR, BL, BR
         jobs.append(job)
 
-    y, pred = np.asarray(labels, dtype=bool), np.asarray(predictions, dtype=bool)
+    y, score = np.asarray(labels, dtype=bool), np.asarray(scores, dtype=np.float32)
+    pred = score >= args.threshold
     tp = int(np.logical_and(y, pred).sum())
     positives_n, negatives_n = int(y.sum()), int((~y).sum())
     fp = int(np.logical_and(~y, pred).sum())
@@ -98,6 +99,16 @@ def main():
     print(f"TL_recall={tp / max(1, positives_n):.3f} ({tp}/{positives_n}) false_positive_rate={fp / max(1, negatives_n):.3f} ({fp}/{negatives_n}) FP={fp} FN={fn}")
     timing_name = "onnx_inference_ms" if session else "checkpoint_pytorch_inference_ms"
     print(f"{timing_name} median={statistics.median(elapsed_ms):.3f} p95={float(np.percentile(elapsed_ms, 95)):.3f}")
+    print("threshold_sweep (manual holdout; descriptive only)")
+    for threshold in (0.50, 0.60, 0.70, 0.80, 0.90, 0.95):
+        threshold_pred = score >= threshold
+        threshold_tp = int(np.logical_and(y, threshold_pred).sum())
+        threshold_fp = int(np.logical_and(~y, threshold_pred).sum())
+        threshold_fn = positives_n - threshold_tp
+        print(
+            f"  threshold={threshold:.2f} recall={threshold_tp / max(1, positives_n):.3f} ({threshold_tp}/{positives_n}) "
+            f"FPR={threshold_fp / max(1, negatives_n):.3f} ({threshold_fp}/{negatives_n}) FP={threshold_fp} FN={threshold_fn}"
+        )
     for job in sorted(set(jobs)):
         selected = np.asarray([item == job for item in jobs])
         jy, jp = y[selected], pred[selected]
