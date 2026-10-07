@@ -42,7 +42,11 @@ def detect_zones(session, image):
     x1, x2 = int(target_w * 0.45), int(target_w * 0.55)
     zones = [prob[y2:, :], prob[:y1, :], prob[:y1, :x1], prob[:y1, x2:], prob[y2:, :x1], prob[y2:, x2:]]
     cov = [float(np.count_nonzero(z) / max(1, z.size)) for z in zones]
-    labels = [int(cov[0] >= 0.040), int(cov[1] >= 0.018)] + [int(v >= 0.035) for v in cov[2:]]
+    # Audit manual 200 frame (2026-10-07) menemukan watermark akun di sudut kiri
+    # atas dengan coverage DBNet 0.015-0.022; ambang 0.035 memberi label negatif
+    # pada semua contoh tersebut. Gunakan ambang yang lebih peka untuk enam zona
+    # sudut sambil tetap meminta pemeriksaan manusia sebelum data dipakai training.
+    labels = [int(cov[0] >= 0.040), int(cov[1] >= 0.018)] + [int(v >= 0.015) for v in cov[2:]]
     return labels, cov
 
 
