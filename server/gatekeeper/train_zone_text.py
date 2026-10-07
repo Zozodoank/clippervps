@@ -5,6 +5,7 @@ import csv
 import io
 import os
 import random
+import tempfile
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 import numpy as np
@@ -155,6 +156,12 @@ def main():
                         help="Chance per training image of a labeled synthetic overlay; validation remains untouched.")
     parser.add_argument("--seed", type=int, default=20261007)
     parser.add_argument("--threads", type=int, default=2)
+    parser.add_argument("--workers", type=int, default=0,
+                        help="DataLoader workers (default 0 to avoid memory-heavy fork workers on Termux).")
+    parser.add_argument("--checkpoint", default="",
+                        help="Atomic per-epoch checkpoint path; defaults to OUTPUT.checkpoint.pt.")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume model, optimizer, and best validation state from the checkpoint.")
     args = parser.parse_args()
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -169,7 +176,7 @@ def main():
         raise SystemExit("Dataset train/val kosong; gunakan --source folder terpisah atau lengkapi kedua split.")
     positives_summary = {name: sum(int(row[name]) for row in train_ds.rows) for name in LABELS}
     print(f"Dataset samples: train={len(train_ds)}, val={len(val_ds)}; train positives={positives_summary}")
-    workers = 0 if os.name == "nt" else 2
+    workers = max(0, args.workers)
     loader_generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=workers, generator=loader_generator)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=workers)
@@ -185,7 +192,40 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-4)
     best_checkpoint_score = (-1.0, -1.0, -1.0)
     best_state = None
-    for epoch in range(1, max(1, args.epochs) + 1):
+    checkpoint_path = args.checkpoint or (args.output + ".checkpoint.pt")
+    start_epoch = 1
+    if args.resume:
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+        model.load_state_dict(checkpoint["model"])
+        optimizer.load_state_dict(checkpoint["optimizer"])
+        best_checkpoint_score = tuple(checkpoint["best_score"])
+        best_state = checkpoint["best_model"]
+        start_epoch = int(checkpoint["epoch"]) + 1
+        print(f"Resumed checkpoint at epoch {start_epoch - 1}; continuing through epoch {args.epochs}.")
+
+    def save_checkpoint(epoch):
+        os.makedirs(os.path.dirname(os.path.abspath(checkpoint_path)), exist_ok=True)
+        payload = {
+            "epoch": epoch,
+            "model": {key: value.detach().cpu() for key, value in model.state_dict().items()},
+            "optimizer": optimizer.state_dict(),
+            "best_score": list(best_checkpoint_score),
+            "best_model": best_state,
+        }
+        checkpoint_dir = os.path.dirname(os.path.abspath(checkpoint_path))
+        fd, temporary = tempfile.mkstemp(prefix=".zonetext-checkpoint-", suffix=".pt", dir=checkpoint_dir)
+        os.close(fd)
+        try:
+            torch.save(payload, temporary)
+            os.replace(temporary, checkpoint_path)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    if start_epoch > max(1, args.epochs):
+        raise SystemExit(f"Checkpoint sudah di epoch {start_epoch - 1}, sama/lebih tinggi dari --epochs {args.epochs}.")
+
+    for epoch in range(start_epoch, max(1, args.epochs) + 1):
         model.train()
         loss_total = 0.0
         for x, y in train_loader:
@@ -209,6 +249,8 @@ def main():
         if checkpoint_score >= best_checkpoint_score:
             best_checkpoint_score = checkpoint_score
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+        save_checkpoint(epoch)
+        print(f"checkpoint_saved={checkpoint_path} epoch={epoch}")
     model.load_state_dict(best_state)
     model.eval().cpu()
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
