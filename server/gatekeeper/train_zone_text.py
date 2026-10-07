@@ -56,16 +56,24 @@ def evaluate(model, loader, device):
     ys, ps = [], []
     with torch.no_grad():
         for x, y in loader:
-            p = torch.sigmoid(model(x.to(device))).cpu().numpy() >= 0.5
+            p = torch.sigmoid(model(x.to(device))).cpu().numpy()
             ys.extend(y.numpy().astype(bool))
             ps.extend(p)
     if not ys:
-        return 0.0, []
-    y, p = np.asarray(ys), np.asarray(ps)
-    # False negatives on dirty-zone labels are the risky outcome; report recall per zone.
-    recalls = (np.logical_and(y, p).sum(axis=0) / np.maximum(1, y.sum(axis=0))).tolist()
+        return 0.0, [], [], 0.0
+    y, probabilities = np.asarray(ys), np.asarray(ps)
+    p = probabilities >= 0.5
+    true_positives = np.logical_and(y, p).sum(axis=0)
+    support = y.sum(axis=0)
+    predicted = p.sum(axis=0)
+    # Report recall because false negatives on dirty zones are the risky outcome.
+    recalls = true_positives / np.maximum(1, support)
+    precisions = true_positives / np.maximum(1, predicted)
+    f1 = 2 * precisions * recalls / np.maximum(1e-8, precisions + recalls)
+    supported = support > 0
+    macro_f1 = float(f1[supported].mean()) if np.any(supported) else 0.0
     exact = float(np.all(y == p, axis=1).mean())
-    return exact, recalls
+    return exact, recalls.tolist(), precisions.tolist(), macro_f1
 
 
 def main():
@@ -96,7 +104,7 @@ def main():
     pos_weight = torch.tensor(np.maximum(1.0, negatives / np.maximum(1.0, positives)), device=device)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     optimizer = torch.optim.AdamW(model.parameters(), lr=2e-4, weight_decay=1e-4)
-    best_exact = -1.0
+    best_checkpoint_score = (-1.0, -1.0, -1.0)
     best_state = None
     for epoch in range(1, max(1, args.epochs) + 1):
         model.train()
@@ -108,10 +116,19 @@ def main():
             loss.backward()
             optimizer.step()
             loss_total += loss.item() * len(x)
-        exact, recalls = evaluate(model, val_loader, device)
-        print(f"epoch={epoch:02d} loss={loss_total / len(train_ds):.4f} exact_match={exact:.3f} zone_recall={dict(zip(LABELS, [round(v,3) for v in recalls]))}")
-        if exact >= best_exact:
-            best_exact = exact
+        exact, recalls, precisions, macro_f1 = evaluate(model, val_loader, device)
+        mean_recall = float(np.mean(recalls)) if recalls else 0.0
+        print(
+            f"epoch={epoch:02d} loss={loss_total / len(train_ds):.4f} "
+            f"macro_f1={macro_f1:.3f} exact_match={exact:.3f} "
+            f"zone_recall={dict(zip(LABELS, [round(v,3) for v in recalls]))} "
+            f"zone_precision={dict(zip(LABELS, [round(v,3) for v in precisions]))}"
+        )
+        # Exact-match alone can prefer a checkpoint that misses a sparse zone.
+        # Macro-F1 leads; recall and exact-match break ties in that order.
+        checkpoint_score = (macro_f1, mean_recall, exact)
+        if checkpoint_score >= best_checkpoint_score:
+            best_checkpoint_score = checkpoint_score
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
     model.load_state_dict(best_state)
     model.eval().cpu()
@@ -125,7 +142,10 @@ def main():
 
     export_model = ProbabilityOutput(model).eval()
     torch.onnx.export(export_model, torch.zeros(1, 3, 224, 224), args.output, input_names=["image"], output_names=["zone_probabilities"], dynamic_axes={"image": {0: "batch"}, "zone_probabilities": {0: "batch"}}, opset_version=17, dynamo=False)
-    print(f"Exported: {args.output}; six output probabilities ordered {LABELS}; validation exact-match={best_exact:.3f}")
+    print(
+        f"Exported: {args.output}; six output probabilities ordered {LABELS}; "
+        f"validation macro-F1={best_checkpoint_score[0]:.3f}, exact-match={best_checkpoint_score[2]:.3f}"
+    )
 
 
 if __name__ == "__main__":
