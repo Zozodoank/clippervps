@@ -1,6 +1,6 @@
 # Perbandingan Kalibrasi Gatekeeper vs Kaggle
 
-Status: Run A dan audit Oracle Run B selesai untuk kandidat `m-unxJ6icHc`. Run B menghasilkan video silent 6 detik, tetapi render final 18 detik ditahan karena batas minimum 20 detik; job menunggu voiceover manual.
+Status: Run A dan audit Oracle Run B selesai untuk kandidat `m-unxJ6icHc`. Run A strict berakhir tanpa output karena semua kandidat ditolak Gatekeeper. Run B telah difinalisasi dengan Gemini TTS; video akhir 23,383 detik lolos QC pipeline dan job berstatus `completed`.
 
 ## Baseline benchmark Gatekeeper (sebelum Run A/B)
 
@@ -108,6 +108,15 @@ False negative lokal (wajah/subtitle yang lolos lokal tetapi ditolak Kaggle): be
 - Authenticated `/api/jobs` inspection confirms `runB-kaggle-m-unxJ6icHc-20261006` is still `awaiting_voiceover`: `hasSilentVideo=true`, `hasFinalVideo=false`, and `voiceoverAudioUrl=null`. The matching calibration Run A jobs are `error` after all candidate frames were rejected; no final Run A video exists.
 - The Run B record has four scenes and a silent video. Producing its final video requires either the app's explicit Gemini TTS regeneration action (which sends the script to Gemini and may use account quota) or a user-provided voiceover file. I left the job untouched and did not spend TTS quota.
 - The Kaggle kernel is currently idle/offline after its configured idle shutdown; Termux keeps `ORACLE_AUTO_LAUNCH=1`. The completed 24-frame cooperative grid run remains the current live acceptance evidence.
+
+## Run B Gemini TTS finalization (2026-10-07)
+
+- The user explicitly selected Gemini TTS. The first request generated 16.27s of audio, then failed because `conformClipsToVoiceover()` stopped at 18s while auto-mode render validation requires at least 20s; the failed request cleaned its temporary audio and created no final video.
+- Fixed that implementation mismatch by raising the conform floor to 20s and persisting a custom finalization script back to `voiceoverScript`. The TTS retry used only `gemini-3.1-flash-tts-preview` / `gemini_tts`; the script adds a factual line about grinding spices, matching the product title.
+- Gemini returned 23.38s of audio. Conform rendered a 23.38s silent edit, generated 11 synchronized ASS subtitle entries, and completed the final render plus pipeline QC.
+- Authenticated `/api/jobs` reports `stage=completed`, `hasFinalVideo=true`, and `ttsProvider=gemini_tts`. `ffprobe` confirms a 23.383008s 1080x1920 H.264 video stream plus AAC audio; file size is 17,860,074 bytes.
+- Termux LAN URL: `http://172.17.4.194:5000/api/video/final_clip_runB-kaggle-m-unxJ6icHc-20261006.mp4`. The local API remains available and the temporary ngrok tunnel is stopped.
+- The Termux Gatekeeper was restarted after the API runner restart and `/health` again reports SCRFD + DBNet ONNX + MobileNetV3. Kaggle remains the configured final Oracle; the previously completed live 24-frame grid acceptance remains the Gatekeeper-to-Kaggle evidence.
 
 ## Windows Gatekeeper runtime setup audit (2026-10-07)
 
