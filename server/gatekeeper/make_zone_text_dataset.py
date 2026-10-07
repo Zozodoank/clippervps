@@ -84,11 +84,16 @@ def main():
     parser.add_argument("--dbnet", default=os.path.join(HERE, "models", "ch_PP-OCRv4_det.onnx"))
     parser.add_argument("--output", default=os.path.join(HERE, "dataset", "zone_text_distilled"))
     parser.add_argument("--checkpoint-every", type=int, default=100, help="Simpan manifest setiap N frame agar run panjang dapat dilanjutkan.")
+    parser.add_argument("--intra-op-threads", type=int, default=2, help="Thread CPU ONNX Runtime untuk distilasi.")
     args = parser.parse_args()
     if not os.path.isfile(args.dbnet):
         raise SystemExit(f"DBNet model tidak ada: {args.dbnet}; jalankan download_models.py lebih dulu.")
     os.makedirs(args.output, exist_ok=True)
-    session = ort.InferenceSession(args.dbnet, providers=["CPUExecutionProvider"])
+    session_options = ort.SessionOptions()
+    session_options.intra_op_num_threads = max(1, args.intra_op_threads)
+    session_options.inter_op_num_threads = 1
+    session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    session = ort.InferenceSession(args.dbnet, sess_options=session_options, providers=["CPUExecutionProvider"])
     manifest = os.path.join(args.output, "manifest.csv")
     rows = []
     completed_sources = set()
