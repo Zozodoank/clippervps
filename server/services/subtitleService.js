@@ -292,7 +292,7 @@ function normalizeSubtitleWord(w, customLexicon = {}) {
 }
 
 /**
- * Generates ASS subtitles directly from Edge-TTS WordBoundary metadata.
+ * Generates ASS subtitles directly from provider-supplied word-boundary metadata.
  * Yields 100.0% exact, sub-millisecond synchronization with the spoken voiceover:
  * - 80ms audio-visual lead-in so subtitles appear at the exact acoustic onset.
  * - Balanced 3 to 5 word chunking (never leaves awkward 1-word orphans like "ini" or "kuning").

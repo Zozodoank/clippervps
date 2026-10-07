@@ -10,7 +10,7 @@ const CATEGORY_LABELS = {
   videoDownload: 'Unduhan Video Full HD (1080p)',
   streamSampling: 'Stream Sampling (30 Frame Visual)',
   metadata: 'Metadata & Filter Kasar (0 Download)',
-  voiceoverTTS: 'Voiceover Audio (Edge-TTS)',
+  voiceoverTTS: 'Voiceover Audio (Gemini TTS)',
   aiRequests: 'AI Vision & API Prompts',
   discovery: 'Pencarian Video Discovery',
   other: 'Lainnya'
