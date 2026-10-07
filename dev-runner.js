@@ -126,7 +126,17 @@ async function startGatekeeperProcess() {
     return;
   }
 
-  const pyCmd = isWindows ? 'python' : 'python3';
+  const gatekeeperVenvPython = path.join(
+    __dirname,
+    'server',
+    'gatekeeper',
+    '.venv',
+    isWindows ? 'Scripts' : 'bin',
+    isWindows ? 'python.exe' : 'python3',
+  );
+  const pyCmd = fs.existsSync(gatekeeperVenvPython)
+    ? gatekeeperVenvPython
+    : (isWindows ? 'python' : 'python3');
   console.log(`🤖 Starting AI Local Gatekeeper on port ${GATEKEEPER_PORT}...`);
   gatekeeperProcess = spawn(pyCmd, [gatekeeperScript, '--port', String(GATEKEEPER_PORT)], {
     cwd: path.join(__dirname, 'server', 'gatekeeper'),

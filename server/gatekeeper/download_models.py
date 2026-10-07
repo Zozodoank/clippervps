@@ -15,6 +15,15 @@ import urllib.request
 import urllib.error
 import argparse
 
+# Some embeddable/Store Python builds on Windows do not expose the OS trust
+# store to urllib. Use certifi's CA bundle when installed; keep normal platform
+# verification enabled and let an explicit SSL_CERT_FILE override it.
+try:
+    import certifi
+    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+except ImportError:
+    pass
+
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 MODELS_DIR = os.path.join(CURRENT_DIR, "models")
 os.makedirs(MODELS_DIR, exist_ok=True)

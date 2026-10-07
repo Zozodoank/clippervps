@@ -84,4 +84,50 @@ False negative lokal (wajah/subtitle yang lolos lokal tetapi ditolak Kaggle): be
 - Restarted Kaggle, observed fresh heartbeat from protocol `2026-10-06-grid-v1`, then submitted the 24 source frames as six 2x2 grids through the API runtime, so the notebook fetched API-allowlisted files successfully. Kaggle claimed and completed the batch.
 - This exposed the grid verdict issue: Qwen returned no usable `perFrame` entries for the grid, so strict server mapping rejected all 24 cells as unverified. This is a model-output coverage gap, not a clean decision, and no parity result can be counted.
 - Fixed the Kaggle worker in commit `17a373b`: it now individually crops and asks Qwen about every missing cell. Failed individual crops remain `verified=false`, preserving strict server behavior. Added offline mapping/refinement contract tests: 3/3 pass; Python syntax compilation and `git diff --check` pass.
-- Worker update has been pushed, but live revalidation remains outstanding: Termux SSH went offline again before the updated notebook could be deployed and the 24-cell comparison rerun. Keep `VLM_ORACLE_GRID=0` in live configuration until that run returns all 24 verdicts and the Gatekeeper/Kaggle rejection sets can be compared.
+- At the time of this entry, live revalidation remained outstanding and grid stayed disabled. This was superseded by the completed live acceptance recorded below.
+
+## Live 2x2 advisory-to-Oracle acceptance (2026-10-07)
+
+- Used the same 24 spread-out source frames from `grid-advisory-audit-20261007-live_reviewframes` that Gatekeeper had already analyzed in advisory mode (17 locally clean, 7 advisory findings).
+- Submitted them through `sanitizePoolWithOracle` in the Termux API runtime with `VLM_ORACLE_GRID=2`; the complete Gatekeeper `discardedFrames` report was passed as advisory `localHints` for Kaggle/Qwen to inspect independently.
+- Kaggle worker heartbeat identified protocol `2026-10-06-grid-v1` and source hash `bf1da02600ed94f9a134097cbe4fd817`.
+- All 3 grid batches completed; server returned `checked=24`, `timedOut=0`, `rejected=0`, and no blacklisted frames in 44.2 seconds. This proves complete live grid cell mapping and confirms Kaggle remained final decision maker even for Gatekeeper findings.
+- Set Windows `server/.env` to `VLM_ORACLE_GRID=2` after this full live acceptance. `VISION_VERIFY_MODE=oracle` and `ORACLE_OFFLINE_CALIBRATION=0` remain in force. Termux runtime leaves the grid variable unset, which resolves to the same grid default (`2`).
+- Interpretation: Gatekeeper's 7 flags were advisory signals; Qwen accepted all 24 after inspection. This comparison is not ground-truth proof that the 7 flags are false positives, and it does not replace the separate 200-sample review required before training ZoneMob.
+
+## ZoneText distillation audit (2026-10-07)
+
+- The Windows checkout had only 38 datasheet JSONs and no source image assets, but the live Termux runtime retained 4,202 raw candidate frames across 10 jobs. A deterministic 400-frame subset was staged outside the repository (`/tmp/zone-source`) with job-level train/validation isolation (300/100) and distilled by the existing DBNet script to `/tmp/zone-distilled`.
+- Manually reviewed a random 200-frame visual contact sheet against the six DBNet zone labels. Repeated top-left creator/account overlays were visibly present while the `TL` label was `0`; many of those examples were all-zero labels. This confirms a material pseudo-label false-negative risk.
+- Training was not run. The review gate failed, and PyTorch is not installed on either Windows or the Termux Ubuntu runtime. ZoneMob stays experimental and `GK_TEXT_BACKEND` remains DBNet.
+- Full record and label limitations are documented in `server/gatekeeper/ZONE_TEXT_DISTILLATION_AUDIT.md`. Contact sheets were kept under the Windows temp directory, not committed, because they contain user runtime video frames.
+
+## Run-state recheck (2026-10-07)
+
+- The Termux SSH endpoint `172.17.4.194:8022` is reachable; live API health is `ok`, and Gatekeeper health is online with SCRFD, DBNet ONNX, and MobileNetV3.
+- Authenticated `/api/jobs` inspection confirms `runB-kaggle-m-unxJ6icHc-20261006` is still `awaiting_voiceover`: `hasSilentVideo=true`, `hasFinalVideo=false`, and `voiceoverAudioUrl=null`. The matching calibration Run A jobs are `error` after all candidate frames were rejected; no final Run A video exists.
+- The Run B record has four scenes and a silent video. Producing its final video requires either the app's explicit Gemini TTS regeneration action (which sends the script to Gemini and may use account quota) or a user-provided voiceover file. I left the job untouched and did not spend TTS quota.
+- The Kaggle kernel is currently idle/offline after its configured idle shutdown; Termux keeps `ORACLE_AUTO_LAUNCH=1`. The completed 24-frame cooperative grid run remains the current live acceptance evidence.
+
+## Windows Gatekeeper runtime setup audit (2026-10-07)
+
+- Added `server/gatekeeper/requirements-runtime.txt` and `setup-windows.ps1`; `dev-runner.js` now prefers the Gatekeeper virtual environment when present. `download_models.py` uses the certifi trust bundle when installed, preserving TLS verification.
+- Created `server/gatekeeper/.venv`, installed OpenCV/NumPy/ONNX Runtime/certifi, and downloaded SCRFD, DBNet, and MobileNetV3 model assets (ignored by Git).
+- Windows service startup test confirmed the service responds, but health reports `yunet`, `gradient_fallback`, and `entropy_variance`. ONNX Runtime cannot import because this Windows installation lacks the MSVC runtime DLLs `MSVCP140_1.dll` and `VCRUNTIME140_1.dll` in System32. I stopped the fallback-only test process; this does not alter the running Termux Gatekeeper.
+- Setup script now reports the exact Microsoft x64 Redistributable prerequisite. System installation requires an administrator/UAC action; until resolved, Windows does not meet the intended SCRFD+DBNet model configuration. Termux health remains SCRFD + DBNet ONNX + MobileNetV3.
+
+## Full advisory benchmark of retained 273-frame sample (2026-10-07)
+
+- Ran the retained `/tmp/bench_gk/frames` sample through the live Termux Gatekeeper in `gatekeeperMode=advisory`, strict face policy, 24-frame batches.
+- Twelve batches covering 249 frames returned normal results in 285.53 seconds total (1.147 s/frame; linear projection 4.78 minutes/250 frames). The user target of <=5 minutes/250 frames is met for those measured responses.
+- The first 24-frame request returned in 0.61 seconds with 0 clean / 24 discarded and no explicit `error` key. That timing/result is anomalous and was excluded from the performance denominator. An immediate follow-up validation could not reconnect because the Termux SSH endpoint stopped accepting connections. Do not claim this is a validated full 273-frame run; the valid measured subset contains 249 frames.
+- Summed stage timing across those valid batches: SCRFD crop 180.4 s (724 ms/frame), DBNet 84.9 s (341 ms/frame), MobileNet 14.0 s (56 ms/frame), decode 4.7 s (19 ms/frame), Sobel sentinel 0.22 s (0.9 ms/frame).
+- Advisory pipeline skips the SCRFD full-frame pass and lowers DBNet input size; the measured response is consistent with the user-requested Gatekeeper-advisory + Kaggle-final architecture. Full strict mode remains much slower and this result is not a quality/parity score.
+
+## Phase 2 runtime configuration audit (2026-10-07)
+
+The live Windows `server/.env` matches the intended cooperative Oracle setup and sampling budget:
+
+- `VISION_VERIFY_MODE=oracle`, `ORACLE_OFFLINE_CALIBRATION=0`, `VLM_ORACLE_GRID=2`, and `GATEKEEPER_AUTO_START=1`.
+- `RENDER_SAMPLE_INTERVAL_SEC=1.2`, `VLM_ORACLE_FRAME_HEIGHT=240`, `VLM_ORACLE_MAX_FRAMES=500`, `VLM_ORACLE_AUDIT_MAX_FRAMES=240`, `SAMPLE_MAX_FRAMES=500`, `VLM_ORACLE_TOTAL_TIMEOUT_SEC=1800`, and `VLM_ORACLE_TIMEOUT_SEC=300`.
+- `GK_MAX_BATCH_FRAMES=240` is retained based on measured advisory CPU cost and the documented recommendation in this plan to cap local Gatekeeper work; Kaggle retains the 500-frame Oracle ceiling. Advisory execution uses crop-only SCRFD and a lighter DBNet size, while strict/calibration retains full-frame face and 736px DBNet passes.
