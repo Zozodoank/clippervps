@@ -9,6 +9,9 @@ import time
 import numpy as np
 import onnxruntime as ort
 from PIL import Image
+import torch
+from torchvision import models
+import torch.nn as nn
 
 MEAN = np.asarray([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.asarray([0.229, 0.224, 0.225], dtype=np.float32)
@@ -24,7 +27,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data", required=True, help="Root used by the distillation manifest crops.")
     parser.add_argument("--review", required=True, help="Manually reviewed CSV with job and crop columns.")
-    parser.add_argument("--model", required=True, help="Candidate six-probability ONNX artifact.")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--model", help="Candidate six-probability ONNX artifact.")
+    source.add_argument("--checkpoint", help="Trainer checkpoint; evaluates its best model without waiting for ONNX export.")
     parser.add_argument("--positive-job", action="append", required=True,
                         help="Reviewed source job with verified TL watermark/logo; repeat as needed.")
     parser.add_argument("--negative-job", action="append", required=True,
@@ -51,16 +56,30 @@ def main():
     if not samples:
         raise SystemExit("No manually reviewed rows matched the selected source jobs.")
 
-    options = ort.SessionOptions()
-    options.intra_op_num_threads = max(1, args.threads)
-    options.inter_op_num_threads = 1
-    session = ort.InferenceSession(args.model, sess_options=options, providers=["CPUExecutionProvider"])
-    input_name = session.get_inputs()[0].name
+    session = None
+    model = None
+    if args.model:
+        options = ort.SessionOptions()
+        options.intra_op_num_threads = max(1, args.threads)
+        options.inter_op_num_threads = 1
+        session = ort.InferenceSession(args.model, sess_options=options, providers=["CPUExecutionProvider"])
+        input_name = session.get_inputs()[0].name
+    else:
+        torch.set_num_threads(max(1, args.threads))
+        checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
+        model = models.mobilenet_v3_small(weights=None)
+        model.classifier[3] = nn.Linear(model.classifier[3].in_features, 6)
+        model.load_state_dict(checkpoint["best_model"])
+        model.eval()
     labels, predictions, elapsed_ms, jobs = [], [], [], []
     for job, label, crop in samples:
         tensor = load_tensor(crop)
         started = time.perf_counter()
-        output = session.run(None, {input_name: tensor})[0]
+        if session:
+            output = session.run(None, {input_name: tensor})[0]
+        else:
+            with torch.no_grad():
+                output = torch.sigmoid(model(torch.from_numpy(tensor))).numpy()
         elapsed_ms.append((time.perf_counter() - started) * 1000)
         values = np.asarray(output).reshape(-1)
         if values.size != 6 or not np.isfinite(values).all():
