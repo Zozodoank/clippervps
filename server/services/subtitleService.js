@@ -15,7 +15,7 @@ import { restoreStandardText } from './dictionaryService.js';
  * @returns {string} The path to the generated ASS file
  */
 export function generateAssSubtitles(scriptText, totalDurationSec, assOutputPath, options = {}) {
-  // If word boundaries are provided from Edge-TTS, use exact millisecond synchronization!
+  // If precise word boundaries are provided, use exact millisecond synchronization.
   if (options && options.wordBoundaries && Array.isArray(options.wordBoundaries) && options.wordBoundaries.length > 0) {
     const ok = generateAssSubtitlesFromWordBoundaries({
       wordBoundaries: options.wordBoundaries,
@@ -29,7 +29,7 @@ export function generateAssSubtitles(scriptText, totalDurationSec, assOutputPath
 
   const safeTotalDuration = Math.max(3, Number(totalDurationSec) || 25);
 
-  // WORD BOUNDARIES TIDAK TERSEDIA di titik ini (Gemini TTS single-stream / fallback Edge-TTS).
+  // Gemini TTS menghasilkan audio single-stream tanpa word boundaries.
   // Timestamp [00:XX] pada naskah adalah ESTIMASI AI saat menulis skrip — TIDAK mencerminkan
   // timing nyata audio TTS (Gemini TTS berbicara pada kecepatannya sendiri, mengabaikan angka
   // timestamp ini). Meng-anchor subtitle ke angka tersebut membuat caption melenceng dari suara.
