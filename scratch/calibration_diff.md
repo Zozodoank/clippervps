@@ -119,10 +119,10 @@ False negative lokal (wajah/subtitle yang lolos lokal tetapi ditolak Kaggle): be
 ## Full advisory benchmark of retained 273-frame sample (2026-10-07)
 
 - Ran the retained `/tmp/bench_gk/frames` sample through the live Termux Gatekeeper in `gatekeeperMode=advisory`, strict face policy, 24-frame batches.
-- Twelve batches covering 249 frames returned normal results in 285.53 seconds total (1.147 s/frame; linear projection 4.78 minutes/250 frames). The user target of <=5 minutes/250 frames is met for those measured responses.
-- The first 24-frame request returned in 0.61 seconds with 0 clean / 24 discarded and no explicit `error` key. That timing/result is anomalous and was excluded from the performance denominator. An immediate follow-up validation could not reconnect because the Termux SSH endpoint stopped accepting connections. Do not claim this is a validated full 273-frame run; the valid measured subset contains 249 frames.
-- Summed stage timing across those valid batches: SCRFD crop 180.4 s (724 ms/frame), DBNet 84.9 s (341 ms/frame), MobileNet 14.0 s (56 ms/frame), decode 4.7 s (19 ms/frame), Sobel sentinel 0.22 s (0.9 ms/frame).
-- Advisory pipeline skips the SCRFD full-frame pass and lowers DBNet input size; the measured response is consistent with the user-requested Gatekeeper-advisory + Kaggle-final architecture. Full strict mode remains much slower and this result is not a quality/parity score.
+- All 273/273 frames returned valid `status=success` responses. Wall time was 285.94 seconds total (1.047 s/frame; linear projection 4.36 minutes/250 frames). The performance target of <=5 minutes/250 frames is met for this retained sample.
+- The first 24 frames completed in 0.405 seconds because all 24 were consistently rejected at the orientation stage; response reported `totalFrames=24`, `cleanFramesCount=0`, `discardedFramesCount=24`, `stageCounts.frames_in=24`, and `rejectsByStage.orientation=24`. They were valid fast-path decisions, not a failed request.
+- Aggregate results: 199 clean and 74 discarded. Summed stage timing: SCRFD crop 180.4 s (661 ms/frame), DBNet 84.9 s (311 ms/frame), MobileNet 14.0 s (51 ms/frame), decode 4.9 s (18 ms/frame), Sobel sentinel 0.22 s (0.8 ms/frame).
+- Advisory pipeline skips the SCRFD full-frame pass and lowers DBNet input size. This measures Gatekeeper's advisory cost only; it does not establish false-negative parity or quality against Kaggle. Full strict mode remains slower.
 
 ## Phase 2 runtime configuration audit (2026-10-07)
 
