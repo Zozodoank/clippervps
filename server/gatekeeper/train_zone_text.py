@@ -6,7 +6,7 @@ import io
 import os
 import random
 
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 import numpy as np
 import torch
 import torch.nn as nn
@@ -17,11 +17,71 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 LABELS = ("bottom", "top", "TL", "TR", "BL", "BR")
 MEAN = [0.485, 0.456, 0.406]
 STD = [0.229, 0.224, 0.225]
+SYNTHETIC_LABELS = ("DAPUR PRAKTIS", "@rumahpraktis", "VIDEO RESEP", "daily.home", "RESEP HARIAN")
+
+
+def add_synthetic_zone_overlay(image, zone_index):
+    """Add a small watermark/text treatment and return its corresponding zone label."""
+    image = image.convert("RGBA")
+    width, height = image.size
+    layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    font = ImageFont.load_default()
+    for font_path in (
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+    ):
+        if os.path.isfile(font_path):
+            try:
+                font = ImageFont.truetype(font_path, random.randint(11, 15))
+                break
+            except OSError:
+                pass
+
+    text = random.choice(SYNTHETIC_LABELS)
+    bbox = draw.textbbox((0, 0), text, font=font, stroke_width=1)
+    text_width = bbox[2] - bbox[0]
+    text_height = bbox[3] - bbox[1]
+    margin = random.randint(5, 10)
+    is_corner = zone_index >= 2
+    icon_size = max(11, text_height + random.randint(1, 5)) if is_corner and random.random() < 0.7 else 0
+    combined_width = text_width + (icon_size + 3 if icon_size else 0)
+
+    if zone_index in (1, 2, 3):
+        y = margin
+    else:
+        y = max(margin, height - text_height - margin)
+    if zone_index in (2, 4):
+        x = margin
+    elif zone_index in (3, 5):
+        x = max(margin, width - combined_width - margin)
+    else:
+        x = max(margin, (width - text_width) // 2)
+
+    opacity = random.randint(145, 220)
+    text_color = random.choice(((255, 255, 255, opacity), (20, 20, 20, opacity)))
+    if icon_size:
+        icon_x = x
+        icon_y = y
+        icon_color = random.choice(((239, 72, 92, opacity), (45, 150, 232, opacity), (248, 173, 55, opacity)))
+        draw.ellipse((icon_x, icon_y, icon_x + icon_size, icon_y + icon_size), fill=icon_color)
+        draw.ellipse((icon_x + icon_size * 0.3, icon_y + icon_size * 0.3,
+                      icon_x + icon_size * 0.7, icon_y + icon_size * 0.7), fill=(255, 255, 255, opacity))
+        x += icon_size + 3
+    if random.random() < 0.5:
+        pad = random.randint(2, 5)
+        bg = random.choice(((0, 0, 0, 105), (255, 255, 255, 105)))
+        draw.rectangle((x - pad, y - pad, x + text_width + pad, y + text_height + pad), fill=bg)
+    draw.text((x, y), text, font=font, fill=text_color, stroke_width=1,
+              stroke_fill=(0, 0, 0, 150) if text_color[0] > 127 else (255, 255, 255, 150))
+    return Image.alpha_composite(image, layer).convert("RGB")
 
 
 class ZoneDataset(Dataset):
-    def __init__(self, root, manifest, split, train):
+    def __init__(self, root, manifest, split, train, synthetic_overlay_probability=0.0):
         self.root, self.train = root, train
+        self.synthetic_overlay_probability = max(0.0, min(1.0, float(synthetic_overlay_probability)))
         with open(manifest, newline="", encoding="utf-8") as stream:
             self.rows = [row for row in csv.DictReader(stream) if row["split"] == split]
         self.tensor = transforms.Compose([transforms.Resize((224, 224)), transforms.ToTensor(), transforms.Normalize(MEAN, STD)])
@@ -38,6 +98,14 @@ class ZoneDataset(Dataset):
                 image = ImageOps.mirror(image)
                 labels[2], labels[3] = labels[3], labels[2]
                 labels[4], labels[5] = labels[5], labels[4]
+            if random.random() < self.synthetic_overlay_probability:
+                zone_index = random.randrange(len(LABELS))
+                image = add_synthetic_zone_overlay(image, zone_index)
+                labels[zone_index] = 1
+                if zone_index in (2, 3):
+                    labels[1] = 1
+                elif zone_index in (4, 5):
+                    labels[0] = 1
             if random.random() < 0.55:
                 image = ImageEnhance.Brightness(image).enhance(random.uniform(0.8, 1.2))
                 image = ImageEnhance.Contrast(image).enhance(random.uniform(0.8, 1.2))
@@ -83,16 +151,27 @@ def main():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--output", default=os.path.join(HERE, "models", "zonetext_v1.onnx"))
     parser.add_argument("--no-pretrained", action="store_true")
+    parser.add_argument("--synthetic-overlay-probability", type=float, default=0.25,
+                        help="Chance per training image of a labeled synthetic overlay; validation remains untouched.")
+    parser.add_argument("--seed", type=int, default=20261007)
+    parser.add_argument("--threads", type=int, default=2)
     args = parser.parse_args()
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
+    torch.set_num_threads(max(1, args.threads))
     manifest = os.path.join(args.data, "manifest.csv")
-    train_ds = ZoneDataset(args.data, manifest, "train", True)
+    train_ds = ZoneDataset(args.data, manifest, "train", True, args.synthetic_overlay_probability)
     val_ds = ZoneDataset(args.data, manifest, "val", False)
     if not train_ds or not val_ds:
         raise SystemExit("Dataset train/val kosong; gunakan --source folder terpisah atau lengkapi kedua split.")
     positives_summary = {name: sum(int(row[name]) for row in train_ds.rows) for name in LABELS}
     print(f"Dataset samples: train={len(train_ds)}, val={len(val_ds)}; train positives={positives_summary}")
     workers = 0 if os.name == "nt" else 2
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=workers)
+    loader_generator = torch.Generator().manual_seed(args.seed)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=workers, generator=loader_generator)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=workers)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     weights = None if args.no_pretrained else models.MobileNet_V3_Small_Weights.DEFAULT
