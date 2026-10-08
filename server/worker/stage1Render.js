@@ -869,7 +869,6 @@ async function _runStage1Pipeline({
         const cachedPlannedDuration = highlight.clips.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
         if (isAutoModeFallback && (highlight.clips.length < 3 || cachedPlannedDuration < 20)) {
           const shortCachePlan = new Error(`Rencana cache hanya ${highlight.clips.length} adegan / ${cachedPlannedDuration.toFixed(1)} detik; beralih ke panen kandidat agar rencana mencapai minimal 3 adegan dan 20 detik.`);
-          shortCachePlan.isAiRejection = true;
           shortCachePlan.isRenderPlanShortfall = true;
           shortCachePlan.rejectionReason = shortCachePlan.message;
           throw shortCachePlan;
@@ -885,7 +884,13 @@ async function _runStage1Pipeline({
           origin: 'cached_raw_frames',
         });
       } catch (cacheEvalErr) {
-        if (cacheEvalErr.isAiRejection || String(cacheEvalErr?.message || '').toLowerCase().includes('ditolak')) {
+        if (cacheEvalErr.isRenderPlanShortfall) {
+          console.warn(`[Job ${jobId}] Rencana cache terlalu pendek, bukan penolakan konten (${cacheEvalErr.message}). Cache dilewati; lanjut panen kandidat.`);
+          try { fs.unlinkSync(rawVideoPath); } catch {}
+          rawVideoPath = null;
+          highlight = null;
+          approved = false;
+        } else if (cacheEvalErr.isAiRejection || String(cacheEvalErr?.message || '').toLowerCase().includes('ditolak')) {
           console.warn(`[Job ${jobId}] Cached video 1080p ditolak AI: ${cacheEvalErr.message}. Menghapus cache dan mencoba online...`);
           try { fs.unlinkSync(rawVideoPath); } catch {}
           rawVideoPath = null;
@@ -2073,7 +2078,6 @@ async function _runStage1Pipeline({
       }
       if (isAutoModeFallback && hl.clips.length < 3) {
         const shortPlanErr = new Error(`Rencana hanya memiliki ${hl.clips.length} adegan berbeda; perlu minimal 3 sebelum download/render.`);
-        shortPlanErr.isAiRejection = true;
         shortPlanErr.isRenderPlanShortfall = true;
         shortPlanErr.rejectionReason = shortPlanErr.message;
         throw shortPlanErr;
@@ -2663,7 +2667,6 @@ async function _runStage1Pipeline({
     highlight.duration = finalPlannedDuration;
     if (isAutoModeFallback && (highlight.clips.length < 3 || finalPlannedDuration < 20)) {
       const shortFinalPlan = new Error(`Klip bersih setelah audit hanya ${highlight.clips.length} adegan / ${finalPlannedDuration.toFixed(1)} detik; minimal 3 adegan dan 20 detik diperlukan.`);
-      shortFinalPlan.isAiRejection = true;
       shortFinalPlan.isRenderPlanShortfall = true;
       shortFinalPlan.rejectionReason = shortFinalPlan.message;
       throw shortFinalPlan;
@@ -3025,6 +3028,16 @@ async function _runStage1Pipeline({
           niche: options.niche || jobMeta.niche || 'kitchen_tools',
         });
         const conformedDuration = conformedClips.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
+
+        // Voiceover conform must never shrink an already-approved auto edit below
+        // the minimum and then let a short render masquerade as a bad product.
+        // Bubble this structural failure back to Master Loop so it can reacquire.
+        if (isAutoModeFallback && (conformedClips.length < 3 || conformedDuration < 20)) {
+          const shortConformedPlan = new Error(`Conform voiceover menyisakan ${conformedClips.length} adegan / ${conformedDuration.toFixed(1)} detik; perlu minimal 3 adegan dan 20 detik.`);
+          shortConformedPlan.isRenderPlanShortfall = true;
+          shortConformedPlan.rejectionReason = shortConformedPlan.message;
+          throw shortConformedPlan;
+        }
 
         if (conformedClips.length > 0) {
           updateProgress({

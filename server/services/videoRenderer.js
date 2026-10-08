@@ -476,9 +476,8 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
     const MIN_VIDEO_DURATION_SEC = 20.0;
     if (currentTotal < MIN_VIDEO_DURATION_SEC && deduplicated.length > 0) {
       const durationErr = new Error(`Durasi final video terlalu pendek (${currentTotal.toFixed(1)} detik, minimal ${MIN_VIDEO_DURATION_SEC} detik). Silakan gunakan video dengan variasi adegan yang lebih banyak.`);
-      durationErr.isAiRejection = true;
       durationErr.isRenderPlanShortfall = true;
-      durationErr.rejectionReason = `Durasi final (${currentTotal.toFixed(1)}s) tidak memenuhi syarat minimal algoritma Reels (${MIN_VIDEO_DURATION_SEC}s).`;
+      durationErr.rejectionReason = `Rencana render hanya ${currentTotal.toFixed(1)}s; perlu minimal ${MIN_VIDEO_DURATION_SEC}s.`;
       if (isAutoModeFallback) {
         throw durationErr;
       } else {
