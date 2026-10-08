@@ -703,19 +703,57 @@ async function _runStage1Pipeline({
         durationSec: preview10s.actualDurationSec,
         sourceId: targetUrl
       });
-      // Semua frame hasil probe diteruskan; tidak ada filter visual lokal.
-      // FIX 2026-10-05: jumlah frame NYATA, bukan hardcoded '5' — dan log ini dicetak SEBELUM
-      // Oracle dipanggil (pass pool/audit klip masih jauh di hilir), jadi jangan klaim
-      // "vonis akhir" di titik yang belum melakukan panggilan Kaggle sama sekali.
-      console.log(`[Job ${jobId}] ✅ [Fast Probe Selesai] ${(probe.frames || []).length} frame lokal dikumpulkan (vonis akhir oleh Oracle terjadi di pass pool/audit klip).`);
+      // Pemeriksaan visual lokal bersifat advisory. Vonis untuk frame preview ini
+      // dilakukan langsung oleh Qwen/Kaggle sebelum Gemini atau pemilihan section
+      // dapat membuang kandidat; hasil Gatekeeper tidak boleh menjadi veto.
+      const previewFrames = (Array.isArray(probe.frames) && probe.frames.length)
+        ? probe.frames
+        : (Array.isArray(probe.cleanFrames) ? probe.cleanFrames : []);
+      if (!previewFrames.length) {
+        throw Object.assign(new Error('Fast probe tidak menghasilkan frame untuk dikirim ke Qwen/Kaggle.'), { isInfraError: true });
+      }
+      let qwenPreviewFrames = previewFrames;
+      if (isVlmOracleEnabled(process.env)) {
+        updateProgress({ step: 'vlm_oracle', message: `Qwen/Kaggle memeriksa ${previewFrames.length} frame preview sebelum kandidat dipilih...`, progress: 28 });
+        const previewOracle = await applyOracleVeto(previewFrames, {
+          jobId,
+          niche: options.niche || 'kitchen_tools',
+          onProgress: updateProgress,
+          logger: console,
+          outDir: outputDir,
+        });
+        qwenPreviewFrames = previewOracle.frames;
+        const previewRejected = new Set(previewOracle.blacklisted || []);
+        const previewAccepted = previewFrames.filter((f) => f?.filePath && !previewRejected.has(f.filePath));
+        noteVisionProvenance({
+          acceptedFrames: previewAccepted,
+          rejectedFrames: previewOracle.blacklisted || [],
+          visionEvidence: buildVisionProvenance({
+            mode: 'evidence',
+            usableFrames: previewFrames.length,
+            framesSent: previewOracle.checked || 0,
+            acceptedCount: previewAccepted.length,
+            rejectedCount: previewOracle.rejected || 0,
+            sourceCount: 1,
+          }),
+        }, { origin: 'candidate_preview', framesRef: previewFrames });
+        console.log(`[Job ${jobId}] [Qwen Preview] ${previewOracle.checked || 0} frame diperiksa, ${previewOracle.rejected || 0} ditolak Qwen, ${qwenPreviewFrames.length} diteruskan.`);
+        if (!qwenPreviewFrames.length) {
+          const reject = new Error(`Qwen menolak seluruh ${previewFrames.length} frame preview; kandidat dihentikan sebelum download section.`);
+          reject.isAiRejection = true;
+          reject.rejectionReason = reject.message;
+          throw reject;
+        }
+      }
+      // Gatekeeper tidak menghapus frame. Semua frame preview hanya disaring menurut
+      // vonis Qwen di atas; kandidat dengan frame yang Qwen setujui tetap berlanjut.
+      console.log(`[Job ${jobId}] ✅ [Fast Probe Selesai] ${previewFrames.length} frame dikumpulkan; ${qwenPreviewFrames.length} frame lolos vonis Qwen/Kaggle.`);
 
       // ── TAHAP 5: CONTEXT PREVIEW (15s) — WINDOW DEFAULT (TANPA WHISPER) ──
       // Whisper dihapus: window terbaik ditentukan dari tengah video (hemat kuota/CPU).
       // Selected sections come from the preceding full-video Gemini analysis.
 
-      let verifiedCleanFrames = (probe.eligible && Array.isArray(probe.cleanFrames) && probe.cleanFrames.length)
-        ? probe.cleanFrames
-        : (Array.isArray(probe.frames) && probe.frames.length ? probe.frames : probe.cleanFrames || []);
+      let verifiedCleanFrames = qwenPreviewFrames;
       
       updateProgress({
         step: 'product_verify',
@@ -1119,7 +1157,7 @@ async function _runStage1Pipeline({
       const targetMultiSources = options.singleVideoOnly === true
         ? 1
         : Math.max(1, Number(nichePresetForSource?.minVerifiedSources) || 2);
-      const harvestStreamBudget = Math.min(maxStreamVideos, Math.max(4, targetMultiSources * 3));
+      const harvestStreamBudget = Math.min(maxStreamVideos, Math.max(6, targetMultiSources * 3));
 
       // Helper: Pemanenan adaptif video pengganti di YouTube jika AI menolak frame atau slot kurang
       const harvestAdaptiveReplacementCandidates = async ({
@@ -1503,6 +1541,7 @@ async function _runStage1Pipeline({
         const bestVerified = preferredSoFar[0];
         const totalCleanFrames = preferredSoFar.reduce((acc, c) => acc + (c.cleanFrames?.length || 0), 0);
         const verifiedCandidatesCount = preferredSoFar.filter(c => c?.productVerification?.verified).length;
+        const selectedClipCount = preferredSoFar.reduce((count, c) => count + (c.highlight?.clips?.length || 0), 0);
         const hasRemainingPool = candidatePoolIndex < candidatePool.length;
 
         // DYNAMIC MULTI-VIDEO HARVESTING FOR REELS:
@@ -1510,9 +1549,12 @@ async function _runStage1Pipeline({
         // komentar di sana). Smartphone/gadget preset memakai minVerifiedSources:1 ->
         // begitu 1 video terverifikasi LANGSUNG diproses, jangan terus-terusan men-skip
         // kandidat demi mengejar sumber ke-2 yang langka.
-        const shouldKeepHarvesting = verifiedCandidatesCount < targetMultiSources &&
-          hasRemainingPool &&
-          streamedCount < harvestStreamBudget;
+        // A passing source is not enough: collect at least four distinct selected
+        // scenes before leaving harvesting, so a short plan never reaches rendering.
+        const shouldKeepHarvesting =
+          (verifiedCandidatesCount < targetMultiSources || selectedClipCount < 4) &&
+          streamedCount < harvestStreamBudget &&
+          (hasRemainingPool || !explicitOnly);
 
         if (shouldKeepHarvesting) {
           console.log(`[Job ${jobId}] 🎬 Multi-video harvesting: Sudah dapat ${verifiedCandidatesCount} video terverifikasi. Terus stream kandidat berikutnya untuk mendapatkan variasi sudut kamera & latar belakang...`);
@@ -1520,6 +1562,10 @@ async function _runStage1Pipeline({
         }
 
         if (bestVerified?.highlight?.pipelineVersion === 'whisper_first_v1' || bestVerified?.highlight?.pipelineVersion === 'visual_only_v2') {
+          if (selectedClipCount < 4 && streamedCount < harvestStreamBudget && !explicitOnly) {
+            console.warn(`[Job ${jobId}] Hanya ${selectedClipCount} klip terpilih sejauh ini; lanjut panen kandidat hingga rencana cukup.`);
+            continue;
+          }
           console.log(`[Job ${jobId}] ⚡ Visual-Only Pipeline: Menggabungkan ${preferredSoFar.length} kandidat lolos! Melewati AI Storyboard fallback...`);
           hl = {
             clips: preferredSoFar.flatMap((c) => (c.highlight.clips || []).map((clip) => ({
@@ -1975,6 +2021,12 @@ async function _runStage1Pipeline({
       if (neededIndices.length < 1) {
         throw new Error(`Klip terpilih tidak memiliki video sumber yang valid.`);
       }
+      if (isAutoModeFallback && hl.clips.length < 3) {
+        const shortPlanErr = new Error(`Rencana hanya memiliki ${hl.clips.length} adegan berbeda; perlu minimal 3 sebelum download/render.`);
+        shortPlanErr.isAiRejection = true;
+        shortPlanErr.rejectionReason = shortPlanErr.message;
+        throw shortPlanErr;
+      }
       console.log(`[Job ${jobId}] AI memilih ${hl.clips.length} cuplikan dari ${neededIndices.length} video kandidat indeks: [${neededIndices.join(', ')}]. Mengunduh ${isManualJob ? 'kualitas terbaik yang tersedia (manual, tanpa syarat resolusi)' : '1080p Full HD'}...`);
 
       let lastDlError = null;
@@ -2196,12 +2248,12 @@ async function _runStage1Pipeline({
       }
 
       // Pacing adaptif: minimal durasi video adalah 18.0 detik sesuai mandat pengguna
-      const targetMinTotalSec = Math.max(18.0, hl.clips.length <= 3 ? 18.0 : (hl.clips.length <= 4 ? 18.5 : (hl.clips.length <= 5 ? 19.5 : 22.0)));
-      const adaptiveClipSec = Math.max(3.2, Math.min(6.0, Math.round((targetMinTotalSec / hl.clips.length) * 10) / 10));
+      const targetMinTotalSec = 20.5;
+      const adaptiveClipSec = Math.max(3.4, Math.min(8.0, Math.round((targetMinTotalSec / hl.clips.length) * 10) / 10));
 
       hl.clips = hl.clips.map((c, clipIndex) => {
         const planShot = creativePlan?.shots?.[clipIndex];
-        const duration = Math.max(adaptiveClipSec, Number(planShot?.targetSec) || Number(c.duration) || adaptiveClipSec);
+        const duration = Math.min(8.0, Math.max(adaptiveClipSec, Number(planShot?.targetSec) || Number(c.duration) || adaptiveClipSec));
         return {
           ...c,
           duration,
@@ -2459,11 +2511,11 @@ async function _runStage1Pipeline({
 
         // Adaptive clip pacing: minimal durasi video adalah 18.0 detik
         if (cleanAuditedClips.length >= 3) {
-          const targetMinSec = 18.0;
-          const targetPerClip = Math.max(3.2, Math.min(6.0, targetMinSec / cleanAuditedClips.length));
+          const targetMinSec = 20.5;
+          const targetPerClip = Math.max(3.4, Math.min(8.0, targetMinSec / cleanAuditedClips.length));
           highlight.clips = cleanAuditedClips.map((c, clipIndex) => {
             const planShot = creativePlan?.shots?.[clipIndex];
-            const duration = Math.max(targetPerClip, Number(planShot?.targetSec) || Number(c.duration) || targetPerClip);
+              const duration = Math.min(8.0, Math.max(targetPerClip, Number(planShot?.targetSec) || Number(c.duration) || targetPerClip));
             return {
               ...c,
               duration,
@@ -2510,11 +2562,11 @@ async function _runStage1Pipeline({
           }
 
           if (recoveryClips.length >= 3) {
-            const targetMinSec = 18.0;
-            const targetPerClip = Math.max(3.2, Math.min(6.0, targetMinSec / recoveryClips.length));
+            const targetMinSec = 20.5;
+            const targetPerClip = Math.max(3.4, Math.min(8.0, targetMinSec / recoveryClips.length));
             highlight.clips = recoveryClips.slice(0, 8).map((c, clipIndex) => {
               const planShot = creativePlan?.shots?.[clipIndex];
-              const duration = Math.max(targetPerClip, Number(planShot?.targetSec) || targetPerClip);
+              const duration = Math.min(8.0, Math.max(targetPerClip, Number(planShot?.targetSec) || targetPerClip));
               return {
                 ...c,
                 duration,
@@ -2541,6 +2593,14 @@ async function _runStage1Pipeline({
       } else {
         console.log(`[ClipAudit] ✅ Seluruh ${highlight.clips.length} klip lolos audit${isVlmOracleEnabled(process.env) ? ' (motion lokal + vonis Oracle Kaggle)' : ' (gerbang motion lokal — Oracle nonaktif, vonis akhir di pass lain)'}.`);
       }
+    }
+
+    const finalPlannedDuration = (highlight.clips || []).reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
+    if (isAutoModeFallback && (highlight.clips?.length < 3 || finalPlannedDuration < 20)) {
+      const shortFinalPlan = new Error(`Klip bersih setelah audit hanya ${highlight.clips?.length || 0} adegan / ${finalPlannedDuration.toFixed(1)} detik; minimal 3 adegan dan 20 detik diperlukan.`);
+      shortFinalPlan.isAiRejection = true;
+      shortFinalPlan.rejectionReason = shortFinalPlan.message;
+      throw shortFinalPlan;
     }
 
     isBrandDetected = highlight.hasProductBrand === true ||
