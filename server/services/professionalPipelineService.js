@@ -277,17 +277,38 @@ export function validateScriptSlotAlignment({
   const planShots = Array.isArray(creativePlan?.shots) ? creativePlan.shots : [];
   const clipList = Array.isArray(clips) ? clips : [];
   const sceneList = Array.isArray(scenes) ? scenes : [];
+  const requiredSlots = Array.isArray(preset?.slotsConfig)
+    ? preset.slotsConfig.map((slot) => Number(slot?.slot)).filter(Number.isFinite)
+    : [];
 
   // 1) Lockstep 1:1: jumlah klip == jumlah baris voiceover scene (ekspansi loop dilarang)
   if (strictMode && sceneList.length > 0 && clipList.length !== sceneList.length) {
     errors.push(`Jumlah klip visual (${clipList.length}) != jumlah baris voiceover scene (${sceneList.length}) - lockstep Scene<->VO melanggar.`);
   }
 
+  // Smartphone must cover every editorial beat exactly once. Logging a warning here
+  // used to allow a partial storyboard to render with later VO lines over the wrong
+  // footage, especially when memory or camera evidence was missing.
+  if (strictMode && requiredSlots.length > 0) {
+    if (sceneList.length !== requiredSlots.length) {
+      errors.push(`Storyboard smartphone memiliki ${sceneList.length} scene; wajib ${requiredSlots.length} scene.`);
+    }
+    if (clipList.length !== requiredSlots.length) {
+      errors.push(`Storyboard smartphone memiliki ${clipList.length} klip; wajib ${requiredSlots.length} klip.`);
+    }
+  }
+
   // 2) Urutan storyboardSlot harus monotonik sesuai formula slot preset
   const slotsSeq = clipList.map(c => Number(c?.storyboardSlot) || 0);
+  if (strictMode && requiredSlots.length > 0 && slotsSeq.length === requiredSlots.length &&
+      slotsSeq.some((slot, index) => slot !== requiredSlots[index])) {
+    errors.push(`Urutan slot smartphone harus ${requiredSlots.join(' -> ')}; ditemukan ${slotsSeq.join(' -> ')}.`);
+  }
   for (let i = 1; i < slotsSeq.length; i++) {
     if (slotsSeq[i] > 0 && slotsSeq[i - 1] > 0 && slotsSeq[i] <= slotsSeq[i - 1]) {
-      warnings.push(`Urutan slot storyboard tidak naik pada klip #${i + 1} (${slotsSeq[i - 1]} -> ${slotsSeq[i]}).`);
+      const message = `Urutan slot storyboard tidak naik pada klip #${i + 1} (${slotsSeq[i - 1]} -> ${slotsSeq[i]}).`;
+      if (strictMode) errors.push(message);
+      else warnings.push(message);
     }
   }
 

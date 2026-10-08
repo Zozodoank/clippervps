@@ -2760,6 +2760,12 @@ async function _runStage1Pipeline({
             if (alignment.errors.length > 0) {
               console.warn(`[Job ${jobId}] ⛔ [SceneVoLockstep] ${alignment.errors.length} pelanggaran alignment:`);
               alignment.errors.forEach(e => console.warn(`[Job ${jobId}]   • ${e}`));
+              if (alignment.strictMode) {
+                const alignmentErr = new Error(`Storyboard smartphone tidak lengkap atau tidak berurutan; render dihentikan agar narasi tidak tertukar dengan adegan. ${alignment.errors.join(' ')}`);
+                alignmentErr.isRenderPlanShortfall = true;
+                alignmentErr.rejectionReason = alignmentErr.message;
+                throw alignmentErr;
+              }
             }
             alignment.warnings.forEach(w => console.warn(`[Job ${jobId}] ⚠️ [SceneVoLockstep] ${w}`));
             jobMeta.sceneVoSegments = buildSceneVoSegments({
@@ -2774,6 +2780,7 @@ async function _runStage1Pipeline({
             activeJobs.set(jobId, jobMeta);
             console.log(`[Job ${jobId}] 🔗 [SceneVoLockstep] ${jobMeta.sceneVoSegments.length} segmen terkunci ke VO (strict=${alignment.strictMode}, ok=${alignment.ok}).`);
           } catch (lockErr) {
+            if (lockErr.isRenderPlanShortfall) throw lockErr;
             // Lockstep bersifat aditif — kegagalan analisa tidak boleh menggagalkan render
             console.warn(`[Job ${jobId}] [SceneVoLockstep] Analisa alignment dilewati (${lockErr.message}).`);
           }
