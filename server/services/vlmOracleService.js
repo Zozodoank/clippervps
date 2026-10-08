@@ -344,7 +344,13 @@ function sweepOldCopies(rootDir, logger, keepDir = '') {
 }
 
 function portraitCanvas(height) {
-  const unit = Math.max(15, Math.round(Number(height) / 16));
+  // JPEG/MJPEG encoders commonly require even width and height (4:2:0 chroma).
+  // For an exact 9:16 canvas both dimensions are even only when the shared unit
+  // is even. A requested 240px height used to produce 135x240, which FFmpeg's
+  // MJPEG encoder rejects with EINVAL on Termux. Quantize to the nearest even
+  // unit and keep the exact aspect ratio.
+  const requestedUnit = Math.round(Number(height) / 16);
+  const unit = Math.max(16, Math.round(requestedUnit / 2) * 2);
   return { width: 9 * unit, height: 16 * unit };
 }
 
