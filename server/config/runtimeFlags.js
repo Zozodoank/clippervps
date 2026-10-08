@@ -47,10 +47,8 @@ const FLAG_NORMALIZERS = {
   FINAL_AI_QC: (env) => env.FINAL_AI_QC !== 'false',
   // finalizationService: process.env.FINAL_AI_QC_STRICT === 'true'
   FINAL_AI_QC_STRICT: (env) => env.FINAL_AI_QC_STRICT === 'true',
-  // EVIDENCE MODE: aiService.selectHighlightWithAI + stage1Render membaca
-  // GEMINI_INPUT_MODE. Default 'evidence' (frame bersih lokal — hemat token Gemini,
-  // 0 MB kuota tambahan). 'stream' = perilaku lama (Gemini baca video penuh).
-  GEMINI_INPUT_MODE: (env) => (String(env.GEMINI_INPUT_MODE || '').trim().toLowerCase() === 'stream' ? 'stream' : 'evidence'),
+  // GEMINI_INPUT_MODE defaults to direct Gemini video stream; evidence mode is opt-in.
+  GEMINI_INPUT_MODE: (env) => (String(env.GEMINI_INPUT_MODE || '').trim().toLowerCase() === 'evidence' ? 'evidence' : 'stream'),
   // visionEvidenceService.shouldPreferEvidence: Math.max(2, Number(process.env.EVIDENCE_MIN_FRAMES) || 6)
   EVIDENCE_MIN_FRAMES: (env) => Math.max(2, Number(env.EVIDENCE_MIN_FRAMES) || 6),
   // visionEvidenceService.pickEvidenceFrames: Math.max(4, Number(process.env.EVIDENCE_MAX_FRAMES) || 30)
@@ -255,7 +253,7 @@ export function configSnapshotToEnvPatch(snapshot) {
  * stream/File API). Baca dari process.env (di-bekukan via configSnapshot saat retry).
  */
 export function isGeminiEvidenceEnabled(env = process.env) {
-  return String(env.GEMINI_INPUT_MODE || '').trim().toLowerCase() !== 'stream';
+  return String(env.GEMINI_INPUT_MODE || '').trim().toLowerCase() === 'evidence';
 }
 
 /**

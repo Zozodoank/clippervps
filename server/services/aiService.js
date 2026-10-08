@@ -105,10 +105,14 @@ Return ONLY compact JSON: {"windows":[{"startSec":<number>,"endSec":<number>,"re
 
   const genAI = new GoogleGenerativeAI(geminiKey);
   const candidateModels = [
-    'gemini-2.5-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-3.8-flash',
+    'gemini-3.7-flash',
+    'gemini-3.6-flash',
     'gemini-3.5-flash',
-    'gemini-flash-latest',
-    'gemini-2.5-flash-lite',
+    'gemini-2.5-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
   ];
   let lastErr = null;
   let aiStartedAt = 0;
@@ -215,17 +219,17 @@ export async function analyzeYouTubeVideoWithGemini({
   onProgress({
     step: 'gemini_vision',
     message: isVideoFirstMode
-      ? `Google Gemini 3.6 Flash menganalisa stream video YouTube (Mode: Video-First Discovery)...`
+      ? `Google Gemini menganalisa stream video YouTube (Mode: Video-First Discovery)...`
       : (refImageInlineData
-          ? 'Google Gemini 3.6 Flash menganalisa stream video YouTube & membandingkan dengan foto produk Shopee...'
-          : 'Google Gemini 3.6 Flash menganalisa stream video langsung dari YouTube (0 MB kuota lokal)...'),
+          ? 'Google Gemini menganalisa stream video YouTube & referensi produk Shopee...'
+          : 'Google Gemini menganalisa stream video langsung dari YouTube...'),
     progress: 46,
   });
 
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are a scene selector for an affiliate video backend, not a video judge.
-Your ONLY task is to find timestamps of individual sections that the backend should download.
-Never accept/reject, approve/disapprove, or veto the whole source video. A face, vlogger, title card, subtitle, watermark, or other unsafe content in one part of the video says nothing about the other parts. Skip only the affected section and continue searching the full timeline for usable sections.
+Your ONLY task is to propose timestamps of sections that may contain a physical product demonstration.
+Never accept/reject, approve/disapprove, or veto the whole source. Do not screen sections for faces, text, subtitles, watermarks, packaging, or product identity; Kaggle makes those decisions after the footage is downloaded.
 
 TARGET PRODUCT: "${coreNoun}"
 PRODUCT LISTING: "${effectiveTitle}"
@@ -235,13 +239,10 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 TIMELINE:
 - Inspect the complete video. Never select a section before ${introCutoffSec || 0}s or after ${Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0))}s.
 - Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.
-- Select a section only when the target physical product is clearly visible and actively shown in that section.
-- Select only sections whose 9:16 output area contains no human face/talking head, floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging.
-- For a horizontal 16:9 source, assess the center 9:16 crop; logos outside that crop are irrelevant. For a vertical source, assess the full frame.
-- Prefer hands-on product demonstrations and varied angles. A vlogger elsewhere in the source is never a reason to omit clean product sections.
-- If the exact product is uncertain, return no section for that moment; do not issue a source-level rejection.
-- Return every distinct clean section you can identify, even if there are fewer than four. If none are identifiable, return empty arrays. The backend decides whether it has enough footage.
-- Do not return an overall cleanliness/product-match verdict. Ignore any temptation to set status to reject. Always use status "select".
+- Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.
+- Do not make a product-match, face, overlay, subtitle, watermark, or source-quality verdict. Kaggle is the sole visual judge.
+- If no likely product section can be located, return an empty list; the backend will still submit sample timestamps to Kaggle.
+- Always use status "select". Never return status "reject".
 
 Return ONLY JSON in this shape:
 {
@@ -250,28 +251,26 @@ Return ONLY JSON in this shape:
   "hasOpeningIntro": true,
   "introDurationSeconds": 5,
   "selectedClips": [
-    {"startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "clean": true, "reason": "Product is visible in a clean hands-on section"}
+    {"startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "reason": "Possible physical product demonstration"}
   ],
   "timestamps": [12.0],
-  "frameAudit": [
-    {"timestamp": 12.0, "isClean": true, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "hasFace": false, "hasFloatingOverlay": false, "hasTextOrSubtitles": false, "hasWatermark": false}
-  ],
   "productHook": "<short hook>",
   "hasProductBrand": false,
   "detectedBrand": "none"
 }
 
-Each selectedClips row must have one matching frameAudit row. Include only clean sections in both arrays. Keep timestamps as numeric seconds. If no clean section is found, use status "select", selectedClips: [], timestamps: [], frameAudit: []. Never return status "reject".`;
+Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether their footage is usable. Never return status "reject".`;
 
   const candidateModels = [
-    'gemini-2.5-flash',
-    'gemini-3.5-flash',
-    'gemini-flash-latest',
-    'gemini-3.6-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-3.8-flash',
     'gemini-3.7-flash',
-    'gemini-2.5-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
     'gemini-3.5-flash-lite',
-  ];
+    'gemini-3.1-flash-lite',
+  ].filter((model, index, models) => Boolean(model) && models.indexOf(model) === index);
   let parsed = null;
   let activeGeminiModel = candidateModels[0];
   let lastGeminiErr = null;
@@ -287,7 +286,6 @@ Each selectedClips row must have one matching frameAudit row. Include only clean
         model: modelName,
         generationConfig: {
           responseMimeType: 'application/json',
-          temperature: 0.2,
           mediaResolution: 'MEDIA_RESOLUTION_LOW',
         },
       });
@@ -329,12 +327,7 @@ Each selectedClips row must have one matching frameAudit row. Include only clean
       if (!isQuota) {
         allQuotaErrors = false;
       }
-      const isDailyQuota = isQuota && (gemErr.message?.toLowerCase().includes('per-day') || gemErr.message?.toLowerCase().includes('daily') || gemErr.message?.toLowerCase().includes('per day'));
       console.warn(`[Gemini YouTube Stream] Model ${modelName} gagal: ${gemErr.message}. ${isQuota ? '⚠️ [Limit Kuota/Token Tercapai]' : ''} ${i < candidateModels.length - 1 ? `Mencoba model fallback berikutnya (${candidateModels[i + 1]})...` : 'Semua model Gemini dalam rantai fallback telah dicoba.'}`);
-      if (isDailyQuota) {
-        console.warn('[Gemini YouTube Stream] ⛔ Kuota harian API Key habis (Daily RPD limit). Menghentikan loop fallback.');
-        break;
-      }
     }
   }
 
@@ -349,45 +342,29 @@ Each selectedClips row must have one matching frameAudit row. Include only clean
     throw lastGeminiErr || new Error('Gemini YouTube Stream gagal menganalisa video.');
   }
 
-  // Gemini is a SECTION SELECTOR here. Whole-video status/face/product flags never veto
-  // the source; only explicit per-section clean selections are passed to the backend.
-  const streamFrameAudit = Array.isArray(parsed.frameAudit) ? parsed.frameAudit : [];
+  // Gemini only proposes timestamps. Kaggle makes the cleanliness and product-match decisions.
   const rawSections = Array.isArray(parsed.selectedClips)
     ? parsed.selectedClips
     : (Array.isArray(parsed.clips)
       ? parsed.clips
       : (Array.isArray(parsed.timestamps) ? parsed.timestamps : []));
+  const firstSafeSec = Math.max(0, Number(introCutoffSec) || 0);
+  const lastSafeStart = Math.max(firstSafeSec, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0) - clipSec);
+  const oracleProbeSections = rawSections.length > 0
+    ? rawSections
+    : Array.from({ length: 4 }, (_, i) => ({
+        startSeconds: firstSafeSec + ((lastSafeStart - firstSafeSec) * (i + 0.5) / 4),
+        reason: 'Timestamp sampel untuk penilaian Oracle Kaggle',
+      }));
   const asTimestamp = (item) => {
     if (typeof item === 'number' || typeof item === 'string') return parseTimeToSeconds(item);
     return Number.isFinite(Number(item?.timestamp))
       ? Number(item.timestamp)
       : parseTimeToSeconds(item?.startSeconds ?? item?.startTime ?? item?.timestamp);
   };
-  const sectionAuditFor = (sec) => streamFrameAudit.find((audit) =>
-    Number.isFinite(Number(audit?.timestamp)) && Math.abs(Number(audit.timestamp) - sec) <= 1.5
-  );
-  const selectedSections = rawSections.map((entry) => ({ entry, sec: asTimestamp(entry) }))
-    .filter(({ entry, sec }) => {
-      if (!Number.isFinite(sec)) return false;
-      const audit = sectionAuditFor(sec);
-      const evidence = [entry, audit].filter(Boolean);
-      const explicitlyDirty = evidence.some((item) =>
-        item.clean === false || item.isClean === false || item.containsTargetProduct === false ||
-        item.isPackaging === true || item.isMachine === true || item.isActiveProductDemo === false ||
-        item.hasFace === true || item.containsFace === true || item.hasHumanOrFace === true ||
-        item.hasFloatingOverlay === true || item.hasFloatingOverlayText === true ||
-        item.hasTextOrSubtitles === true || item.hasSubtitles === true || item.hasWatermark === true ||
-        item.hasChannelLogo === true || item.hasAnimatedGraphicOverlay === true
-      );
-      const explicitlyClean = evidence.some((item) => item.clean === true || item.isClean === true) ||
-        evidence.some((item) => item.containsTargetProduct === true && item.isActiveProductDemo === true &&
-          item.isPackaging !== true && item.isMachine !== true);
-      if (explicitlyDirty || !explicitlyClean) {
-        console.log(`[Gemini YouTube Stream] Lewati section ${sec}s: Gemini tidak menandainya sebagai bagian produk yang bersih.`);
-        return false;
-      }
-      return true;
-    });
+  const selectedSections = oracleProbeSections
+    .map((entry) => ({ entry, sec: asTimestamp(entry) }))
+    .filter(({ sec }) => Number.isFinite(sec));
 
   let candidateClips = [];
   const acceptedStarts = [];
@@ -434,7 +411,8 @@ Each selectedClips row must have one matching frameAudit row. Include only clean
 
   const clips = normalizeClipPlan(candidateClips, totalDuration, {
     allowFallback: allowFallbackClips,
-    frameAudit: streamFrameAudit,
+    // Do not feed Gemini's visual flags into the local normalizer; Kaggle owns that verdict.
+    frameAudit: [],
     hasProductBrand,
     allowHflip,
     sceneDuration: clipSec,
@@ -581,14 +559,15 @@ Return ONLY JSON:
 If no section is clean, return {"status":"select","selectedClips":[]}. Never return status "reject".`;
 
   const candidateModels = [
-    'gemini-2.5-flash',
-    'gemini-3.5-flash',
-    'gemini-flash-latest',
-    'gemini-3.6-flash',
+    'gemini-3.1-pro-preview',
+    'gemini-3.8-flash',
     'gemini-3.7-flash',
-    'gemini-2.5-flash-lite',
+    'gemini-3.6-flash',
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
     'gemini-3.5-flash-lite',
-  ];
+    'gemini-3.1-flash-lite',
+  ].filter((model, index, models) => Boolean(model) && models.indexOf(model) === index);
   let parsed = null;
   let activeGeminiModel = candidateModels[0];
   let lastGeminiErr = null;
@@ -604,7 +583,6 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
         model: modelName,
         generationConfig: {
           responseMimeType: 'application/json',
-          temperature: 0.2,
           mediaResolution: 'MEDIA_RESOLUTION_LOW',
         },
       });
@@ -636,12 +614,7 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
       await recordGeminiFailure({ site: 'Gemini Multi-Video Stream', model: modelName, inputKind: 'youtube_url_stream', error: gemErr, startedAt: aiStartedAt });
       const isQuota = isQuotaError(gemErr);
       if (!isQuota) allQuotaErrors = false;
-      const isDailyQuota = isQuota && (gemErr.message?.toLowerCase().includes('per-day') || gemErr.message?.toLowerCase().includes('daily'));
       console.warn(`[Gemini Multi-Video Stream] Model ${modelName} gagal: ${gemErr.message}. ${isQuota ? '⚠️ [Limit Kuota/Token Tercapai]' : ''}`);
-      if (isDailyQuota) {
-        console.warn('[Gemini Multi-Video Stream] ⛔ Kuota harian habis.');
-        break;
-      }
     }
   }
 
@@ -961,11 +934,15 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
 
     const candidateModels = [
-      process.env.GEMINI_MODEL || 'gemini-flash-latest',
-      'gemini-flash-latest',
+      'gemini-3.1-pro-preview',
+      'gemini-3.8-flash',
+      'gemini-3.7-flash',
+      'gemini-3.6-flash',
       'gemini-3.5-flash',
-      'gemini-3.5-flash-lite'
-    ];
+      'gemini-2.5-flash',
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+    ].filter((model, index, models) => Boolean(model) && models.indexOf(model) === index);
     let parsed = null;
     let activeGeminiModel = candidateModels[0];
     let lastGeminiErr = null;

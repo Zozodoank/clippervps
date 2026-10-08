@@ -446,6 +446,7 @@ async function _runStage1Pipeline({
           if (cacheSourceUrl && videoMeta && !options.isManualOem) {
             const cacheCompliance = checkVideoMetadataCompliance(videoMeta, productTitle, {
               ...options,
+              oracleOwnsContentDecision: true,
               isVisualSearch: Boolean(effectiveProductImage || options.isVisualSearch),
               productImage: effectiveProductImage,
               imageUrl: effectiveProductImage,
@@ -630,6 +631,7 @@ async function _runStage1Pipeline({
 
       const compliance = checkVideoMetadataCompliance(meta, productTitle, {
         ...options,
+        oracleOwnsContentDecision: true,
         // User-supplied manual sources are quality-approved by the operator;
         // keep metadata checks, but never reject them for a resolution threshold.
         enforceResolution: isManualJob ? false : options.enforceResolution,

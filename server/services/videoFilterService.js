@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
 import { tempDir } from '../utils/paths.js';
 import { trackBandwidth, trackSavedBandwidth } from './bandwidthTracker.js';
-import { extractCoreProductInfo, isTitleMatchingProduct } from './discoveryService.js';
+import { extractCoreProductInfo, isTitleMatchingProduct, normalizeText } from './discoveryService.js';
 import { getSmartProxyArgs } from './downloader.js';
 import { classifyPipelineError } from './networkDiagnosticService.js';
 import { getNichePreset } from '../config/nichePresets.js';
@@ -273,28 +273,11 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal ${(maxDurSec / 60).toFixed(0)} menit (${maxDurSec} detik).` };
   }
 
-  // 1A. Resolusi Maksimal Video (WAJIB tersedia minimal 720p HD; tolak sumber buram 144p/240p/360p/480p).
-  //     Diperiksa dari resolusi MAKSIMAL YANG TERSEDIA di YouTube (maxHeight/maxWidth), BUKAN dari stream
-  //     preview 480p yang sengaja dipakai untuk sampling hemat kuota. Render akhir tetap men-scale ke 1080x1920.
-  //     Aturan orientation-agnostic: sisi TERPENDEK dari sumber maksimal harus >= 720p (720p landscape 1280x720,
-  //     maupun short vertikal 720x1280 lolos; sedangkan 854x480 / 540x960 yang buram ditolak).
-  //     PENTING: daftar format anonim (TANPA cookies) sering dibatasi YouTube sampai 360p (PO-token gate),
-  //     sehingga resolusi maksimal yang terlihat TIDAK mencerminkan kualitas asli video. Karena itu gerbang
-  //     keras ini hanya ditegakkan bila probe dapat dipercaya (ada file cookies). Tanpa cookies, lewati penolakan
-  //     (cukup peringatan) agar tidak semua kandidat tertolak; downloader tetap mengambil format terbaik yang
-  //     tersedia dan render akhir men-upscale ke 1080x1920.
-  const hasTrustedProbe = (typeof options.enforceResolution === 'boolean')
-    ? options.enforceResolution
-    : Boolean(findCookiesFile());
-  const knownDims = [Number(metadata.maxWidth) || 0, Number(metadata.maxHeight) || 0].filter(d => d > 0);
-  const shortSide = knownDims.length > 0 ? Math.min(...knownDims) : 0;
-  if (shortSide > 0 && shortSide < 720) {
-    if (hasTrustedProbe) {
-      return { eligible: false, reason: `Resolusi maksimal video (${metadata.maxWidth}x${metadata.maxHeight}) di bawah standar 720p (sisi terpendek ${shortSide}p). Sumber buram ditolak; sistem akan mencari kandidat lebih tajam.` };
-    }
-    console.warn(`[Gate Resolusi] Kandidat "${(metadata.title || '').slice(0, 40)}" hanya terlihat ${metadata.maxWidth}x${metadata.maxHeight} pada probe anonim (tanpa cookies, dibatasi 360p). TIDAK ditolak — kualitas asli tidak dapat dipastikan tanpa cookies; lanjut unduh format terbaik.`);
-  }
+  // Production content/product decisions belong to Kaggle. YouTube metadata is
+  // neither a visual verdict nor a reliable source-resolution measurement.
+  if (options.oracleOwnsContentDecision) return { eligible: true };
 
+  // Resolution is decided only from the downloaded file via ffprobe.
   const titleLower = (metadata.title || '').toLowerCase();
   const descLower = (metadata.description || '').toLowerCase();
   const tagsLower = (metadata.tags || []).map(t => String(t).toLowerCase());

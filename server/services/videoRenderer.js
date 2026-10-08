@@ -567,7 +567,7 @@ export function getMediaDurationSec(filePath, ffmpegPath = getFFmpegPath()) {
 }
 
 /**
- * Inspects a video file using FFmpeg to determine its exact resolution and whether it meets minimal 1080p Full HD.
+ * Inspects a downloaded video file using ffprobe to determine its exact resolution.
  * @param {string} filePath - Path to video file
  * @param {string} [ffmpegPath]
  * @returns {Promise<{ width: number, height: number, is1080pOrHigher: boolean } | null>}
@@ -577,14 +577,25 @@ export function getVideoDimensions(filePath, ffmpegPath = getFFmpegPath()) {
     if (!filePath || !fs.existsSync(filePath)) {
       return resolve(null);
     }
-    const proc = spawn(ffmpegPath, ['-i', filePath]);
-    let stderr = '';
-    proc.stderr.on('data', (d) => stderr += d.toString());
-    proc.on('close', () => {
-      const match = stderr.match(/Stream #\d+:\d+.*Video:.*?,\s*(\d{3,5})x(\d{3,5})/s);
-      if (!match) return resolve(null);
-      const width = Number(match[1]);
-      const height = Number(match[2]);
+    const siblingProbePath = /ffmpeg(\.exe)?$/i.test(ffmpegPath)
+      ? ffmpegPath.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1')
+      : '';
+    const ffprobePath = siblingProbePath && fs.existsSync(siblingProbePath)
+      ? siblingProbePath
+      : (process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+    const proc = spawn(ffprobePath, [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height', '-of', 'json', filePath,
+    ]);
+    let stdout = '';
+    proc.stdout.on('data', (d) => stdout += d.toString());
+    proc.on('close', (code) => {
+      if (code !== 0) return resolve(null);
+      let stream;
+      try { stream = JSON.parse(stdout).streams?.[0]; } catch { return resolve(null); }
+      const width = Number(stream?.width);
+      const height = Number(stream?.height);
+      if (!(width > 0 && height > 0)) return resolve(null);
 
       // True 1080p Full HD:
       // Landscape 16:9 (1920x1080) -> width=1920, height=1080

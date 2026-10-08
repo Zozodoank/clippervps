@@ -2276,11 +2276,9 @@ export async function discoverYouTubeCandidatesForProduct({
         return vid && !excludeSet.has(vid);
       });
 
-      // Only accept if the query produced compliant candidate(s) (5-15 min, faceless, multi-word matching)
-      const cleanResults = freshResults.filter((c) => isLikelyCleanYouTubeCandidate(c, coreWords));
-
-      if (cleanResults.length > 0) {
-        candidates = cleanResults;
+      // Keep metadata-mismatched results in the pool; Kaggle decides visual/product suitability.
+      if (freshResults.length > 0) {
+        candidates = freshResults;
         usedQuery = query;
         break;
       }
@@ -2310,7 +2308,7 @@ export async function discoverYouTubeCandidatesForProduct({
       }
       const validFb = (fbResults || []).filter((c) => {
         const vid = c.id || extractVideoId(c.url);
-        return vid && !excludeSet.has(vid) && isLikelyCleanYouTubeCandidate(c, coreWords);
+        return vid && !excludeSet.has(vid);
       });
       if (validFb.length > 0) {
         candidates = validFb;
@@ -2321,7 +2319,6 @@ export async function discoverYouTubeCandidatesForProduct({
   }
 
   const scoredCandidates = candidates
-    .filter((candidate) => isLikelyCleanYouTubeCandidate(candidate, coreWords))
     .map((candidate) => ({
       ...candidate,
       searchQuery: usedQuery,
@@ -2329,15 +2326,7 @@ export async function discoverYouTubeCandidatesForProduct({
       matchScore: scoreCandidateMatch(candidate, coreWords, productDescription),
     }));
 
-  const visualCandidates = scoredCandidates.filter(
-    (c) => Boolean(c.isVisualSearch || c.source === 'bing_visual_search' || c.source === 'visual_ai_query')
-  );
-  const matchedCandidates = scoredCandidates.filter((c) => c.matchScore > 0);
-  const cleanCandidates = [...matchedCandidates, ...visualCandidates.filter((c) => c.matchScore <= 0)]
-    .sort((a, b) => b.matchScore - a.matchScore);
-
-  // Jika matchedCandidates kosong namun scoredCandidates ada (hasil dari query merk/tipe langsung), jangan buang!
-  return cleanCandidates.length > 0 ? cleanCandidates : scoredCandidates;
+  return scoredCandidates.sort((a, b) => b.matchScore - a.matchScore);
 }
 
 // Kata umum yang bukan identitas produk: hampir semua judul video memuatnya, jadi mereka
@@ -2677,37 +2666,15 @@ export async function searchMultiEngineVideos(query, {
 
   // In strict identity mode, preserve the exact brand/model/type signal in the
   // query and never allow a broad product-family fallback to pass.
-  if (strictIdentity) {
-    const identityInfo = extractDynamicProductIdentity(query);
-    const identityTokens = [identityInfo.brand, identityInfo.model]
-      .filter(Boolean)
-      .map((v) => normalizeText(v))
-      .filter((v) => v.length >= 2);
-    if (identityTokens.length === 0) return [];
-    const strictCandidates = allCandidates.filter((candidate) => {
-      const text = normalizeText(`${candidate.title || ''} ${candidate.description || ''}`);
-      return identityTokens.some((token) => text.includes(token));
-    });
-    allCandidates.length = 0;
-    allCandidates.push(...strictCandidates);
-  }
-
-  // 4. Filter through Stage 1 Metadata Pre-filter.
-  const metadataClean = allCandidates.filter((candidate) => isLikelyCleanYouTubeCandidate(candidate, queryWords));
-
-  // 5. Rank by actual target-product signal, then refuse zero-match keyword results.
-  const ranked = metadataClean
+  // Rank product-signal matches first, but keep all results for Kaggle's visual verdict.
+  const ranked = allCandidates
     .map((candidate) => ({
       ...candidate,
       matchScore: scoreCandidateMatch(candidate, queryWords, queryInfo?.cleanTitle || query),
     }))
-    .filter((candidate) => {
-      const isVisual = Boolean(candidate.isVisualSearch || candidate.source === 'bing_visual_search' || candidate.source === 'visual_ai_query');
-      return isVisual || candidate.matchScore > 0;
-    })
     .sort((a, b) => b.matchScore - a.matchScore);
 
-  console.log(`[MultiEngineVideo] Ditemukan ${allCandidates.length} total video (${ranked.length} lolos filter metadata + product-match) untuk: "${query}"`);
+  console.log(`[MultiEngineVideo] Ditemukan ${allCandidates.length} video; semua diteruskan, skor kecocokan hanya mengatur urutan untuk: "${query}"`);
   return ranked.slice(0, safeLimit);
 }
 
