@@ -189,6 +189,7 @@ export async function analyzeYouTubeVideoWithGemini({
   }
 
   const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const isGadget = niche === 'gadget_smartphone';
   const isVideoFirstMode = Boolean(isVideoFirst);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
@@ -239,7 +240,8 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 TIMELINE:
 - Inspect the complete video. Never select a section before ${introCutoffSec || 0}s or after ${Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0))}s.
 - Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.
-- Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.
+- ${isGadget ? 'Propose eight ordered 6-second smartphone-review sections when available: slots 1-2 screen/UI, 3-4 visible features, 5-6 RAM/storage evidence, 7-8 camera samples as the final scenes. Camera samples may show only captured photos/video without the phone in frame, including people as subjects.' : 'Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.'}
+- ${isGadget ? 'Tag each selectedClips entry with storyboardSlot 1 through 8 in that order. Do not classify people inside camera samples as presenters; Kaggle checks only whether a scene is self-recording presenter footage.' : 'Return timestamp proposals in scene order.'}
 - Do not make a product-match, face, overlay, subtitle, watermark, or source-quality verdict. Kaggle is the sole visual judge.
 - If no likely product section can be located, return an empty list; the backend will still submit sample timestamps to Kaggle.
 - Always use status "select". Never return status "reject".
@@ -251,7 +253,7 @@ Return ONLY JSON in this shape:
   "hasOpeningIntro": true,
   "introDurationSeconds": 5,
   "selectedClips": [
-    {"startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "reason": "Possible physical product demonstration"}
+    {"startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "storyboardSlot": 1, "reason": "Possible product scene"}
   ],
   "timestamps": [12.0],
   "productHook": "<short hook>",
@@ -352,8 +354,9 @@ Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether
   const lastSafeStart = Math.max(firstSafeSec, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0) - clipSec);
   const oracleProbeSections = rawSections.length > 0
     ? rawSections
-    : Array.from({ length: 4 }, (_, i) => ({
-        startSeconds: firstSafeSec + ((lastSafeStart - firstSafeSec) * (i + 0.5) / 4),
+    : Array.from({ length: isGadget ? 8 : 4 }, (_, i) => ({
+        startSeconds: firstSafeSec + ((lastSafeStart - firstSafeSec) * (i + 0.5) / (isGadget ? 8 : 4)),
+        ...(isGadget ? { storyboardSlot: i + 1 } : {}),
         reason: 'Timestamp sampel untuk penilaian Oracle Kaggle',
       }));
   const asTimestamp = (item) => {
@@ -363,13 +366,13 @@ Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether
       : parseTimeToSeconds(item?.startSeconds ?? item?.startTime ?? item?.timestamp);
   };
   const selectedSections = oracleProbeSections
-    .map((entry) => ({ entry, sec: asTimestamp(entry) }))
+    .map((entry, sectionIndex) => ({ entry, sec: asTimestamp(entry), sectionIndex }))
     .filter(({ sec }) => Number.isFinite(sec));
 
   let candidateClips = [];
   const acceptedStarts = [];
   if (selectedSections.length > 0) {
-    for (const { entry, sec } of selectedSections) {
+    for (const { entry, sec, sectionIndex } of selectedSections) {
       if (isNaN(sec) || sec < 0 || sec > totalDuration) continue;
       const maxSafeEnd = Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0));
       if (sec < Math.max(0, Number(introCutoffSec) || 0) || sec + clipSec > maxSafeEnd) {
@@ -388,10 +391,16 @@ Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether
       acceptedStarts.push(startSec);
 
       const endSec = Math.round((startSec + clipSec) * 10) / 10;
+      const storyboardSlot = Number(entry?.storyboardSlot) || sectionIndex + 1;
+      const isCameraSample = isGadget && storyboardSlot >= 7;
       candidateClips.push({
         startSeconds: startSec,
         endSeconds: endSec,
         duration: clipSec,
+        storyboardSlot: isGadget ? storyboardSlot : undefined,
+        storyboardSlotKey: isGadget ? getNichePreset(niche)?.slotsConfig?.[storyboardSlot - 1]?.key : undefined,
+        facePolicy: isCameraSample ? 'presenter_only' : 'strict',
+        isCameraResultSample: isCameraSample,
         startTime: formatSeconds(startSec),
         endTime: formatSeconds(endSec),
         reason: String(entry?.reason || `Cuplikan produk di detik ${formatSeconds(startSec)}`),
@@ -500,6 +509,7 @@ export async function analyzeMultipleYouTubeVideosWithGemini({
   }
 
   const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const isGadget = niche === 'gadget_smartphone';
   const isVideoFirstMode = Boolean(isVideoFirst);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
@@ -540,17 +550,18 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
 TIMELINE AND SELECTION:
 - Inspect all supplied videos. Ignore the first ${introCutoffSec || 0} seconds and the final 10 seconds of each video.
-- Each selected section must be ${clipSec}s long and show the target physical product clearly in active use.
-- Select only sections whose final 9:16 crop has no human face/talking head, floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging.
+- Each selected section must be ${clipSec}s long. ${isGadget ? 'Return up to eight ordered smartphone review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 verified RAM/storage evidence, and 7-8 phone camera samples as the final scenes. Slots 1-6 must show the phone or its active interface. Slots 7-8 may show only captured photos/video without the phone in frame; people inside captured samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every section must show the target physical product clearly in active use.'}
+- Select only sections whose final 9:16 crop has no floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging. ${isGadget ? 'Faces are allowed inside a camera sample in slots 7-8; reject a face only when it is a reviewer filming themselves and speaking directly to the camera.' : 'Reject human faces and talking heads.'}
 - For horizontal footage assess the center 9:16 crop; for vertical footage assess the full frame.
 - Return every distinct clean section you can identify, including fewer than four. If none are identifiable in a source, simply return no section for that source.
+- ${isGadget ? 'For camera slots 7-8, set isCameraSample=true and storyboardSlot to 7 or 8. Set isSelfRecordingPresenter=true only when a person is filming themselves and speaking directly to camera.' : 'Return storyboardSlot matching the requested shot role.'}
 - Never return an overall source or batch verdict. Always use status "select", including when selectedClips is empty.
 
 Return ONLY JSON:
 {
   "status": "select",
   "selectedClips": [
-    {"sourceVideoIndex": 0, "startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "clean": true, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "hasFace": false, "hasFloatingOverlay": false, "hasTextOrSubtitles": false, "hasWatermark": false, "reason": "Clean product demonstration"}
+    {"sourceVideoIndex": 0, "startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "storyboardSlot": 1, "isCameraSample": false, "isSelfRecordingPresenter": false, "clean": true, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "hasFace": false, "hasFloatingOverlay": false, "hasTextOrSubtitles": false, "hasWatermark": false, "reason": "Clean product demonstration"}
   ],
   "productHook": "<short hook>",
   "hasProductBrand": false,
@@ -631,15 +642,17 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
 
   // Ignore every whole-video/batch verdict. Only individually clean sections are useful.
   const selectedSections = (Array.isArray(parsed.selectedClips) ? parsed.selectedClips : [])
-    .filter((item) => {
+    .filter((item, index) => {
+      const slot = Number(item?.storyboardSlot) || index + 1;
+      const cameraSample = isGadget && slot >= 7 && item?.isCameraSample === true && item?.isSelfRecordingPresenter !== true;
       const explicitlyDirty = item?.clean === false || item?.isClean === false ||
-        item?.containsTargetProduct === false || item?.isPackaging === true ||
-        item?.isMachine === true || item?.isActiveProductDemo === false ||
-        item?.hasFace === true || item?.containsFace === true || item?.hasHumanOrFace === true ||
+        (!cameraSample && item?.containsTargetProduct === false) || item?.isPackaging === true ||
+        item?.isMachine === true || (!cameraSample && item?.isActiveProductDemo === false) ||
+        ((!cameraSample || item?.isSelfRecordingPresenter === true) && (item?.hasFace === true || item?.containsFace === true || item?.hasHumanOrFace === true)) ||
         item?.hasFloatingOverlay === true || item?.hasTextOrSubtitles === true ||
         item?.hasSubtitles === true || item?.hasWatermark === true || item?.hasChannelLogo === true;
       const explicitlyClean = item?.clean === true || item?.isClean === true ||
-        (item?.containsTargetProduct === true && item?.isActiveProductDemo === true);
+        (item?.containsTargetProduct === true && item?.isActiveProductDemo === true) || cameraSample;
       return !explicitlyDirty && explicitlyClean;
     });
 
@@ -647,7 +660,9 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
   const acceptedStartsByVideo = {};
   
   if (Array.isArray(selectedSections)) {
-    for (const clipData of selectedSections) {
+    for (const [sectionIndex, clipData] of selectedSections.entries()) {
+      const storyboardSlot = Number(clipData?.storyboardSlot) || sectionIndex + 1;
+      const isCameraSample = isGadget && storyboardSlot >= 7 && clipData?.isCameraSample === true;
       const sec = Number(clipData.startSeconds ?? clipData.timestamp);
       const vidIdx = Number(clipData.sourceVideoIndex) || 0;
       
@@ -669,6 +684,10 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
         startSeconds: startSec,
         endSeconds: endSec,
         duration: clipSec,
+        storyboardSlot: isGadget ? storyboardSlot : undefined,
+        storyboardSlotKey: isGadget ? getNichePreset(niche)?.slotsConfig?.[storyboardSlot - 1]?.key : undefined,
+        facePolicy: isCameraSample ? 'presenter_only' : 'strict',
+        isCameraResultSample: isCameraSample,
         startTime: formatSeconds(startSec),
         endTime: formatSeconds(endSec),
         reason: clipData.reason || `Cuplikan produk dari video ${vidIdx + 1}`,
@@ -745,6 +764,7 @@ export async function analyzeVideoWithGeminiFileApi({
   }
 
   const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const isGadget = niche === 'gadget_smartphone';
   const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
@@ -863,8 +883,8 @@ CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DI
 - MANDAT PEMBUANGAN PROSES UNBOXING:
   * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, KARTU GARANSI, ATAU BUSA PACKAGING!
   * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing, buku panduan manual kertas, atau menyorot kotak kardus/kemasan!
-  * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN SECARA AKTIF / DIDEMONSTRASIKAN FUNGSINYA (misal: saat memotong, mengupas, memasak, menyalakan mesin, scrolling layar HP, gaming fisik di tangan).
-  * DILARANG MEMILIH SCENE TANPA PRODUK: setiap timestamp yang dipilih WAJIB menampilkan PRODUK UTAMA secara jelas di dalam frame. Dilarang memilih scene yang hanya berisi tangan kosong, latar/ruangan, orang tanpa produk, meja kosong, atau objek yang bukan produk target.
+  * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN / DIDEMONSTRASIKAN. ${isGadget ? 'Pengecualian: dua adegan terakhir boleh berupa hasil foto/video yang diambil kamera ponsel, tanpa ponsel di dalam hasil tangkapan.' : ''}
+  * ${isGadget ? 'Slot 1-6 WAJIB menunjukkan ponsel/UI/kapasitas yang relevan; slot kamera 7-8 dinilai sebagai sampel hasil kamera. Subjek manusia di dalam sampel tersebut diperbolehkan.' : 'Setiap timestamp yang dipilih WAJIB menampilkan PRODUK UTAMA secara jelas di dalam frame.'}
   * DILARANG KERAS memilih scene di mana produk hanya BERSALIN, TERSEDIA, tersimpan, diletakkan, didisplay di rak, meja, laci, atau counter TANPA ada tangan yang mengoperasikan atau mendemonstrasikannya. Shot "produk statis pajangan" = TIDAK VALID. Yang diterima hanyalah produk yang SEDANG DIPAKAI atau SEDANG DISENTUH/DIOPERASIKAN.
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh isi video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun demonstrasi fungsi fisik produk.
@@ -877,13 +897,13 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
   * DILARANG KERAS video yang memiliki pilar / garis hitam vertikal tebal di sisi kiri dan kanan (pillarbox narrow slit)! Video harus mengisi penuh frame secara proporsional.
 - Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
-CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
-- Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.
-- Each timestamp in "timestamps" MUST be in seconds from the start of the video where the 9:16 center area is 100% faceless, free of subtitles, free of floating text, free of graphic overlays, free of colored background cards, and free of watermarks/logos.
+CRITERION 5: ${isGadget ? 'EIGHT-SCENE SMARTPHONE REVIEW' : 'DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE'}
+- ${isGadget ? 'Select exactly eight non-overlapping 6-second scenes for a 48-second smartphone review: slots 1-2 screen/UI, 3-4 visible features, 5-6 RAM/storage capacity evidence, 7-8 camera samples as the final scenes. Camera samples may show captured people or scenery without the physical phone in frame.' : 'Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.'}
+- Each timestamp in "timestamps" MUST be free of subtitles, floating text, graphic overlays, colored cards, and watermarks. ${isGadget ? 'A human subject inside a phone camera sample is allowed; reject only a self-recording presenter speaking directly to camera.' : 'Selected scenes must be 100% faceless.'}
 - MOTION FIRST: Prioritize active hands-on demonstration (cutting, pressing, operating, tangible results) over frozen/static product displays.
 - ANTI-MONOTONOUS RULE: Each timestamp MUST represent a distinct action, phase, or camera angle. If the footage repeats the same static cut without diversity, REJECT IT:
   {"status": "reject", "reason": "Video ditolak: Footage monoton, hanya mengulang 1 gerakan tanpa variasi aksi yang memadai."}
-- If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.
+- ${isGadget ? 'Return exactly eight timestamps in the required topic order. Do not reject captured sample photos/video because the device is absent from the captured image.' : 'If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.'}
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -893,6 +913,7 @@ If ACCEPTED:
   "isExactProductMatch": true,
   "isFacelessIn916Frame": true,
   "hasFaceIn916Frame": false,
+  "hasVloggerOrSelfRecordingPresenter": false,
   "hasHumanOrFaceAnywhereInVideo": false,
   "hasAnimatedGraphicOverlayIn916Frame": false,
   "hasBumperPhotoInFrame": false,
@@ -903,7 +924,7 @@ If ACCEPTED:
   "hasFloatingTextIn916Frame": false,
   "hasOnlyPhysicalProductText": true,
   "isAiGeneratedOrSynthetic": false,
-  "timestamps": [10, 22, 35, 48, 62, 75, 90, 105, 120, 135],
+  "timestamps": [${isGadget ? '10, 20, 30, 40, 50, 60, 70, 80' : '10, 22, 35, 48, 62, 75, 90, 105, 120, 135'}],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none"
@@ -926,7 +947,7 @@ If REJECTED:
   "hasFloatingTextIn916Frame": false,
   "hasOnlyPhysicalProductText": false,
   "isAiGeneratedOrSynthetic": false,
-  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker di dalam frame 9:16 tengah' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
+  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker di dalam frame 9:16 tengah' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU '${isGadget ? 'Vlogger merekam diri sambil berbicara langsung ke kamera' : 'Menampilkan wajah orang/vlogger'}' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
 }
 
 CRITICAL RULES FOR REJECTION OUTPUT:
@@ -1012,9 +1033,9 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       parsed.hasTargetProductInEverySelectedFrame === false ||
       isBulky ||
       parsed.isUsableSourceVideo === false;
-    const hasFace = parsed.hasFaceIn916Frame === true ||
-      parsed.hasFaceOrHumanInSelectedFrames === true ||
-      parsed.hasFaceInSelectedClips === true;
+    const hasFace = isGadget
+      ? (parsed.hasVloggerOrSelfRecordingPresenter === true || parsed.hasFaceToCameraPresenter === true)
+      : (parsed.hasFaceIn916Frame === true || parsed.hasFaceOrHumanInSelectedFrames === true || parsed.hasFaceInSelectedClips === true);
     const hasWatermarkInFrame = parsed.hasWatermarkIn916Frame === true || parsed.hasCenterObstructingWatermark === true;
     const hasSocialOrChannelInFrame = parsed.hasSocialOrChannelLogoIn916Frame === true || parsed.hasSocialMediaOrChannelIdentityIn916Frame === true;
     const hasSubtitles = parsed.hasSubtitlesIn916Frame === true || parsed.hasSubtitlesOrBurnedText === true || parsed.hasBurnedText === true;
@@ -1032,7 +1053,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
       (reasonLower.includes('9:16') || reasonLower.includes('tengah') || reasonLower.includes('menutupi') || reasonLower.includes('center')) &&
       !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16') && !reasonLower.includes('tidak ada animasi') && !reasonLower.includes('bebas animasi');
     const mentionsBumperInReason = reasonLower.includes('bumper') || reasonLower.includes('intro card') || reasonLower.includes('opening card') || reasonLower.includes('slide statis');
-    const mentionsFaceInReason = reasonLower.includes('wajah') || reasonLower.includes('face') || reasonLower.includes('manusia') || reasonLower.includes('orang');
+    const mentionsFaceInReason = (reasonLower.includes('wajah') || reasonLower.includes('face') || reasonLower.includes('manusia') || reasonLower.includes('orang')) && (!isGadget || reasonLower.includes('vlogger') || reasonLower.includes('presenter') || reasonLower.includes('bicara langsung'));
     const mentionsWatermarkInFrame = isRejectStatus && (reasonLower.includes('watermark') || reasonLower.includes('capcut')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
     const mentionsLogoInFrame = (isRejectStatus || hasStaticLogo) && (reasonLower.includes('logo') || reasonLower.includes('tiktok') || reasonLower.includes('channel') || reasonLower.includes('identitas') || reasonLower.includes('sosmed')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
     const mentionsSubtitlesInReason = reasonLower.includes('subtitle') || reasonLower.includes('caption') || reasonLower.includes('teks berjalan') || reasonLower.includes('terjemahan') || reasonLower.includes('teks mengambang') || reasonLower.includes('floating text') || reasonLower.includes('stiker teks') || reasonLower.includes('teks promo') || reasonLower.includes('tulisan');
@@ -1093,7 +1114,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
     let candidateClips = [];
     if (rawTimestamps.length > 0) {
-      for (const rawTs of rawTimestamps) {
+      for (const [timestampIndex, rawTs] of rawTimestamps.entries()) {
         const sec = typeof rawTs === 'number' ? rawTs : parseTimeToSeconds(rawTs);
         if (isNaN(sec) || sec < 0 || sec > totalDuration) continue;
         const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
@@ -1106,6 +1127,10 @@ CRITICAL RULES FOR REJECTION OUTPUT:
           startSeconds: startSec,
           endSeconds: endSec,
           duration: clipSec,
+          storyboardSlot: isGadget ? timestampIndex + 1 : undefined,
+          storyboardSlotKey: isGadget ? getNichePreset(niche)?.slotsConfig?.[timestampIndex]?.key : undefined,
+          facePolicy: isGadget && timestampIndex >= 6 ? 'presenter_only' : 'strict',
+          isCameraResultSample: isGadget && timestampIndex >= 6,
           startTime: formatSeconds(startSec),
           endTime: formatSeconds(endSec),
           reason: `Cuplikan produk di detik ${formatSeconds(startSec)}`,
@@ -1248,6 +1273,7 @@ export async function selectHighlightWithAI({
   let activeModel = modelFallbackList[0];
 
   const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(3.5, Math.min(5.0, Number(sceneDuration) || 4.8));
+  const isGadget = niche === 'gadget_smartphone';
   const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
 
   onProgress({
@@ -1359,10 +1385,10 @@ CRITERIA FOR ACCEPTANCE (ALL MUST BE TRUE):
    - MARKET COMPATIBILITY: The product demonstrated MUST match generic OEM / white-label household gadgets, kitchen tools, or daily appliances widely sold across Shopee regional markets (Shopee Indonesia, Malaysia, Thailand, Vietnam, Philippines, Singapore, Taiwan, Brazil).
    - Multi-country Shopee / Asian OEM demonstration videos (hands-on tabletop demos from SEA/Asian sellers or creators) are 100% WELCOME and ACCEPTABLE.
    - STRICTLY REJECT US/Western-exclusive retail items: If the video clearly shows an exclusive US/Western retail product or retail packaging with Amazon, Walmart, Target, Home Depot, or Best Buy branding not found on Shopee, output status reject.
-2. Clean Hands-On Demonstration in Selected Frames: Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.
+2. Clean Hands-On Demonstration in Selected Frames: ${isGadget ? 'Slots 1-6 must show the smartphone, active interface, or memory evidence. Slots 7-8 may show photos/video captured by its camera, and people or faces inside those samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.'}
 3. 100% Clean from hardburned speech subtitles/captions and colored text banner boxes inside 9:16 frame (physical text/labels on the product are 100% allowed).
 4. 100% Clean from watermarks, social media logos, and channel identities inside the 9:16 central frame (outer left/right watermarks that get cropped/covered are acceptable).
-5. Real authentic physical demonstration (5 to 8 clean clips across the storyboard for full 30 to 35 second video ad).
+5. ${isGadget ? 'Smartphone review: exactly eight ordered scene slots covering screen, features, memory capacity, then camera samples as the final two slots.' : 'Real authentic physical demonstration (5 to 8 clean clips across the storyboard for full 30 to 35 second video ad).'}
 
 Output strictly valid JSON with this exact schema:
 {
@@ -1392,19 +1418,13 @@ Output strictly valid JSON with this exact schema:
   "missingSlots": ["clip3_action_demo", "clip4_action_demo_diff"],
   "suggestedSearchQueries": ["${effectiveTitle} demo produk", "${effectiveTitle} unboxing review"],
   "storyboard": {
-    "clip1_full_product": 1,
-    "clip2_feature": 3,
-    "clip3_action_demo": 5,
-    "clip4_action_demo_diff": 7,
-    "clip5_action_demo": 8,
-    "clip6_full_product": 10,
-    "clip7_full_product": 10
+${preset.slotsConfig.map((slot, index) => `    "${slot.key}": ${index + 1}`).join(',\n')}
   },
   "reframeBySlot": {
     "clip1_full_product": {"focusXStart": 0.50, "focusYStart": 0.55, "focusXEnd": 0.52, "focusYEnd": 0.55},
     "clip2_feature": {"focusXStart": 0.48, "focusYStart": 0.55, "focusXEnd": 0.53, "focusYEnd": 0.57}
   },
-  "frames": [1, 3, 5, 7, 8, 10, 10],
+  "frames": [${Array.from({ length: isGadget ? 8 : 7 }, (_, index) => index + 1).join(', ')}],
   "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
   "hasProductBrand": false,
   "detectedBrand": "none",
@@ -1414,10 +1434,10 @@ Output strictly valid JSON with this exact schema:
 CRITICAL MANDATE FOR FRAME AUDIT & REJECTION REPORTING:
 1. "rejectedFrames": You MUST inspect every single frame and list ALL frames that violate QC (human faces/heads, dialogue subtitles, promo cards, watermarks, floating numbers/stickers like '99', tape measures/rulers, or empty packaging without target product).
    Specify "frameIndex" (1-indexed matching frame #1, #2, ...), "timestamp" (approx seconds), and an explicit "reason".
-2. "acceptedFrames": List every clean, faceless, hands-on demonstration frame index.
+2. "acceptedFrames": ${isGadget ? 'List every clean frame matching its smartphone storyboard role; people inside camera samples in slots 7-8 are allowed.' : 'List every clean, faceless, hands-on demonstration frame index.'}
 3. "missingSlots": If the pool of clean frames cannot fill all 7 diverse storyboard slots without repetition, list the unfilled slot keys (e.g. ["clip3_action_demo", "clip4_action_demo_diff"]).
 4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage. WAJIB GUNAKAN merk dan tipe produk ("${effectiveTitle}") secara utuh dan akurat, meskipun nama merk berbahasa Inggris. Padukan dengan kata kunci pencarian dalam Bahasa Indonesia (contoh: "${effectiveTitle} demo produk", "review ${effectiveTitle} indonesia") agar sesuai dengan audiens Shopee lokal. DILARANG memakai kata cara/tutorial/diy/servis/reparasi/rusak/perbaikan - query semacam itu otomatis dibuang backend.
-5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
+5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! ${isGadget ? 'People inside camera-result samples in slots 7-8 are allowed and must not be listed as face violations.' : ''} Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
 
   // Batasi keyframes untuk API. Evidence mode: pemilih cluster-aware (tiap kluster
   // jendela bersih terwakili proporsional + boundary awal/akhir selalu ikut).
@@ -1501,38 +1521,39 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 2. Granular Frame-Level Discard QC (CRITICAL POLICY - DO NOT REJECT WHOLE VIDEO):
    - JANGAN PERNAH MENOLAK SELURUH VIDEO hanya karena 1 atau beberapa frame terdapat wajah vlogger, subtitle ucapan, intro bumper, atau watermark!
    - HANYA BUANG FRAME YANG TIDAK SESUAI TERSEBUT (abaikan nomor indeks frame yang ada wajah/ada teks ucapan).
-   - PILIH 7 SLOT ADEGAN DARI FRAME-FRAME PERAGAAN FISIK PRODUK YANG BERSIH! (Contoh: jika frame #1 intro ada wajah, frame #2-20 tangan memperagakan produk di meja, pilih 7 frame dari #2-#20!).
+   - ${isGadget ? 'PILIH 8 SLOT REVIEW SMARTPHONE BERURUTAN: dua layar/UI, dua fitur, dua bukti kapasitas memori, lalu dua sampel kamera sebagai penutup.' : 'PILIH 7 SLOT ADEGAN DARI FRAME-FRAME PERAGAAN FISIK PRODUK YANG BERSIH!'}
    - VIDEO HANYA BOLEH DITOLAK (status: "reject") JIKA:
      1) Produk fisik di video 100% BUKAN produk target ("isExactProductMatch": false).
-     2) SELURUH frame (100% dari detik awal hingga akhir) adalah rekaman podcast wajah orang bicara tanpa ada sama sekali peragaan fisik produk.
+     2) ${isGadget ? 'Tidak ada bukti review smartphone yang dapat digunakan; wajah orang di dalam sampel foto/video kamera bukan alasan untuk menolak.' : 'SELURUH frame (100% dari detik awal hingga akhir) adalah rekaman podcast wajah orang bicara tanpa ada sama sekali peragaan fisik produk.'}
      3) Video adalah animasi CGI / kartun / slide foto statis (gambar diam bergeser) tanpa video nyata bergerak.
-   - Asalkan video memperagakan produk target dan memiliki frame peragaan yang bersih, OUTPUT SELALU {"status": "accept"} dengan memilih frame-frame peragaan bersih ke dalam 7 slot storyboard!
+   - Asalkan video memperagakan produk target dan memiliki frame peragaan yang bersih, OUTPUT SELALU {"status": "accept"} dengan memilih slot storyboard sesuai niche.
 3. Subtitle, Floating Text, & Graphic Overlay QC (with Granular Frame Tolerance):
    - Teks merek/tombol yang tercetak langsung pada fisik produk (printed/molded on product) adalah 100% DITERIMA dan BUKAN subtitle!
    - Jika satu frame ada teks/stiker ucapan, buang frame itu saja dan pilih frame lain yang bersih dari video yang sama!
 4. Watermark & Logo QC (9:16 Crop Tolerance):
    - Watermark/logo di pojok kiri/kanan video (di luar area 9:16 tengah) TETAP DITERIMA karena akan terpotong saat di-crop ke format vertikal 9:16.
    - Jika ada watermark di tengah pada satu frame, abaikan frame tersebut dan pilih frame lain yang bersih dari video yang sama!
-5. MANDATORY 7-SLOT AFFILIATE STORYBOARD ARCHITECTURE (WAJIB 7 ADEGAN BERBEDA & DYNAMIC MULTI-ANGLE):
-   Video reels/shorts affiliate WAJIB berganti adegan setiap ~3-5 detik dan DILARANG KERAS monoton!
+5. MANDATORY ${isGadget ? '8-SLOT SMARTPHONE REVIEW STORYBOARD' : '7-SLOT AFFILIATE STORYBOARD ARCHITECTURE'}:
+   ${isGadget ? 'Smartphone review terdiri dari delapan adegan enam detik (total 48 detik sebelum conform), mengikuti layar → fitur → kapasitas memori → kamera. Kamera hanya di slot 7-8.' : 'Video reels/shorts affiliate WAJIB berganti adegan setiap ~3-5 detik dan DILARANG KERAS monoton!'}
    - ATURAN SUDUT PANDANG & VARIASI PERSPEKTIF (CRITICAL UNTUK RETENSI REELS):
      * DILARANG KERAS memilih 2 frame berurutan dengan sudut kamera & jarak yang sama persis (terutama sudut top-down tegak lurus dari atas meja).
-     * WAJIB kombinasikan minimal 3 tipe visual berbeda di antara 7 slot:
+     * WAJIB kombinasikan tipe visual berbeda sesuai peran slot:
        1) Hero Establishing Shot: Produk utuh di atas meja (Slot 1).
        2) Macro Close-up Shot: Menyorot detail motif bunga, handle, tutup, knob, atau tekstur bahan.
        3) Dynamic Action Shot: Tangan memutar rak saji carousel/lazy susan, membuka penutup, menyajikan makanan, atau fungsi mekanik.
        4) Angle Variety: Sudut 45 derajat (miring elegan) atau perspektif meja makan.
    - DILARANG KERAS FRAME METERAN JAHIT / PENGGARIS: Dilarang memilih frame orang memegang meteran jahit kuning / mengukur mangkuk / membaca buku manual!
-   - ATURAN KHUSUS SLOT 1: "clip1_full_product" (00:00-00:05) WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH (Opening Hero Shot / beauty shot produk di atas meja / produk yang sudah keluar dari kemasan / hands-on showcase fisik produk). DILARANG KERAS kardus kosong, bubble wrap tanpa produk, meteran, paket resi pengiriman, atau frame tanpa produk di Slot 1!
+   - ${isGadget ? 'Slot 1-6 wajib menampilkan perangkat atau UI aktif yang mendukung layar, fitur, dan memori. Slot 7-8 boleh menampilkan hanya foto/video yang diambil oleh kamera ponsel, tanpa perangkat fisik di dalam hasil tangkapan.' : 'ATURAN KHUSUS SLOT 1: "clip1_full_product" WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH. DILARANG kardus kosong, bubble wrap tanpa produk, meteran, atau resi pengiriman.'}
    ${preset.storyboardInstructions}
-5B. TARGET PRODUCT MUST BE VISIBLY PRESENT IN EVERY SELECTED FRAME:
-   - Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.
+5B. TARGET PRODUCT EVIDENCE BY STORYBOARD ROLE:
+   - ${isGadget ? 'Slot 1-6 harus menunjukkan perangkat/UI; slot 7-8 dinilai sebagai hasil kamera sehingga foto/video tangkapan ponsel adalah bukti yang sah walau ponsel tidak tampak di dalam gambar.' : 'Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.'}
+   - ${isGadget ? 'Orang, wajah, potret, atau subjek lain di dalam sampel kamera diperbolehkan. Tolak hanya presenter/vlogger yang sedang merekam diri dan berbicara langsung ke kamera.' : ''}
    - REJECT frame yang hanya menampilkan tangan kosong, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus kosong, bubble wrap tanpa produk, resi paket, meteran pengukur, atau mesin industri/peralatan lain tanpa produk target.
    - Untuk kitchen_tools: jangan pernah menganggap aktivitas memasak sebagai bukti produk. Jika produk target tidak terlihat dan dioperasikan, frame TIDAK valid.
-   - Set hasTargetProductInEverySelectedFrame menjadi true HANYA bila setiap frame yang dipilih lolos bukti visual tersebut; bila satu saja tidak memenuhi, set false.
+   - Set hasTargetProductInEverySelectedFrame true bila semua frame sesuai aturan bukti per slot; hasil kamera pada slot 7-8 dihitung sebagai bukti kamera smartphone.
 
 6. 100% PRODUCT VISUAL CONSISTENCY & MULTI-VIDEO HARVESTING:
-   - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh 7 adegan yang dipilih (Slot 1 sampai Slot 7) WAJIB menampakkan MODEL PRODUK FISIK YANG SAMA PERSIS (model, bentuk, material, warna, dan fungsi identik dengan produk target: "${coreNoun}").
+   - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh adegan harus mendukung produk target "${coreNoun}". ${isGadget ? 'Hasil kamera pada slot 7-8 adalah bukti review yang sah dan tidak harus menampilkan badan ponsel.' : 'Setiap slot harus menampakkan model produk fisik yang sama.'}
    - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! Jika ada kandidat video yang produk fisiknya berbeda tipe/warna/model dengan produk target, JANGAN pilih frame dari video tersebut!
    - ATURAN PEMILIHAN SUMBER VIDEO (MULTI-VIDEO HARVESTING):
      * JIKA FRAME BERASAL DARI LEBIH DARI 1 VIDEO KANDIDAT (misal: "Video #1" dan "Video #2"):
@@ -1542,13 +1563,13 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
        PILIH 7 SLOT DENGAN VARIASI MAKSIMAL: pilih momen-momen dengan perbedaan sudut pandang (angle 45°, top-down), zoom hero shot, macro close-up tekstur/motif, dan aksi pemutaran/penyajian yang paling kontras dari video tersebut.
 7. Output Format:
    - WAJIB laporkan "rejectedFrames": Daftar rincian semua frame yang ditolak ([{"frameIndex": N, "timestamp": T, "reason": "alasan"}]).
-   - WAJIB laporkan "acceptedFrames": Daftar indeks frame yang bersih dan faceless ([1, 2, ...]).
+   - WAJIB laporkan "acceptedFrames": Daftar indeks frame yang sesuai bukti dan aturan wajah per slot ([1, 2, ...]).
    - Laporkan "missingSlots": Slot storyboard yang masih kosong jika footage belum cukup beragam ([ "clip3_action_demo", ... ]).
    - Berikan "suggestedSearchQueries": Kata kunci pencarian video pengganti di YouTube untuk mencari footage tambahan.
-   - Isi objek "storyboard" dengan 7 indeks frame terbaik dari acceptedFrames.
+   - Isi objek "storyboard" dengan ${isGadget ? '8' : '7'} indeks frame terbaik dari acceptedFrames.
    - Isi "reframeBySlot" untuk setiap slot dengan focusXStart/focusYStart/focusXEnd/focusYEnd.
-   - Isi array "frames" dengan urutan ke-7 indeks frame tersebut.
-   - Isi "frameAudit" untuk SETIAP frame yang dipilih: [{"frameIndex": N, "timestamp": 10.0, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}].
+   - Isi array "frames" dengan urutan ke-${isGadget ? '8' : '7'} indeks frame tersebut.
+   - Isi "frameAudit" untuk SETIAP frame yang dipilih: [{"frameIndex": N, "timestamp": 10.0, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "isCameraSample": false}]. Untuk slot kamera smartphone 7-8 gunakan isCameraSample=true dan izinkan subjek manusia di dalam hasil kamera; isSelfRecordingPresenter=true hanya untuk vlogger bicara ke kamera.
    - Output JSON lengkap sesuai skema terstruktur.`;
 
   const messageContent = [
@@ -1640,12 +1661,12 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       const isMatchFalse =
         parsed.isProductMatch === false ||
         parsed.isExactProductMatch === false ||
-        parsed.hasTargetProductInEverySelectedFrame === false ||
+        (parsed.hasTargetProductInEverySelectedFrame === false && !isGadget) ||
         isBulky ||
         parsed.isUsableSourceVideo === false;
-      const hasFace = parsed.hasFaceIn916Frame === true ||
-        parsed.hasFaceOrHumanInSelectedFrames === true ||
-        parsed.hasFaceInSelectedClips === true;
+      const hasFace = isGadget
+        ? (parsed.hasVloggerOrSelfRecordingPresenter === true || parsed.hasFaceToCameraPresenter === true)
+        : (parsed.hasFaceIn916Frame === true || parsed.hasFaceOrHumanInSelectedFrames === true || parsed.hasFaceInSelectedClips === true);
       const hasSubtitles = parsed.hasSubtitlesIn916Frame === true || parsed.hasSubtitlesOrBurnedText === true || parsed.hasBurnedText === true;
       const hasFloatingText = parsed.hasFloatingTextIn916Frame === true || parsed.hasTextOverlaysIn916Frame === true;
       const hasGraphic = parsed.hasAnimatedGraphicOverlayIn916Frame === true;
@@ -1663,7 +1684,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         (reasonLower.includes('9:16') || reasonLower.includes('tengah') || reasonLower.includes('menutupi') || reasonLower.includes('center')) &&
         !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16') && !reasonLower.includes('tidak ada animasi') && !reasonLower.includes('bebas animasi');
       const mentionsBumperInReason = reasonLower.includes('bumper') || reasonLower.includes('intro card') || reasonLower.includes('opening card') || reasonLower.includes('slide statis');
-      const mentionsFaceInReason = reasonLower.includes('wajah') || reasonLower.includes('face') || reasonLower.includes('manusia') || reasonLower.includes('orang');
+      const mentionsFaceInReason = (reasonLower.includes('wajah') || reasonLower.includes('face') || reasonLower.includes('manusia') || reasonLower.includes('orang')) && (!isGadget || reasonLower.includes('vlogger') || reasonLower.includes('presenter') || reasonLower.includes('bicara langsung'));
       const mentionsSubtitlesInReason = reasonLower.includes('subtitle') || reasonLower.includes('caption') || reasonLower.includes('teks berjalan') || reasonLower.includes('terjemahan') || reasonLower.includes('teks mengambang') || reasonLower.includes('floating text') || reasonLower.includes('stiker teks') || reasonLower.includes('teks promo') || reasonLower.includes('tulisan');
       const mentionsWatermarkInFrame = isRejectStatus && (reasonLower.includes('watermark') || reasonLower.includes('capcut')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
       const mentionsLogoInFrame = (isRejectStatus || hasStaticLogo) && (reasonLower.includes('logo') || reasonLower.includes('tiktok') || reasonLower.includes('channel') || reasonLower.includes('identitas') || reasonLower.includes('sosmed')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
@@ -1676,24 +1697,38 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
           .map((a) => [Number(a?.frameIndex), a])
           .filter(([idx]) => Number.isFinite(idx) && idx > 0)
       );
+      const cameraSampleFrameIndexes = new Set();
+      if (isGadget) {
+        selectedIndices.forEach((rawIdx, index) => {
+          const slot = Number(rawIdx?.storyboardSlot) || index + 1;
+          const frameIndex = typeof rawIdx === 'object'
+            ? Number(rawIdx?.frameIndex ?? rawIdx?.frame ?? rawIdx?.index)
+            : Number(rawIdx);
+          if (slot >= 7 && auditByFrameIndex.get(frameIndex)?.isCameraSample === true && auditByFrameIndex.get(frameIndex)?.isSelfRecordingPresenter !== true) {
+            cameraSampleFrameIndexes.add(frameIndex);
+          }
+        });
+      }
       const hasCompleteSelectedFrameAudit = selectedIndices.length === 0
         ? true
-        : selectedIndices.every((rawIdx) => {
+        : selectedIndices.every((rawIdx, selectedIndex) => {
             const idx = typeof rawIdx === 'object'
               ? Number(rawIdx?.frameIndex ?? rawIdx?.frame ?? rawIdx?.index)
               : Number(rawIdx);
             const audit = auditByFrameIndex.get(idx);
+            const storyboardSlot = Number(rawIdx?.storyboardSlot) || selectedIndex + 1;
+            const validCameraSample = isGadget && storyboardSlot >= 7 && cameraSampleFrameIndexes.has(idx);
             return Boolean(
               audit &&
-              audit.containsTargetProduct === true &&
               audit.isPackaging !== true &&
               audit.isMachine !== true &&
-              audit.isActiveProductDemo === true
+              (validCameraSample || (audit.containsTargetProduct === true && audit.isActiveProductDemo === true && audit.hasFace !== true && audit.isSelfRecordingPresenter !== true))
             );
           });
       const selectedFrameProofFailure =
-        selectedIndices.length >= 3 &&
-        (parsed.hasTargetProductInEverySelectedFrame === false || (selectedFrameAudit.length > 0 && !hasCompleteSelectedFrameAudit));
+        isGadget
+          ? (selectedIndices.length !== 8 || !hasCompleteSelectedFrameAudit)
+          : (selectedIndices.length >= 3 && (parsed.hasTargetProductInEverySelectedFrame === false || (selectedFrameAudit.length > 0 && !hasCompleteSelectedFrameAudit)));
 
       // ── EKSTRAKSI & NORMALISASI REJECTED & ACCEPTED FRAMES ──
       let normalizedRejectedFrames = [];
@@ -1710,7 +1745,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
             candidateIndex: matchedFrame?.candidateIndex !== undefined ? matchedFrame.candidateIndex : null,
             videoId: matchedFrame?.videoId || matchedFrame?.candidate?.id || null,
           };
-        }).filter(Boolean);
+        }).filter((frame) => frame && !cameraSampleFrameIndexes.has(frame.frameIndex));
       }
 
       // Gabungkan frameAudit yang tidak memenuhi syarat jika belum ada di rejectedFrames
@@ -1718,7 +1753,8 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         for (const audit of parsed.frameAudit) {
           const aIdx = Number(audit?.frameIndex);
           if (Number.isFinite(aIdx) && aIdx >= 1 && aIdx <= evalFrames.length) {
-            const isBad = audit.containsTargetProduct === false || audit.isPackaging === true || audit.isMachine === true || audit.isActiveProductDemo === false;
+            const isCameraSample = cameraSampleFrameIndexes.has(aIdx);
+            const isBad = audit.isPackaging === true || audit.isMachine === true || (!isCameraSample && (audit.containsTargetProduct === false || audit.isActiveProductDemo === false));
             if (isBad && !normalizedRejectedFrames.some(r => r.frameIndex === aIdx)) {
               const matchedF = evalFrames[aIdx - 1];
               normalizedRejectedFrames.push({
@@ -2540,7 +2576,7 @@ export async function generateAdAdvisorScriptWithAI({
 
 ORDER IS FIXED: scenes 1-2 review the screen/UI; scenes 3-4 review visible features; scenes 5-6 review memory capacity; scenes 7-8 review camera samples and are the final scenes. Do not move camera earlier. No CTA, price, purchase invitation, or comment prompt anywhere in narration.
 
-Every narration line must describe the action or evidence visible in its corresponding frames. Never invent a spec. State RAM/storage numbers only if legible in the supplied frames or explicitly stated in product title/description. If memory capacity is not verifiable, say that the capacity is not clearly shown. Camera sample footage may include people as subjects in photos/videos captured by the phone. Reject only a reviewer/vlogger/presenter recording themselves while speaking directly to camera; do not reject people inside the phone's captured sample footage.
+Every narration line must describe the action or evidence visible in its corresponding frames. Use specific active verbs and natural reactions to what changes on screen; vary the opening and rhythm of each line. Do not repeat a stiff template such as starting every line with "Perhatikan" or merely announce a topic without describing what the scene shows. Never invent a spec. State RAM/storage numbers only if legible in the supplied frames or explicitly stated in product title/description. If memory capacity is not verifiable, say that the capacity is not clearly shown. Camera sample footage may include people as subjects in photos/videos captured by the phone. Reject only a reviewer/vlogger/presenter recording themselves while speaking directly to camera; do not reject people inside the phone's captured sample footage.
 
 Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. Make the voiceover span the full target duration with timestamps at exactly 00:00, 00:06, 00:12, 00:18, 00:24, 00:30, 00:36, and 00:42. Write 12-15 spoken words per line so the complete narration lasts 45-60 seconds at a calm, clear pace. Keep every line descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
     : `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
@@ -2686,7 +2722,7 @@ Return strict JSON in this format:
       "adAdvisorNotes": "Tips sutradara (SFX / Text Overlay)"
     }
   ],
-  "voiceoverScript": "${isGadget ? '[00:00] [neutral] Review layar dan antarmuka perangkat.\\n[00:06] [neutral] Detail perubahan yang terlihat pada layar.\\n[00:12] [neutral] Fitur yang sedang diperagakan.\\n[00:18] [neutral] Fungsi yang tampak di adegan.\\n[00:24] [neutral] Kapasitas memori bila terbaca jelas.\\n[00:30] [neutral] Detail tampilan penyimpanan.\\n[00:36] [soft] Sampel hasil kamera.\\n[00:42] [soft] Hasil kamera sebagai penutup.' : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
+  "voiceoverScript": "${isGadget ? '[00:00] [curious] Ikuti perpindahan menu saat jari menyentuh layar; susunan ikon dan responsnya tampak jelas di sini.\\n[00:06] [calm] Saat halaman digulir, teks dan gambar bergerak; interaksi ini memperlihatkan pengalaman layar secara langsung.\\n[00:12] [engaged] Tombol yang ditekan membuka menu fitur; amati perubahan tampilannya sebelum menyimpulkan fungsi perangkat.\\n[00:18] [calm] Bagian perangkat yang terlihat memberi konteks fitur, sementara demonstrasi ini menunjukkan penggunaan yang sebenarnya.\\n[00:24] [careful] Angka RAM hanya disebut jika informasinya terbaca jelas pada layar yang sedang ditampilkan.\\n[00:30] [careful] Jika halaman penyimpanan tidak terbuka jelas, kita jelaskan tampilannya tanpa menebak kapasitas perangkat.\\n[00:36] [interested] Sekarang perhatikan sampel kamera; warna, pencahayaan, dan subjek tampak sebagai hasil tangkapan ponsel.\\n[00:42] [calm] Pada contoh terakhir, amati detail dan gerak subjek yang tertangkap dalam video kamera.' : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
   "aiStudioPrompt": "Scene\\nStudio rekaman energik...\\n\\nSample Context\\nDurasi voice over ${targetDuration} detik...\\n\\nSpeaker 1\\n[00:00] [excited] Hook pembuka...",
   "caption": "${isGadget ? 'Review smartphone berdasarkan bukti visual.\\n\\nUrutan bahasan: layar dan antarmuka, fitur yang terlihat, kapasitas memori bila terverifikasi, lalu sampel kamera sebagai penutup.\\n\\n#reviewhp #smartphoneterbaru #gadgetindonesia #techreview' : '🔥 Masih repot pakai cara lama yang bikin boros & berantakan? 🧼✨\\n\\nKenalin solusinya! Produk ini bikin pekerjaan harian kamu jadi 2x lebih cepat, praktis, dan hasilnya jauh lebih rapi maksimal 😍\\n\\nKeunggulan Utama:\\n✅ Desain praktis, inovatif, dan mudah digunakan\\n✅ Kualitas bahan premium, awet, dan tahan lama\\n✅ Hemat waktu, tenaga, dan bikin lebih efisien\\n✅ Bikin ruangan jadi lebih bersih, rapi, dan estetik\\n\\nBuruan checkout sekarang mumpung lagi diskon spesial & gratis ongkir! 🔥\\n\\n🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!\\n\\n#racunshopee #shopeehaul #spillracun #racuntiktok #racunbelanja #reelsviral #affiliateindonesia #barangunik #perabotandapur #dapurminimalis #fyp'}",
   "lexicon_to_replace": {
@@ -2766,7 +2802,7 @@ Return strict JSON in this format:
           && parsed.scenes.length === 8
           && scriptLines.length === 8
           && timestampedLines.every((match, index) => match && match[1] === expectedTimestamps[index])
-          && spokenWords.every(count => count >= 8 && count <= 20)
+          && spokenWords.every(count => count >= 12 && count <= 15)
           && spokenWords.reduce((sum, count) => sum + count, 0) >= minWords
           && spokenWords.reduce((sum, count) => sum + count, 0) <= maxWords
           && !hasForbiddenCta;

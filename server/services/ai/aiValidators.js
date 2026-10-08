@@ -10,7 +10,8 @@ export function formatSeconds(secs) {
 export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.5, minimumClipCount = 4 } = {}) {
   // Adaptive cadence: individual clips may be shorter/longer according to creative role,
   // while the default stays around 3.0-3.5s.
-  const defaultClipLength = Math.max(2.0, Math.min(4.0, Number(sceneDuration) || 3.2));
+  const requestedSceneDuration = Number(sceneDuration) || 3.2;
+  const defaultClipLength = Math.max(2.0, Math.min(requestedSceneDuration >= 5.5 ? 8.0 : 4.0, requestedSceneDuration));
   const sourceClips = Array.isArray(rawClips) ? rawClips : [];
   const normalized = [];
   let previousEnd = -1;
@@ -33,12 +34,20 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       // Only reject legacy text if it is NOT physical brand
       const legacyText = (audit.detectedText || '').toLowerCase().trim();
       const isLegacySubtitle = !isPhysicalBrand && (audit.hasTextOrSubtitles === true || (legacyText && legacyText !== 'none' && legacyText !== 'null' && legacyText !== 'false'));
-      const hasFace = audit.hasFace === true;
+      const cameraSampleAudit = sourceClips.some((clip) => {
+        if (clip?.facePolicy !== 'presenter_only') return false;
+        if (Number(clip?.sourceFrameIndex) === Number(audit.frameIndex)) return true;
+        const auditSec = Math.round(parseTimeToSeconds(audit.timestamp ?? audit.frameIndex));
+        const clipStart = Math.round(parseTimeToSeconds(clip?.startSeconds ?? clip?.startTime));
+        const clipEnd = clipStart + (Number(clip?.duration) || defaultClipLength);
+        return auditSec >= clipStart && auditSec <= clipEnd;
+      });
+      const hasFace = audit.hasFace === true && !cameraSampleAudit;
       const isPoorlyFramed = audit.isWellFramed === false;
       const isPurePackaging = audit.isPackaging === true ||
         (audit.detectedAction && /(?:kardus\s+kosong|cardboard\s+box|bubble\s*wrap\s+only|resi\s+pengiriman|buka\s+kardus\s+kosong)/i.test(audit.detectedAction));
       
-      const missingProduct = audit.containsTargetProduct === false;
+      const missingProduct = audit.containsTargetProduct === false && !cameraSampleAudit;
 
       if (hasFloatingOverlay || isLegacySubtitle || hasFace || isPoorlyFramed || isPurePackaging || missingProduct) {
         const sec = Math.round(parseTimeToSeconds(audit.timestamp ?? audit.frameIndex));
@@ -51,7 +60,8 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   const hasStoryboardSlots = sourceClips.some(c => c.storyboardSlot !== undefined);
 
   for (const rawClip of sourceClips) {
-    const clipLength = Math.max(1.5, Math.min(4.5, Number(rawClip?.duration) || defaultClipLength));
+    const maxClipLength = defaultClipLength >= 5.5 ? 8.0 : 4.5;
+    const clipLength = Math.max(1.5, Math.min(maxClipLength, Number(rawClip?.duration) || defaultClipLength));
     let startSeconds = Math.max(0, Math.round(parseTimeToSeconds(rawClip?.startSeconds ?? rawClip?.startTime)));
     const candKey = rawClip?.candidateIndex !== null && rawClip?.candidateIndex !== undefined ? rawClip.candidateIndex : 'default';
     const prevEnd = previousEndsByCand.get(candKey) || 0;
@@ -107,7 +117,12 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
       videoPath: rawClip?.videoPath || null,
       candidate: rawClip?.candidate || null,
       storyboardSlot: rawClip?.storyboardSlot,
+      storyboardSlotKey: rawClip?.storyboardSlotKey,
       storyboardRole: rawClip?.storyboardRole,
+      facePolicy: rawClip?.facePolicy,
+      isCameraResultSample: rawClip?.isCameraResultSample === true,
+      sourceFramePath: rawClip?.sourceFramePath || '',
+      sourceFrameIndex: rawClip?.sourceFrameIndex,
       datasetTag: rawClip?.datasetTag,
       reason: (rawClip?.reason || 'Clean full-product affiliate shot.').toString().slice(0, 180),
       hasProductBrand: clipHasBrand,
@@ -144,10 +159,10 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   const dedupedClips = [];
   for (const c of normalized) {
     const isDup = dedupedClips.some(e => {
-      // Di storyboard mode, lindungi Slot 6 dan Slot 7 (reprise visual produk utuh penutup/CTA)
-      if (hasStoryboardSlots && (c.storyboardSlot === 6 || c.storyboardSlot === 7)) {
+      // Keep closing storyboard roles distinct, including smartphone's camera slots 7-8.
+      if (hasStoryboardSlots && Number(c.storyboardSlot) >= 6) {
         if (e.storyboardSlot === c.storyboardSlot) return true;
-        if (e.storyboardSlot === 6 && c.storyboardSlot === 7 && Math.abs(e.startSeconds - c.startSeconds) < 1.0) return true;
+        if (Math.abs(e.startSeconds - c.startSeconds) < 1.0) return true;
         return false;
       }
       return (

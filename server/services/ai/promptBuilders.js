@@ -69,12 +69,14 @@ ${effectiveDesc ? `- Description: "${effectiveDesc}"` : ''}
 - PURPOSE: Identify the physical smartphone or gadget demonstrated and verify it is suitable for a 9:16 vertical affiliate video ad.
 - ACCEPTANCE STANDARD:
   * ACCEPT smartphone review B-roll, hands-on physical demonstrations, screen 120Hz smooth scrolling, gaming tests in hands, and unboxing B-roll (cherry-pick active usage/chassis shots, discard cardboard packaging and paper manuals).
-  * CRITICAL MANDATE - 100% PHYSICAL SMARTPHONE HARDWARE VISIBILITY:
-    Every selected clip/frame MUST show the physical smartphone hardware unit itself (hands holding the device, bezel, back cover, camera bump, or screen actively touched by fingers).
+  * HARDWARE VISIBILITY BY STORYBOARD ROLE:
+    Slots 1-6 (screen, features, and memory) must show the physical smartphone or its active interface. Slots 7-8 are camera reviews and may show only photos/video captured by that phone, even when the phone itself is not in the sample frame.
+  * CAMERA SAMPLE PEOPLE ARE ALLOWED:
+    People appearing as subjects inside photos or footage captured by the reviewed phone are valid camera evidence. Do not treat a photographed face as a reviewer. Reject a camera scene only when a reviewer/vlogger is filming themselves and speaking directly to the camera.
   * In "detectedProduct", output the specific model name (e.g. "Infinix Note 40 Pro", "Poco X6 5G", "Samsung Galaxy A15 5G", "Redmi Note 13 Pro 5G").
   * In "detectedBrand", output the brand (e.g. "Infinix", "Xiaomi", "Samsung", "Poco", "Realme", "Vivo", "Tecno").
 - REJECTION STANDARD:
-  * ZERO SCENERY / OUTDOOR PHOTO B-ROLL BAN: REJECT IMMEDIATELY if the video or clips display random outdoor scenery, night cityscapes, skyscrapers, trees, roads, or sample camera shots where the physical smartphone unit is ABSENT! A smartphone affiliate ad must showcase the actual physical smartphone hardware, not random scenery photos!
+  * Reject unrelated scenic B-roll in slots 1-6. In camera-review slots 7-8, captured scenery, portraits, people, and other camera-test subjects are valid evidence even when the phone is absent from the captured image.
   * PILLARBOX & BLACK BARS BAN: REJECT IMMEDIATELY if the video has vertical black bars (pillarbox) on the left and right sides.
   * ROTATED / SIDEWAYS 90° FOOTAGE BAN: REJECT IMMEDIATELY if the video or gameplay is rotated sideways 90 degrees.
   * REJECT IF TALKING HEAD / PODCAST: REJECT if the video is pure talking-head presenter without hands-on close-up B-roll of the physical smartphone.
@@ -133,14 +135,10 @@ export function buildFaceAndMotionCriterion(niche = 'kitchen_tools', clipSec = 4
     return `CRITERION 4: VLOGGER TALKING-HEAD BAN & PHYSICAL HARDWARE FOCUS (SMARTPHONE NICHE)
 - MANDATORY SHORT-FORM VIDEO STANDARD:
   * This is an automated smartphone showcase video. The core focus MUST be physical hardware B-roll: hands holding the device, bezel, back cover, 120Hz scrolling, physical gaming in hands.
-  * STRICT BAN ON VLOGGER TALKING-HEAD IN STUDIO:
-    DILARANG KERAS memilih klip presenter/vlogger berbicara menghadap kamera di studio (talking-head intro/outro/talking scenes).
-  * ZERO TOLERANCE FOR SCENERY OR RANDOM B-ROLL WITHOUT THE SMARTPHONE:
-    DILARANG KERAS memilih foto/video pemandangan alam, gedung/kota malam, langit, jalan raya, atau sample foto kamera yang HANYA menampilkan objek pemandangan tanpa fisik smartphone di tangan! Setiap cuplikan WAJIB menampakkan unit smartphone fisik yang sedang dipegang atau dioperasikan tangan.
-  * SLIDESHOW BAN:
-    DILARANG KERAS memilih frame atau klip yang berupa foto diam (slideshow statis)! Klip wajib memiliki gerakan fisik nyata (tangan memegang, memutar bodi HP, scrolling layar, swipe jari, tombol ditekan).
-  * REJECT ONLY IF:
-    The video is purely a vlogger talking to the camera without hands-on phone B-roll, or lacks at least 6 distinct smartphone physical hardware B-roll clips.
+  * Slots 1-6 must show physical phone hardware, active screen interaction, or a verifiable memory screen. Camera review slots 7-8 may show the phone's captured photo/video without the device in frame.
+  * Camera sample footage may contain people, portraits, bystanders, or scenery. A face in captured footage is not a face-to-camera presenter.
+  * REJECT ONLY a reviewer/vlogger filming themselves while speaking directly to the camera, or a source that has no usable phone review evidence. Do not reject a phone camera sample because it contains a person or lacks the physical phone in that sample.
+  * Prefer moving hands-on footage for the first six slots. Camera review slots may use still photos or video samples captured by the phone; use motion only when it is present in the source.
   * In rejection output, set reason to: "Menampilkan vlogger talking-head studio tanpa B-roll fisik HP yang cukup"`;
   }
 
@@ -414,7 +412,11 @@ export function build7SlotStoryboardClips({
   // mendeklarasikan policy non-strict di preset (smartphone camera sample slots = presenter_only).
   // Slot tanpa facePolicy = 'strict' helper getSlotFacePolicy -> perilaku lama tak berubah (kitchen).
   const slotFacePolicies = slotsConfig.map((sc) => getSlotFacePolicy(preset, sc?.key) || 'strict');
-  const isCameraEligibleFrame = (f) => Boolean(f && (f.isCameraResultEligible === true || f.cameraResultEligible === true));
+  const isCameraEligibleFrame = (f) => {
+    if (!f) return false;
+    const idx = validFrames.indexOf(f) + 1;
+    return f.isCameraResultEligible === true || f.cameraResultEligible === true || frameAuditByIndex.get(idx)?.isCameraSample === true;
+  };
 
   const getFrameByIdx = (idx) => {
     if (typeof idx !== 'number' || isNaN(idx) || idx < 1 || idx > totalFramesCount) return null;
@@ -478,12 +480,13 @@ export function build7SlotStoryboardClips({
     f?.filePath ||
     `${f?.videoId || f?.candidate?.id || f?.candidateUrl || 'candidate'}:${Math.round((Number(f?.timestamp) || 0) * 10) / 10}`;
 
-  const isForbiddenFrame = (f) => {
+  const isForbiddenFrame = (f, facePolicy = 'strict') => {
     if (!f) return true;
     const idx = validFrames.indexOf(f) + 1;
     const audit = frameAuditByIndex.get(idx);
     if (audit) {
-      if (audit.containsTargetProduct === false || audit.isPackaging === true || audit.isMachine === true || audit.isActiveProductDemo === false) {
+      const isAllowedCameraSample = facePolicy === 'presenter_only' && isCameraEligibleFrame(f);
+      if (audit.isPackaging === true || audit.isMachine === true || (!isAllowedCameraSample && (audit.containsTargetProduct === false || audit.isActiveProductDemo === false))) {
         return true;
       }
     }
@@ -512,7 +515,7 @@ export function build7SlotStoryboardClips({
   const primaryCandidate = sourceRank[0]?.candidateIndex ?? null;
 
   const isUsableDistinctFrame = (f, facePolicy = 'strict') => {
-    if (!f || isForbiddenFrame(f)) return false;
+    if (!f || isForbiddenFrame(f, facePolicy)) return false;
 
     // FACE POLICY (Fase 4): slot strict DILARANG memakai frame camera-eligible (ada wajah konten,
     // misal reviewer di layar review kamera) walaupun frame itu ikut terpool untuk slot presenter_only.
@@ -587,7 +590,7 @@ export function build7SlotStoryboardClips({
           frameObj = heroFromPool;
         } else {
           // FACE POLICY (Fase 4): slot presenter_only lebih dulu pakai stok pool kamera khusus
-          const eligibleStock = validFrames.find((f) => isCameraEligibleFrame(f) && !isForbiddenFrame(f));
+          const eligibleStock = validFrames.find((f) => isCameraEligibleFrame(f) && !isForbiddenFrame(f, slotPolicy));
           if (slotPolicy === 'presenter_only' && eligibleStock) {
             frameObj = eligibleStock;
           } else {
@@ -634,7 +637,7 @@ export function build7SlotStoryboardClips({
       // The two camera sample scenes are the only smartphone slots allowed to use
       // camera-result frames (which may contain photographed people).
       if (!frameObj && slotPolicy === 'presenter_only') {
-        frameObj = validFrames.find(f => isCameraEligibleFrame(f) && !isForbiddenFrame(f) && isUsableDistinctFrame(f, slotPolicy)) || null;
+        frameObj = validFrames.find(f => isCameraEligibleFrame(f) && !isForbiddenFrame(f, slotPolicy) && isUsableDistinctFrame(f, slotPolicy)) || null;
       }
       if (!frameObj) {
         const lateIndex = Math.min(totalFramesCount - 1, Math.floor(totalFramesCount * (0.72 + (config.slot - 7) * 0.12)));
@@ -698,7 +701,10 @@ export function build7SlotStoryboardClips({
       // Provenance frame anchor (Fase 5): dipakai gerbang face-policy validateScriptSlotAlignment
       sourceFramePath: frameObj?.filePath || '',
       storyboardSlot: config.slot,
+      storyboardSlotKey: config.key,
       storyboardRole: config.role,
+      facePolicy: slotPolicy,
+      sourceFrameIndex: validFrames.indexOf(frameObj) + 1,
       datasetTag: config.datasetTag,
       reason: `${config.label} [Slot #${config.slot} | ${config.datasetTag}]`,
       isCleanAffiliateShot: true,

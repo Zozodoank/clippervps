@@ -2493,6 +2493,10 @@ async function _runStage1Pipeline({
       });
     } catch (scriptErr) {
       const isGadget = (options.niche === 'gadget_smartphone');
+      if (isGadget) {
+        scriptErr.message = `Gemini gagal membuat naskah review smartphone yang sesuai; job dihentikan agar tidak memakai narasi template. ${scriptErr.message}`;
+        throw scriptErr;
+      }
       console.warn(`[Job ${jobId}] AI Scripting failed (${scriptErr.message}). Menggunakan smart fallback naskah ${isGadget ? 'Smartphone Shorts' : 'Shopee'}...`);
       const fallbackProductName = (highlight.detectedProduct || productTitle || videoMeta?.title || 'produk ini').trim();
       const mechanismLabels = {
