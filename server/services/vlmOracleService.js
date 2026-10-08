@@ -348,6 +348,37 @@ function portraitCanvas(height) {
   return { width: 9 * unit, height: 16 * unit };
 }
 
+// Kaggle receives JPEGs only. Check the actual encoded dimensions instead of
+// trusting the filename/cache entry: an interrupted FFmpeg write must never
+// let a raw-aspect or malformed image reach the visual judge.
+function jpegDimensions(filePath) {
+  let data;
+  try { data = fs.readFileSync(filePath); } catch { return null; }
+  if (data.length < 4 || data[0] !== 0xff || data[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 4 < data.length) {
+    if (data[offset] !== 0xff) { offset += 1; continue; }
+    const marker = data[offset + 1];
+    offset += 2;
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (offset + 2 > data.length) return null;
+    const segmentLength = data.readUInt16BE(offset);
+    if (segmentLength < 2 || offset + segmentLength > data.length) return null;
+    // SOF markers encode precision, height, width, then component count.
+    if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+      if (segmentLength < 7) return null;
+      return { height: data.readUInt16BE(offset + 3), width: data.readUInt16BE(offset + 5) };
+    }
+    offset += segmentLength;
+  }
+  return null;
+}
+
+function isPortraitJpeg(filePath, canvas) {
+  const dimensions = jpegDimensions(filePath);
+  return Boolean(dimensions && dimensions.width === canvas.width && dimensions.height === canvas.height);
+}
+
 function runResize(srcPath, dstPath, height, timeoutMs = RESIZE_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let ffmpeg = '';
@@ -407,12 +438,13 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
     }
     const key = `portrait9x16|${f.filePath}|${canvas.width}x${canvas.height}|${st.mtimeMs}|${st.size}`;
     const cached = resizeCache.get(key);
-    if (cached && fs.existsSync(cached)) {
+    if (cached && isPortraitJpeg(cached, canvas)) {
       out.converted += 1;
       out.sent.push({ ...f, filePath: cached, originalPath: f.filePath, oracleAspectRatio: '9:16' });
       out.originalBySent.set(cached, f.filePath);
       continue;
     }
+    if (cached) resizeCache.delete(key);
     work.push({ frame: f, key, dst: path.join(dir, `${crypto.createHash('sha1').update(key).digest('hex').slice(0, 16)}.jpg`) });
   }
 
@@ -421,11 +453,12 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
   for (let i = 0; i < work.length; i += LIMIT) {
     const chunk = work.slice(i, i + LIMIT);
     const oks = await Promise.all(chunk.map(({ frame, dst }) => {
-      if (fs.existsSync(dst)) return Promise.resolve(true); // sudah ada dari proses/sebelah chunk
+      if (isPortraitJpeg(dst, canvas)) return Promise.resolve(true); // cache disk valid
+      try { fs.rmSync(dst, { force: true }); } catch {}
       return runResize(frame.filePath, dst, h);
     }));
     chunk.forEach((item, idx) => {
-      const ok = oks[idx] === true && fs.existsSync(item.dst);
+      const ok = oks[idx] === true && isPortraitJpeg(item.dst, canvas);
       if (ok) {
         resizeCache.set(item.key, item.dst);
         out.converted += 1;
@@ -500,7 +533,11 @@ export async function composeGridImages(frames = [], { jobId = '', outDir = null
       ok = await runGridCompose(inputs, dstPath, false);
       if (ok && logger?.warn) logger.warn('[Oracle] FFmpeg tidak menyediakan drawtext/font; grid dibuat tanpa label, urutan row-major tetap berlaku.');
     }
-    if (!ok) throw new Error(`FFmpeg gagal menyusun grid Oracle #${group.index}.`);
+    const canvas = { width: 540, height: 960 };
+    if (!ok || !isPortraitJpeg(dstPath, canvas)) {
+      try { fs.rmSync(dstPath, { force: true }); } catch {}
+      throw new Error(`FFmpeg gagal menyusun grid Oracle #${group.index} sebagai JPEG 540x960 (9:16).`);
+    }
     result.push({ index: group.index, filePath: dstPath, timestampMs: group.cells[0]?.timestampMs ?? null, cells: group.cells, frames: group.frames });
   }
   return result;
