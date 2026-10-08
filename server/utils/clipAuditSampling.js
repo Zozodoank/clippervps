@@ -1,7 +1,6 @@
 /**
  * Sampling titik audit klip (2,5 fps) — fungsi murni, terkunci unit test
- * (pola sama seperti resolveAudioWindow di services/audioBeatService.js:
- * clamping terhadap durasi NYATA file dilakukan di satu tempat yang bisa dites).
+ * clamping terhadap durasi NYATA file dilakukan di satu tempat yang bisa dites.
  *
  * Kenapa perlu: file hasil --download-sections kadang TERPOTONG (yt-dlp +
  * --force-keyframes-at-cuts menghasilkan file ~2 detik untuk rentang 22 detik yang

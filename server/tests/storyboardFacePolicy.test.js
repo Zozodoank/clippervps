@@ -30,11 +30,12 @@ function makePool(withEligible) {
 
 describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
   describe('getSlotFacePolicy (preset contract)', () => {
-    it('hanya slot 5 gadget yang presenter_only; semua slot kitchen strict', () => {
+    it('hanya slot sampel kamera gadget yang presenter_only; semua slot kitchen strict', () => {
       const gadget = getNichePreset('gadget_smartphone');
       const kitchen = getNichePreset('kitchen_tools');
-      expect(getSlotFacePolicy(gadget, 'clip5_action_demo')).toBe('presenter_only');
-      for (const s of gadget.slotsConfig.filter(x => x.key !== 'clip5_action_demo')) {
+      expect(getSlotFacePolicy(gadget, 'clip7_camera_sample')).toBe('presenter_only');
+      expect(getSlotFacePolicy(gadget, 'clip8_camera_detail')).toBe('presenter_only');
+      for (const s of gadget.slotsConfig.filter(x => !['clip7_camera_sample', 'clip8_camera_detail'].includes(x.key))) {
         expect(getSlotFacePolicy(gadget, s.key)).toBe('strict');
       }
       for (const s of kitchen.slotsConfig) {
@@ -44,27 +45,24 @@ describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
   });
 
   describe('build7SlotStoryboardClips - pool kamera khusus slot presenter_only', () => {
-    it('gadget: slot 5 mengambil frame camera-eligible, slot lain tidak menyentuhnya', () => {
+    it('gadget: slot kamera mengambil frame camera-eligible, slot lain tidak menyentuhnya', () => {
       const frames = makePool(true);
       const clips = build7SlotStoryboardClips({ parsed: {}, frames, totalDuration: 240, niche: 'gadget_smartphone' });
 
-      const slot5 = clips.find(c => c.storyboardSlot === 5);
-      expect(slot5).toBeTruthy();
-      expect(slot5.startSeconds).toBe(150); // anchor = timestamp frame eligible
-
-      // Tidak ada slot lain yang memakai frame eligible
-      expect(clips.filter(c => c.storyboardSlot !== 5 && c.startSeconds === 150).length).toBe(0);
-      // Semua slot terisi (12 frame bersih + 1 eligible, cukup untuk 7 slot distinct)
-      expect(clips.length).toBe(7);
+      const cameraClip = clips.find(c => c.startSeconds === 150);
+      expect(cameraClip).toBeTruthy();
+      expect([7, 8]).toContain(cameraClip.storyboardSlot);
+      expect(clips.filter(c => c.startSeconds === 150).length).toBe(1);
+      expect(clips.length).toBe(8);
     });
 
     it('gadget: slot lain tetap strict walau frame eligible ada di pool (fallback tidak mencuri)', () => {
       // Pool di mana frame biasa HABIS (semua bentrok), hanya eligible yang tersisa untuk fallback
       const frames = makePool(true).map(f => (f.isCameraResultEligible ? f : { ...f, timestamp: 8 }));
       const clips = build7SlotStoryboardClips({ parsed: {}, frames, totalDuration: 240, niche: 'gadget_smartphone' });
-      // Slot 5 boleh pakai eligible; slot lain wajib skip (bukan curi eligible via fallback)
+      // Hanya slot kamera 7-8 yang boleh pakai eligible.
       for (const c of clips) {
-        if (c.storyboardSlot === 5) continue;
+        if (c.storyboardSlot >= 7) continue;
         expect(c.startSeconds).not.toBe(150);
       }
     });

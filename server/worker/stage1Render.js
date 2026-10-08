@@ -53,14 +53,10 @@ import {
   fastProbeLocal,
 } from '../services/videoFilterService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
-// [NOTE] whisperGateService dihapus — gerbang narasi & kewajiban voice-over tidak lagi digunakan.
 // BLUEPRINT ALUR BARU (ACQUISITION_FLOW=v2) — orkestrasi L2->L5 & penyusun zigzag.
 import { runSourceAcquisitionV2, buildLegacyStructuresFromV2 } from './sourceAcquisitionV2.js';
 import { interleaveBySource } from '../utils/clipOrdering.js';
 import { buildAuditSampleTimestamps } from '../utils/clipAuditSampling.js';
-// AUDIO-DRIVEN SCENE PLANNING (Fase 1 & 2) - percobaan, di-guard flag AUDIO_DRIVEN_SCENES.
-import { analyzeSourceAudioForBeats, isAudioDrivenEnabled, resolveAudioWindow } from '../services/audioBeatService.js';
-import { paraphraseBeats, beatsToScript } from '../services/antiPlagiarismService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
 import { trackProgressEvent, recordStageEvent } from '../services/observabilityService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
@@ -433,13 +429,11 @@ async function _runStage1Pipeline({
 
         // ── P1-4: PARITAS GERBANG UNTUK JALUR CACHE ──
         // Dulu file cache 1080p langsung diloloskan ke analisa frame TANPA Filter 1 (metadata)
-        // dan tanpa gerbang narasi Whisper — padahal funnel online menilai keduanya. Akibatnya
         // vonis tidak konsisten: URL yang sama gugur via funnel online tapi lolos diam-diam
         // pada run berikutnya karena file cache masih ada (mis. tersisa dari unduhan parsial
         // yang gagal sebelum gerbang selesai). Lempeng yang sama kini diberlakukan:
         // - Metadata: hanya untuk URL sumber yang dikenal (cache anonim di sessionTempDir
         //   tidak punya keharusan judul -> metadata online tidak bisa divonis offline).
-        // - Narasi: slice tengah 15s DIEKSTRAK LOKAL dari file cache (0 kuota, 1x whisper).
         if (!gatesPassedThisRun) {
           const cacheSourceUrl = currentYoutubeUrl;
 
@@ -459,8 +453,6 @@ async function _runStage1Pipeline({
           }
 
           if (rawVideoPath) {
-            // [SIMPLIFIED] Gerbang narasi Whisper dihapus — video YouTube tidak diwajibkan
-            // memiliki voice-over. Cache langsung lolos ke audit frame tanpa cek narasi.
             console.log(`[Job ${jobId}] ℹ️ [Cache] Gerbang narasi dilewati (voice-over tidak diwajibkan).`);
           }
         }
@@ -498,13 +490,12 @@ async function _runStage1Pipeline({
       const isGeminiEngine = eng === 'gemini' || eng === 'gemini_direct' || (process.env.GEMINI_API_KEY && eng !== 'openrouter');
       return isGeminiEngine && Boolean(getDirectGeminiApiKey(apiKey)) && !isGeminiEvidenceEnabled();
     };
-    // Hard production rule: change the visual scene at least every 3.5s.
-    // User-provided values above 3.5s are capped so the renderer cannot hold one scene too long.
+    // Standard niches cut every 3.5s; smartphone review uses eight 6s scenes to reach 48s total.
     const requestedSceneDuration = Number(options.sceneDuration);
-    const sceneDuration = Math.max(
-      3.0,
-      Math.min(3.5, Number.isFinite(requestedSceneDuration) && requestedSceneDuration > 0 ? requestedSceneDuration : 3.5)
-    );
+  const isSmartphoneReview = (options.niche || jobMeta.niche) === 'gadget_smartphone';
+    const sceneDuration = isSmartphoneReview
+      ? 6.0
+      : Math.max(3.0, Math.min(3.5, Number.isFinite(requestedSceneDuration) && requestedSceneDuration > 0 ? requestedSceneDuration : 3.5));
 
     // P1 OBSERVABILITY: satu event konteks per job membuat provider/model/kebijakan yang dipakai
     // terbaca dari trace, tanpa perlu menempel event di setiap pemanggilan AI (8 titik).
@@ -515,7 +506,7 @@ async function _runStage1Pipeline({
       runId: extraJobMeta?.autoRunId,
       stage: 'context',
       provider: aiProvider,
-      message: `Jalur visual: ${isGeminiEvidenceEnabled() ? 'EVIDENCE MODE (frame bersih lokal, hemat token)' : 'GEMINI STREAM (baca video penuh)'} | audio-driven: ${isAudioDrivenEnabled() ? 'ON' : 'OFF'}`,
+      message: `Jalur visual: ${isGeminiEvidenceEnabled() ? 'EVIDENCE MODE (frame bersih lokal, hemat token)' : 'GEMINI STREAM (baca video penuh)'}`,
       model: aiProvider === 'openrouter'
         ? (process.env.OPENROUTER_MODEL || '')
         : (process.env.GEMINI_MODEL || ''),
@@ -526,7 +517,6 @@ async function _runStage1Pipeline({
         multiVideoHarvesting: options.multiVideoHarvesting === true,
         sourceCount: Array.isArray(targetCandidates) ? targetCandidates.length : 0,
         visionMode: isGeminiEvidenceEnabled() ? 'evidence' : 'gemini_stream',
-        audioDrivenScenes: isAudioDrivenEnabled(),
         configLine: describeConfigSnapshot(jobMeta.configSnapshot),
       },
     });
@@ -736,7 +726,6 @@ async function _runStage1Pipeline({
           endSec: selectedClips[selectedClips.length - 1].endSeconds,
           durationSec: fullVideoPlan.duration
         },
-        whisperSegments: [],
         narration: { hasNarration: true, coverage: 1 },
         pipelineVersion: 'visual_only_v2',
         productHook: null 
@@ -847,8 +836,9 @@ async function _runStage1Pipeline({
         });
         const initialClips = initialRes.highlight?.clips || [];
         const initialDuration = initialClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
-        const minRequiredClips = options.singleVideoOnly ? 3 : 5;
-        const minRequiredDur = options.singleVideoOnly ? 15.0 : 25.0;
+        const isGadgetReview = (options.niche || jobMeta.niche) === 'gadget_smartphone';
+        const minRequiredClips = isGadgetReview ? 8 : (options.singleVideoOnly ? 3 : 5);
+        const minRequiredDur = isGadgetReview ? 45.0 : (options.singleVideoOnly ? 15.0 : 25.0);
         if (initialClips.length >= minRequiredClips && initialDuration >= minRequiredDur) {
           highlight = initialRes.highlight;
           videoMeta = initialRes.videoMeta;
@@ -865,7 +855,7 @@ async function _runStage1Pipeline({
         }
       } catch (initErr) {
         if (initErr.isInfraError) {
-          // P1-5: timeout yt-dlp / whisper.cpp crash / Oracle Kaggle tidak tersedia adalah transien
+          // P1-5: timeout yt-dlp / Oracle Kaggle tidak tersedia adalah transien
           // INFRASTRUKTUR. Vonis "video buruk" (-> blacklist) harus tetap milik isAiRejection;
           // sebelumnya error infra di sini meleleh ke outer catch dan membatal-kan seluruh job.
           console.warn(`[Job ${jobId}] ⚠️ [Infra] Gangguan sementara saat menilai video awal (${initErr.message}). Tidak mem-blacklist; lanjut ke jalur kandidat.`);
@@ -889,7 +879,7 @@ async function _runStage1Pipeline({
     let hadContentRejection = false;
     let hadRenderPlanShortfall = false;
     const failedCandidateUrls = new Set();
-    // P1-5: URL kandidat yang pernah kena error infrastruktur (timeout yt-dlp, whisper crash,
+    // P1-5: URL kandidat yang pernah kena error infrastruktur (timeout yt-dlp, Oracle error,
     // Oracle Kaggle tidak tersedia). Masing-masing dapat 1 percobaan ULANG sebelum dianggap gugur, supaya
     // jaringan sesaat tidak lagi membuang kandidat baik secara permanen di run ini.
     const infraRetriedUrls = new Set();
@@ -1392,8 +1382,8 @@ async function _runStage1Pipeline({
           continue;
         }
 
-        if (bestVerified?.highlight?.pipelineVersion === 'whisper_first_v1' || bestVerified?.highlight?.pipelineVersion === 'visual_only_v2') {
-          if (selectedClipCount < 4 && streamedCount < harvestStreamBudget && !explicitOnly) {
+        if (bestVerified?.highlight?.pipelineVersion === 'visual_only_v2') {
+          if (selectedClipCount < (options.niche === 'gadget_smartphone' ? 8 : 4) && streamedCount < harvestStreamBudget && !explicitOnly) {
             console.warn(`[Job ${jobId}] Hanya ${selectedClipCount} klip terpilih sejauh ini; lanjut panen kandidat hingga rencana cukup.`);
             continue;
           }
@@ -1406,7 +1396,6 @@ async function _runStage1Pipeline({
               candidate: c.candidate,
             }))),
             bestWindow: bestVerified.highlight.bestWindow,
-            whisperSegments: [],
             narration: bestVerified.highlight.narration,
             pipelineVersion: 'visual_only_v2',
             productHook: bestVerified.highlight.productHook
@@ -1722,9 +1711,9 @@ async function _runStage1Pipeline({
         if (allCleanFrames.length >= 2) {
           const rescueClips = [];
           const usedSources = new Map();
-          const targetClipDuration = Math.max(3.0, Math.min(sceneDuration || 3.5, 4.5));
+          const targetClipDuration = (options.niche === 'gadget_smartphone') ? 6 : Math.max(3.0, Math.min(sceneDuration || 3.5, 4.5));
 
-          for (let i = 0; i < allCleanFrames.length && rescueClips.length < 7; i++) {
+          for (let i = 0; i < allCleanFrames.length && rescueClips.length < (options.niche === 'gadget_smartphone' ? 8 : 7); i++) {
             const f = allCleanFrames[i];
             const cIdx = f.candidateIndex !== undefined ? f.candidateIndex : 0;
             const ts = Number(f.timestamp) || 0;
@@ -2043,7 +2032,7 @@ async function _runStage1Pipeline({
       //
       // [RENDER-ON-APPROVAL] Gerbang ">=3 klip" ini adalah PENYARING PASCA-APPROVAL terakhir yang
       // masih menggagalkan job meski Gemini sudah menyatakan kandidat layak dan segmen bagus sudah
-      // terunduh. Whisper-First Pipeline sengaja merakit SATU window terbaik yang divalidasi Gemini
+      // terunduh. Pipeline ini merakit satu window terbaik yang divalidasi Gemini
       // (clips.length === 1), sehingga gerbang lama selalu melempar "AI Vision hanya menghasilkan 1
       // adegan unik (<3)" -> "Gagal merender setelah 1 kali percobaan". Sesuai mandat user
       // (2 Okt 2026): setelah Gemini menyatakan layak, unduh window bagus lalu RENDER, tidak usah
@@ -2433,8 +2422,13 @@ async function _runStage1Pipeline({
     );
     const finalPlannedDuration = highlight.clips.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
     highlight.duration = finalPlannedDuration;
-    if (isAutoModeFallback && (highlight.clips.length < 3 || finalPlannedDuration < 20)) {
-      const shortFinalPlan = new Error(`Klip bersih setelah audit hanya ${highlight.clips.length} adegan / ${finalPlannedDuration.toFixed(1)} detik; minimal 3 adegan dan 20 detik diperlukan.`);
+    const isSmartphoneReview = (options.niche || jobMeta.niche) === 'gadget_smartphone';
+    const planTooShort = isSmartphoneReview
+      ? (highlight.clips.length < 8 || finalPlannedDuration < 45)
+      : (isAutoModeFallback && (highlight.clips.length < 3 || finalPlannedDuration < 20));
+    if (planTooShort) {
+      const minimumDescription = isSmartphoneReview ? '8 adegan dan 45 detik' : '3 adegan dan 20 detik';
+      const shortFinalPlan = new Error(`Klip bersih setelah audit hanya ${highlight.clips.length} adegan / ${finalPlannedDuration.toFixed(1)} detik; minimal ${minimumDescription} diperlukan.`);
       shortFinalPlan.isRenderPlanShortfall = true;
       shortFinalPlan.rejectionReason = shortFinalPlan.message;
       throw shortFinalPlan;
@@ -2491,7 +2485,6 @@ async function _runStage1Pipeline({
         productTitle: (highlight.detectedProduct || productTitle || '').trim(),
         productDescription,
         shopeeLink,
-        whisperSegments: [],
         productHook: highlight.productHook,
         segmentDuration: actualSilentDuration,
         sceneDuration,
@@ -2525,12 +2518,29 @@ async function _runStage1Pipeline({
       const ts3 = formatSeconds(Math.round(stepSec * 3));
       const ts4 = formatSeconds(Math.round(Math.max(stepSec * 4, actualSilentDuration - 3.5)));
 
+      const fallbackSmartphoneRows = [
+        ['Layar dan antarmuka', 'Perhatikan tampilan layar dan antarmuka yang sedang dibuka.'],
+        ['Detail layar', 'Gerakan pada layar terlihat jelas saat menu berganti.'],
+        ['Fitur perangkat', 'Di bagian ini, kita melihat fitur yang sedang digunakan.'],
+        ['Detail fitur', 'Perhatikan respons dan detail yang memang tampak di adegan.'],
+        ['Kapasitas memori', 'Informasi kapasitas hanya disebut jika angkanya terbaca jelas.'],
+        ['Detail penyimpanan', 'Tampilan penyimpanan ini memberi konteks kapasitas perangkat.'],
+        ['Sampel kamera', 'Sekarang terlihat sampel foto atau video hasil kamera ponsel.'],
+        ['Hasil kamera', 'Sebagai penutup, perhatikan detail hasil kamera pada cuplikan ini.'],
+      ];
+      const fallbackSmartphoneScenes = fallbackSmartphoneRows.map(([topic, voiceover], index) => {
+        const start = index * 6;
+        const end = index === 7 ? Math.round(actualSilentDuration) : Math.min(Math.round(actualSilentDuration), start + 6);
+        return {
+          sceneNumber: index + 1,
+          timeRange: `${formatSeconds(start)} - ${formatSeconds(end)}`,
+          visualDescription: `${topic}; narasi mengikuti bukti yang terlihat pada frame.`,
+          voiceover,
+          adAdvisorNotes: 'Selaraskan kalimat dengan adegan; tanpa klaim yang tidak terverifikasi.',
+        };
+      });
       const fallbackVoiceScript = isGadget
-        ? `[${ts0}] [excited] ${fallbackHook}
-[${ts1}] [emphasis] Di sini bentuk bodi dan bagian utamanya terlihat jelas.
-[${ts2}] [neutral] Berikut tampilan saat perangkat benar-benar digunakan.
-[${ts3}] [neutral] Perhatikan detail fisik dan hasil yang memang terlihat di video.
-[${ts4}] [soft] Cek spesifikasi resmi produknya sebelum menentukan pilihan.`
+        ? fallbackSmartphoneRows.map(([, line], index) => `[${formatSeconds(index * 6)}] [neutral] ${line}`).join('\n')
         : `[${ts0}] [excited] ${fallbackHook}
 [${ts1}] [emphasis] Bentuk produk dan bagian utamanya terlihat jelas di sini.
 [${ts2}] [neutral] Sekarang perhatikan ${mechanismPhrase} saat digunakan.
@@ -2544,11 +2554,11 @@ async function _runStage1Pipeline({
           targetAudience: isGadget ? 'Penonton yang ingin melihat demonstrasi fisik perangkat' : 'Pengguna yang ingin melihat cara kerja produk secara langsung',
           coreProblem: 'Tidak disimpulkan otomatis saat fallback; fokus pada bukti visual demonstrasi.',
           keyFeatures: isGadget
-            ? ['Bentuk fisik terlihat', 'Penggunaan nyata terlihat', 'Detail visual produk terlihat']
+            ? ['Layar dan UI sesuai bukti visual', 'Fitur yang tampak digunakan', 'Kapasitas memori bila terverifikasi', 'Sampel kamera sebagai penutup']
             : ['Bentuk fisik terlihat', `${mechanismPhrase} terlihat`, 'Hasil penggunaan terlihat'],
           buyingTrigger: 'Bukti visual demonstrasi tanpa klaim spesifikasi tambahan',
         },
-        scenes: [
+        scenes: isGadget ? fallbackSmartphoneScenes : [
           {
             sceneNumber: 1,
             timeRange: `00:00 - ${ts1}`,
@@ -2595,12 +2605,14 @@ async function _runStage1Pipeline({
         ],
         voiceoverScript: fallbackVoiceScript,
         aiStudioPrompt: fallbackVoiceScript,
-        caption: formatEnrichedCaption({
-          caption: '',
-          productTitle: fallbackProductName,
-          productDescription,
-          platform: 'clipper'
-        }),
+        caption: isGadget
+          ? `${fallbackProductName}\n\nReview layar, fitur, kapasitas memori yang terverifikasi, lalu sampel hasil kamera berdasarkan bukti visual.`
+          : formatEnrichedCaption({
+              caption: '',
+              productTitle: fallbackProductName,
+              productDescription,
+              platform: 'clipper'
+            }),
         lexicon_to_replace: {},
       };
     }
@@ -2619,103 +2631,7 @@ async function _runStage1Pipeline({
     }
 
     rawVoiceScript = scriptData.voiceoverScript || scriptData.aiStudioPrompt || '';
-
-    // ─── AUDIO-DRIVEN NARRATION (Fase 1 & 2, guard flag; default OFF) ───
-    // Bila aktif: ekstrak VO sumber pada jendela klip → whisper beat → parafrase
-    // anti-plagiat (model teks) → pakai sebagai naskah Gemini TTS. Visual tetap
-    // conformed ke durasi audio final (conformClipsToVoiceover), sehingga potongan
-    // adegan mengikuti ritme narasi asli. Gagal-anggun: tetap pakai naskah vision.
-    let finalVoiceScript = rawVoiceScript;
-    // Laporan hasil audio-driven, dicatat ke trace + record job. Sebelumnya hasil
-    // whisper hanya muncul di console (hang di /dev/pts/0 di Termux) sehingga tidak ada
-    // cara memverifikasi fitur ini benar-benar bekerja atau diam-diam jatuh ke pola lama.
-    const audioDrivenReport = {
-      enabled: isAudioDrivenEnabled(),
-      used: false,
-      outcome: isAudioDrivenEnabled() ? 'not_attempted' : 'flag_off',
-      beats: 0,
-      reason: '',
-      sourceFile: '',
-      windowSec: null,
-    };
-    if (isAudioDrivenEnabled()) {
-      updateProgress({ step: 'audio_analysis', message: '🎧 Menganalisis voice-over sumber (whisper beat)...', progress: 81, status: 'running' });
-      try {
-        // Sumber audio = file yang benar-benar memuat klip pertama. Pada mode hemat
-        // (RENDER_DOWNLOAD_SECTIONS=1) `rawVideoPath` adalah SEGMEN hasil --download-sections
-        // yang timeline-nya sudah dimulai di sourceOffsetSec -> jendela whisper di-rebase
-        // dan di-clamp lewat resolveAudioWindow (pure, terkunci unit test).
-        const adFirstClip = (Array.isArray(highlight.clips) && highlight.clips[0]) ? highlight.clips[0] : null;
-        const adSourcePath = (adFirstClip?.videoPath && fs.existsSync(adFirstClip.videoPath)) ? adFirstClip.videoPath : rawVideoPath;
-        const adFileDur = (await getMediaDurationSec(adSourcePath)) || 0;
-        const { startSec: adStart, endSec: adEnd } = resolveAudioWindow({
-          clip: adFirstClip,
-          highlight,
-          fileDurationSec: adFileDur,
-        });
-        audioDrivenReport.sourceFile = adSourcePath ? path.basename(adSourcePath) : '';
-        audioDrivenReport.windowSec = [adStart, adEnd];
-        const ad = await analyzeSourceAudioForBeats({
-          videoPath: adSourcePath,
-          // PAKAI ANGKA DETIK (startSeconds/endSeconds), BUKAN string "MM:SS" (startTime/
-          // endTime). Number("01:24") = NaN -> 0, sehingga jendela analisis runtuh jadi
-          // 0-0 dan whisper membaca video dari detik awal (offset beat tidak selaras klip).
-          startSec: adStart,
-          endSec: adEnd,
-          // Coverage dihitung terhadap jendela yang benar-benar dianalisis, bukan durasi
-          // hasil render silent (yang sudah menyusut/memanjang setelah conforming).
-          totalDurationSec: adEnd > adStart ? (adEnd - adStart) : actualSilentDuration,
-        });
-        if (ad.ok && ad.voiceover?.hasVoiceover && Array.isArray(ad.beats) && ad.beats.length) {
-          updateProgress({ step: 'audio_paraphrase', message: `🪶 Memparafrase ${ad.beats.length} beat narasi (anti-plagiat)...`, progress: 82, status: 'running' });
-          const pp = await paraphraseBeats({ beats: ad.beats, apiKey, aiProvider });
-          const narration = beatsToScript(pp.ok ? pp.beats : ad.beats);
-          if (narration && narration.trim()) {
-            finalVoiceScript = narration.trim();
-            highlight.audioDrivenBeats = pp.ok ? pp.beats : ad.beats;
-            audioDrivenReport.used = true;
-            audioDrivenReport.outcome = 'narration_from_source';
-            audioDrivenReport.beats = ad.beats.length;
-            audioDrivenReport.reason = `cakupan ${(ad.voiceover.coverage * 100).toFixed(0)}%, parafrase ${pp.ok ? 'OK' : 'dilewati'}`;
-            console.log(`[Job ${jobId}] ✅ AUDIO-DRIVEN: naskah diambil dari VO sumber terparafrase (${ad.beats.length} beat, cakupan ${(ad.voiceover.coverage * 100).toFixed(0)}%).`);
-          } else {
-            audioDrivenReport.outcome = 'empty_narration';
-            audioDrivenReport.beats = ad.beats.length;
-            audioDrivenReport.reason = 'beat ada tetapi naskah hasil parafrase kosong';
-          }
-        } else if (ad.ok && !ad.voiceover?.hasVoiceover) {
-          audioDrivenReport.outcome = 'no_voiceover_in_source';
-          audioDrivenReport.reason = ad.voiceover?.reason || 'video tanpa voice-over';
-          console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN: ${audioDrivenReport.reason} — fallback ke naskah vision.`);
-        } else if (ad.skipped) {
-          audioDrivenReport.outcome = 'skipped';
-          audioDrivenReport.reason = ad.reason || 'analisis audio di-skip';
-        } else {
-          audioDrivenReport.outcome = 'analysis_failed';
-          audioDrivenReport.reason = ad.missingBinary ? 'whisper.cpp belum terpasang' : (ad.error || 'analisis audio gagal');
-          console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN: analisis audio gagal (${audioDrivenReport.reason}) — fallback ke naskah vision.`);
-        }
-      } catch (adErr) {
-        audioDrivenReport.outcome = 'error';
-        audioDrivenReport.reason = adErr.message;
-        console.warn(`[Job ${jobId}] ⚠️ AUDIO-DRIVEN error: ${adErr.message} — fallback ke naskah vision.`);
-      }
-      // Jejak durabel: satu baris trace per job tentang nasib audio-driven (+ file yang dibaca).
-      // Laporan juga ditempel ke `highlight` agar ikut tersimpan di record job (history/DB),
-      // bukan hanya console yang di Termux dibuang ke /dev/pts/0.
-      highlight.audioDriven = { ...audioDrivenReport };
-      recordStageEvent({
-        jobId,
-        kind: 'metric',
-        stage: 'audio',
-        provider: 'whisper.cpp',
-        message: `Audio-driven ${audioDrivenReport.used ? 'AKTIF' : 'TIDAK terpakai'}: ${audioDrivenReport.outcome}`,
-        failureReason: audioDrivenReport.used ? '' : audioDrivenReport.reason,
-        meta: { ...audioDrivenReport },
-      });
-    } else {
-      highlight.audioDriven = { ...audioDrivenReport };
-    }
+    const finalVoiceScript = rawVoiceScript;
 
     const voiceoverFileName = `voiceover_${jobId}.mp3`;
     autoVoiceoverPath = path.join(uploadsDir, voiceoverFileName);
@@ -3014,7 +2930,6 @@ async function _runStage1Pipeline({
             // Duplikat penanda di dalam highlight: riwayat manual/panel membaca objek
             // highlight ini, bukan field top-level job.
             isRescueStoryboard: Boolean(highlight.isRescueStoryboard),
-            audioDriven: highlight.audioDriven || null,
           },
           hasProductBrand: isBrandDetected,
           detectedBrand: highlight.detectedBrand || 'none',
@@ -3192,7 +3107,6 @@ async function _runStage1Pipeline({
         // vision dan jatuh kembali ke judul mentah Shopee (lihat record auto_3dd085b354).
         detectedProduct: highlight.detectedProduct || '',
         isRescueStoryboard: Boolean(highlight.isRescueStoryboard),
-        audioDriven: highlight.audioDriven || null,
       },
       hasProductBrand: isBrandDetected,
       detectedBrand: highlight.detectedBrand || 'none',

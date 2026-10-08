@@ -347,7 +347,7 @@ describe('P1 wiring source locks', () => {
     expect(read('services/ttsService.js')).toMatch(/stage: 'tts'/);
     expect(read('worker/finalizationService.js')).toMatch(/stage: 'qc'/);
     const stage1 = read('worker/stage1Render.js');
-    // Whisper-First refactor (commit 69baaed) menggabungkan funnel 3-tahap menjadi satu
+    // Pipeline refactor (commit 69baaed) menggabungkan funnel 3-tahap menjadi satu
     // gerbang, sehingga event metrik `stage: 'gatekeeper'` kini hanya DIEMIT di satu titik
     // audit frame (blokir cache-check). Dulu kunci ini mengharapkan 3; angka 3 merujuk
     // arsitektur lama yang sudah tidak ada. Longgarkan ke 1 = state saat ini yang intentional.

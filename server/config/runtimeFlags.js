@@ -3,8 +3,7 @@
 //
 // Masalah nyata: jalur pipeline membaca flag dari `process.env` SAAT EKSEKUSI
 // (lihat stage1Render: RENDER_DOWNLOAD_SECTIONS, videoFilterService: SAMPLE_MAX_FRAMES,
-// finalizationService: FINAL_AI_QC(_STRICT), audioBeatService:
-// AUDIO_DRIVEN_SCENES). Bila operator mengganti .env lalu me-retry job lama, retry
+// finalizationService: FINAL_AI_QC(_STRICT)). Bila operator mengganti .env lalu me-retry job lama, retry
 // memakai konfigurasi BARU sehingga hasil tidak dapat direproduksi & log menipu.
 //
 // Solusi ringan: saat job DIBUAT, bekukan nilai EFETIF flag-flag itu ke `job.configSnapshot`.
@@ -33,8 +32,6 @@ const FLAG_NORMALIZERS = {
   RENDER_NO_FULL_DOWNLOAD: (env) => env.RENDER_NO_FULL_DOWNLOAD === '1',
   // videoFilterService: Math.max(20, Number(process.env.SAMPLE_MAX_FRAMES) || 500)
   SAMPLE_MAX_FRAMES: (env) => Math.max(20, Number(env.SAMPLE_MAX_FRAMES) || 500),
-  // audioBeatService.isAudioDrivenEnabled: trim().toLowerCase() === 'true'
-  AUDIO_DRIVEN_SCENES: (env) => String(env.AUDIO_DRIVEN_SCENES || '').trim().toLowerCase() === 'true',
   // downloader.js render path: parseInt(env.RENDER_MAX_HEIGHT,10) valid>0 ? itu : 1080
   RENDER_MAX_HEIGHT: (env) => {
     const v = parseInt(env.RENDER_MAX_HEIGHT, 10);
@@ -62,8 +59,7 @@ const FLAG_NORMALIZERS = {
   RENDER_SAMPLE_INTERVAL_SEC: (env) => Math.max(0.5, Number(env.RENDER_SAMPLE_INTERVAL_SEC) || 1.5),
   // BLUEPRINT ALUR BARU (6 langkah). Opt-in: default 'legacy' = jalur Fase 1-4 lama (aman).
   // 'v2' mengaktifkan runSourceAcquisitionV2 (vonis batch Gemini + transkrip penuh +
-  // window teks + zigzag + segment-only). Nama kunci BEDA dari PIPELINE_MODE (label
-  // whisper-first yang sudah ada & tidak dibaca kode) agar tidak tabrakan semantik.
+  // window teks + zigzag + segment-only).
   ACQUISITION_FLOW: (env) => (String(env.ACQUISITION_FLOW || '').trim().toLowerCase() === 'v2' ? 'v2' : 'legacy'),
   // Visual decisions require Kaggle Oracle. Legacy modes remain parseable only so the
   // worker can reject old snapshots with a clear error before any content processing.
@@ -195,7 +191,6 @@ export function configSnapshotToEnvPatch(snapshot) {
     patch.RENDER_NO_FULL_DOWNLOAD = snapshot.RENDER_NO_FULL_DOWNLOAD ? '1' : '0';
   }
   if (typeof snapshot.SAMPLE_MAX_FRAMES === 'number') patch.SAMPLE_MAX_FRAMES = String(snapshot.SAMPLE_MAX_FRAMES);
-  if (typeof snapshot.AUDIO_DRIVEN_SCENES === 'boolean') patch.AUDIO_DRIVEN_SCENES = snapshot.AUDIO_DRIVEN_SCENES ? 'true' : 'false';
   // RENDER_VIDEO_ONLY dibaca dengan `!== '0'`, jadi 'false' pun berarti ON. Tulis nilai
   // kanonik '1'/'0' agar pembacaan konsumen identik dengan nilai yang dibekukan.
   if (typeof snapshot.RENDER_MAX_HEIGHT === 'number') patch.RENDER_MAX_HEIGHT = String(snapshot.RENDER_MAX_HEIGHT);

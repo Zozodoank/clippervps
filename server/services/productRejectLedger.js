@@ -256,7 +256,6 @@ function inferStageLabel({ err = null, reason = '', message = '' } = {}) {
   const explicit = String(err?.stage || err?.step || '').trim();
   if (explicit) return explicit;
   const text = `${reason} ${message}`.toLowerCase();
-  if (text.includes('narasi voice-over') || text.includes('whisper')) return 'whisper_gate';
   if (text.includes('watermark') || text.includes('wajah') || text.includes('faceless') || text.includes('subtitle')) return 'ai_vision';
   if (text.includes('ai vision') || text.includes('bukti visual') || text.includes('frame kotor')) return 'ai_vision';
   if (text.includes('master qc') || text.includes('final_master_qc') || text.includes('durasi final')) return 'final_qc';

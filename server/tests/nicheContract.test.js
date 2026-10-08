@@ -44,11 +44,11 @@ describe('getNichePreset — resolusi alias & fallback', () => {
 });
 
 describe('Kontrak struktur setiap preset niche', () => {
-  it.each(ALL_NICHE_IDS)('%s punya 7 slot berurut 1..7 dengan field wajib', (id) => {
+  it.each(ALL_NICHE_IDS)('%s punya slot berurut dengan field wajib', (id) => {
     const preset = NICHE_PRESETS[id];
     expect(preset.id).toBe(id);
     expect(Array.isArray(preset.slotsConfig)).toBe(true);
-    expect(preset.slotsConfig.length).toBe(7);
+    expect(preset.slotsConfig.length).toBe(id === 'gadget_smartphone' ? 8 : 7);
     preset.slotsConfig.forEach((slot, idx) => {
       expect(slot.slot).toBe(idx + 1);
       expect(typeof slot.key).toBe('string');
@@ -59,7 +59,8 @@ describe('Kontrak struktur setiap preset niche', () => {
 
   it.each(ALL_NICHE_IDS)('%s punya hook/keyword/storyboard terisi', (id) => {
     const preset = NICHE_PRESETS[id];
-    expect(Array.isArray(preset.curatedHooks) && preset.curatedHooks.length > 0).toBe(true);
+    expect(Array.isArray(preset.curatedHooks)).toBe(true);
+    if (id !== 'gadget_smartphone') expect(preset.curatedHooks.length).toBeGreaterThan(0);
     expect(Array.isArray(preset.defaultKeywords) && preset.defaultKeywords.length > 0).toBe(true);
     expect(typeof preset.storyboardInstructions).toBe('string');
     expect(preset.storyboardInstructions.length).toBeGreaterThan(0);
@@ -84,8 +85,9 @@ describe('getSlotFacePolicy — default strict, data-driven per slot', () => {
     expect(getSlotFacePolicy(NICHE_PRESETS.kitchen_tools, 'key-tak-dikenal')).toBe('strict');
   });
 
-  it('gadget slot clip5_action_demo => presenter_only', () => {
-    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip5_action_demo')).toBe('presenter_only');
+  it('hanya slot sampel kamera gadget yang presenter_only', () => {
+    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip7_camera_sample')).toBe('presenter_only');
+    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip8_camera_detail')).toBe('presenter_only');
   });
 
   it('kitchen_tools: SEMUA slot strict (tidak ada facePolicy non-strict)', () => {
@@ -101,7 +103,7 @@ describe('resolveNicheFacePolicy — ringkasan kebijakan wajah niche', () => {
     expect(resolveNicheFacePolicy('dapur')).toBe('strict');
   });
 
-  it('gadget_smartphone => presenter_only (slot 5 longgar)', () => {
+  it('gadget_smartphone => presenter_only hanya untuk adegan kamera', () => {
     expect(resolveNicheFacePolicy('gadget_smartphone')).toBe('presenter_only');
     expect(resolveNicheFacePolicy('hp')).toBe('presenter_only');
   });

@@ -177,8 +177,8 @@ export const NICHE_PRESETS = {
     name: 'Smartphone Flagship & Mid-Range',
     shortName: 'Smartphone',
     icon: '📱',
-    tagline: 'Video YouTube Shorts review smartphone, spesifikasi kencang, gaming & B-roll kamera faceless.',
-    visualFocus: 'B-roll fisik smartphone: bodi belakang mewah, bezel layar tipis, scrolling AMOLED 120Hz, performa gaming, dan uji kamera outdoor/still photo.',
+    tagline: 'Review smartphone berbasis bukti visual dengan voice-over yang mengikuti adegan.',
+    visualFocus: 'Review smartphone berurutan: layar dan antarmuka, fitur yang benar-benar terlihat, kapasitas memori yang terverifikasi, lalu hasil kamera sebagai penutup.',
     badgeColor: '#3b82f6',
     outroBumper: 'gadget_outro.mp4',
     strictSceneVoSync: true,
@@ -186,123 +186,25 @@ export const NICHE_PRESETS = {
     // sumber ke-2 (b-roll faceless HP langka -> kandidat berikutnya terus di-skip & kuota terbuang).
     minVerifiedSources: 1,
     slotsConfig: [
-      {
-        slot: 1,
-        key: 'clip1_full_product',
-        fallbackKey: 'clip1',
-        label: 'Desain Bodi Belakang & Modul Kamera (Hero)',
-        role: 'full_product',
-        datasetTag: 'valid_full_product',
-        description: 'Tampilan fisik bodi belakang smartphone, pantulan warna, dan modul kamera estetik (Opening Hero).'
-      },
-      {
-        slot: 2,
-        key: 'clip2_feature',
-        fallbackKey: 'clip2',
-        label: 'Layar Bezel Tipis & Build Quality Bodi Kokoh',
-        role: 'feature',
-        datasetTag: 'valid_feature',
-        description: 'Sorotan detail ketipisan bodi, frame aluminium/polikarbonat kokoh, bezel layar tipis, speaker, atau port Type-C.'
-      },
-      {
-        slot: 3,
-        key: 'clip3_action_demo',
-        fallbackKey: 'clip3',
-        label: 'Layar AMOLED 120Hz Mulus & Navigasi Antarmuka',
-        role: 'action_demo',
-        datasetTag: 'valid_action',
-        description: 'Demonstrasi pengoperasian layar HP: scrolling sosmed super mulus 120Hz, transisi aplikasi gesit tanpa patah-patah.'
-      },
-      {
-        slot: 4,
-        key: 'clip4_action_demo_diff',
-        fallbackKey: 'clip4_action_demo',
-        label: 'Performa Kencang, RAM & Memori Lega',
-        role: 'action_demo_diff',
-        datasetTag: 'valid_action',
-        description: 'Gameplay game (MLBB/PUBG) atau multitasking membuktikan chipset Snapdragon/Dimensity, RAM 8GB, dan internal 256/512GB (bebas istilah GPU rumit).'
-      },
-      {
-        slot: 5,
-        key: 'clip5_action_demo',
-        fallbackKey: 'clip5_result',
-        label: 'Uji Kamera Jernih: Video 4K & Foto Tajam',
-        role: 'action_demo',
-        datasetTag: 'valid_result',
-        description: 'Demonstrasi kamera: rekaman video stabil 4K 30fps atau sample foto jepretan malam/portrait jernih (didukung still photo zoom).',
-        facePolicy: 'presenter_only'
-      },
-      {
-        slot: 6,
-        key: 'clip6_full_product',
-        fallbackKey: 'clip6',
-        label: 'Daya Tahan Baterai & Fast Charging Seharian',
-        role: 'full_product',
-        datasetTag: 'valid_full_product',
-        description: 'Ketahanan baterai awet seharian, adapter charger fast charging ngebut, dan fisik HP digenggam pas di tangan.'
-      },
-      {
-        slot: 7,
-        key: 'clip7_full_product',
-        fallbackKey: 'clip7_display_cta',
-        label: 'Soft CTA: Kisaran Harga & Lempar Diskusi Penonton',
-        role: 'full_product',
-        datasetTag: 'valid_display_cta',
-        description: 'Fisik HP ditata elegan selaras dengan informasi kisaran harga (Rp / Yuan) dan ajakan berpendapat di kolom komentar (tanpa kata Shopee/beli).'
-      }
+      { slot: 1, key: 'clip1_screen_review', fallbackKey: 'clip1', label: 'Layar & Antarmuka', role: 'feature', datasetTag: 'valid_feature', description: 'Tampilan layar aktif, menu, scrolling, atau perubahan antarmuka yang benar-benar terlihat.' },
+      { slot: 2, key: 'clip2_screen_detail', fallbackKey: 'clip2', label: 'Detail Pengalaman Layar', role: 'action_demo', datasetTag: 'valid_action', description: 'Sudut layar atau interaksi UI lain yang mendukung review pengalaman layar.' },
+      { slot: 3, key: 'clip3_feature_review', fallbackKey: 'clip3', label: 'Demonstrasi Fitur', role: 'action_demo', datasetTag: 'valid_action', description: 'Peragakan fitur atau bagian perangkat yang tampak; jangan menyimpulkan spesifikasi yang tidak dibuktikan.' },
+      { slot: 4, key: 'clip4_feature_detail', fallbackKey: 'clip4', label: 'Detail Fitur Lain', role: 'feature', datasetTag: 'valid_feature', description: 'Detail fisik atau fungsi lain yang terlihat jelas saat penggunaan.' },
+      { slot: 5, key: 'clip5_memory_capacity', fallbackKey: 'clip5', label: 'Kapasitas Memori', role: 'feature', datasetTag: 'valid_feature', description: 'Tampilan menu penyimpanan atau informasi RAM/storage yang terbaca jelas; jangan menebak angka.' },
+      { slot: 6, key: 'clip6_memory_detail', fallbackKey: 'clip6', label: 'Detail RAM atau Penyimpanan', role: 'action_demo', datasetTag: 'valid_action', description: 'Bukti visual kapasitas memori atau pengelolaan penyimpanan yang nyata dan terbaca.' },
+      { slot: 7, key: 'clip7_camera_sample', fallbackKey: 'clip7', label: 'Sampel Hasil Kamera', role: 'action_demo', datasetTag: 'valid_result', description: 'Foto atau video hasil kamera ponsel. Orang yang menjadi subjek hasil foto/video diperbolehkan.', facePolicy: 'presenter_only' },
+      { slot: 8, key: 'clip8_camera_detail', fallbackKey: 'clip8', label: 'Review Kamera (Penutup)', role: 'action_demo', datasetTag: 'valid_result', description: 'Sampel hasil foto/video kamera sebagai adegan terakhir; orang di dalam hasil kamera diperbolehkan.', facePolicy: 'presenter_only' }
     ],
-    storyboardInstructions: `Petakan indeks frame ke dalam 7 peran "storyboard" smartphone B-roll (WAJIB FACELESS, TOLAK WAJAH VLOGGER TALKING-HEAD):
-- "clip1_full_product": Slot 1 (00:00-00:06) -> DESAIN BODI BELAKANG & KAMERA (Opening Hero). Frame bodi belakang smartphone, kilau warna gradasi, atau modul kamera yang mewah. Sesuai kategori: [valid_full_product]. DILARANG wajah reviewer talking-head di studio!
-- "clip2_feature": Slot 2 (00:06-00:13) -> DETAIL BEZEL LAYAR & FRAME KOKOH. Frame close-up bezel layar tipis, material frame aluminium/solid agar tidak gampang panas/tergores, serta port Type-C. Sesuai kategori: [valid_feature].
-- "clip3_action_demo": Slot 3 (00:13-00:20) -> NAVIGASI UI & LAYAR 120Hz. Layar aktif menampilkan scrolling sosmed atau antarmuka OS yang super mulus responsif. Sesuai kategori: [valid_action].
-- "clip4_action_demo_diff": Slot 4 (00:20-00:27) -> PERFORMA KENCANG & MULTITASKING. Cuplikan gameplay game atau buka tutup aplikasi cepat yang membuktikan performa chipset Snapdragon/Dimensity, RAM 8GB LPDDR4, dan internal 256/512GB (JANGAN sebut istilah GPU rumit). Sesuai kategori: [valid_action].
-- "clip5_action_demo": Slot 5 (00:27-00:34) -> UJI KAMERA & STILL PHOTO ("clip5_result"). Cuplikan hasil rekaman video outdoor 4K atau sample foto jepretan kamera yang tajam dan natural (wajah pejalan kaki jauh / foto portrait diizinkan). Sesuai kategori: [valid_result].
-- "clip6_full_product": Slot 6 (00:34-00:41) -> BATERAI AWET & FAST CHARGING. Frame HP saat di-charge atau bodi utuh yang menekankan baterai awet seharian. Sesuai kategori: [valid_full_product].
-- "clip7_full_product": Slot 7 (00:41-00:48) -> DISPLAY SOFT CTA ("clip7_display_cta"). Tampilan HP diletakkan rapi selaras dengan perkiraan kisaran harga (Rupiah atau konversi Yuan) serta pancingan interaksi penonton: "Menurut kalian worth it gak? Komen di bawah ya!". DILARANG menggunakan kata Shopee, keranjang kuning, atau ajakan membeli langsung! Sesuai kategori: [valid_display_cta] / [valid_full_product].`,
-    hookGuidelines: `Hook naskah pembuka 3 detik harus memancing rasa penasaran penonton YouTube Shorts mengenai keunggulan bodi, layar 120Hz mulus, performa kencang anti lag, atau value for money smartphone (DILARANG menggunakan kata 'alat dapur', 'Shopee', 'keranjang kuning', dan DILARANG pakai kata 'fix' / 'fiks'!).`,
-    curatedSoftCtas: [
-      "Untuk varian RAM 8 dan internal 256GB, harganya ada di kisaran 3 jutaan. Menurut kalian dengan spek kayak gini worth it gak? Coba tulis pendapat kalian di kolom komentar ya!",
-      "Di negara asalnya HP ini baru rilis sekitar 2.000 Yuan atau kalau dirupiahkan kisaran 4 jutaan. Kira-kira kalau resmi masuk sini, kalian tertarik beli gak nih?",
-      "Dengan harga di kisaran 2 jutaan kecil, HP ini udah dapet layar AMOLED 120Hz dan chipset kencang. Menurut kalian worth it banget gak? Tulis di komentar ya!",
-      "Harganya dipatok di kisaran 3 sampai 4 jutaan. Menurut kalian mending ambil HP ini atau nunggu seri saingannya rilis? Diskusi di kolom komentar yuk!",
-      "Buat harga di kisaran 2 jutaan, kameranya udah stabil dan baterainya badak seharian. Gimana menurut kalian, cocok gak buat daily driver? Coba komen di bawah!"
-    ],
-    curatedHooks: [
-      // ⚡ 1. Tipe Performa & Anti Lemot (Chipset & Layar 120Hz)
-      "Capek pakai HP yang gampang patah-patah pas scrolling? Smartphone yang satu ini mulusnya kebangetan!",
-      "HP harga terjangkau tapi pas dipakai gaming rasanya kayak pakai HP belasan juta.",
-      "Jangan kaget kalau scrolling sosmed di HP ini bakal bikin mata kalian nyaman banget seharian.",
-      "Buat kalian yang butuh HP kencang anti lemot buat harian, smartphone ini wajib masuk wishlist.",
-      "Chipset kencang dipadu layar 120Hz, kombinasi yang bikin aktivitas harian sat-set tanpa jeda.",
+    storyboardInstructions: `Susun storyboard smartphone untuk video 45-60 detik dengan urutan wajib berikut. Gunakan dua adegan per topik agar tiap adegan sekitar 6 detik:
+- Slot 1-2: REVIEW LAYAR. Tampilkan layar aktif, navigasi UI, scrolling, atau detail tampilan yang benar-benar terlihat.
+- Slot 3-4: REVIEW FITUR. Tampilkan demonstrasi fitur dan detail fisik yang terlihat. Jangan mengarang chipset, refresh rate, baterai, atau performa.
+- Slot 5-6: KAPASITAS MEMORI. Sebut angka hanya bila terbaca pada layar atau dinyatakan eksplisit di metadata produk; jangan menafsirkan judul yang ambigu.
+- Slot 7-8: REVIEW KAMERA sebagai bagian terakhir. Gunakan sampel foto/video yang diambil ponsel; orang yang tampak sebagai subjek hasil kamera boleh diterima. Tolak hanya reviewer, vlogger, atau presenter yang merekam diri sambil berbicara langsung ke kamera.
 
-      // 📸 2. Tipe Kamera & Visual Jernih
-      "Siapa sangka HP di kelas harga segini bisa ngasilin rekaman video 4K yang stabil begini?",
-      "Hasil jepretan kamera smartphone ini detailnya tajam banget, bahkan pas dipakai motret malam hari.",
-      "Buat yang suka bikin konten video tapi budget pas-pasan, kualitas kamera HP ini bener-bener di luar nalar.",
-      "Warna fotonya natural dan fokusnya gesit, pas banget buat kalian yang hobi street photography.",
-      "Kamera jernih anti goyang di HP ini bikin hasil video kalian kelihatan kayak pakai kamera profesional.",
-
-      // 💎 3. Tipe Desain Mewah & Build Quality
-      "Lihat bodi belakangnya! Tampilannya mewah dan bezel layarnya bener-bener setipis ini.",
-      "Frame bodi kokoh dan finishing elegan yang bikin HP ini berasa solid banget pas digenggam.",
-      "Banyak yang ngira ini HP flagship mahal, padahal harganya jauh lebih ramah di kantong.",
-      "Desain tipis ringan tapi tetap kokoh, smartphone ini pas banget buat kalian yang suka gaya minimalis modern.",
-      "Finishing bodi belakangnya tahan goresan halus dan gak gampang ninggalin bekas sidik jari.",
-
-      // 🔋 4. Tipe Baterai & Daya Tahan
-      "Baterai badak seharian dipadu pengisian daya kilat, bye-bye rasa panik kehabisan baterai di jalan!",
-      "Dipakai kerja seharian dari pagi sampai malam, baterai HP ini masih nyisa banyak banget.",
-      "Cuma butuh waktu sebentar buat ngecas, baterainya udah siap nemenin aktivitas kalian lagi.",
-      "Buat yang mobilitasnya tinggi di luar ruangan, daya tahan baterai HP ini bener-bener bisa diandalkan.",
-      "Manajemen daya yang efisien bikin bodi HP tetap adem walau dipakai seharian penuh.",
-
-      // 💰 5. Tipe Value for Money & Penasaran
-      "Bocoran smartphone yang bakal jadi rebutan banyak orang karena speknya yang kelewat royal!",
-      "Punya memori internal super lega dan performa kencang, smartphone ini siap jadi raja di kelasnya.",
-      "Sebelum kalian mutusin ganti HP baru, tonton dulu kemampuan smartphone yang satu ini sampai habis.",
-      "Kombinasi spek juara dan tampilan premium, apakah HP ini bakal jadi yang terbaik di tahun ini?",
-      "Dengan spek selengkap ini, kira-kira berapa ya kisaran harga pasarnya? Simak sampai akhir!"
-    ],
+Setiap adegan harus memiliki bukti visual yang sesuai dan voiceover yang menjelaskan aksi yang sedang terlihat. Jangan menambah CTA, harga, ajakan komentar, atau ajakan membeli.`,
+    hookGuidelines: `Buka review dengan pengamatan pada layar yang benar-benar tampak. Jangan membuat klaim harga, performa, kamera, atau spesifikasi yang tidak didukung bukti visual maupun deskripsi produk.`,
+    curatedSoftCtas: [],
+    curatedHooks: [],
     defaultKeywords: [
       'review infinix note 40 pro indonesia',
       'review poco x6 5g indonesia',

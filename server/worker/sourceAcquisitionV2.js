@@ -1,7 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // BLUEPRINT ALUR BARU — runSourceAcquisitionV2 (L2 -> L5)
 //
-// Menggantikan funnel `evaluateCandidate` lama (TAHAP 2-6) + pre-flight + whisper
 // window ketika flag ACQUISITION_FLOW=v2 aktif (lihat config/runtimeFlags.js,
 // isNewFlowEnabled). L1 (pencarian kandidat gambar+keyword) TETAP dilakukan
 // pemanggil (stage1Render) — modul ini menerima `candidatePool` hasil L1.
@@ -11,13 +10,11 @@
 //   produk + kebersihan)  ->  pilih >=2 sumber layak (4b)  ->  WINDOW UNIFORM
 //   (tengah video)  ->  zigzag per window (2b).
 //
-// [PERUBAHAN] L3 transkrip Whisper penuh DIHAPUS — video YouTube tidak diwajibkan
 // memiliki voice-over. Window ditentukan dari tengah video secara uniform.
 //
 // Output: { sources, orderedWindows, scriptDraft, diagnostics } siap dipakai
 // tahap unduh-per-segmen (L4) & render (L6) yang ADA di stage1Render.
 //
-// Semantik error (P1-5): gangguan infrastruktur (frame extraction/Whisper/Oracle tidak tersedia)
 // dilempar dengan flag `isInfraError` agar master loop TIDAK mem-blacklist; vonis
 // konten (produk tak cocok / frame kotor) cukup menjatuhkan kandidat tanpa throw.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,7 +95,6 @@ export function buildAcquisitionPlan(sourcesData, interleave) {
  * (L6) di stage1Render: blok hilir membaca `hl.clips[].candidateIndex` ( utk memetakan
  * klip -> file sumber via candidateResults[candIdx].candidate.url ) plus startSeconds/
  * endSeconds. Mapper ini MURNI & teruji supaya bentuk data cocok persis dgn yang
- * diproduksi jalur panen lama (lihat blok rescue/whisper_first yg men-set `hl`).
  * @param {Array<{sourceId,url,meta}>} sources hasil runSourceAcquisitionV2
  * @param {Array<{sourceId,startSec,endSec,scriptDraft}>} orderedWindows (sudah zigzag)
  */

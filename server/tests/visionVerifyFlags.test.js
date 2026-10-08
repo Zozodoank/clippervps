@@ -4,7 +4,6 @@ import {
   configSnapshotToEnvPatch,
   isSmolvlmVerifyEnabled,
   isGeminiSceneDiscoveryEnabled,
-  shouldBypassWhisperGate,
 } from '../config/runtimeFlags.js';
 
 // Tahap 8: kunci perilaku flag arsitektur Gemini-first + SmolVLM2.
@@ -77,14 +76,6 @@ describe('SCENE_SAMPLE_FPS & GK_VLM_TIMEOUT_SEC_PER_FRAME — floor', () => {
   });
 });
 
-describe('shouldBypassWhisperGate — Whisper hanya dilewati saat mode smolvlm', () => {
-  it('legacy -> Whisper tetap jalan (false); smolvlm -> bypass (true)', () => {
-    expect(shouldBypassWhisperGate({})).toBe(false);
-    expect(shouldBypassWhisperGate({ VISION_VERIFY_MODE: 'legacy' })).toBe(false);
-    expect(shouldBypassWhisperGate({ VISION_VERIFY_MODE: 'smolvlm' })).toBe(true);
-  });
-});
-
 describe('Snapshot SmolVLM round-trip — retry mengunci mode yang sama', () => {
   it('mode smolvlm beku bertahan setelah env operator berubah', () => {
     const createEnv = {
@@ -106,7 +97,6 @@ describe('Snapshot SmolVLM round-trip — retry mengunci mode yang sama', () => 
     expect(resnap.GK_VLM_TIMEOUT_SEC_PER_FRAME).toBe(15);
     // konsumen helper membaca dari env hasil-patch -> tetap mode baru
     expect(isSmolvlmVerifyEnabled(applied)).toBe(true);
-    expect(shouldBypassWhisperGate(applied)).toBe(true);
   });
 
   it('patch default (oracle) menulis oracle + bypass=false, bukan string kosong', () => {

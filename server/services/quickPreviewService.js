@@ -177,7 +177,7 @@ export async function downloadQuickPreview(url, outputDir, jobId, {
           actualDurationSec: measuredSec || targetLength,
           sourceDurationSec: videoDuration,
           croppedTo9_16: finalPath !== outPath,
-          hasAudio: true // We assume true for now, audioBeatService will confirm
+          hasAudio: true // Preview metadata is probed separately from source audio analysis
         };
         // Simpan ke cache (batasi ukuran; evicted entri terlama) agar evaluasi ulang reuse.
         if (previewCache.size >= PREVIEW_CACHE_MAX) {

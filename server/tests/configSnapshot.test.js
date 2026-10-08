@@ -21,7 +21,6 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(s.GK_MAX_BATCH_FRAMES).toBe(240);
     expect(s.ORACLE_OFFLINE_CALIBRATION).toBe(false);
     expect(s.VLM_ORACLE_GRID).toBe(2);
-    expect(s.AUDIO_DRIVEN_SCENES).toBe(false);        // 'true' lowercase
     expect(s.FINAL_AI_QC).toBe(true);                 // !== 'false'
     expect(s.FINAL_AI_QC_STRICT).toBe(false);         // === 'true'
     expect(s.niche).toBe('kitchen_tools');
@@ -50,11 +49,6 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(buildConfigSnapshot({ SAMPLE_MAX_FRAMES: 'abc' }).SAMPLE_MAX_FRAMES).toBe(500); // NaN -> default
     expect(buildConfigSnapshot({ GK_MAX_BATCH_FRAMES: '480' }).GK_MAX_BATCH_FRAMES).toBe(480);
     expect(buildConfigSnapshot({ GK_MAX_BATCH_FRAMES: '10' }).GK_MAX_BATCH_FRAMES).toBe(20);
-  });
-
-  it('AUDIO_DRIVEN_SCENES toleransi spasi & kapital (trim+lowercase)', () => {
-    expect(buildConfigSnapshot({ AUDIO_DRIVEN_SCENES: ' TRUE ' }).AUDIO_DRIVEN_SCENES).toBe(true);
-    expect(buildConfigSnapshot({ AUDIO_DRIVEN_SCENES: 'yes' }).AUDIO_DRIVEN_SCENES).toBe(false);
   });
 
   it('FINAL_AI_QC aktif kecuali string persis "false"; STRICT hanya "true"', () => {
@@ -94,7 +88,6 @@ describe('configSnapshotToEnvPatch — retry dapat mereproduksi setelan', () => 
       RENDER_NO_FULL_DOWNLOAD: '1',
       SAMPLE_MAX_FRAMES: '320',
       GK_MAX_BATCH_FRAMES: '300',
-      AUDIO_DRIVEN_SCENES: 'true',
       FINAL_AI_QC: 'true',
       FINAL_AI_QC_STRICT: 'true',
     };
@@ -118,7 +111,6 @@ describe('configSnapshotToEnvPatch — retry dapat mereproduksi setelan', () => 
   it('boolean false -> string "0"/"false" (bukan dihilangkan), supaya override deterministik', () => {
     const patch = configSnapshotToEnvPatch(buildConfigSnapshot({}));
     expect(patch.RENDER_DOWNLOAD_SECTIONS).toBe('0');
-    expect(patch.AUDIO_DRIVEN_SCENES).toBe('false');
     expect(patch.FINAL_AI_QC).toBe('true'); // default aktif
   });
 
@@ -213,8 +205,7 @@ describe('applyConfigSnapshot — jalur retry auto (regresi fix 2026-10-05)', ()
     withSavedEnv(() => {
       const snap = buildConfigSnapshot({
         RENDER_DOWNLOAD_SECTIONS: '1',
-        AUDIO_DRIVEN_SCENES: 'true',
-        SAMPLE_MAX_FRAMES: '320',
+          SAMPLE_MAX_FRAMES: '320',
         GK_MAX_BATCH_FRAMES: '300',
         FINAL_AI_QC: 'false',
         VLM_ORACLE_BATCH_SIZE: '8',
@@ -226,8 +217,6 @@ describe('applyConfigSnapshot — jalur retry auto (regresi fix 2026-10-05)', ()
       for (const k of SNAPSHOT_FLAG_KEYS) {
         expect(resnap[k], `flag ${k} harus identik setelah apply`).toEqual(snap[k]);
       }
-      // AUDIO_DRIVEN_SCENES true -> 'true' (normalizer membaca lowercase 'true').
-      expect(process.env.AUDIO_DRIVEN_SCENES).toBe('true');
     });
   });
 

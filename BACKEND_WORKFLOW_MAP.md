@@ -36,9 +36,7 @@ Urutan fase di bawah diambil dari penanda `updateProgress({ step })` nyata di ko
 3. `step: 'download'` (L336) — `downloadYouTubeVideo()` (`downloader.js`, spawn yt-dlp/ffmpeg).
 4. `step: 'metadata_qc'` (L474) — `checkVideoMetadataCompliance()` (`videoFilterService.js`): aturan durasi/resolusi/aspect dari `config/videoLimits.js` + `config/nichePresets.js`.
 5. `step: 'quick_preview'` (L510) — unduh segmen preview 10 detik murah.
-6. `step: 'whisper_gate'` (L519) — `whisperGateService.js`: whisper.cpp cek keberadaan narasi/VO di sumber.
 7. `step: 'frame_probe'` (L535) — cek visual cepat 5 frame (`inspectFramesLocally`).
-8. `step: 'context_preview'` (L552) → `step: 'window_select'` (L560) — unduh jendela narasi; Whisper pilih window bicara terbaik.
 9. `step: 'product_verify'` (L581) — `verifyProductCandidateWithAI()` (Gemini vision: produk cocok dgn narasi). **Dilewati di mode manual** sesuai policy niche.
 
 - [ ] Evaluasi Fase 1
@@ -65,7 +63,6 @@ Urutan fase di bawah diambil dari penanda `updateProgress({ step })` nyata di ko
 17. **HARD MOTION GATE** (L1983) — `auditRealMotionFromFrames()` tolak foto diam efek zoom/pan; `sampleDenseClustersAroundCleanFrames()` resampling rapat di sekitar frame bersih.
 18. `step: 'render_silent'` (L2116) — `renderSilentAntiDetectionVideo()` (`videoRenderer.js`): potong 9:16, transformasi anti-deteksi (hflip/reframe), bumper.
 19. `step: 'frames_trimmed'` (L2131) → `step: 'gpt_scripting'` (L2137) — sampling frame hasil cut final, lalu `generateAdAdvisorScriptWithAI()` hasilkan kotak scene + `rawVoiceScript` + caption + leksikon fonetik (`detectPhoneticLexiconWithAI`, `phoneticData.js`).
-20. `step: 'audio_analysis'` (L2296) → `step: 'audio_paraphrase'` (L2324) — **HANYA jika `AUDIO_DRIVEN_SCENES=1`**: `analyzeSourceAudioForBeats()` (`audioBeatService.js`, beat whisper 1–5 dtk) lalu `paraphraseBeats()` (`antiPlagiarismService.js`, penjaga drift kata ±30%) menggantikan naskah vision; fallback anggun ke vision bila gagal.
 21. **Edit conform** (L2443–2445) — `conformClipsToVoiceover()` re-timing potongan visual ke durasi bicara nyata; lalu `renderSilentAntiDetectionVideo()` KEDUA kali (L2500).
 
 - [ ] Evaluasi Fase 4
@@ -113,11 +110,10 @@ Urutan fase di bawah diambil dari penanda `updateProgress({ step })` nyata di ko
 flowchart TD
     A["POST /generate atau /auto/start"] --> Q["heavyTaskQueue pLimit(1)"]
     Q --> P0["Fase 0: init + skrining bulky"]
-    P0 --> P1["Fase 1: download + metadata QC + whisper gate + frame probe + product verify"]
     P1 --> P2["Fase 2: frames_raw + Gatekeeper port 5050 + selectHighlightWithAI"]
     P2 --> ML{"Master Loop: pool kandidat"}
     ML --> P3["Fase 3: pre-flight + harvest + unduh HD/segmen"]
-    P3 --> P4["Fase 4: motion gate + render silent + scripting + audio-driven conform"]
+    P3 --> P4["Fase 4: render silent + Gemini scripting + scene/VO conform"]
     P4 --> P5["Fase 5: TTS + SRT + merge burn subtitle"]
     P5 --> QC["Final Master QC (teknis + visual AI)"]
     QC -- lulus --> DONE["completed + patchJob + cleanup + sync Android"]

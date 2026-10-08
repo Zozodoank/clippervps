@@ -1,7 +1,7 @@
 // Prompt contract consumed by Kaggle Oracle; no local vision inference lives here.
 export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict', { productName = '', requireRanking = false } = {}) {
   const faceRule = facePolicy === 'presenter_only'
-    ? 'Faces that belong to on-screen demo/activity are acceptable; REJECT only a presenter face filling the frame.'
+    ? 'Camera-sample policy: people appearing inside photos or video footage captured by the reviewed phone are allowed, including portraits and bystanders. REJECT only a reviewer/vlogger/presenter who is filming themselves and speaking directly to the camera. A face inside the phone camera sample is not a presenter.'
     : 'REJECT if any human face is visible.';
   const lines = [
     'Inspect ALL frames below for this short scene.',
@@ -12,6 +12,7 @@ export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict', {
     '- an unboxing / paperwork / manual document',
     `Face policy: ${faceRule}`,
     'Hands and product demonstration are allowed.',
+    ...(niche === 'gadget_smartphone' && facePolicy === 'presenter_only' ? ['For smartphone camera-review scenes, evaluate the captured sample footage as the phone camera result; do not classify its human subjects as a vlogger.'] : []),
   ];
   if (requireRanking) {
     const core = oneLineForPrompt(productName, 120);

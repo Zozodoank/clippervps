@@ -188,7 +188,7 @@ export async function analyzeYouTubeVideoWithGemini({
     throw new Error('URL YouTube tidak valid.');
   }
 
-  const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
   const isVideoFirstMode = Boolean(isVideoFirst);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
@@ -499,7 +499,7 @@ export async function analyzeMultipleYouTubeVideosWithGemini({
     throw new Error('GEMINI_API_KEY belum disetel di server/.env untuk Google Gemini.');
   }
 
-  const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
   const isVideoFirstMode = Boolean(isVideoFirst);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
@@ -744,7 +744,7 @@ export async function analyzeVideoWithGeminiFileApi({
     throw new Error(`File video tidak ditemukan di: ${videoPath}`);
   }
 
-  const clipSec = Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
+  const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(2.5, Math.min(5.0, Number(sceneDuration) || 3.3));
   const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
   const prodInfo = extractCoreProductInfo(productTitle, productDescription);
   const coreNoun = prodInfo.coreProductNoun || 'Produk Praktis';
@@ -1247,7 +1247,7 @@ export async function selectHighlightWithAI({
   let { client, models: modelFallbackList, provider } = activeConfig;
   let activeModel = modelFallbackList[0];
 
-  const clipSec = Math.max(3.5, Math.min(5.0, Number(sceneDuration) || 4.8));
+  const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(3.5, Math.min(5.0, Number(sceneDuration) || 4.8));
   const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
 
   onProgress({
@@ -2329,67 +2329,6 @@ export function parseWindowSelection(parsed, segments, maxTotalSec = 0) {
   return windows;
 }
 
-/**
- * L3 — Model TEKS cloud memilih window narasi PALING MENARIK untuk affiliate dari
- * transkrip whisper (segment + timestamp), lalu merangkai draf naskah dari KATA ASLI
- * (bukan mengarang). Dipanggil setelah transkrip penuh kandidat 5-15 menit.
- * @returns {Promise<{ windows: Array, provider: string, model: string }>}
- */
-export async function selectAffiliateWindowsWithAIText({
-  apiKey,
-  aiProvider,
-  segments = [],
-  targetDurationSec = 30,
-  productTitle = '',
-  niche = 'kitchen_tools',
-  sourceId = null,
-  onProgress = () => {},
-} = {}) {
-  if (!Array.isArray(segments) || segments.length === 0) return { windows: [], provider: null, model: null };
-
-  const selectedEngine = (aiProvider || process.env.ACTIVE_AI_ENGINE || 'gemini').trim().toLowerCase();
-  const { client, models, provider } = getAiClientConfig({ apiKeyOverride: apiKey, aiProvider: selectedEngine });
-
-  const transcriptBlock = segments
-    .map((s) => `[${(Number(s.startSec) || 0).toFixed(1)}s-${(Number(s.endSec) || 0).toFixed(1)}s] ${String(s.text || '').trim()}`)
-    .join('\n');
-
-  const userText = `Transkrip voice-over video produk "${productTitle}" (niche ${niche}) dengan timestamp:
-${transcriptBlock}
-
-Tugas: pilih bagian NARASI paling menarik untuk klip affiliate dengan TOTAL durasi mendekati ${targetDurationSec} detik. WAJIB pakai timestamp dari transkrip di atas. Rangkai draf naskah HANYA dari kata-kata asli pada window terpilih (boleh pangkas, JANGAN tambah klaim baru).
-Return STRICT JSON: { "windows": [ { "startSec": <float>, "endSec": <float>, "scriptDraft": "<string>" } ] }`;
-
-  let lastError = null;
-  for (const model of models) {
-    try {
-      onProgress({ step: 'text_window_select', message: `🧠 AI teks memilih window menarik (${model})...`, progress: 35, status: 'running' });
-      const response = await client.chat.completions.create({
-        model,
-        messages: [
-          { role: 'system', content: 'Anda penyusun klip affiliate dari transkrip. Balas HANYA JSON valid.' },
-          { role: 'user', content: userText },
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.2,
-        max_tokens: 1200,
-      }, { timeout: 45000, maxRetries: 0 });
-
-      const msg = response.choices?.[0]?.message;
-      const raw = (msg?.content && msg.content.trim()) ? msg.content : (msg?.reasoning || '{}');
-      const parsed = repairJson(raw) || {};
-      const windows = parseWindowSelection(parsed, segments, targetDurationSec * 1.5).map((w) => ({ ...w, sourceId }));
-      return { windows, provider, model };
-    } catch (err) {
-      lastError = err;
-      const status = err?.status || err?.statusCode;
-      if (status === 401 || status === 402) break;
-    }
-  }
-  const infraErr = new Error(`Pemilihan window teks gagal: ${lastError?.message || 'semua model AI gagal'}`);
-  infraErr.isInfraError = true;
-  throw infraErr;
-}
 
 /**
  * Final rendered-frame QC. Unlike source QC, burned affiliate subtitles are expected here.
@@ -2563,10 +2502,10 @@ export async function generateAdAdvisorScriptWithAI({
   productDescription,
   shopeeLink,
   productHook,
-  whisperSegments = [],
   segmentDuration = 33,
   sceneDuration = 3.3,
   niche = 'kitchen_tools',
+  creativePlan = {},
   onProgress = () => { }
 }) {
   let activeConfig = getAiClientConfig({ apiKeyOverride: apiKey, aiProvider });
@@ -2583,63 +2522,27 @@ export async function generateAdAdvisorScriptWithAI({
 
   const effectiveTitle = (productTitle || '').trim() || videoMetadata?.title || (isGadget ? 'Smartphone Flagship & Mid-Range' : 'Produk Viral Shopee');
   const effectiveDesc = truncateProductDescription(productDescription, 900);
-  const targetDuration = Math.max(18, Math.min(45, Math.round(Number(segmentDuration) || 22)));
-  const effectiveSceneSec = Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
-  const sceneCount = Math.max(5, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
+  const smartphoneShotPlan = Array.isArray(creativePlan?.shots)
+    ? creativePlan.shots.map((shot, index) => `${index + 1}. ${shot.purpose}`).join('\n')
+    : '';
+  const targetDuration = isGadget
+    ? Math.max(45, Math.min(60, Math.round(Number(segmentDuration) || 48)))
+    : Math.max(18, Math.min(45, Math.round(Number(segmentDuration) || 22)));
+  const effectiveSceneSec = isGadget ? 6 : Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
+  const sceneCount = isGadget ? 8 : Math.max(5, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
   const targetSpeechSec = Math.max(17, targetDuration - 1.5);
   const targetWords = Math.round(targetSpeechSec * 2.2);
   const minWords = Math.max(38, Math.round(targetSpeechSec * 1.9));
   const maxWords = Math.max(48, Math.round(targetSpeechSec * 2.4));
 
   const systemPrompt = isGadget
-    ? `You are a Senior Tech Reviewer and Creative Director specializing in Indonesian YouTube Shorts and TikTok smartphone reviews (Faceless B-roll tech content).
+    ? `You are an Indonesian smartphone reviewer. Produce a grounded 45-60 second review with exactly 8 scene-aligned narration lines, about 6 seconds each.
 
-You will receive the Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
+ORDER IS FIXED: scenes 1-2 review the screen/UI; scenes 3-4 review visible features; scenes 5-6 review memory capacity; scenes 7-8 review camera samples and are the final scenes. Do not move camera earlier. No CTA, price, purchase invitation, or comment prompt anywhere in narration.
 
-CRITICAL ${sceneCount}-SLOT SMARTPHONE STORYBOARD FORMULA (${targetDuration}s Total Runtime):
-The video consists of ${sceneCount} dynamic scene cuts (~${effectiveSceneSec.toFixed(1)}s each). Your voiceover MUST contain EXACTLY ${sceneCount} distinct spoken lines matching the progression of the video:
+Every narration line must describe the action or evidence visible in its corresponding frames. Never invent a spec. State RAM/storage numbers only if legible in the supplied frames or explicitly stated in product title/description. If memory capacity is not verifiable, say that the capacity is not clearly shown. Camera sample footage may include people as subjects in photos/videos captured by the phone. Reject only a reviewer/vlogger/presenter recording themselves while speaking directly to camera; do not reject people inside the phone's captured sample footage.
 
-- Slot 1 [00:00]: Dynamic Hook (tarik perhatian seputar keunggulan bodi, layar mulus, atau kamera).
-- Slot 2 s/d Slot ${sceneCount - 1}: Sorot fitur dan pengujian fisik yang tampak di frame (desain bodi, layar, performa, kamera).
-- Slot ${sceneCount}: Soft CTA penutup (kisaran harga pasar dan pancingan diskusi penonton).
-
-CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
-- TEMPO BICARA WAJIB SANTAI, JELAS, DAN TIDAK TERBURU-BURU!
-- Total voiceover script MUST contain between ${minWords} and ${maxWords} words (~${targetWords} words target, ~7-8 words per line across all ${sceneCount} scenes).
-- DILARANG menempelkan judul panjang SEO ke dalam naskah. Gunakan nama pendek produk (2-3 kata).
-- Suara narator WAJIB terdistribusi merata dari detik [00:00] sampai selesai dengan tempo santai.
-
-MANDATORY VISUAL GROUNDING (CRITICAL ANTI-HALLUCINATION RULE):
-- Frame video adalah sumber kebenaran utama. Product Description hanya untuk nama/konteks, BUKAN bukti fitur yang tidak terlihat.
-- Setiap baris voiceover WAJIB mencerminkan bukti fisik yang tampak pada frame yang dilampirkan (${trimmedFrames.length} frames): bodi, layar, hasil kamera, atau antarmuka yang terlihat.
-- DILARANG KERAS mengarang angka spesifikasi (nits, mAh, MP, GB, skor benchmark, "AnTuTu 800 ribu") atau klaim "kamera stabil 4K" jika tidak terlihat pada frame atau tidak disebut eksplisit di deskripsi.
-- DILARANG KERAS menyalin template generik seperti "rasa belasan juta", "baterai badak", atau "chipset dewa" bila visualnya tidak mendukung.
-- JIKA visual hanya menunjukkan box/segmentasi tanpa perangkat nyata, JANGAN membuat narasi seolah-olah fitur sedang diuji.
-
-STRICT RULES FOR VOICE OVER:
-- TONE & NATURALITAS: Hindari gaya bahasa kaku seperti membaca brosur atau berita. Bicaralah dengan gaya santai, luwes, dan kasual layaknya Anda sedang mereview langsung di depan kamera.
-- WAJIB BEREAKSI PADA ADEGAN: Voiceover harus mendeskripsikan secara spesifik apa yang SEDANG DITAMPILKAN di frame tersebut (misal: "Lihat deh desainnya...", "Layar depannya mulus banget kan..."). Jangan mengawang-awang atau bahas spesifikasi yang tidak terlihat.
-- ORIGINALITY & TRANSFORMATION: DILARANG mendeskripsikan video secara datar ("Ini adalah HP..."). Naskah WAJIB menyajikan alur review bernilai tambah: 1) Hook keunggulan yang tampak, 2) Pembuktian fitur fisik di layar/bodi/kamera, 3) Kesan hasil nyata, 4) Soft CTA pancingan diskusi.
-- NEVER mention unboxing cardboard boxes, bubble wrap, or plastic packaging. Focus 100% on phone aesthetics, UI, camera, performance, and battery.
-- Write in natural, engaging conversational Indonesian.
-- DILARANG KERAS menggunakan kata "kece" dan "kangen".
-- HINDARI KATA SLANG "ng" (nggak, ngasih, ngeliat, dll) - gunakan kata baku.
-- PENTING: Gunakan transkrip audio asli sebagai inspirasi utama, perbaiki menjadi bahasa Indonesia yang lebih natural dan relevan dengan produk.
-- DILARANG menyebut nama medsos lain.
-- DILARANG mengatakan "link di bio", "keranjang kuning", "checkout", atau ajakan beli langsung! Ini adalah Soft CTA murni untuk YouTube Shorts review.
-
-'voiceoverScript' (NASKAH VOICEOVER DENGAN PENANDA WAKTU & TAG EMOSI - WAJIB UNTUK TTS GEMINI):
-- Complete Indonesian spoken narration (${minWords} - ${maxWords} words total) across EXACTLY ${sceneCount} lines.
-- Setiap baris WAJIB diawali timestamp yang merata sesuai slot ([00:00], lalu seterusnya sampai penutup), diikuti tag emosi, baru kalimat.
-- Pakai tag dinamika agar suara AI hidup dan TIDAK monoton: [excited] untuk hook & penutup, [emphasis] untuk fitur kunci, [soft] untuk kesan/nuansa, [pause] untuk jeda alami antar kalimat.
-- Contoh format: "[00:00] [excited] Bodi belakangnya mewah, bezel layarnya tipis banget."
-
-'lexicon_to_replace' (PETAKAN ISTILAH TECH INGGRIS KE FONETIK INDONESIA UNTUK TTS):
-- Deteksi SEMUA istilah Inggris/teknis di naskah (mis. 'smartphone', 'AMOLED', 'refresh rate', 'chipset', 'Snapdragon', 'gaming', 'camera', 'battery', 'wireless', 'fast charging', 'giga', 'hertz', 'MP', 'nits').
-- Petakan ke ejaan pelafalan fonetik Indonesia agar dibaca natural (mis. {"smartphone": "smaartfon", "AMOLED": "aamoled", "Snapdragon": "snapdregon", "refresh rate": "riferesh reit", "hertz": "hert", "gaming": "geeming", "battery": "baeteri"}).
-- Format wajib: objek key-value. Jika tidak ada, isi {}. HANYA ubah ejaan pelafalan, JANGAN ubah makna atau tambah klaim.
-
-Output MUST be strictly valid JSON matching the requested schema.`
+Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. Make the voiceover span the full target duration with timestamps at approximately 00:00, 00:06, 00:12, 00:18, 00:24, 00:30, 00:36, and 00:42. Keep each line concise but descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
     : `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
@@ -2733,7 +2636,8 @@ Output MUST be strictly valid JSON matching the requested schema.`;
   const userPrompt = `=== INFORMASI PRODUK UTAMA ===
 Judul / Nama Produk: "${effectiveTitle}"
 ${effectiveDesc ? `Deskripsi & Spesifikasi Produk: "${effectiveDesc}"` : 'Deskripsi: (Analisis dari visual frame video)'}
-Visual Hook: "${productHook || (isGadget ? 'Smartphone Kencang Desain Mewah!' : 'Racun Viral Wajib Punya!')}"
+Visual Hook: "${isGadget ? 'Review dimulai dari tampilan layar yang terlihat' : (productHook || 'Racun Viral Wajib Punya!')}"
+${isGadget ? `KONTRAK SMARTPHONE: tepat 8 adegan berurutan (2 layar, 2 fitur, 2 kapasitas memori, 2 hasil kamera sebagai penutup), tanpa CTA/harga/ajakan komentar. Angka kapasitas hanya dari bukti terbaca atau deskripsi eksplisit. Orang dalam sampel foto/video kamera diperbolehkan; tolak hanya vlogger yang berbicara ke kamera.\nRencana adegan: ${smartphoneShotPlan}` : ''}
 Durasi Video Potongan: ${targetDuration} detik (Wajib naskah dengan panjang ${minWords} - ${maxWords} kata, target ideal: ~${targetWords} kata)
 
 Visual Frames of the concatenated 5-second AI-selected product clips (${trimmedFrames.length} frames):
@@ -2751,13 +2655,13 @@ PENTING - ATURAN DURASI, TIMESTAMP & TEMPO NASKAH:
 6. DILARANG KERAS menggunakan kata "kangen" dan HINDARI kata gaul berawalan "ng" (seperti: nggak, ngasih, ngeliat, ngerasain, ngapain, dll). Gunakan bahasa Indonesia baku (tidak, memberi, melihat, dll).
 7. KATA "keju" DAN "beres" WAJIB DITULIS PERSIS: "keju" dan "beres" (keju=keju, beres=beres) tanpa tanda kecil atau aksen di atas huruf e.
 8. DILARANG KERAS menyebutkan nama marketplace atau platform (Shopee, TikTok, Instagram, dll) di dalam naskah voiceover!
-${isGadget ? `9. UNTUK SMARTPHONE: WAJIB gunakan Soft CTA di penutup naskah: Sebutkan kisaran harga dan pancing komentar penonton (contoh: "Di kisaran harga dua jutaan, menurut kalian worth it gak? Komen di bawah ya!"). DILARANG kata "checkout", "keranjang kuning", atau "link di bio"!` : `9. JANGAN PERNAH gunakan kata "link di bio" di dalam naskah voiceover. Selalu gunakan ajakan seperti "Cek produk di bawah sekarang", "Klik produk di bawah", atau "Checkout produk di bawah sebelum kehabisan".`}
+${isGadget ? `9. UNTUK SMARTPHONE: dilarang CTA, harga, ajakan komentar, atau ajakan membeli. Kamera harus menjadi dua adegan terakhir.` : `9. JANGAN PERNAH gunakan kata "link di bio" di dalam naskah voiceover. Selalu gunakan ajakan seperti "Cek produk di bawah sekarang", "Klik produk di bawah", atau "Checkout produk di bawah sebelum kehabisan".`}
 10. PADA BAGIAN 'CAPTION' (WAJIB LENGKAP 5 STRUKTUR, DILARANG CUMA 1 KALIMAT):
     Susun caption lengkap profesional yang siap copy-paste langsung:
     - Bagian 1: Headline Hook & Emojis pemancing perhatian.
     - Bagian 2: Solusi & penjelasan produk mengapa layak dibeli / dipertimbangkan.
     - Bagian 3: Keunggulan Utama / Spesifikasi Kunci (3-4 bullet points dengan tanda '✅').
-    - Bagian 4: Urgensi & CTA (${isGadget ? 'Pancingan diskusi: "Menurut kalian worth it gak? Tulis di komentar ya!"' : 'Ajakan checkout keranjang kuning'}).
+    - Bagian 4: ${isGadget ? 'Ringkasan bukti tanpa CTA.' : 'Urgensi & CTA: ajakan checkout keranjang kuning.'}
     - Bagian 5: 10-15 hashtag viral relevan (${isGadget ? '#reviewhp #smartphoneterbaru #gadgetindonesia #hp2jutaan #hpmurah #shorts #techreview' : '#racunshopee #shopeehaul #spillracun #reelsviral #affiliateindonesia'}).
     - DILARANG KERAS menuliskan URL/link web, karakter China (Mandarin/Hanzi), dan DILARANG hanya membuat 1 kalimat pendek!
 11. Gunakan ejaan bahasa Indonesia baku yang wajar (misal: keren, elegan, praktis, keju, beres) tanpa menambahkan tanda aksen é atau è.
@@ -2768,10 +2672,10 @@ Return strict JSON in this format:
   "sampleContext": {
     "productName": "${effectiveTitle}",
     "videoDuration": "${targetDuration} detik",
-    "targetAudience": "${isGadget ? 'Pencari smartphone, tech enthusiast, dan penonton YouTube Shorts' : 'Target audiens'}",
-    "coreProblem": "${isGadget ? 'HP lama lemot, kamera buram, dan baterai boros' : 'Masalah utama'}",
-    "keyFeatures": [${isGadget ? '"Layar AMOLED 120Hz", "Chipset Kencang & RAM Lega", "Kamera Jernih 4K"' : '"Fitur 1", "Fitur 2", "Fitur 3"'}],
-    "buyingTrigger": "${isGadget ? 'Spek gahar di harga terjangkau' : 'Alasan psikologis beli'}"
+    "targetAudience": "${isGadget ? 'Penonton yang ingin memahami pengalaman pakai smartphone dari bukti visual' : 'Target audiens'}",
+    "coreProblem": "${isGadget ? 'Menilai layar, fitur, kapasitas memori, dan hasil kamera perangkat' : 'Masalah utama'}",
+    "keyFeatures": [${isGadget ? '"Layar sesuai bukti visual", "Fitur yang terlihat", "Kapasitas memori terverifikasi", "Sampel hasil kamera"' : '"Fitur 1", "Fitur 2", "Fitur 3"'}],
+    "buyingTrigger": "${isGadget ? 'Review berbasis bukti visual' : 'Alasan psikologis beli'}"
   },
   "scenes": [
     {
@@ -2782,9 +2686,9 @@ Return strict JSON in this format:
       "adAdvisorNotes": "Tips sutradara (SFX / Text Overlay)"
     }
   ],
-  "voiceoverScript": "${isGadget ? '[00:00] [excited] Cari HP spek kencang harga ramah kantong?\\n[00:05] [emphasis] Bodi belakangnya mewah dan bezel layarnya tipis...\\n[00:30] [soft] Di kisaran harga dua jutaan, worth it gak? Komen di bawah!' : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
+  "voiceoverScript": "${isGadget ? '[00:00] [neutral] Review layar dan antarmuka perangkat.\\n[00:06] [neutral] Detail perubahan yang terlihat pada layar.\\n[00:12] [neutral] Fitur yang sedang diperagakan.\\n[00:18] [neutral] Fungsi yang tampak di adegan.\\n[00:24] [neutral] Kapasitas memori bila terbaca jelas.\\n[00:30] [neutral] Detail tampilan penyimpanan.\\n[00:36] [soft] Sampel hasil kamera.\\n[00:42] [soft] Hasil kamera sebagai penutup.' : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
   "aiStudioPrompt": "Scene\\nStudio rekaman energik...\\n\\nSample Context\\nDurasi voice over ${targetDuration} detik...\\n\\nSpeaker 1\\n[00:00] [excited] Hook pembuka...",
-  "caption": "${isGadget ? '⚡ Smartphone 2 Jutaan Rasa Belasan Juta?! Layar 120Hz & Kamera Stabil! 📱✨\\n\\nKombinasi spek juara dan harga ramah kantong! Buat kalian yang butuh HP kencang anti lemot buat harian, smartphone ini wajib masuk wishlist 😍\\n\\nKeunggulan Utama:\\n✅ Layar AMOLED 120Hz super mulus\\n✅ Chipset kencang dipadu RAM lega\\n✅ Kamera jernih dengan rekaman stabil\\n✅ Baterai badak seharian + fast charging\\n\\nMenurut kalian di kisaran harga segini worth it gak? Coba tulis pendapat kalian di kolom komentar ya! 👇🔥\\n\\n#reviewhp #smartphoneterbaru #gadgetindonesia #hpmurah #hp2jutaan #rekomendasihp #shorts #techreview' : '🔥 Masih repot pakai cara lama yang bikin boros & berantakan? 🧼✨\\n\\nKenalin solusinya! Produk ini bikin pekerjaan harian kamu jadi 2x lebih cepat, praktis, dan hasilnya jauh lebih rapi maksimal 😍\\n\\nKeunggulan Utama:\\n✅ Desain praktis, inovatif, dan mudah digunakan\\n✅ Kualitas bahan premium, awet, dan tahan lama\\n✅ Hemat waktu, tenaga, dan bikin lebih efisien\\n✅ Bikin ruangan jadi lebih bersih, rapi, dan estetik\\n\\nBuruan checkout sekarang mumpung lagi diskon spesial & gratis ongkir! 🔥\\n\\n🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!\\n\\n#racunshopee #shopeehaul #spillracun #racuntiktok #racunbelanja #reelsviral #affiliateindonesia #barangunik #perabotandapur #dapurminimalis #fyp'}",
+  "caption": "${isGadget ? 'Review smartphone berdasarkan bukti visual.\\n\\nUrutan bahasan: layar dan antarmuka, fitur yang terlihat, kapasitas memori bila terverifikasi, lalu sampel kamera sebagai penutup.\\n\\n#reviewhp #smartphoneterbaru #gadgetindonesia #techreview' : '🔥 Masih repot pakai cara lama yang bikin boros & berantakan? 🧼✨\\n\\nKenalin solusinya! Produk ini bikin pekerjaan harian kamu jadi 2x lebih cepat, praktis, dan hasilnya jauh lebih rapi maksimal 😍\\n\\nKeunggulan Utama:\\n✅ Desain praktis, inovatif, dan mudah digunakan\\n✅ Kualitas bahan premium, awet, dan tahan lama\\n✅ Hemat waktu, tenaga, dan bikin lebih efisien\\n✅ Bikin ruangan jadi lebih bersih, rapi, dan estetik\\n\\nBuruan checkout sekarang mumpung lagi diskon spesial & gratis ongkir! 🔥\\n\\n🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!\\n\\n#racunshopee #shopeehaul #spillracun #racuntiktok #racunbelanja #reelsviral #affiliateindonesia #barangunik #perabotandapur #dapurminimalis #fyp'}",
   "lexicon_to_replace": {
     "istilah_inggris": "pelafalan_fonetik_indonesia"
   }
@@ -2886,7 +2790,30 @@ Return strict JSON in this format:
     throw scriptErr;
   }
 
-  const scenes = normalizeShortScenes(parsed.scenes, effectiveTitle, segmentDuration, sceneDuration);
+  const gadgetSceneRows = [
+    ['Review layar', 'Tampilan layar dan antarmuka yang sedang dibuka.'],
+    ['Detail layar', 'Gerakan dan perubahan menu yang terlihat pada layar.'],
+    ['Review fitur', 'Fitur yang sedang ditunjukkan pada adegan ini.'],
+    ['Detail fitur', 'Perhatikan fungsi perangkat yang benar-benar tampak.'],
+    ['Kapasitas memori', 'Angka kapasitas hanya disebut jika terbaca jelas.'],
+    ['Detail penyimpanan', 'Tampilan penyimpanan menjadi bukti untuk pembahasan memori.'],
+    ['Sampel kamera', 'Contoh foto atau video yang diambil dengan kamera ponsel.'],
+    ['Hasil kamera', 'Adegan terakhir menampilkan hasil kamera ponsel.'],
+  ];
+  const scenes = isGadget
+    ? gadgetSceneRows.map(([label, fallbackVoiceover], index) => {
+        const startSec = index * 6;
+        const endSec = Math.min(targetDuration, startSec + 6);
+        const source = Array.isArray(parsed.scenes) ? parsed.scenes[index] || {} : {};
+        return {
+          sceneNumber: index + 1,
+          timeRange: `${formatSeconds(startSec)} - ${formatSeconds(endSec)}`,
+          visualDescription: source.visualDescription || label,
+          voiceover: source.voiceover || fallbackVoiceover,
+          adAdvisorNotes: source.adAdvisorNotes || 'Ikuti bukti visual; tanpa klaim atau CTA.',
+        };
+      })
+    : normalizeShortScenes(parsed.scenes, effectiveTitle, targetDuration, effectiveSceneSec);
 
   let voiceoverScript = (parsed.voiceoverScript || '').trim();
   if (!voiceoverScript && scenes.length > 0) {
@@ -2895,13 +2822,14 @@ Return strict JSON in this format:
   if (!voiceoverScript) {
     const dynamicHook = productHook || getDynamicProductHookFallback(effectiveTitle, niche);
     voiceoverScript = isGadget
-      ? `[00:00] [excited] ${dynamicHook}
-[00:05] [emphasis] Bodi belakangnya mewah dengan frame kokoh yang sangat nyaman digenggam.
-[00:10] [neutral] Layar AMOLED seratus dua puluh Hertz bikin scrolling sosmed super mulus.
-[00:15] [emphasis] Chipset kencang dipadu RAM delapan giga, gaming lancar tanpa hambatan.
-[00:20] [excited] Hasil jepretan kamera dan rekaman videonya jernih, tajam serta stabil.
-[00:25] [emphasis] Baterai awet seharian penuh didukung teknologi pengisian daya super cepat.
-[00:30] [excited] Di kisaran harga dua jutaan, menurut kalian worth it gak? Komen di bawah ya!`
+      ? `[00:00] [neutral] Perhatikan layar dan antarmuka yang sedang dibuka.
+[00:06] [neutral] Gerakan pada layar terlihat saat menu berganti.
+[00:12] [emphasis] Di sini fitur perangkat sedang diperagakan.
+[00:18] [neutral] Perhatikan detail fungsi yang benar-benar tampak.
+[00:24] [neutral] Kapasitas memori hanya disebut bila angkanya terbaca.
+[00:30] [neutral] Tampilan penyimpanan memberi konteks kapasitas perangkat.
+[00:36] [soft] Sekarang terlihat sampel hasil kamera ponsel.
+[00:42] [soft] Sebagai penutup, perhatikan detail hasil kameranya.`
       : `[00:00] [excited] ${dynamicHook}
 [00:03] [emphasis] Untung sekarang ada ${effectiveTitle} ini yang bikin praktis.
 [00:07] [soft] Busa melimpah, kotoran tebal langsung rontok seketika.
@@ -2912,7 +2840,8 @@ Return strict JSON in this format:
   }
 
   let rawCaption = (parsed.caption || '').trim();
-  let caption = formatEnrichedCaption({
+  if (isGadget && !rawCaption) rawCaption = `Review smartphone berdasarkan bukti visual.\n\nBahasan mengikuti urutan layar, fitur, kapasitas memori terverifikasi, dan sampel kamera. #reviewhp #gadgetindonesia`;
+  let caption = isGadget ? rawCaption : formatEnrichedCaption({
     caption: rawCaption,
     productTitle: effectiveTitle,
     productDescription: effectiveDesc,
@@ -2921,7 +2850,9 @@ Return strict JSON in this format:
     platform: 'clipper'
   });
 
-  let aiStudioPrompt = (parsed.aiStudioPrompt || '').trim();
+  let aiStudioPrompt = isGadget
+    ? `Scene\nDelapan adegan berurutan: layar, fitur, kapasitas memori, lalu sampel kamera sebagai penutup.\n\nSpeaker 1\n${voiceoverScript}`
+    : (parsed.aiStudioPrompt || '').trim();
   const fallbackLastSec = Math.max(0, targetDuration - 5);
   if (!aiStudioPrompt) {
     aiStudioPrompt = `Scene\nStudio rekaman energik dengan presenter Indonesia yang antusias dan percaya diri.\n\nSample Context\nDurasi voice over ${fallbackLastSec} detik. Iklan affiliate viral. Dimulai dengan hook yang mengejutkan, membangun ke demonstrasi manfaat produk, diakhiri CTA yang meyakinkan. Nada suara hangat, antusias, dan persuasif.\n\nSpeaker 1 - Orus\n[intrigue] Stop scroll dulu! [desire] ${effectiveTitle} yang satu ini beneran wajib kamu punya! [information] ${effectiveDesc ? effectiveDesc.slice(0, 120) + '.' : 'Produk ini hadir dengan kualitas premium dan desain yang praktis untuk kebutuhan sehari-hari.'} [excited] Udah ribuan orang pake dan reviewnya bagus semua! [inspiration] Kualitasnya terbukti awet dan terpercaya untuk jangka panjang. [confident] Buruan cek produk di bawah sekarang sebelum kehabisan!`;
@@ -2973,7 +2904,7 @@ Return strict JSON in this format:
       targetAudience: "Pencari produk viral & praktis",
       coreProblem: "Mencari produk berkualitas dengan harga terjangkau",
       keyFeatures: ["Praktis & Multifungsi", "Bahan Berkualitas", "Harga Terjangkau"],
-      buyingTrigger: "FOMO & Diskon Terbatas"
+      buyingTrigger: isGadget ? "Review berbasis bukti visual" : "FOMO & Diskon Terbatas"
     },
     scenes,
     voiceoverScript,

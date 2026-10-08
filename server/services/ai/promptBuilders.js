@@ -411,7 +411,7 @@ export function build7SlotStoryboardClips({
   const storyboardClips = [];
 
   // FACE POLICY (Fase 4, data-driven): frame camera-eligible hanya boleh dipakai slot yang
-  // mendeklarasikan policy non-strict di preset (gadget slot 5 review kamera = presenter_only).
+  // mendeklarasikan policy non-strict di preset (smartphone camera sample slots = presenter_only).
   // Slot tanpa facePolicy = 'strict' helper getSlotFacePolicy -> perilaku lama tak berubah (kitchen).
   const slotFacePolicies = slotsConfig.map((sc) => getSlotFacePolicy(preset, sc?.key) || 'strict');
   const isCameraEligibleFrame = (f) => Boolean(f && (f.isCameraResultEligible === true || f.cameraResultEligible === true));
@@ -571,7 +571,7 @@ export function build7SlotStoryboardClips({
       frameObj = getFrameByIdx(chosenIdx);
     }
 
-    if (config.slot === 1) {
+    if (config.slot === 1 && niche !== 'gadget_smartphone') {
       // ── SLOT 1: WAJIB VISUAL PRODUK UTUH (Opening Hero Shot) ──
       // Dilarang peragaan aksi (menggosok, memotong, memeras) di Slot 1!
       const isCleanHeroCandidate = (f) => {
@@ -625,17 +625,22 @@ export function build7SlotStoryboardClips({
         }
       }
     } else if (config.slot === 5) {
-      // Slot 5: Action demo 3 (rinsing / proof / result)
-      if (!frameObj && slotPolicy === 'presenter_only') {
-        // FACE POLICY (Fase 4): slot review kamera (gadget slot 5) prioritaskan bukti kamera
-        // dari pool cameraResultEligible (wajah konten oke, wajah kreator tetap terblokir Oracle visual policy)
-        frameObj = validFrames.find(f => isCameraEligibleFrame(f) && !isForbiddenFrame(f)) || null;
-      }
+      // Kitchen slot 5 is a result shot; smartphone slot 5 is memory evidence.
       if (!frameObj) {
         const resultCandidateIdx = Math.min(totalFramesCount, Math.max(6, Math.floor(totalFramesCount * 0.78)));
         frameObj = getFrameByIdx(resultCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 8)];
       }
-    } else if (config.slot === 6 || config.slot === 7) {
+    } else if (niche === 'gadget_smartphone' && config.slot >= 7) {
+      // The two camera sample scenes are the only smartphone slots allowed to use
+      // camera-result frames (which may contain photographed people).
+      if (!frameObj && slotPolicy === 'presenter_only') {
+        frameObj = validFrames.find(f => isCameraEligibleFrame(f) && !isForbiddenFrame(f) && isUsableDistinctFrame(f, slotPolicy)) || null;
+      }
+      if (!frameObj) {
+        const lateIndex = Math.min(totalFramesCount - 1, Math.floor(totalFramesCount * (0.72 + (config.slot - 7) * 0.12)));
+        frameObj = validFrames[lateIndex] || null;
+      }
+    } else if (config.slot >= 6) {
       // Slot 6 & 7: cari hero/closing frame yang BENAR-BENAR berbeda.
       if (!frameObj) {
         const lateHeroCandidates = validFrames
@@ -660,10 +665,10 @@ export function build7SlotStoryboardClips({
 
     const candIdx = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : 0;
     const candDuration = frameObj?.candidate?.duration || totalDuration;
-    const frameTs = frameObj.timestamp !== undefined ? frameObj.timestamp : (sIdx * (candDuration / 7));
+    const frameTs = frameObj.timestamp !== undefined ? frameObj.timestamp : (sIdx * (candDuration / Math.max(1, slotsConfig.length)));
 
     let startSec = Math.max(0, Math.min(candDuration - clipSec, Math.round(frameTs * 10) / 10));
-    if (startSec < minSafeStart && config.slot !== 6 && config.slot !== 7) {
+    if (startSec < minSafeStart && config.slot !== 6 && !(niche === 'gadget_smartphone' && config.slot >= 7)) {
       startSec = minSafeStart;
     }
 

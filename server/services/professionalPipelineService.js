@@ -73,18 +73,20 @@ export function buildProductFingerprint({ title = '', description = '', productI
 
 export function buildCreativeShotPlan({ fingerprint = {}, niche = 'kitchen_tools' } = {}) {
   if (niche === 'gadget_smartphone') {
+    const topics = [
+      ['screen_review', 'Review layar dan antarmuka yang sedang terlihat'],
+      ['screen_detail', 'Detail pengalaman layar dari aksi yang tampak'],
+      ['feature_review', 'Demonstrasi fitur yang benar-benar terlihat'],
+      ['feature_detail', 'Detail fungsi atau bentuk perangkat yang tampak'],
+      ['memory_capacity', 'Kapasitas RAM atau penyimpanan yang terverifikasi'],
+      ['memory_detail', 'Bukti visual kapasitas atau pengelolaan penyimpanan'],
+      ['camera_sample', 'Sampel foto atau video hasil kamera ponsel'],
+      ['camera_result', 'Review hasil kamera sebagai adegan terakhir'],
+    ];
     return {
       strategy: 'story_first',
       sourcePolicy: 'multi_angle_dynamic_preferred',
-      shots: [
-        { role: 'hook_hero', purpose: 'Buka dengan hero shot paling kuat', targetSec: 1.8, minSec: 1.4, maxSec: 2.4 },
-        { role: 'design_detail', purpose: 'Detail fisik/build quality', targetSec: 2.6, minSec: 2.0, maxSec: 3.3 },
-        { role: 'screen_action', purpose: 'Interaksi layar/UI yang nyata', targetSec: 3.2, minSec: 2.5, maxSec: 3.8 },
-        { role: 'performance_demo', purpose: 'Aksi penggunaan/performa', targetSec: 3.2, minSec: 2.5, maxSec: 3.8 },
-        { role: 'camera_result', purpose: 'Bukti hasil kamera/fitur', targetSec: 2.8, minSec: 2.2, maxSec: 3.5 },
-        { role: 'proof', purpose: 'Bukti tambahan yang terlihat', targetSec: 2.5, minSec: 2.0, maxSec: 3.2 },
-        { role: 'cta_hero', purpose: 'Hero shot penutup untuk CTA', targetSec: 2.3, minSec: 1.8, maxSec: 3.0 },
-      ],
+      shots: topics.map(([role, purpose]) => ({ role, purpose, targetSec: 6, minSec: 5, maxSec: 7.5 })),
     };
   }
 

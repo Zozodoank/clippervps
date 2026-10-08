@@ -78,7 +78,7 @@ describe('classifyFailure — prioritas flag terstruktur', () => {
   it('flag infra (OracleUnavailableError / kuota / isInfraError) mengalahkan marker konten di reason', () => {
     expect(classifyFailure({ err: { code: 'ORACLE_UNAVAILABLE', message: 'Oracle tidak mengklaim batch' } })).toBe('infra');
     expect(classifyFailure({ err: { isQuotaError: true, message: 'Frame kotor: tidak ada narasi voice-over' } })).toBe('infra');
-    expect(classifyFailure({ err: { isInfraError: true, message: 'whisper.cpp crash' } })).toBe('infra');
+    expect(classifyFailure({ err: { isInfraError: true, message: 'ffmpeg process crash' } })).toBe('infra');
   });
 
   it('outage Gatekeeper :5050 = infra walau kalimat pembungkusnya berbunyi "cukup cuplikan"', () => {
