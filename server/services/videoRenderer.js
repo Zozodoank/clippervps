@@ -447,9 +447,16 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
     const deduplicated = [];
     for (const c of normalized) {
       const isDuplicate = !c.isConformedLoop && deduplicated.some(existing => {
-        const sameVideo = (existing.videoPath && c.videoPath && existing.videoPath === c.videoPath) ||
-          (existing.candidateIndex !== null && existing.candidateIndex !== undefined && existing.candidateIndex === c.candidateIndex) ||
-          (!existing.videoPath && !c.videoPath && existing.candidateIndex === c.candidateIndex);
+        // candidateIndex identifies a YouTube source, not a downloaded section file.
+        // Several valid sections from one candidate have distinct videoPath values;
+        // treating candidateIndex alone as asset identity collapsed those sections
+        // into one clip and caused 6s outputs to fail the 20s minimum.
+        const bothHavePaths = Boolean(existing.videoPath && c.videoPath);
+        const sameVideo = bothHavePaths
+          ? existing.videoPath === c.videoPath
+          : (!existing.videoPath && !c.videoPath &&
+            existing.candidateIndex !== null && existing.candidateIndex !== undefined &&
+            existing.candidateIndex === c.candidateIndex);
         const sameMode = existing.reframe?.renderMode === c.reframe?.renderMode;
         return sameVideo && sameMode && !existing.isConformedLoop && Math.abs(existing.startSeconds - c.startSeconds) < 3.5;
       });
@@ -466,6 +473,7 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
     if (currentTotal < MIN_VIDEO_DURATION_SEC && deduplicated.length > 0) {
       const durationErr = new Error(`Durasi final video terlalu pendek (${currentTotal.toFixed(1)} detik, minimal ${MIN_VIDEO_DURATION_SEC} detik). Silakan gunakan video dengan variasi adegan yang lebih banyak.`);
       durationErr.isAiRejection = true;
+      durationErr.isRenderPlanShortfall = true;
       durationErr.rejectionReason = `Durasi final (${currentTotal.toFixed(1)}s) tidak memenuhi syarat minimal algoritma Reels (${MIN_VIDEO_DURATION_SEC}s).`;
       if (isAutoModeFallback) {
         throw durationErr;
