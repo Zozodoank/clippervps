@@ -50,17 +50,6 @@ export async function renderSilentAntiDetectionVideo({
     }
   }
 
-  const dims = await getVideoDimensions(targetVideo, ffmpegPath);
-  const isSourceVertical = Boolean(dims && dims.height > dims.width);
-
-  onProgress({
-    step: 'render_silent',
-    message: isSourceVertical
-      ? 'Rendering Smart Stage 80% product shots (Muted, No Subtitles, Top/Bottom Blur)...'
-      : 'Rendering Smart Stage 80% product shots (Muted, No Subtitles, Top/Bottom Blur)...',
-    progress: 60
-  });
-
   return new Promise(async (resolve, reject) => {
     try {
       const selectedClips = normalizeRenderClips(clips, startTime, endTime, reframe, isAutoModeFallback);
@@ -79,6 +68,15 @@ export async function renderSilentAntiDetectionVideo({
       if (renderSourceIds.size >= 2 && selectedClips.length < 2) {
         throw new Error('Render dibatalkan: storyboard multi-source kehilangan klip unik.');
       }
+
+      // Report rendering only after clip normalization and the automatic minimum
+      // duration gate pass. Otherwise operators see a render stage for a plan that
+      // is rejected before FFmpeg starts.
+      onProgress({
+        step: 'render_silent',
+        message: 'Rendering Smart Stage 80% product shots (Muted, No Subtitles, Top/Bottom Blur)...',
+        progress: 60,
+      });
 
       const safeSpeedMultiplier = clampNumber(speedMultiplier, 0.5, 2, 1);
       const ptsFactor = (1 / safeSpeedMultiplier).toFixed(4);
