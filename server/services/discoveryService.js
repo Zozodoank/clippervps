@@ -1419,7 +1419,7 @@ export async function discoverSingleShopeeProduct(keyword, seen = new Set()) {
       }
 
       const titleCandidate = cleanTitle(rawTitle, result.url);
-      if (!titleCandidate || isGenericShopeeTitle(titleCandidate)) {
+      if (!titleCandidate || isGenericShopeeTitle(titleCandidate) || hasRecommendationListicleIntent(titleCandidate)) {
         continue;
       }
 
@@ -1886,6 +1886,7 @@ export function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescripti
     const fallbackModelToken = titleTokens.find((token) =>
       /^(?=.*\d)[A-Za-z0-9-]{2,}$/i.test(token) &&
       !isMeasurementOrVariantToken(token) &&
+      !isCalendarYearToken(token) &&
       normalizeText(token) !== seedNorm
     ) || '';
 
@@ -1938,6 +1939,7 @@ export function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescripti
   const model = titleTokens.find((token) =>
     /^(?=.*\d)[A-Za-z][A-Za-z0-9-]{2,}$/i.test(token) &&
     !isMeasurementOrVariantToken(token) &&
+    !isCalendarYearToken(token) &&
     normalizeText(token) !== seedNorm &&
     normalizeText(token) !== hit[0]
   ) || '';
@@ -1985,6 +1987,13 @@ export function pickValidIdentitySearchQuery(brand = '', productType = '', model
 function isSmartphoneDiscovery(niche = '', text = '') {
   return getNichePreset(niche)?.id === 'gadget_smartphone' ||
     /\b(?:smartphone|handphone|ponsel|hp)\b/i.test(String(text || ''));
+}
+
+/** Reject recommendation/listicle titles before treating them as a single product or source video. */
+export function hasRecommendationListicleIntent(text = '') {
+  const value = normalizeText(String(text || ''));
+  return /\b(?:rekomendasi|recommendations?|recommended|top\s*\d+|best\s*\d+)\b/i.test(value) ||
+    /\b\d+\s+(?:smartphones?|smart\s+phones?|ponsel|handphone|hp)\b/i.test(value);
 }
 
 function requireQuotedReview(query = '') {
@@ -2106,6 +2115,7 @@ export async function discoverBrandedShopeeProduct({
       }
       return r?.url &&
         !seen.has(r.url) &&
+        !hasRecommendationListicleIntent(rawTitle) &&
         text.includes(normalizeText(brandSeed)) &&
         !isBundleOrSetProduct(text) &&
         !isFoodOrBeverageProduct(text) &&
@@ -3922,6 +3932,7 @@ export function isLikelyCleanYouTubeCandidate(candidate, productWords = []) {
   if (isChineseSocialOrForeignMedia(candidate.title || '') || isChineseSocialOrForeignMedia(candidate.description || '')) return false;
 
   const titleText = normalizeText(candidate.title || '');
+  if (hasRecommendationListicleIntent(titleText)) return false;
   if (isBulkyOrUnsuitableProduct(titleText)) return false;
 
   const isToolDemoTitle = /\b(alat|cetakan|maker|chopper|slicer|parutan|peeler|presser|cutter|pisau|gunting|wajan|panci|dispenser|sealer|praktis|review|unboxing|demo|pakai|menggunakan)\b/i.test(titleText);
@@ -4099,6 +4110,7 @@ export function isVagueOrAggregateProduct(info = {}) {
   // Periksa gabungan: productType + title, karena identitas produk tersebar di keduanya.
   const text = `${type} ${title}`.trim();
   if (!text) return true;
+  if (hasRecommendationListicleIntent(title)) return true;
 
   const matchedNouns = new Set();
   for (const noun of PRODUCT_NOUN_TOKENS) {
@@ -4570,6 +4582,10 @@ function isMeasurementOrVariantToken(value = '') {
     return true;
   }
   return false;
+}
+
+function isCalendarYearToken(value = '') {
+  return /^(?:19|20)\d{2}$/.test(String(value || '').trim());
 }
 
 function extractDynamicProductIdentity(title = '', description = '', explicitBrand = '') {
