@@ -54,10 +54,8 @@ const CONTENT_REJECT_MARKERS = [
   'cuplikan aksi demonstrasi bersih terlalu sedikit',
   'tidak memenuhi syarat',
   'sumber terpakai',
-  'gagal merender video setelah',
   'watermark',
   'final_master_qc_failed',
-  'durasi final video terlalu pendek',
   'subtitle terbakar',
   'teks overlay promosi',
   'bumper statis',
@@ -150,6 +148,9 @@ export function classifyFailure({ err = null, message = '', reason = '' } = {}) 
   if (err?.isInfraError) return 'infra';
   if (err?.code === 'ORACLE_UNAVAILABLE' || err?.name === 'OracleUnavailableError') return 'infra';
   if (err?.isQuotaError || err?.isAllModelsQuotaExhausted) return 'infra';
+  // Renderer duration/dedup shortfalls describe a broken/incomplete assembly plan,
+  // not a Qwen content verdict. Do not put those products in the content cooldown.
+  if (err?.isRenderPlanShortfall) return 'unknown';
 
   // Pola infrastruktur diuji pada PESAN penuh sebelum flag konten: polanya spesifik
   // (kata majemuk/pola teknis) sehingga judul produk tidak ikut kena.
