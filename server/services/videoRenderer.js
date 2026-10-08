@@ -458,12 +458,16 @@ export function normalizeRenderClips(clips, fallbackStartTime, fallbackEndTime, 
             existing.candidateIndex !== null && existing.candidateIndex !== undefined &&
             existing.candidateIndex === c.candidateIndex);
         const sameMode = existing.reframe?.renderMode === c.reframe?.renderMode;
-        return sameVideo && sameMode && !existing.isConformedLoop && Math.abs(existing.startSeconds - c.startSeconds) < 3.5;
+        // Scene plans use ~3.3s windows by default. A 3.5s start-distance rule
+        // therefore erased adjacent, intentionally selected scenes from the same
+        // source and could collapse a multi-scene plan to one 6s shot. Only merge
+        // clips whose starts are effectively the same timestamp.
+        return sameVideo && sameMode && !existing.isConformedLoop && Math.abs(existing.startSeconds - c.startSeconds) < 0.75;
       });
       if (!isDuplicate) {
         deduplicated.push(c);
       } else {
-        console.log(`[normalizeRenderClips] ⚠️ Membuang klip duplikat / berjarak terlalu dekat (< 3.5s) pada timestamp ${c.startSeconds}s.`);
+        console.log(`[normalizeRenderClips] ⚠️ Membuang klip duplikat pada timestamp yang nyaris sama (< 0.75s): ${c.startSeconds}s.`);
       }
     }
     // Evaluasi Durasi Minimal (20 Detik)
