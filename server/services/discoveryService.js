@@ -1900,13 +1900,7 @@ export function extractBrandedYouTubeProductIdentity(rawTitle = '', rawDescripti
       brand: brandSeed,
       model: cleanModel,
       productType,
-      searchQueries: [
-        `${brandSeed} ${cleanModel} review indonesia`.trim(),
-        `${brandSeed} ${cleanModel} unboxing`.trim(),
-        `${brandSeed} ${cleanModel} tes kamera gaming`.trim(),
-        `${brandSeed} ${cleanModel} ${productType}`.trim(),
-        `${brandSeed} ${cleanModel}`.trim(),
-      ].filter((q) => q && q.length > brandSeed.length),
+      searchQueries: [`${brandSeed} ${cleanModel || productType} "review"`.trim()],
     };
   }
 
@@ -2245,8 +2239,14 @@ export async function discoverYouTubeCandidatesForProduct({
 
   // Rotate query order based on searchIteration so consecutive auto retry attempts hit fresh queries first
   const offset = searchIteration % baseQueryCandidates.length;
-  const queryCandidates = [...baseQueryCandidates.slice(offset), ...baseQueryCandidates.slice(0, offset)]
-    .map((query) => smartphoneSearch ? requireQuotedReview(query) : query);
+  const orderedQueryCandidates = [...baseQueryCandidates.slice(offset), ...baseQueryCandidates.slice(0, offset)];
+  const smartphoneIdentity = [productInfo.brand, productInfo.model || coreNoun]
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' ');
+  const queryCandidates = smartphoneSearch
+    ? (smartphoneIdentity ? [`${smartphoneIdentity} "review"`] : orderedQueryCandidates.slice(0, 1).map(requireQuotedReview))
+    : orderedQueryCandidates;
 
   let candidates = [];
   let usedQuery = queryCandidates[0];
@@ -2282,14 +2282,16 @@ export async function discoverYouTubeCandidatesForProduct({
   if (!candidates.length) {
     const brand = (productInfo.brand || '').trim();
     const model = (productInfo.model || '').trim();
-    const fallbackQueries = [
+    const fallbackQueries = smartphoneSearch
+      ? (smartphoneIdentity ? [`${smartphoneIdentity} "review"`] : [])
+      : [
       brand && model ? `${brand} ${model} review` : '',
       brand && model ? `unboxing ${brand} ${model}` : '',
       brand ? `${brand} ${coreNoun} review` : '',
       `${coreNoun} review indonesia`,
       `${coreNoun} review`,
       `${cleanTitle(productTitle)} review`,
-    ].filter(Boolean).map((query) => smartphoneSearch ? requireQuotedReview(query) : query);
+    ].filter(Boolean);
 
     for (const fbQuery of fallbackQueries) {
       let fbResults = await searchYouTubeVideos(fbQuery, { limit, onProgress });
@@ -2543,7 +2545,23 @@ export async function searchMultiEngineVideos(query, {
   niche = '',
 } = {}) {
   const smartphoneSearch = isSmartphoneDiscovery(niche, query);
-  if (smartphoneSearch) query = requireQuotedReview(query);
+  if (smartphoneSearch) {
+    // Remove listicle/count language from every caller, including AI suggestions.
+    query = String(query || '')
+      .replace(/^\s*\d+\s+(?=(?:(?:rekomendasi|terbaik|teratas|best|top)\s+)*(?:smartphone|ponsel|handphone|hp)\b)/i, '')
+      .replace(/\b(?:rekomendasi|terbaik|teratas|best|top|review|unboxing|review\s+jujur|review\s+indonesia|tes\s+kamera|tes\s+gaming|demo\s+produk|preview|tanpa\s+bicara|produk|video|viral|terbaru|murah|\d{4})\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const identityOnly = query
+      .replace(/\b(?:smartphone|ponsel|handphone|hp|review)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!identityOnly) {
+      console.log('[MultiEngineVideo] Lewati kueri smartphone tanpa identitas merek/model setelah membersihkan kata listicle.');
+      return [];
+    }
+    query = requireQuotedReview(query);
+  }
   const excludeSet = excludeVideoIds instanceof Set ? excludeVideoIds : new Set(excludeVideoIds || []);
   const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
 
@@ -4687,6 +4705,12 @@ function extractDynamicSearchAttributes(title = '') {
 }
 
 export function buildDynamicProductSearchQueries({ title = '', noun = '', englishNoun = '', brand = '', model = '', identity = '' } = {}) {
+  if (isSmartphoneDiscovery('', `${title} ${noun} ${englishNoun} ${identity}`)) {
+    const smartphoneIdentity = [brand, model || noun || englishNoun]
+      .map((part) => String(part || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    return smartphoneIdentity.length ? [`${smartphoneIdentity.join(' ')} "review"`] : [];
+  }
   const queries = [];
   const add = (query) => {
     // Identitas produk bisa saja ikut membawa kata dari listing jasa servis

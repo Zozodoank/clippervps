@@ -1044,7 +1044,11 @@ async function _runStage1Pipeline({
         const b = (info.brand || options.brand || '').trim();
         const m = (info.model || options.model || '').trim();
         const p = (info.coreProductNoun || options.productType || '').trim();
-        const fallbackQueries = [
+        const smartphoneSearch = options.niche === 'gadget_smartphone';
+        const smartphoneIdentity = [b, m || p].filter(Boolean).join(' ').trim();
+        const fallbackQueries = smartphoneSearch
+          ? (smartphoneIdentity ? [`${smartphoneIdentity} "review"`] : [])
+          : [
           // ALUR BARU (fix 0/20): merk+tipe polos dulu (paling bersih), lalu "review" berkutip;
           // varian longgar di bawah ini hanya dipakai bila yang polos tidak menghasilkan kandidat.
           b && m ? `${b} ${m}` : '',
@@ -1133,6 +1137,11 @@ async function _runStage1Pipeline({
         const combinedBP = (b && p && normalizeText(b) !== normalizeText(p)) ? `${b} ${p}` : (p || b);
 
         const customQueries = [];
+        const smartphoneSearch = options.niche === 'gadget_smartphone';
+        const smartphoneIdentity = [b, prodInfo.model || p].filter(Boolean).join(' ').trim();
+        if (smartphoneSearch) {
+          if (smartphoneIdentity) customQueries.push(`${smartphoneIdentity} "review"`);
+        } else {
         // ALUR BARU (fix 0/20): awali dengan merk+tipe polos + "review" berkutip (paling bersih),
         // baru usulan AI & varian longgar di bawah sebagai fallback.
         if (combinedBP) {
@@ -1165,6 +1174,7 @@ async function _runStage1Pipeline({
           `${cleanTitle(productTitle)} review`,
           `${cleanTitle(productTitle)} demo`
         );
+        }
 
         const validQueries = [...new Set(customQueries.filter(q => q && q.length > 3))];
 
