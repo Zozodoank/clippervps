@@ -517,6 +517,10 @@ export function build7SlotStoryboardClips({
   const isUsableDistinctFrame = (f, facePolicy = 'strict') => {
     if (!f || isForbiddenFrame(f, facePolicy)) return false;
 
+    // A smartphone camera-review slot must be backed by a frame explicitly audited
+    // as captured camera output. A late phone B-roll frame is not a camera sample.
+    if (niche === 'gadget_smartphone' && facePolicy === 'presenter_only' && !isCameraEligibleFrame(f)) return false;
+
     // FACE POLICY (Fase 4): slot strict DILARANG memakai frame camera-eligible (ada wajah konten,
     // misal reviewer di layar review kamera) walaupun frame itu ikut terpool untuk slot presenter_only.
     if (facePolicy !== 'presenter_only' && isCameraEligibleFrame(f)) return false;
@@ -574,7 +578,18 @@ export function build7SlotStoryboardClips({
       frameObj = getFrameByIdx(chosenIdx);
     }
 
-    if (config.slot === 1 && niche !== 'gadget_smartphone') {
+    if (niche === 'gadget_smartphone') {
+      // Smartphone slots 1-6 keep only Gemini's role-specific storyboard frame.
+      // Slots 7-8 may recover from another frame, but only from the Kaggle/Gemini
+      // camera-result pool; never relabel arbitrary late B-roll as a camera sample.
+      if (config.slot >= 7 && (!frameObj || !isCameraEligibleFrame(frameObj))) {
+        frameObj = validFrames.find((f) =>
+          isCameraEligibleFrame(f) &&
+          !isForbiddenFrame(f, slotPolicy) &&
+          isUsableDistinctFrame(f, slotPolicy)
+        ) || null;
+      }
+    } else if (config.slot === 1) {
       // ── SLOT 1: WAJIB VISUAL PRODUK UTUH (Opening Hero Shot) ──
       // Dilarang peragaan aksi (menggosok, memotong, memeras) di Slot 1!
       const isCleanHeroCandidate = (f) => {
@@ -633,16 +648,6 @@ export function build7SlotStoryboardClips({
         const resultCandidateIdx = Math.min(totalFramesCount, Math.max(6, Math.floor(totalFramesCount * 0.78)));
         frameObj = getFrameByIdx(resultCandidateIdx) || validFrames[Math.min(validFrames.length - 1, 8)];
       }
-    } else if (niche === 'gadget_smartphone' && config.slot >= 7) {
-      // The two camera sample scenes are the only smartphone slots allowed to use
-      // camera-result frames (which may contain photographed people).
-      if (!frameObj && slotPolicy === 'presenter_only') {
-        frameObj = validFrames.find(f => isCameraEligibleFrame(f) && !isForbiddenFrame(f, slotPolicy) && isUsableDistinctFrame(f, slotPolicy)) || null;
-      }
-      if (!frameObj) {
-        const lateIndex = Math.min(totalFramesCount - 1, Math.floor(totalFramesCount * (0.72 + (config.slot - 7) * 0.12)));
-        frameObj = validFrames[lateIndex] || null;
-      }
     } else if (config.slot >= 6) {
       // Slot 6 & 7: cari hero/closing frame yang BENAR-BENAR berbeda.
       if (!frameObj) {
@@ -656,6 +661,11 @@ export function build7SlotStoryboardClips({
     let distinctFrame = null;
     if (frameObj && isUsableDistinctFrame(frameObj, slotPolicy)) {
       distinctFrame = frameObj;
+    } else if (niche === 'gadget_smartphone' && config.slot >= 7) {
+      distinctFrame = chooseDistinctFrame(frameObj, targetCandidate, slotPolicy);
+    } else if (niche === 'gadget_smartphone') {
+      // Do not fill missing screen, feature, or memory scenes with unrelated B-roll.
+      distinctFrame = null;
     } else {
       distinctFrame = chooseDistinctFrame(frameObj, targetCandidate, slotPolicy);
     }
