@@ -183,7 +183,8 @@ export async function runSourceAcquisitionV2(p) {
     gatePreviewSec = Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 15,
   } = p;
 
-  const diagnostics = { screened: 0, gated: 0, verdictEligible: 0, transcribed: 0, oracleVetoed: 0 };
+  const diagnostics = { screened: 0, gated: 0, verdictEligible: 0, transcribed: 0, oracleVetoed: 0, metadataInfraFailures: 0, previewInfraFailures: 0 };
+  let lastSourceInfraError = null;
   const sourceKeys = new Set((candidatePool || []).map((cand) => {
     const url = String(cand?.url || (typeof cand === 'string' ? cand : '')).trim();
     return url ? (extractVideoId(url) || url) : '';
@@ -206,7 +207,10 @@ export async function runSourceAcquisitionV2(p) {
       const { metadata: meta } = await fetchVideoMetadataAndStream(cand.url, { onProgress: updateProgress });
       const compliance = checkVideoMetadataCompliance(meta, productTitle, { ...options, isVisualSearch: Boolean(productImage), productImage, imageUrl: productImage });
       diagnostics.screened++;
-      if (!compliance.eligible) continue; // vonis konten metadata -> drop tanpa throw
+      if (!compliance.eligible) {
+        diagnostics.metadataRejected = (diagnostics.metadataRejected || 0) + 1;
+        continue; // vonis konten metadata -> drop tanpa throw
+      }
       // Analyze the complete YouTube stream before downloading even the short gate
       // preview. Gemini's selected timestamps become the only section plan for L4.
       updateProgress({ step: 'full_video_gemini', message: `Gemini menganalisis video penuh (${meta.title}); memilih adegan sebelum unduh section...`, progress: 14 });
@@ -228,17 +232,33 @@ export async function runSourceAcquisitionV2(p) {
         analysisError.isInfraError = true;
         throw analysisError;
       }
-      if ((fullVideoPlan.clips || []).length < 4) continue;
+      if ((fullVideoPlan.clips || []).length < 4) {
+        diagnostics.fullVideoShortPlans = (diagnostics.fullVideoShortPlans || 0) + 1;
+        continue;
+      }
       const sourceId = extractVideoId(cand.url) || cand.url;
       if (seenSourceIds.has(sourceId)) continue;
       seenSourceIds.add(sourceId);
       screened.push({ url: cand.url, meta, sourceId, title: meta.title, fullVideoPlan });
     } catch (err) {
-      if (err?.isInfraError) throw err; // gangguan -> serahkan ke master loop (jangan blacklist)
+      if (err?.isInfraError) {
+        diagnostics.metadataInfraFailures++;
+        lastSourceInfraError = err;
+        continue;
+      }
       // metadata tak terbaca = kandidat buruk, lanjut.
     }
   }
   if (!screened.length) {
+    const contentFailures = (diagnostics.metadataRejected || 0) +
+      (diagnostics.fullVideoRejected || 0) +
+      (diagnostics.fullVideoShortPlans || 0);
+    if (diagnostics.metadataInfraFailures > 0 && contentFailures === 0) {
+      const infraErr = lastSourceInfraError || new Error('Akuisisi V2 gagal membaca kandidat karena gangguan sumber/AI.');
+      infraErr.isInfraError = true;
+      infraErr.acquisitionDiagnostics = diagnostics;
+      throw infraErr;
+    }
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
 
@@ -246,19 +266,33 @@ export async function runSourceAcquisitionV2(p) {
   updateProgress({ step: 'acquisition_v2_probe', message: `?? [V2] Mengekstrak frame preview untuk Oracle Kaggle (${screened.length} kandidat)...`, progress: 18 });
   const gatedCandidates = [];
   for (const cand of screened) {
-    const preview = await downloadQuickPreview(cand.url, tempDir, `${jobId}_g`, {
-      onProgress: updateProgress,
-      durationSec: gatePreviewSec,
-      sourceDurationSec: cand.meta.duration,
-      cropTo9_16: true,
-    });
-    if (!preview?.filePath) continue;
+    let preview;
+    try {
+      preview = await downloadQuickPreview(cand.url, tempDir, `${jobId}_g`, {
+        onProgress: updateProgress,
+        durationSec: gatePreviewSec,
+        sourceDurationSec: cand.meta.duration,
+        cropTo9_16: true,
+      });
+    } catch (err) {
+      diagnostics.previewInfraFailures++;
+      lastSourceInfraError = err;
+      continue;
+    }
+    if (!preview?.filePath) {
+      diagnostics.previewInfraFailures++;
+      lastSourceInfraError = Object.assign(new Error(`Download preview gagal untuk kandidat ${cand.sourceId}.`), { isInfraError: true });
+      continue;
+    }
     let probe;
     let usableFrames = [];
     try {
       probe = await fastProbeLocal(preview.filePath, `${jobId}`, { onProgress: updateProgress, niche, durationSec: preview.actualDurationSec, sourceId: cand.sourceId });
     } catch (err) {
-      if (err?.isInfraError) throw err; // Gangguan sistem tidak boleh dianggap penolakan produk.
+      if (err?.isInfraError) {
+        diagnostics.previewInfraFailures++;
+        lastSourceInfraError = err;
+      }
       continue;
     }
     // Tidak ada pemfilteran visual lokal; seluruh frame dikirim ke Oracle Kaggle.
@@ -277,6 +311,12 @@ export async function runSourceAcquisitionV2(p) {
     if (gatedCandidates.length >= requireSources * 2) break;
   }
   if (!gatedCandidates.length) {
+    if (diagnostics.previewInfraFailures > 0) {
+      const infraErr = lastSourceInfraError || new Error('Semua ekstraksi preview kandidat gagal.');
+      infraErr.isInfraError = true;
+      infraErr.acquisitionDiagnostics = diagnostics;
+      throw infraErr;
+    }
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
 
@@ -371,6 +411,7 @@ export async function runSourceAcquisitionV2(p) {
       w.startSec >= 10 && w.endSec <= vidDur - 10 && w.endSec > w.startSec);
     if (windows.length < 4) {
       console.warn(`[Job ${jobId}] [V2] ${cand.sourceId} ditolak sebelum download section: hanya ${windows.length} timestamp Gemini yang memenuhi batas 10 detik.`);
+      diagnostics.windowsRejected = (diagnostics.windowsRejected || 0) + 1;
       continue;
     }
     diagnostics.transcribed++;

@@ -50,10 +50,7 @@ const MAX_ENTRIES = 400;
 const CONTENT_REJECT_MARKERS = [
   'ai vision menolak',
   'tidak ada narasi voice-over',
-  'belum memiliki cukup cuplikan',
   'cuplikan aksi demonstrasi bersih terlalu sedikit',
-  'tidak memenuhi syarat',
-  'sumber terpakai',
   'watermark',
   'final_master_qc_failed',
   'subtitle terbakar',

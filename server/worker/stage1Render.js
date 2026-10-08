@@ -953,6 +953,8 @@ async function _runStage1Pipeline({
     let finalCompletedJob = null;
     let forceManualFallback = false;
     let autoFinalError = null;
+    let hadContentRejection = false;
+    let hadRenderPlanShortfall = false;
     const failedCandidateUrls = new Set();
     // P1-5: URL kandidat yang pernah kena error infrastruktur (timeout yt-dlp, whisper crash,
     // Oracle Kaggle tidak tersedia). Masing-masing dapat 1 percobaan ULANG sebelum dianggap gugur, supaya
@@ -961,6 +963,7 @@ async function _runStage1Pipeline({
     let maxStreamVideos = explicitOnly ? 10 : (preferMultiVideo ? 5 : 3);
     let streamedCount = 0;
     let candidateResults = [];
+    let candidateFailureStats = { infra: 0, content: 0, unknown: 0 };
     let hl = null;
     // [RENDER-ON-APPROVAL] Setelah kandidat mendapat approval, jangan jalankan rescue
     // storyboard atau final QC pasca-render yang dapat menghapus hasil. Jika rencana
@@ -987,6 +990,7 @@ async function _runStage1Pipeline({
       }
 
       if (!approved) {
+      candidateFailureStats = { infra: 0, content: 0, unknown: 0 };
       const allowAutoSearch = !explicitOnly && options.autoSearchFallback !== false && Boolean(productTitle);
       if (!allowAutoSearch && !preferMultiVideo && !explicitOnly) {
         throw lastRejectionError || new Error('Video ditolak oleh AI.');
@@ -1306,8 +1310,23 @@ async function _runStage1Pipeline({
         });
         if (!v2.sources.length || !v2.orderedWindows.length) {
           const v2Err = new Error('[V2] Tidak ada kandidat memenuhi vonis batch + narasi cukup.');
-          v2Err.isAiRejection = true;
-          v2Err.rejectionReason = 'V2: tidak ada sumber layak';
+          const diagnostics = v2.diagnostics || {};
+          const hasContentVerdict = Boolean(
+            diagnostics.metadataRejected || diagnostics.fullVideoRejected ||
+            diagnostics.fullVideoShortPlans || diagnostics.windowsRejected ||
+            diagnostics.oracleVetoed ||
+            (diagnostics.gated > 0 && diagnostics.verdictEligible === 0)
+          );
+          const hasAcquisitionInfraFailure = Boolean(diagnostics.metadataInfraFailures || diagnostics.previewInfraFailures);
+          if (hasContentVerdict && !hasAcquisitionInfraFailure) {
+            v2Err.isAiRejection = true;
+            v2Err.rejectionReason = 'V2: tidak ada sumber layak berdasarkan metadata/AI/Qwen.';
+          } else {
+            // An empty source plan without a recorded content verdict is an acquisition
+            // failure. Keep it out of product cooldowns and let Auto retry discovery.
+            v2Err.isInfraError = true;
+            v2Err.acquisitionDiagnostics = diagnostics;
+          }
           throw v2Err; // Master Loop akan mencari kandidat lain (retry).
         }
         const mapped = buildLegacyStructuresFromV2(v2.sources, v2.orderedWindows);
@@ -1542,6 +1561,9 @@ async function _runStage1Pipeline({
             candidatePoolIndex--;
             continue;
           }
+          if (err.isInfraError) candidateFailureStats.infra++;
+          else if (err.isAiRejection) candidateFailureStats.content++;
+          else candidateFailureStats.unknown++;
           streamedCount++; // Tetap hitung stream count
           continue;
         }
@@ -1993,10 +2015,28 @@ async function _runStage1Pipeline({
       if (!hl || !Array.isArray(hl.clips) || hl.clips.length === 0) {
         const fallbackMsg = `Semua kandidat video (telah di-stream ${streamedCount} video) belum memiliki cukup cuplikan produk yang memenuhi syarat untuk "${productTitle}": ${lastRejectionError?.rejectionReason || lastRejectionError?.message || 'frame tidak mencukupi / ditolak filter atau AI'}.`;
         if (isAutoModeFallback && candidatePoolIndex < candidatePool.length) {
-            console.warn(`[Job ${jobId}] ⚠️ ${fallbackMsg}. Meneruskan ke iterasi Master Loop untuk mencari video lain...`);
-            continue; // Ulangi master loop
+          masterRetryLimit = Math.max(masterRetryLimit, 3);
+          // The current batch had no usable storyboard, so don't feed the same
+          // exhausted candidates into the next bounded acquisition pass.
+          for (let i = 0; i < candidatePoolIndex; i++) {
+            const url = candidatePool[i]?.url;
+            if (!url) continue;
+            failedCandidateUrls.add(url);
+            const id = extractVideoId(url);
+            if (id) usedVids.add(id);
+          }
+          console.warn(`[Job ${jobId}] ⚠️ ${fallbackMsg}. Masih ada ${candidatePool.length - candidatePoolIndex} kandidat yang belum dicoba; memperpanjang akuisisi sebelum meninggalkan produk.`);
+          continue; // Ulangi master loop untuk kandidat yang belum diproses.
         }
-        throw new Error(fallbackMsg);
+        const fallbackErr = new Error(fallbackMsg);
+        if (candidateFailureStats.infra > 0 && candidateFailureStats.content === 0 && candidateFailureStats.unknown === 0) {
+          fallbackErr.isInfraError = true;
+          fallbackErr.cause = lastRejectionError || undefined;
+        } else if (candidateFailureStats.content > 0 && candidateFailureStats.infra === 0 && candidateFailureStats.unknown === 0) {
+          fallbackErr.isAiRejection = true;
+          fallbackErr.rejectionReason = lastRejectionError?.rejectionReason || lastRejectionError?.message || fallbackMsg;
+        }
+        throw fallbackErr;
       }
 
       // Visibilitas variasi sumber. Storyboard 1 sumber pernah terjadi DIAM-DIAM
@@ -3042,6 +3082,7 @@ async function _runStage1Pipeline({
             speedMultiplier: options.speedMultiplier || 1,
             reframe: effectiveReframe,
             onProgress: updateProgress,
+            isAutoModeFallback,
           });
         }
 
@@ -3282,6 +3323,7 @@ async function _runStage1Pipeline({
           // is not a product verdict: exclude exhausted sources and permit a bounded
           // fresh acquisition pass for this same product.
           masterRetryLimit = Math.max(masterRetryLimit, 3);
+          hadRenderPlanShortfall = true;
           if (currentYoutubeUrl) {
             failedCandidateUrls.add(currentYoutubeUrl);
             const id = extractVideoId(currentYoutubeUrl);
@@ -3302,6 +3344,7 @@ async function _runStage1Pipeline({
           continue;
         }
         if (isAutoModeFallback && masterLoopErr.isAiRejection) {
+          hadContentRejection = true;
           console.warn(`[Job ${jobId}] ⚠️ Pipeline tertunda (isAiRejection=true): ${masterLoopErr.message}. Meneruskan ke iterasi Master Loop untuk mencari video lain...`);
           if (candidateResults) {
             candidateResults.forEach(c => {
@@ -3318,7 +3361,18 @@ async function _runStage1Pipeline({
     if (finalCompletedJob) return finalCompletedJob;
 
     if (isAutoModeFallback) {
-      throw new Error(`Gagal merender video setelah ${masterRetryCount} kali percobaan (kandidat habis atau selalu ditolak QC).`);
+      const finalErr = new Error(`Gagal merender video setelah ${masterRetryCount} kali percobaan (kandidat habis atau rencana tidak memenuhi syarat QC).`);
+      // Preserve the aggregate cause for Auto Mode's rejection ledger. A generic
+      // wrapper used to erase real Oracle/content verdicts; conversely, structural
+      // shortfalls must never be converted into a product content rejection.
+      if (hadContentRejection) {
+        finalErr.isAiRejection = true;
+        finalErr.rejectionReason = 'Kandidat habis setelah satu atau lebih vonis konten AI/Qwen.';
+      } else if (hadRenderPlanShortfall) {
+        finalErr.isRenderPlanShortfall = true;
+        finalErr.rejectionReason = 'Rencana footage gagal memenuhi jumlah adegan/durasi minimum setelah pencarian ulang.';
+      }
+      throw finalErr;
     }
 
     // Fallback (MODE MANUAL SAJA): TTS atau tahap final gagal -> berhenti di awaiting_voiceover
@@ -3491,7 +3545,7 @@ async function _runStage1Pipeline({
         // -> laporan "Auto Mode selesai: 1 video berhasil" padahal output kosong.
         console.error(`[Job ${jobId}] ⛔ Auto mode dinyatakan GAGAL: ${error.message} (video final tidak ada; silent 9:16 dipertahankan di riwayat).`);
         error.jobId = jobId;
-        error.isQuotaError = isQuotaErrorMessage(error.message);
+        error.isQuotaError = Boolean(error.isQuotaError || isQuotaErrorMessage(error.message));
         throw error;
       }
 
@@ -3518,7 +3572,7 @@ async function _runStage1Pipeline({
       persistJob(jobId, errorJob);
     }
 
-    const isQuotaError = isQuotaErrorMessage(error.message);
+    const isQuotaError = Boolean(error.isQuotaError || isQuotaErrorMessage(error.message));
     updateProgress({
       step: 'error',
       message: error.message || 'An error occurred during video processing.',

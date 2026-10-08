@@ -2424,7 +2424,14 @@ Verify ONLY product identity. Do not accept a candidate merely because it is vis
     }
   }
 
-  throw new Error(`Verifikasi produk kandidat gagal: ${lastError?.message || 'semua model AI gagal'}`);
+  const verifyErr = new Error(`Verifikasi produk kandidat gagal: ${lastError?.message || 'semua model AI gagal'}`);
+  verifyErr.isInfraError = true;
+  verifyErr.cause = lastError || undefined;
+  if (lastError?.status !== undefined) verifyErr.status = lastError.status;
+  if (lastError?.statusCode !== undefined) verifyErr.statusCode = lastError.statusCode;
+  if (lastError?.code !== undefined) verifyErr.code = lastError.code;
+  if (isQuotaError(lastError)) verifyErr.isQuotaError = true;
+  throw verifyErr;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

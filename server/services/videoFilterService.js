@@ -840,7 +840,9 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
 
   if (frameFiles.length < 5) {
     if (downloadedBytes > 0) { try { fs.unlinkSync(tempStreamFile); } catch {} }
-    throw new Error(`Frame visual unik tidak mencukupi setelah input-seek + fallback output-seek (${frameFiles.length}/5). Candidate ditolak agar sistem tidak mengulang frame yang sama.`);
+    const extractionErr = new Error(`Ekstraksi frame preview tidak mencukupi setelah input-seek + fallback output-seek (${frameFiles.length}/5).`);
+    extractionErr.isInfraError = true;
+    throw extractionErr;
   }
 
   const pointMap = new Map(samplePoints.map(p => [`frame_${String(p.index).padStart(4, '0')}.jpg`, p.timestamp]));
