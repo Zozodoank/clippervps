@@ -74,6 +74,15 @@ envget() {
 fail() { log "GAGAL: $*"; status failed "$*"; exit 1; }
 status starting "launcher dimulai"
 
+KAGGLE_CLI_TIMEOUT_SEC="${KAGGLE_CLI_TIMEOUT_SEC:-$(envget KAGGLE_CLI_TIMEOUT_SEC)}"
+[ -n "$KAGGLE_CLI_TIMEOUT_SEC" ] || KAGGLE_CLI_TIMEOUT_SEC=180
+case "$KAGGLE_CLI_TIMEOUT_SEC" in *[!0-9]*|'') fail "KAGGLE_CLI_TIMEOUT_SEC harus bilangan detik positif" ;; esac
+[ "$KAGGLE_CLI_TIMEOUT_SEC" -ge 30 ] || fail "KAGGLE_CLI_TIMEOUT_SEC minimal 30 detik"
+
+run_kaggle() {
+  timeout --signal=TERM --kill-after=10 "${KAGGLE_CLI_TIMEOUT_SEC}s" "$KBIN" "$@" >>"$log_file" 2>&1
+}
+
 # --- 1. Kaggle CLI ----------------------------------------------------------
 KBIN="${KAGGLE_BIN:-}"
 if [ -z "$KBIN" ]; then
@@ -159,9 +168,25 @@ cat > "$cfg_dir/dataset-metadata.json" <<EOF
   "licenses": [{ "name": "other" }]
 }
 EOF
-log "dataset config -> $BASE_URL (token ${#SERVER_TOKEN} char, tidak ditampilkan), MAX_MINUTES=$MAX_MIN"
-if ! "$KBIN" datasets version -p "$cfg_dir" -q -m "auto-launch $(date '+%F %T')" >>"$log_file" 2>&1; then
-  "$KBIN" datasets create -p "$cfg_dir" -q >>"$log_file" 2>&1 || fail "upload dataset konfigurasi gagal (lihat $log_file)"
+log "dataset config -> $BASE_URL (token ${#SERVER_TOKEN} char, tidak ditampilkan), MAX_MINUTES=$MAX_MIN, timeout CLI=${KAGGLE_CLI_TIMEOUT_SEC}s"
+status dataset_upload "memperbarui dataset konfigurasi Kaggle"
+if run_kaggle datasets version -p "$cfg_dir" -q -m "auto-launch $(date '+%F %T')"; then
+  :
+else
+  version_rc=$?
+  if [ "$version_rc" -eq 124 ] || [ "$version_rc" -eq 137 ]; then
+    fail "timeout ${KAGGLE_CLI_TIMEOUT_SEC}s saat memperbarui dataset konfigurasi Kaggle"
+  fi
+  status dataset_create "dataset belum ada/versi gagal; membuat dataset konfigurasi"
+  if run_kaggle datasets create -p "$cfg_dir" -q; then
+    :
+  else
+    create_rc=$?
+    if [ "$create_rc" -eq 124 ] || [ "$create_rc" -eq 137 ]; then
+      fail "timeout ${KAGGLE_CLI_TIMEOUT_SEC}s saat membuat dataset konfigurasi Kaggle"
+    fi
+    fail "upload dataset konfigurasi gagal; lihat logs/oracle-launch.log"
+  fi
 fi
 echo "$KUSER/clippervps-oracle-config" > "$stage_dir/.config-dataset-ref"
 
@@ -186,8 +211,16 @@ if [ "$DRY_RUN" = 1 ]; then
   status dry_run "staging siap"
   exit 0
 fi
-status pushing "mengunggah konfigurasi dan kernel ke Kaggle"
-"$KBIN" kernels push -p "$stage_dir" >>"$log_file" 2>&1 || fail "kernels push gagal (lihat $log_file)"
+status kernel_push "mengunggah kernel Kaggle"
+if run_kaggle kernels push -p "$stage_dir"; then
+  :
+else
+  push_rc=$?
+  if [ "$push_rc" -eq 124 ] || [ "$push_rc" -eq 137 ]; then
+    fail "timeout ${KAGGLE_CLI_TIMEOUT_SEC}s saat push kernel Kaggle"
+  fi
+  fail "kernels push gagal; lihat logs/oracle-launch.log"
+fi
 [ -n "$MODEL_SRC" ] && printf '%s' "$MODEL_SRC" > "$stage_dir/.model-source"
 status pushed "kernel berhasil dipush; menunggu boot dan heartbeat"
 log "PUSH OK — Kaggle menjalankan sesi baru: $KUSER/clippervps-vlm-oracle (GPU T4, self-stop ${MAX_MIN} mnt + idle-exit)."
