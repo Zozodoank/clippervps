@@ -51,11 +51,7 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally,
-  filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
 } from '../../services/videoFilterService.js';
 import {
   getPublicIpAddress,
@@ -112,7 +108,7 @@ import { loadedEnvFiles, cleanEnvValue, isPlaceholderEnvValue, reloadEnvironment
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../../services/quotaService.js';
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../../services/antiDupService.js';
 import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from '../../utils/jobHelpers.js';
-import { applyConfigSnapshot, describeConfigSnapshot, isOracleOfflineCalibration } from '../../config/runtimeFlags.js';
+import { applyConfigSnapshot, describeConfigSnapshot } from '../../config/runtimeFlags.js';
 import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover } from '../../worker/pipelineWorker.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -279,6 +275,7 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
         const fresh = await discoverYouTubeCandidatesForProduct({
           productTitle: job.productTitle,
           productDescription: job.productDescription,
+          niche: jobNiche,
           limit: 8,
           excludeVideoIds: usedVids,
           onProgress: (p) => updateJobProgress(jobId, { ...p, status: 'running' }),
@@ -405,9 +402,7 @@ router.post('/jobs/:jobId/retry', async (req, res) => {
 
 router.post('/jobs/:jobId/auto-retry/start', async (req, res) => {
   reloadEnvironment();
-  if (isOracleOfflineCalibration(process.env)) {
-    return res.status(409).json({ error: 'Auto Retry dinonaktifkan selama ORACLE_OFFLINE_CALIBRATION=1. Jalankan job manual untuk kalibrasi lokal atau matikan kalibrasi agar Kaggle menjadi pemutus.' });
-  }
+
   const { jobId } = req.params;
   const job = activeJobs.get(jobId);
   if (!job) {

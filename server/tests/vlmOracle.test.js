@@ -53,17 +53,29 @@ const { tempDir } = await import('../utils/paths.js');
 const { getFFmpegPath } = await import('../services/binaryChecker.js');
 
 const ENV_OFF = { VISION_VERIFY_MODE: 'legacy' };
-const ENV_ON = { VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_TIMEOUT_SEC: '6', VLM_ORACLE_POLL_MS: '120', VLM_ORACLE_BATCH_SIZE: '8', VLM_ORACLE_MAX_FRAMES: '120', VLM_ORACLE_TOTAL_TIMEOUT_SEC: '20' };
+const ENV_ON = { VISION_VERIFY_MODE: 'oracle', VLM_ORACLE_TIMEOUT_SEC: '6', VLM_ORACLE_POLL_MS: '120', VLM_ORACLE_BATCH_SIZE: '8', VLM_ORACLE_MAX_FRAMES: '120', VLM_ORACLE_TOTAL_TIMEOUT_SEC: '20', VLM_ORACLE_GRID: '0' };
 
 const silent = { log: () => {}, warn: () => {}, error: () => {} };
 
-/** Frame sungguhan di disk: sanitizePoolWithOracle membuang yang tidak ada. */
+/** Valid JPEG fixtures: every Oracle submission now requires FFmpeg conversion. */
 let frameFiles = [];
+let jpegFixtureDir = '';
+let jpegFixturePath = '';
+function getJpegFixture() {
+  if (jpegFixturePath && fs.existsSync(jpegFixturePath)) return jpegFixturePath;
+  jpegFixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-jpeg-fixture-'));
+  jpegFixturePath = path.join(jpegFixtureDir, 'portrait.jpg');
+  const ffmpeg = getFFmpegPath();
+  const result = spawnSync(ffmpeg, ['-y', '-nostdin', '-f', 'lavfi', '-i', 'testsrc=size=320x568:rate=1', '-frames:v', '1', '-q:v', '3', jpegFixturePath], { stdio: 'ignore' });
+  if (result.status !== 0 || !fs.existsSync(jpegFixturePath)) throw new Error('Tidak dapat membuat fixture JPEG valid untuk tes Oracle.');
+  return jpegFixturePath;
+}
 function makeFrames(n) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-frames-'));
+  const fixture = getJpegFixture();
   return Array.from({ length: n }, (_, i) => {
     const filePath = path.join(dir, `f${i}.jpg`);
-    fs.writeFileSync(filePath, 'x');
+    fs.copyFileSync(fixture, filePath);
     return { filePath, timestampMs: i * 1000 };
   });
 }
@@ -442,7 +454,7 @@ describe('sanitizePoolWithOracle / applyOracleVeto', () => {
       for (const f of batch.frames) {
         expect(f.index, 'index dalam batch harus 0..n-1 (batch-relatif)').toBeLessThan(batch.frames.length);
       }
-      const target = batch.frames.some((f) => f.filePath === frames[3].filePath);
+      const target = batch.frames.some((f) => f.timestampMs === frames[3].timestampMs);
       const verdict = { model: 'Qwen2.5-VL-7B', reason: target ? 'watermark di satu frame' : 'bersih', perFrame: batch.frames.map((f) => ({ index: f.index, safe: !(target && f.index === 1) })) };
       submitOracleResult({ batchId: batch.id, verdict, attempt: batch.attempts, workerId: batch.workerId });
       served.push(batch);
@@ -460,16 +472,16 @@ describe('sanitizePoolWithOracle / applyOracleVeto', () => {
     const clips = [{ duration: 5, startSeconds: 0 }];
     const run = auditClipsWithOracle(clips, [frames], { jobId: 'auditmb', env, logger: silent });
     const served = [];
-    for (let guard = 0; guard < 160 && served.length < 2; guard++) {
+    for (let guard = 0; guard < 160 && served.length < 3; guard++) {
       const batch = claimOracleBatch({ workerId: 'nb-auditmb' });
       if (!batch) { await new Promise((r) => setTimeout(r, 25)); continue; }
       if (batch.jobId !== 'auditmb') { expireOracleBatch(batch.id, 'bukan batch tes'); continue; }
-      const target = batch.frames.some((f) => f.filePath === frames[3].filePath);
+      const target = batch.frames.some((f) => f.timestampMs === frames[3].timestampMs);
       const verdict = { model: 'Qwen2.5-VL-7B', reason: target ? 'teks terbakar' : 'bersih', perFrame: batch.frames.map((f) => ({ index: f.index, safe: !(target && f.index === 1) })) };
       submitOracleResult({ batchId: batch.id, verdict, attempt: batch.attempts, workerId: batch.workerId });
       served.push(batch);
     }
-    expect(served.length, 'batch kotor harus sempat dilayani').toBeGreaterThanOrEqual(2);
+    expect(served.length, 'berhenti setelah batch kedua memvonis frame kotor').toBe(2);
     const out = await run;
     const v = out.verdicts.get(0);
     expect(v && v.dirty).toBe(true);
@@ -547,9 +559,9 @@ describe('path frame oracle (anti traversal)', () => {
 // ============================================================================
 
 describe('flag VLM_ORACLE_FRAME_HEIGHT + VLM_ORACLE_AUDIT_MAX_FRAMES', () => {
-  it('tinggi kirim: default 360, 0 = mentah, selain itu dijepit 240..720', () => {
+  it('tinggi target kanvas: default 360, legacy 0 dikonversi ke minimum 240, dijepit 240..720', () => {
     expect(buildConfigSnapshot(ENV_OFF).VLM_ORACLE_FRAME_HEIGHT).toBe(360);
-    expect(buildConfigSnapshot({ VLM_ORACLE_FRAME_HEIGHT: '0' }).VLM_ORACLE_FRAME_HEIGHT).toBe(0);
+    expect(buildConfigSnapshot({ VLM_ORACLE_FRAME_HEIGHT: '0' }).VLM_ORACLE_FRAME_HEIGHT).toBe(240);
     expect(buildConfigSnapshot({ VLM_ORACLE_FRAME_HEIGHT: '480' }).VLM_ORACLE_FRAME_HEIGHT).toBe(480);
     expect(buildConfigSnapshot({ VLM_ORACLE_FRAME_HEIGHT: '100' }).VLM_ORACLE_FRAME_HEIGHT).toBe(240);
     expect(buildConfigSnapshot({ VLM_ORACLE_FRAME_HEIGHT: '1080' }).VLM_ORACLE_FRAME_HEIGHT).toBe(720);
@@ -567,16 +579,16 @@ describe('flag VLM_ORACLE_FRAME_HEIGHT + VLM_ORACLE_AUDIT_MAX_FRAMES', () => {
   it('kedua flag ikut dibekukan dan di-patch balik, dan resolveOracleConfig membacanya sama', () => {
     const snap = buildConfigSnapshot({ ...ENV_ON, VLM_ORACLE_FRAME_HEIGHT: '0', VLM_ORACLE_AUDIT_MAX_FRAMES: '12' });
     const patched = configSnapshotToEnvPatch(snap);
-    expect(String(patched.VLM_ORACLE_FRAME_HEIGHT)).toBe('0');
+    expect(String(patched.VLM_ORACLE_FRAME_HEIGHT)).toBe('240');
     expect(String(patched.VLM_ORACLE_AUDIT_MAX_FRAMES)).toBe('12');
     const cfg = resolveOracleConfig(snap);
-    expect(cfg.frameHeight).toBe(0);
+    expect(cfg.frameHeight).toBe(240);
     expect(cfg.auditMaxFrames).toBe(12);
     expect(resolveOracleConfig(ENV_OFF).frameHeight).toBe(360);
   });
 });
 
-describe('prepareOracleFrames (1080p di perangkat, 360p ke Kaggle)', () => {
+describe('prepareOracleFrames (kanvas JPEG 9:16 untuk Kaggle)', () => {
   const FFMPEG = (() => { try { return getFFmpegPath(); } catch { return ''; } })();
 
   function jpegHeight(file) {
@@ -613,30 +625,34 @@ describe('prepareOracleFrames (1080p di perangkat, 360p ke Kaggle)', () => {
   })();
   const withFfmpeg = probe ? it : it.skip;
 
-  it('height 0 -> tidak ada salinan sama sekali, path persis seperti masuk', async () => {
+  it('height 0 legacy tetap dikonversi dan tidak pernah mengirim frame mentah', async () => {
     const frames = makeFrames(2);
     const out = await prepareOracleFrames(frames, { height: 0, jobId: 'raw', logger: silent });
-    expect(out.sent.map((f) => f.filePath)).toEqual(frames.map((f) => f.filePath));
-    expect(out.converted).toBe(0);
-    expect(out.outDir).toBe('');
-    expect(out.originalBySent.get(frames[0].filePath)).toBe(frames[0].filePath);
+    expect(out.converted).toBe(2);
+    for (const f of out.sent) {
+      expect(frames.some((source) => source.filePath === f.filePath)).toBe(false);
+      const { width, height } = jpegHeight(f.filePath);
+      expect(width * 16).toBe(height * 9);
+    }
+    expect(out.originalBySent.get(out.sent[0].filePath)).toBe(frames[0].filePath);
   });
 
-  it('file kecil (<200KB) tidak dikecilkan lagi (hemat panggilan FFmpeg)', async () => {
+  it('file kecil pun dikonversi agar frame keluar berasio 9:16', async () => {
     const frames = makeFrames(1); // isinya 'x' -> beberapa byte
     const out = await prepareOracleFrames(frames, { height: 360, jobId: 'small', logger: silent });
-    expect(out.converted).toBe(0);
+    expect(out.converted).toBe(1);
     expect(out.failed).toBe(0);
-    expect(out.sent[0].filePath).toBe(frames[0].filePath);
+    expect(out.sent[0].filePath).not.toBe(frames[0].filePath);
+    const { width, height } = jpegHeight(out.sent[0].filePath);
+    expect(width * 16).toBe(height * 9);
   });
 
-  it('tidak melempar untuk input kosong/rusak', async () => {
+  it('input kosong tetap kosong dan file hilang gagal tertutup', async () => {
     expect((await prepareOracleFrames([], { height: 360, logger: silent })).sent).toEqual([]);
     expect((await prepareOracleFrames([null, { filePath: '' }], { height: 360, logger: silent })).sent).toEqual([]);
     const hilang = path.join(os.tmpdir(), 'oracle-yang-tak-ada.jpg');
-    const out = await prepareOracleFrames([{ filePath: hilang }], { height: 360, jobId: 'ghost', logger: silent });
-    expect(out.sent[0].filePath).toBe(hilang); // tetap dikirim apa adanya; hilir yang menyaring
-    expect(out.converted).toBe(0);
+    await expect(prepareOracleFrames([{ filePath: hilang }], { height: 360, jobId: 'ghost', logger: silent }))
+      .rejects.toBeInstanceOf(OracleUnavailableError);
   });
 
   it('sapuan salinan tua TIDAK menghapus direktori job lain yang masih baru', async () => {
@@ -666,8 +682,7 @@ describe('prepareOracleFrames (1080p di perangkat, 360p ke Kaggle)', () => {
     // Default outDir harus di bawah tempDir supaya lolos isAllowedFramePath di routes.
     expect(isAllowedFramePath(sent)).toBe(true);
     expect(sent.startsWith(tempDir + path.sep)).toBe(true);
-    expect(jpegHeight(sent)).toMatchObject({ height: 360 });
-    expect(jpegHeight(sent).width % 2).toBe(0);
+    expect(jpegHeight(sent).width * 16).toBe(jpegHeight(sent).height * 9);
     // Path asli tidak disentuh, dan vonis nanti bisa dipetakan balik ke dia.
     expect(fs.statSync(big).size).toBe(sizeBefore);
     expect(out.originalBySent.get(sent)).toBe(big);
@@ -681,20 +696,17 @@ describe('prepareOracleFrames (1080p di perangkat, 360p ke Kaggle)', () => {
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }, 60000);
 
-  withFfmpeg('FFmpeg gagal (bukan JPEG) -> pakai file asli, job tidak dibatalkan', async () => {
+  withFfmpeg('FFmpeg gagal (bukan JPEG) -> job gagal tertutup tanpa mengirim file asli', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-junk-'));
     const junk = path.join(dir, 'pura-pura.jpg');
     fs.writeFileSync(junk, cryptoRandom(300 * 1024));
-    const out = await prepareOracleFrames([{ filePath: junk, timestampMs: 0 }], { height: 360, jobId: 'junk', logger: silent });
-    expect(out.converted).toBe(0);
-    expect(out.failed).toBe(1);
-    expect(out.sent[0].filePath).toBe(junk);
+    await expect(prepareOracleFrames([{ filePath: junk, timestampMs: 0 }], { height: 360, jobId: 'junk', logger: silent }))
+      .rejects.toBeInstanceOf(OracleUnavailableError);
     try { fs.rmSync(dir, { recursive: true, force: true }); } catch {}
   }, 60000);
 
   it('vonis mengenai frame ASLI walau yang dikirim adalah salinan 360p', async () => {
-    // Tanpa FFmpeg pun aman: frame tes berukuran byte-mini -> lolos sebagai "sudah kecil",
-    // jadi yang diuji di sini adalah bahwa blacklisted selalu path yang dikenali hilir.
+    // Frame input valid dikonversi sebelum dimasukkan ke antrean; pemetaan veto tetap ke sumber asli.
     const frames = makeFrames(2);
     const run = sanitizePoolWithOracle(frames, { jobId: 'peta', env: { ...ENV_ON, VLM_ORACLE_MAX_FRAMES: '2' }, logger: silent });
     const served = await serveBatchAny('peta', () => ({ safe: false, perFrame: [{ index: 0, safe: false }] }));
@@ -925,15 +937,15 @@ describe('normalizeOracleVerdict - apparentQuality/lowQuality (kualitas tampak, 
 });
 
 describe('isOraclePreflightEnabled + beku-snapshot PREFLIGHT_ORACLE', () => {
-  it('efektif hanya bila oracle aktif; default NYALA, mati hanya oleh 0 eksplisit', () => {
+  it('pre-flight wajib mengikuti Kaggle; flag 0 lama tidak mengaktifkan fallback Gemini', () => {
     expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'legacy' })).toBe(false);
     // Oracle mati = tidak ada yang memvonis frame, jadi flag menyala pun tidak boleh
     // memindahkan pre-flight ke Kaggle.
     expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'legacy', PREFLIGHT_ORACLE: '1' })).toBe(false);
     expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle' })).toBe(true);
-    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: '0' })).toBe(false);
-    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: ' 0 ' })).toBe(false);
-    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: '0 ' })).toBe(false);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: '0' })).toBe(true);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: ' 0 ' })).toBe(true);
+    expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: '0 ' })).toBe(true);
     expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: '' })).toBe(true);
     expect(isOraclePreflightEnabled({ VISION_VERIFY_MODE: 'oracle', PREFLIGHT_ORACLE: 'ya' })).toBe(true);
   });
@@ -941,11 +953,11 @@ describe('isOraclePreflightEnabled + beku-snapshot PREFLIGHT_ORACLE', () => {
   it('flag baru ikut dibekukan DAN di-patch balik (kontrak satu-sumber-kebenaran)', () => {
     for (const want of [true, false]) {
       const snap = buildConfigSnapshot({ ...ENV_ON, PREFLIGHT_ORACLE: want ? '1' : '0' });
-      expect(snap.PREFLIGHT_ORACLE).toBe(want);
+      expect(snap.PREFLIGHT_ORACLE).toBe(true);
       const patched = configSnapshotToEnvPatch(snap);
-      expect(patched.PREFLIGHT_ORACLE).toBe(want ? '1' : '0');
+      expect(patched.PREFLIGHT_ORACLE).toBe('1');
       // Snapshot harus membaca dirinya sendiri: hasil re-eval identik.
-      expect(isOraclePreflightEnabled(patched)).toBe(want);
+      expect(isOraclePreflightEnabled(patched)).toBe(true);
     }
   });
 });
@@ -958,7 +970,7 @@ describe('preflightCandidatesWithOracle (Lapis 2 + peringkat Lapis 3)', () => {
     const frameDir = fs.mkdtempSync(path.join(os.tmpdir(), `pf-${tag}-`));
     const frames = Array.from({ length: n }, (_, i) => {
       const filePath = path.join(frameDir, `pf_${i}.jpg`);
-      fs.writeFileSync(filePath, 'x');
+      fs.copyFileSync(getJpegFixture(), filePath);
       return { index: i, filePath, timestampMs: i * 1000 };
     });
     return { frameDir, frames };
@@ -1560,12 +1572,14 @@ describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (man
 // supaya tidak meninggalkan sampah di tree produksi perangkat.
 afterAll(() => {
   const base = path.join(tempDir, 'oracle_frames');
-  if (!fs.existsSync(base)) return;
   const milikTes = ['zero', 'diam', 'kotor', 'agregat', 'sampah', 'peta', 'raw', 'small', 'ghost', 'conv', 'junk', 'a_', 'off', 'strict'];
-  for (const name of fs.readdirSync(base)) {
-    if (!milikTes.some((p) => name.startsWith(p))) continue;
-    try { fs.rmSync(path.join(base, name), { recursive: true, force: true }); } catch { }
+  if (fs.existsSync(base)) {
+    for (const name of fs.readdirSync(base)) {
+      if (!milikTes.some((p) => name.startsWith(p))) continue;
+      try { fs.rmSync(path.join(base, name), { recursive: true, force: true }); } catch { }
+    }
+    try { if (fs.readdirSync(base).length === 0) fs.rmdirSync(base); } catch { }
   }
-  try { if (fs.readdirSync(base).length === 0) fs.rmdirSync(base); } catch { }
+  if (jpegFixtureDir) { try { fs.rmSync(jpegFixtureDir, { recursive: true, force: true }); } catch {} }
 });
 

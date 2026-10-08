@@ -1,6 +1,6 @@
 # 📱 Panduan Menjalankan ClipperVPS Native di Termux (Android)
 
-ClipperVPS berjalan **langsung di HP** melalui Termux — tanpa server remote. Semua proses (download YouTube, ekstraksi frame, render FFmpeg, AI Gemini, dan Gatekeeper Python) dieksekusi lokal di perangkat.
+ClipperVPS berjalan **langsung di HP** melalui Termux — tanpa server remote. Semua proses (download YouTube, ekstraksi frame, render FFmpeg, AI Gemini) dieksekusi lokal di perangkat.
 
 ---
 
@@ -27,7 +27,7 @@ bash setup-termux.sh
 cd ~/clipperVPS
 npm run dev
 ```
-`dev-runner.js` akan otomatis menyalakan Backend (`:5000`), Frontend (`:3000`), dan Gatekeeper (`:5050`). Setelah muncul pesan siap, buka browser HP di:
+`dev-runner.js` akan otomatis menyalakan Backend (`:5000`), Frontend (`:3000`). Setelah muncul pesan siap, buka browser HP di:
 ```text
 http://localhost:3000
 ```

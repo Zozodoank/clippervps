@@ -232,9 +232,9 @@ start_cloudflared() {
 # baris kosong persis saat tidak ada app terdaftar - keadaan yang justru paling perlu ditandai.
 pm2_status_line() {
   local out=""
-  out="$(pm2 list 2>/dev/null | grep -E 'tunnel|clipper|gatekeeper' | tr -s ' ')"
+  out="$(pm2 list 2>/dev/null | grep -E 'tunnel|clipper' | tr -s ' ')"
   if [ -z "$out" ]; then
-    echo "(daemon PM2 jalan tapi tidak ada app clipper/gatekeeper/tunnel terdaftar - jalankan menu [6])"
+    echo "(daemon PM2 jalan tapi tidak ada app clipper/tunnel terdaftar - jalankan menu [6])"
   else
     printf '%s\n' "$out"
   fi

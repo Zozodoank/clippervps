@@ -38,11 +38,7 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally,
-  filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
 } from '../services/videoFilterService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
 import { recordStageEvent } from '../services/observabilityService.js';

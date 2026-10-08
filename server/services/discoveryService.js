@@ -1988,6 +1988,16 @@ export function pickValidIdentitySearchQuery(brand = '', productType = '', model
   }) || '';
 }
 
+function isSmartphoneDiscovery(niche = '', text = '') {
+  return getNichePreset(niche)?.id === 'gadget_smartphone' ||
+    /\b(?:smartphone|handphone|ponsel|hp)\b/i.test(String(text || ''));
+}
+
+function requireQuotedReview(query = '') {
+  const clean = String(query || '').replace(/\s+/g, ' ').trim();
+  return /"review"/i.test(clean) ? clean : `${clean} "review"`.trim();
+}
+
 const brandedDiscoveryMisses = new Map();
 const BRANDED_DISCOVERY_MISS_COOLDOWN_MS = 15 * 60 * 1000;
 const BRANDED_DISCOVERY_MAX_BRANDS_PER_PASS = 8;
@@ -2070,7 +2080,7 @@ export async function discoverBrandedShopeeProduct({
     // "cara pakai" DHAPUS dari daftar kata: kata itu termasuk terlarang, jadi
     // hasil pencariannya pasti dibuang filter judul. Pakai "demo" saja.
     const query = isGadget
-      ? `"${brandSeed}" (smartphone OR hp OR "handphone") (review OR unboxing OR tes) -servis -reparasi -"mati total" -laptop -notebook -macbook -douyin -kuaishou -bilibili -weibo -chinese -mandarin`
+      ? `"${brandSeed}" (smartphone OR hp OR "handphone") "review" (unboxing OR tes) -servis -reparasi -"mati total" -laptop -notebook -macbook -douyin -kuaishou -bilibili -weibo -chinese -mandarin`
       : `"${brandSeed}" (alat dapur OR masak OR kitchen OR chopper OR blender OR panci OR steamer OR oven OR "air fryer" OR wajan OR teko) (review OR demo OR unboxing OR tes) -servis -reparasi -rusak -matot -mars -adele -lagu -lirik -douyin -kuaishou -bilibili -weibo -chinese -mandarin`;
     let results = [];
     try {
@@ -2218,6 +2228,7 @@ export async function discoverShopeeProducts({
 export async function discoverYouTubeCandidatesForProduct({
   productTitle,
   productDescription = '',
+  niche = '',
   limit = 16,
   excludeVideoIds = new Set(),
   searchIteration = 0,
@@ -2225,6 +2236,7 @@ export async function discoverYouTubeCandidatesForProduct({
 } = {}) {
   const excludeSet = excludeVideoIds instanceof Set ? excludeVideoIds : new Set(excludeVideoIds || []);
   const productInfo = extractCoreProductInfo(productTitle, productDescription);
+  const smartphoneSearch = isSmartphoneDiscovery(niche, `${productTitle || ''} ${productDescription || ''} ${productInfo.coreProductNoun || ''}`);
   const coreNoun = productInfo.coreProductNoun || cleanTitle(productTitle) || 'Produk';
   const coreWords = productInfo.coreWords || [];
 
@@ -2233,7 +2245,8 @@ export async function discoverYouTubeCandidatesForProduct({
 
   // Rotate query order based on searchIteration so consecutive auto retry attempts hit fresh queries first
   const offset = searchIteration % baseQueryCandidates.length;
-  const queryCandidates = [...baseQueryCandidates.slice(offset), ...baseQueryCandidates.slice(0, offset)];
+  const queryCandidates = [...baseQueryCandidates.slice(offset), ...baseQueryCandidates.slice(0, offset)]
+    .map((query) => smartphoneSearch ? requireQuotedReview(query) : query);
 
   let candidates = [];
   let usedQuery = queryCandidates[0];
@@ -2276,7 +2289,7 @@ export async function discoverYouTubeCandidatesForProduct({
       `${coreNoun} review indonesia`,
       `${coreNoun} review`,
       `${cleanTitle(productTitle)} review`,
-    ].filter(Boolean);
+    ].filter(Boolean).map((query) => smartphoneSearch ? requireQuotedReview(query) : query);
 
     for (const fbQuery of fallbackQueries) {
       let fbResults = await searchYouTubeVideos(fbQuery, { limit, onProgress });
@@ -2527,7 +2540,10 @@ export async function searchMultiEngineVideos(query, {
   onProgress = () => {},
   strictIdentity = false,
   youtubeOnly = false,
+  niche = '',
 } = {}) {
+  const smartphoneSearch = isSmartphoneDiscovery(niche, query);
+  if (smartphoneSearch) query = requireQuotedReview(query);
   const excludeSet = excludeVideoIds instanceof Set ? excludeVideoIds : new Set(excludeVideoIds || []);
   const safeLimit = Math.max(1, Math.min(30, Number(limit) || 20));
 
@@ -2595,7 +2611,8 @@ export async function searchMultiEngineVideos(query, {
   if (allCandidates.length === 0 && !strictIdentity) {
     try {
       const coreInfo = extractCoreProductInfo(query);
-      const coreQuery = coreInfo?.coreProductNoun;
+      const rawCoreQuery = coreInfo?.coreProductNoun;
+      const coreQuery = smartphoneSearch && rawCoreQuery ? requireQuotedReview(rawCoreQuery) : rawCoreQuery;
       if (coreQuery && coreQuery.toLowerCase() !== query.toLowerCase() && coreQuery.split(' ').length < query.split(' ').length) {
         console.log(`[MultiEngineVideo] Query awal panjang tidak menemukan hasil, mencoba core product noun: "${coreQuery}"`);
         const ytCoreResults = await searchYouTubeVideos(coreQuery, { limit: safeLimit, onProgress });

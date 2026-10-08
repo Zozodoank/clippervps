@@ -38,7 +38,7 @@ out = run('pm2 resurrect 2>&1', timeout=15)
 if 'not found' in out.lower() or 'no dump' in out.lower() or 'error' in out.lower():
     print("\n=== Resurrect gagal, start manual ===")
     run('cd ~/clippervps && pm2 start dev-runner.js --name clipper', timeout=30)
-    run('pm2 start server/gatekeeper/service.py --name gatekeeper --interpreter python3 2>&1 || true', timeout=15)
+    run('pm2 delete gatekeeper >/dev/null 2>&1 || true; pm2 save >/dev/null 2>&1 || true', timeout=15)
 else:
     print("\n=== Resurrect berhasil, restart untuk kode baru ===")
     run('cd ~/clippervps && pm2 restart clipper', timeout=20)

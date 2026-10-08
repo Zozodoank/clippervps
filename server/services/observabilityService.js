@@ -152,7 +152,7 @@ function normalizeCounts(event) {
 }
 
 /**
- * Write one explicit metric event (download bytes, gatekeeper counts, AI call, QC verdict).
+ * Write one explicit metric event (download bytes, Oracle frame counts, AI call, QC verdict).
  * @param {object} event
  * @param {string} event.jobId
  * @param {string} event.stage Canonical stage (see classifyStep) or a free bucket name.
@@ -390,7 +390,7 @@ export function buildJobTraceSummary(events = []) {
 
   // ROOT stage of a failure: the last NON-terminal event that carries a reason wins. When the
   // worker only reported the reason on the terminal line, fall back to the last substantive
-  // stage, because "gagal di stage apa" must name real work (gatekeeper/QC/download), never the
+  // stage, because "gagal di stage apa" must name real work (Oracle/QC/download), never the
   // synthetic 'terminal' bucket.
   const substantiveEvents = sorted.filter((e) => e.kind !== 'terminal');
   const lastSubstantive = substantiveEvents.length ? substantiveEvents[substantiveEvents.length - 1] : null;
@@ -474,7 +474,7 @@ export function getJobTraceSummary(jobId, options = {}) {
 
 /**
  * Cross-job failure rollup: which stage kills jobs most often. Reads the whole trace file once
- * and groups by jobId, so "semua job gagal di gatekeeper" is one call instead of ten log reads.
+ * and groups by jobId, so "semua job gagal di Oracle" is one call instead of ten log reads.
  * @param {object} [options]
  * @param {number} [options.maxJobs] Look at the N most recent jobs (default 50).
  * @param {string} [options.tracePath] Override the trace file (tests).

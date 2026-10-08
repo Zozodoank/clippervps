@@ -74,16 +74,7 @@ const __dirname = path.dirname(__filename);
 
 // Moved buildFaceAndMotionCriterion to ai/promptBuilders.js
 
-/**
- * TAHAP 3 (arsitektur Gemini-first + SmolVLM2): DISCOVERY WINDOW SCENE.
- * Gemini membaca video YouTube penuh via fileUri NATIVE (0 unduhan lokal, 0 FFmpeg),
- * lalu mengusulkan beberapa WINDOW scene kandidat (bukan vonis akhir). Backend akan
- * mengunduh klip pendek HANYA untuk window ini, sampled 1fps, lalu memverifikasi tiap
- * scene secara lokal dengan SmolVLM2. Ini membalik urutan lama (gatekeeper dulu ->
- * Gemini) menjadi Gemini dulu -> verifikasi lokal ringan.
- *
- * @returns {Promise<{windows:Array<{startSec:number,endSec:number,reason:string}>, model:string, status:string}>}
- */
+/** Gemini scene-window discovery helper retained for non-production tooling. */
 export async function discoverSceneWindowsWithGemini({
   youtubeUrl,
   productTitle = '',
@@ -175,6 +166,7 @@ export async function analyzeYouTubeVideoWithGemini({
   allowFallbackClips = false,
   totalDuration = 600,
   introCutoffSec = 0,
+  outroCutoffSec = 0,
   discardedFaceTimestamps = [],
   discardedViolationTimestamps = [],
   cleanTimeWindows = [],
@@ -243,6 +235,7 @@ export async function analyzeYouTubeVideoWithGemini({
 
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
+FULL VIDEO TIMELINE RULE: Analyze the complete video. Never select footage from the first ${introCutoffSec || 0} seconds or the final ${outroCutoffSec || 0} seconds. Every selected clip must fit entirely between those boundaries.
 Evaluate this YouTube video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
 ${violationBlacklistWarning}
 ${cleanWindowsDirective}
@@ -580,6 +573,11 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     for (const rawTs of rawTimestamps) {
       const sec = typeof rawTs === 'number' ? rawTs : parseTimeToSeconds(rawTs);
       if (isNaN(sec) || sec < 0 || sec > totalDuration) continue;
+      const maxSafeEnd = Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0));
+      if (sec < Math.max(0, Number(introCutoffSec) || 0) || sec + clipSec > maxSafeEnd) {
+        console.log(`[Gemini YouTube Stream] Discarding timestamp ${sec}s outside safe timeline ${introCutoffSec}-${maxSafeEnd}s`);
+        continue;
+      }
       // Filter out timestamps colliding with locally detected violation frames (+- 3.0s)
       if (allViolationTimestamps.length > 0 && allViolationTimestamps.some(vt => Math.abs(vt - sec) < 3.0)) {
         console.log(`[Gemini YouTube Stream] Discarding timestamp ${sec}s because it collides with detected violation frame (+-3s)`);
@@ -1471,7 +1469,7 @@ export async function selectHighlightWithAI({
   const geminiKey = getDirectGeminiApiKey(apiKey);
 
   // EVIDENCE MODE (audit GPT 2026 — hemat token Gemini, 0 MB kuota tambahan):
-  // Kirim BUKTI visual berupa frame bersih yang sudah diverifikasi Gatekeeper lokal
+  // Kirim bukti visual dari frame yang sudah dipilih; vonis visual dilakukan Oracle Kaggle.
   // dan SUDAH ada di disk — Gemini tidak membaca ulang video penuh via fileUri/File API.
   // Bila frame kurang dari EVIDENCE_MIN_FRAMES, otomatis jatuh ke jalur stream lama.
   const usableFrameCount = countUsableFrames(frames);
@@ -2493,9 +2491,8 @@ export function parseBatchVerdict(parsed, candidates) {
 
 /**
  * L2 — VONIS GEMINI BATCH: satu panggilan menilai SEMUA kandidat sekaligus terhadap
- * gambar produk + kebersihan visual (wajah/watermark/overlay/subtitle). Dipanggil SESUDAH
- * Gatekeeper lokal menyaring frame (keputusan 1c), jadi frame yang dikirim sudah bersih
- * secara lokal; Gemini mengonfirmasi identitas produk & kebersihan akhir.
+ * gambar produk + kebersihan visual (wajah/watermark/overlay/subtitle). Visual frame
+ * decisions are made by Kaggle Oracle; this Gemini call evaluates product and script context.
  * @returns {Promise<{ verdicts: Array, provider: string, model: string }>}
  */
 export async function verdictCandidatesWithGemini({

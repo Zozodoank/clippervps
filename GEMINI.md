@@ -11,7 +11,7 @@
 
 Aplikasi dijalankan langsung di perangkat user (bukan di-hosting remote):
 
-* **PC Windows:** jalankan lewat [dev-runner.js](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/dev-runner.js) (`npm run dev`). Backend Express + Frontend Vite + Gatekeeper Python aktif satu perintah.
+* **PC Windows:** jalankan lewat [dev-runner.js](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/dev-runner.js) (`npm run dev`). Backend Express + Frontend Vite aktif satu perintah.
 * **HP Android / Termux:** ikuti [CARA_JALANKAN_TERMUX.md](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/CARA_JALANKAN_TERMUX.md). Setup sekali jalan via [setup-termux.sh](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/setup-termux.sh). Panel kontrol lokal tersedia di [menu-vps.sh](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/menu-vps.sh).
 
 ---
@@ -21,12 +21,14 @@ Aplikasi dijalankan langsung di perangkat user (bukan di-hosting remote):
 1. **Backend + Frontend (dev-runner.js):**
    * Express Backend (default port `5000`) + Vite Frontend (port `3000`).
    * FFmpeg, yt-dlp, dan integrasi Google Gemini / OpenRouter AI.
-2. **Gatekeeper (`server/gatekeeper/service.py`, port `5050`):**
-   * AI Local Frame Gatekeeper. Dip-auto-start-kan oleh `dev-runner.js`.
-   * Pipeline CPU vision: MediaPipe BlazeFace (faceless), DBNet PP-OCRv4 ONNX (deteksi subtitle terbakar & promo overlay), dan MobileNetV3 (klasifikasi adegan natural vs kartun/bumper).
-3. **Termux (opsional):** bisa dijalankan via **PM2** lewat `menu-vps.sh` untuk mode background + log real-time. Ini murni PM2 **di perangkat Termux itu sendiri**, bukan remote.
+2. **Oracle Kaggle:** satu-satunya pemutus visual. Setiap gambar keluar berupa JPEG tepat 9:16; konversi gagal berarti job berhenti.
+3. **Termux:** proses lokal pada perangkat Termux, dikelola PM2 bila diinginkan.
 
----
+### Kebijakan
+
+* Gatekeeper lokal tidak dipakai saat runtime. Kaggle Oracle wajib untuk keputusan visual dan tidak ada fallback lokal.
+* Semua frame langsung dan grid yang dikirim ke Kaggle harus tepat 9:16.
+* Voice-over hanya memakai Gemini TTS.
 
 ## 🔄 Alur Kerja Sinkronisasi Kode
 

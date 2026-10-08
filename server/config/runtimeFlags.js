@@ -2,8 +2,8 @@
 // P5 — BEKUKAN KONFIGURASI RUNTIME PER JOB (configSnapshot)
 //
 // Masalah nyata: jalur pipeline membaca flag dari `process.env` SAAT EKSEKUSI
-// (lihat stage1Render: RENDER_DOWNLOAD_SECTIONS, videoFilterService: SAMPLE_MAX_FRAMES /
-// GK_MAX_BATCH_FRAMES, finalizationService: FINAL_AI_QC(_STRICT), audioBeatService:
+// (lihat stage1Render: RENDER_DOWNLOAD_SECTIONS, videoFilterService: SAMPLE_MAX_FRAMES,
+// finalizationService: FINAL_AI_QC(_STRICT), audioBeatService:
 // AUDIO_DRIVEN_SCENES). Bila operator mengganti .env lalu me-retry job lama, retry
 // memakai konfigurasi BARU sehingga hasil tidak dapat direproduksi & log menipu.
 //
@@ -19,8 +19,8 @@
 
 // Setiap entri: (env) => nilai efektif, meniru PERSIS cara konsumen membaca flag.
 const FLAG_NORMALIZERS = {
-  // Mode kalibrasi eksplisit: Gatekeeper lokal menjadi pemutus dan Oracle Kaggle dilewati.
-  ORACLE_OFFLINE_CALIBRATION: (env) => String(env.ORACLE_OFFLINE_CALIBRATION || '').trim() === '1' || String(env.ORACLE_OFFLINE_CALIBRATION || '').trim().toLowerCase() === 'true',
+  // Legacy switch is ignored; Kaggle Oracle is mandatory for visual decisions.
+  ORACLE_OFFLINE_CALIBRATION: () => false,
   VLM_ORACLE_GRID: (env) => {
     const raw = env.VLM_ORACLE_GRID;
     if (raw === undefined || String(raw).trim() === '') return 2;
@@ -33,8 +33,6 @@ const FLAG_NORMALIZERS = {
   RENDER_NO_FULL_DOWNLOAD: (env) => env.RENDER_NO_FULL_DOWNLOAD === '1',
   // videoFilterService: Math.max(20, Number(process.env.SAMPLE_MAX_FRAMES) || 500)
   SAMPLE_MAX_FRAMES: (env) => Math.max(20, Number(env.SAMPLE_MAX_FRAMES) || 500),
-  // videoFilterService: Math.max(20, Number(process.env.GK_MAX_BATCH_FRAMES) || 240)
-  GK_MAX_BATCH_FRAMES: (env) => Math.max(20, Number(env.GK_MAX_BATCH_FRAMES) || 240),
   // audioBeatService.isAudioDrivenEnabled: trim().toLowerCase() === 'true'
   AUDIO_DRIVEN_SCENES: (env) => String(env.AUDIO_DRIVEN_SCENES || '').trim().toLowerCase() === 'true',
   // downloader.js render path: parseInt(env.RENDER_MAX_HEIGHT,10) valid>0 ? itu : 1080
@@ -69,14 +67,8 @@ const FLAG_NORMALIZERS = {
   // window teks + zigzag + segment-only). Nama kunci BEDA dari PIPELINE_MODE (label
   // whisper-first yang sudah ada & tidak dibaca kode) agar tidak tabrakan semantik.
   ACQUISITION_FLOW: (env) => (String(env.ACQUISITION_FLOW || '').trim().toLowerCase() === 'v2' ? 'v2' : 'legacy'),
-  // ── ARSITEKTUR GEMINI-FIRST + SmolVLM2 (opt-in). Default 'legacy' = jalur gatekeeper
-  // ONNX lama (SCRFD/DBNet/MobileNetV3 + gerbang Whisper) TIDAK berubah.
-  // 'smolvlm' = Gemini stream/File API mengusulkan window scene -> sampling per-kandidat
-  // @1fps -> verifikasi visual oleh SmolVLM2-500M (menggantikan gatekeeper lama), TANPA Whisper.
-  // 'oracle'  = pipeline LEGACY utuh (Whisper + gatekeeper ONNX tetap jalan), ditambah satu
-  // lapis sanitasi frame oleh model besar di luar perangkat (notebook Kaggle menarik batch
-  // frame dari API lokal, memvonis, lalu mengirim balik). Frame yang divonis KOTOR masuk
-  // `blacklistedFramePaths` yang sudah ada.
+  // Visual decisions require Kaggle Oracle. Legacy modes remain parseable only so the
+  // worker can reject old snapshots with a clear error before any content processing.
   // KEBIJAKAN 2026-10 (user mandate): HANYA mode 'oracle' yang boleh menjalankan job.
   // Default tidak-set/nilai tidak dikenal = 'oracle' (bukan 'legacy' lagi). Nilai eksplisit
   // 'legacy'/'smolvlm' tetap dikenali agar gerbang mode di stage1Render bisa MENOLAK job
@@ -96,14 +88,12 @@ const FLAG_NORMALIZERS = {
     const n = Number(raw);
     return Number.isFinite(n) ? Math.max(0, n) : 120;
   },
-  // Tinggi (px) JPEG yang DIKIRIM ke notebook. Download section tetap 1080p; frame hasil
-  // ekstraksi dikecilkan dulu di perangkat (FFmpeg scale=-2:<height>) karena dua alasan:
-  // byte yang naik lewat tunnel turun ~7x, dan jumlah vision-token GPU turun. 0 = kirim
-  // mentah (dipakai kalibrasi 360p vs 720p). Terlalu kecil => watermark/subtitle tipis
+  // Tinggi target kanvas JPEG potret 9:16 yang DIKIRIM ke notebook. Sumber di-letterbox
+  // tanpa crop agar produk tetap utuh; nilai 0 tidak boleh melewati transformasi.
+  // Terlalu kecil => watermark/subtitle tipis
   // bisa tak terbaca model, makanya nilainya terkurung 240..720.
   VLM_ORACLE_FRAME_HEIGHT: (env) => {
     const h = Math.round(Number(env.VLM_ORACLE_FRAME_HEIGHT));
-    if (h === 0) return 0;
     if (!Number.isFinite(h) || Number.isNaN(h)) return 360;
     return Math.min(720, Math.max(240, h));
   },
@@ -142,11 +132,8 @@ const FLAG_NORMALIZERS = {
   },
   // Interval polling worker saat menunggu vonis (milidetik).
   VLM_ORACLE_POLL_MS: (env) => Math.max(250, Number(env.VLM_ORACLE_POLL_MS) || 2000),
-  // PRE-FLIGHT KANDIDAT dinilai Kaggle (15 frame @1 fps) atau Gemini (MP4 ke File API).
-  // Efektif hanya bila VISION_VERIFY_MODE=oracle; default NYALA karena orang yang
-  // menyalakan oracle justru sedang berusaha memangkas token Gemini. '0' mengembalikan
-  // pre-flight ke jalur lama sementara dua pass oracle lainnya tetap jalan.
-  PREFLIGHT_ORACLE: (env) => isOraclePreflightEnabled(env),
+  // Candidate pre-flight is always performed by Kaggle when Oracle mode is active.
+  PREFLIGHT_ORACLE: (env) => isVlmOracleEnabled(env),
   // Batch 'claimed' lebih tua dari ini (detik) dianggap worker mati -> dikembalikan ke
   // 'pending' (atau 'expired' bila percobaan habis). Notebook Kaggle boleh mati kapan saja.
   VLM_ORACLE_STALE_SEC: (env) => Math.max(30, Number(env.VLM_ORACLE_STALE_SEC) || 300),
@@ -159,9 +146,6 @@ const FLAG_NORMALIZERS = {
   // URL publik lokal (tunnel) tempat notebook memanggil API. Server hanya menyimpan/melaporkan
   // untuk kenyamanan log; yang memakai nilai ini adalah notebook di sisi Kaggle.
   VLM_ORACLE_BASE_URL: (env) => String(env.VLM_ORACLE_BASE_URL || '').trim(),
-  // GEMINI_SCENE_DISCOVERY: pakai Gemini stream/File API sebagai PENCARI kandidat scene
-  // (mengembalikan daftar window). dibaca default OFF ('0').
-  GEMINI_SCENE_DISCOVERY: (env) => env.GEMINI_SCENE_DISCOVERY === '1' || String(env.GEMINI_SCENE_DISCOVERY || '').trim().toLowerCase() === 'true',
   // Panjang klip per kandidat scene (detik). Sekaligus menentukan jumlah frame saat 1 fps.
   // Clamp ke rentang aman 2-5s sesuai percakapan (2 dtk=2 frame, 5 dtk=5 frame).
   SCENE_CLIP_DURATION_SEC: (env) => {
@@ -173,17 +157,6 @@ const FLAG_NORMALIZERS = {
   SCENE_SAMPLE_FPS: (env) => Math.max(0.5, Number(env.SCENE_SAMPLE_FPS) || 1),
   // Jatah waktu VLM per frame (detik) untuk timeout subprocess llama-mtmd-cli. Default 10.
   GK_VLM_TIMEOUT_SEC_PER_FRAME: (env) => Math.max(1, Number(env.GK_VLM_TIMEOUT_SEC_PER_FRAME) || 10),
-  // PERAN VONIS AI LOCAL GATEKEEPER (MediaPipe/DBNet/MobileNet di :5050).
-  //   'strict'   = perilaku lama: frame/kandidat yang dituduh lokal LANGSUNG dibuang,
-  //                job bisa gagal dengan alasan "Ditolak AI Gatekeeper".
-  //   'advisory' = vonis lokal hanya jadi DUKUNGAN: frame tetap dikirim ke Oracle Kaggle
-  //                (Qwen) bersama ringkasan kecurigaan lokal, dan Qwen yang memutuskan.
-  // Mandate user 2026-10: model besar sering menyatakan frame bersih sementara filter
-  // lokal menolak — pemutus akhir harus tetap di tangan Qwen. Default 'advisory' HANYA
-  // saat oracle aktif (kalau tidak, tidak ada pemutus lain); mode legacy/smolvlm strict.
-  // SATU sumber parsing: localGatekeeperVetoMode() di bawah — jangan duplikasi logika
-  // di sini supaya snapshot dan pembaca runtime tidak bisa divergen.
-  GK_LOCAL_VETO: (env) => localGatekeeperVetoMode(env),
 };
 
 export const SNAPSHOT_FLAG_KEYS = Object.keys(FLAG_NORMALIZERS);
@@ -224,7 +197,6 @@ export function configSnapshotToEnvPatch(snapshot) {
     patch.RENDER_NO_FULL_DOWNLOAD = snapshot.RENDER_NO_FULL_DOWNLOAD ? '1' : '0';
   }
   if (typeof snapshot.SAMPLE_MAX_FRAMES === 'number') patch.SAMPLE_MAX_FRAMES = String(snapshot.SAMPLE_MAX_FRAMES);
-  if (typeof snapshot.GK_MAX_BATCH_FRAMES === 'number') patch.GK_MAX_BATCH_FRAMES = String(snapshot.GK_MAX_BATCH_FRAMES);
   if (typeof snapshot.AUDIO_DRIVEN_SCENES === 'boolean') patch.AUDIO_DRIVEN_SCENES = snapshot.AUDIO_DRIVEN_SCENES ? 'true' : 'false';
   // RENDER_VIDEO_ONLY dibaca dengan `!== '0'`, jadi 'false' pun berarti ON. Tulis nilai
   // kanonik '1'/'0' agar pembacaan konsumen identik dengan nilai yang dibekukan.
@@ -238,7 +210,7 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.ACQUISITION_FLOW === 'string') patch.ACQUISITION_FLOW = snapshot.ACQUISITION_FLOW;
   if (typeof snapshot.EVIDENCE_MIN_FRAMES === 'number') patch.EVIDENCE_MIN_FRAMES = String(snapshot.EVIDENCE_MIN_FRAMES);
   if (typeof snapshot.EVIDENCE_MAX_FRAMES === 'number') patch.EVIDENCE_MAX_FRAMES = String(snapshot.EVIDENCE_MAX_FRAMES);
-  // Arsitektur Gemini-first + Smolvlm: selalu ditulis agar mode lama vs baru terkunci persis saat retry.
+  // Selalu ditulis agar mode verifikasi visual terkunci persis saat retry.
   if (typeof snapshot.VISION_VERIFY_MODE === 'string') patch.VISION_VERIFY_MODE = snapshot.VISION_VERIFY_MODE;
   // Oracle Kaggle: selalu ditulis (string/number) agar retry memakai anggaran waktu & plafon
   // frame yang sama persis dengan saat job pertama kali jalan.
@@ -255,13 +227,11 @@ export function configSnapshotToEnvPatch(snapshot) {
   if (typeof snapshot.VLM_ORACLE_MAX_ATTEMPTS === 'number') patch.VLM_ORACLE_MAX_ATTEMPTS = String(snapshot.VLM_ORACLE_MAX_ATTEMPTS);
   if (typeof snapshot.PREFLIGHT_ORACLE === 'boolean') patch.PREFLIGHT_ORACLE = snapshot.PREFLIGHT_ORACLE ? '1' : '0';
   if (typeof snapshot.VLM_ORACLE_BASE_URL === 'string') patch.VLM_ORACLE_BASE_URL = snapshot.VLM_ORACLE_BASE_URL;
-  if (typeof snapshot.GEMINI_SCENE_DISCOVERY === 'boolean') patch.GEMINI_SCENE_DISCOVERY = snapshot.GEMINI_SCENE_DISCOVERY ? '1' : '0';
   if (typeof snapshot.SCENE_CLIP_DURATION_SEC === 'number') patch.SCENE_CLIP_DURATION_SEC = String(snapshot.SCENE_CLIP_DURATION_SEC);
   if (typeof snapshot.SCENE_SAMPLE_FPS === 'number') patch.SCENE_SAMPLE_FPS = String(snapshot.SCENE_SAMPLE_FPS);
   if (typeof snapshot.GK_VLM_TIMEOUT_SEC_PER_FRAME === 'number') patch.GK_VLM_TIMEOUT_SEC_PER_FRAME = String(snapshot.GK_VLM_TIMEOUT_SEC_PER_FRAME);
   // Selalu ditulis: default 'advisory' bergantung mode oracle, retry wajib memakai peran
   // vonis lokal yang sama persis dengan saat job pertama jalan.
-  if (typeof snapshot.GK_LOCAL_VETO === 'string') patch.GK_LOCAL_VETO = snapshot.GK_LOCAL_VETO;
   // SAFETY NET (regresi review 2026-10-05): daftar eksplisit di atas dulu TIDAK memuat
   // EVIDENCE_MIN_FRAMES_PER_SOURCE / RENDER_SAMPLE_INTERVAL_SEC / ORACLE_AUTO_LAUNCH*
   // sehingga 5 flag hilang diam-diam saat retry (mis. auto-launch yang dibekukan OFF
@@ -296,30 +266,7 @@ export function isNewFlowEnabled(env = process.env) {
   return String(env.ACQUISITION_FLOW || '').trim().toLowerCase() === 'v2';
 }
 
-/**
- * Helper konsumen: apakah arsitektur verifikator visual baru (SmolVLM2) aktif.
- * Default OFF -> seluruh pipeline memakai jalur gatekeeper ONNX + Whisper lama.
- */
-export function isSmolvlmVerifyEnabled(env = process.env) {
-  return String(env.VISION_VERIFY_MODE || '').trim().toLowerCase() === 'smolvlm';
-}
-
-/**
- * Helper konsumen: apakah Gemini stream/File API dipakai untuk mengusulkan window scene.
- * Hanya relevan saat mode smolvlm aktif, tetapi dibaca terpisah agar mudah di-A/B.
- */
-export function isGeminiSceneDiscoveryEnabled(env = process.env) {
-  return env.GEMINI_SCENE_DISCOVERY === '1' || String(env.GEMINI_SCENE_DISCOVERY || '').trim().toLowerCase() === 'true';
-}
-
-/**
- * Helper konsumen: apakah SANITASI ORACLE aktif. Kebijakan Kaggle-only (mandate 2026-10):
- * oracle adalah satu-satunya mode yang diizinkan sehingga nilai TIDAK-SET/aneh dihitung
- * AKTIF (sama dengan default normalizer snapshot L72). Hanya 'legacy'/'smolvlm' eksplisit
- * yang mematikan — dan dua nilai itu pun kini ditolak gerbang stage1Render sebelum job jalan.
- */
 export function isVlmOracleEnabled(env = process.env) {
-  if (isOracleOfflineCalibration(env)) return false;
   const v = String(env.VISION_VERIFY_MODE || '').trim().toLowerCase();
   return v !== 'legacy' && v !== 'smolvlm';
 }
@@ -343,60 +290,9 @@ export function isOracleStrictMode(env = process.env) {
  * inilah yang mengirim utuh beberapa video lewat File API.
  */
 export function isOraclePreflightEnabled(env = process.env) {
-  return isVlmOracleEnabled(env) && String(env.PREFLIGHT_ORACLE ?? '1').trim() !== '0';
+  return isVlmOracleEnabled(env);
 }
 
-/**
- * Helper konsumen: apakah vonis AI Local Gatekeeper hanya jadi PENGARAH (advisory) dan
- * bukan pemutus. Saat advisory: frame yang dituduh lokal TIDAK dibuang — tetap dikirim ke
- * Oracle Kaggle beserta ringkasan kecurigaan agar Qwen memeriksa aturan itu sendiri
- * (subtitle terbakar, watermark, wajah presenter, slideshow statis) pada frame video
- * download section terpilih, lalu Qwen yang memvonis.
- *
- * Baca `GK_LOCAL_VETO` bila diisi eksplisit; kalau tidak: advisory selama oracle aktif
- * (satu-satunya mode yang diizinkan menjalankan job), strict pada mode legacy/smolvlm.
- */
-export function localGatekeeperVetoMode(env = process.env) {
-  if (isOracleOfflineCalibration(env)) return 'strict';
-  const v = String(env.GK_LOCAL_VETO || '').trim().toLowerCase();
-  if (v === 'strict' || v === '1' || v === 'true') return 'strict';
-  if (v === 'advisory' || v === '0' || v === 'false') return 'advisory';
-  return isVlmOracleEnabled(env) ? 'advisory' : 'strict';
-}
-
-/** Kalibrasi lokal hanya boleh diaktifkan secara eksplisit oleh operator. */
-export function isOracleOfflineCalibration(env = process.env) {
-  const value = String(env.ORACLE_OFFLINE_CALIBRATION || '').trim().toLowerCase();
-  return value === '1' || value === 'true';
-}
-
-export function buildOracleCalibrationMeta(env = process.env, now = new Date()) {
-  if (!isOracleOfflineCalibration(env)) return null;
-  return {
-    enabled: true,
-    skippedAt: now.toISOString(),
-    gatekeeperBackend: 'local-strict',
-    detectorBackend: String(env.GK_FACE_BACKEND || 'scrfd'),
-    productionEligible: false,
-  };
-}
-
-export function isLocalGatekeeperAdvisory(env = process.env) {
-  return localGatekeeperVetoMode(env) === 'advisory';
-}
-
-/**
- * Helper konsumen: apakah gerbang/pemilihan-window Whisper harus DILEWATI.
- * Pada arsitektur smolvlm, timing scene murni dari window Gemini + vonis SmolVLM2,
- * sehingga Whisper gate & audio-driven tidak dipanggil. Mode legacy selalu False (Whisper tetap jalan).
- */
-export function shouldBypassWhisperGate(env = process.env) {
-  return isSmolvlmVerifyEnabled(env);
-}
-
-/**
- * Ringkas untuk log: satu baris berisi nilai beku yang relevan.
- */
 export function describeConfigSnapshot(snapshot) {
   if (!snapshot) return '(tanpa snapshot)';
   return SNAPSHOT_FLAG_KEYS

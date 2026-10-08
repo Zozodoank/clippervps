@@ -10,7 +10,7 @@ while true; do
   echo "       🎬 CLIPPER - CONTROL PANEL & MONITOR (TERMUX)"
   echo "====================================================================="
   echo "  Status Service Background:"
-  pm2 list | grep -E "clipper|gatekeeper|tunnel" || pm2 list
+  pm2 list | grep -E "clipper|tunnel" || pm2 list
   # Tunnel publik = syarat Oracle Kaggle bisa mengetuk API kita. Tampilkan URL aktifnya.
   TUNNEL_URL=$(grep -E '^CLOUDFLARE_TUNNEL_URL=' server/.env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '\r')
   echo "  Tunnel publik : ${TUNNEL_URL:-(belum ada - Oracle Kaggle tidak akan dapat vonis)}"
@@ -30,7 +30,7 @@ while true; do
   echo "      - Dibutuhkan Oracle Kaggle: notebook yang memanggil API kita"
   echo "      - URL aktif otomatis ditulis ke server/.env (dipakai kaggle/deploy.ps1 -FromTermux)"
   echo ""
-  echo "  [6] 🛡️ DAFTARKAN PENGAWASAN PM2 (clipper + gatekeeper + tunnel)"
+  echo "  [6] 🛡️ DAFTARKAN PENGAWASAN PM2 (clipper + tunnel)"
   echo "      - Sembuhkan 'job mati di tengah render tanpa pesan error': proses yang"
   echo "        hanya hidup di terminal ikut mati saat terminal/proot ditutup"
   echo ""
@@ -67,9 +67,11 @@ while true; do
       ;;
     3)
       clear
-      echo "🔄 Merestart service clipper & gatekeeper..."
+      echo "🔄 Merestart service clipper..."
       git fetch origin main && git pull origin main
-      pm2 restart all
+      pm2 delete gatekeeper >/dev/null 2>&1 || true
+      pm2 restart clipper
+      pm2 save
       echo "✅ Selesai!"
       read -p "Tekan Enter untuk kembali ke menu..."
       ;;
@@ -115,7 +117,7 @@ while true; do
       echo "====================================================================="
       # Daemon PM2 yang baru lahir kosong: simpanan terakhir harus dibangkitkan dulu,
       # kalau tidak menu ini malah mendaftarkan aplikasi baru dengan setting seadanya.
-      if ! pm2 list 2>/dev/null | grep -qE "clipper|gatekeeper"; then
+      if ! pm2 list 2>/dev/null | grep -qE "clipper|tunnel"; then
         echo "(daemon PM2 kosong - mencoba resurrect dari simpanan terakhir...)"
         pm2 resurrect >/dev/null 2>&1 || true
       fi
@@ -125,11 +127,7 @@ while true; do
       else
         echo "✓ clipper sudah terdaftar di PM2."
       fi
-      if ! pm2 describe gatekeeper >/dev/null 2>&1; then
-        echo "▶️ Gatekeeper belum ada di PM2; jalankan setup-gatekeeper.sh di server/gatekeeper."
-      else
-        echo "✓ gatekeeper sudah terdaftar di PM2."
-      fi
+      pm2 delete gatekeeper >/dev/null 2>&1 || true
       bash "$DIR/start-tunnel.sh" auto
       pm2 save
       echo ""

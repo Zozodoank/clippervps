@@ -19,7 +19,7 @@
 //     (isAiRejection), baru fallback marker pesan. Dua alasan: (a) pesan agregat
 //     stage1Render memuat JUDUL PRODUK apa adanya, pencocokan kata bebas bisa salah
 //     kelas; (b) flag isAiRejection pernah salah tempel di kegagalan download, dan
-//     pesan agregat "belum memiliki cukup cuplikan ... Gatekeeper unavailable"
+//     pesan agregat "belum memiliki cukup cuplikan ... Oracle unavailable"
 //     berpunca infra tapi termarkir konten — satu outage :5050 bisa memblokir semua
 //     produk 14 hari bila urutan ini terbalik.
 //  2. Kunci identitas disimpan DUA: coarse (brand|type) dan fine (brand|type|model).
@@ -48,7 +48,6 @@ const MAX_ENTRIES = 400;
  * substring pada alasan penolakan (err.rejectionReason bila ada, selain itu pesan).
  */
 const CONTENT_REJECT_MARKERS = [
-  'ditolak ai gatekeeper',
   'ai vision menolak',
   'tidak ada narasi voice-over',
   'belum memiliki cukup cuplikan',
@@ -79,11 +78,10 @@ const INFRA_REJECT_PATTERNS = [
   /file is empty/i,
   /memblokir ip|membatasi ip|bot detection/i,
   /http\s*4\d\d|429|too many requests|sign in to confirm/i,
-  /oracle (kaggle )?(tidak|offline|tak)/i,
+  /oracle (kaggle )?(tidak|offline|tak|unavailable|timeout)/i,
+  /gatekeeper (?:unavailable|tidak tersedia|tidak bisa dihubungi|gagal merespons)/i, // classify historical service outages as infrastructure
+  /kaggle.{0,30}(?:offline|timeout|unavailable|gagal|tidak terhubung)/i,
   /oracleunavailable/i,
-  // Gatekeeper :5050 mati = infra, walau kalimat pembungkusnya "belum memiliki cukup
-  // cuplikan" (marker konten). Karena itu pola ini diuji SEBELUM marker konten.
-  /gatekeeper (?:unavailable|tidak tersedia|tidak bisa dihubungi|gagal merespons)/i,
   /rate.?limit|resource(?:\s+\w+){0,3}\s+exhausted|exhausted\s+quota|resource_exhausted|kuota (gemini|harian|habis)|limit kuota/i,
   /econnrefused|etimedout|enotfound|econnreset|socket hang up|network(?:box)? timeout/i,
   /no space left|disk (?:full| quota)/i,
@@ -254,14 +252,14 @@ function countExpired(store, env = process.env, nowMs = Date.now()) {
 
 /**
  * Label stage dari bentuk kegagalan, supaya laporan ke operator berisi 'ai_vision'
- * atau 'gatekeeper' dan bukan string kosong (err.stage jarang tersedia).
+ * atau 'ai_vision' dan bukan string kosong (err.stage jarang tersedia).
  */
 function inferStageLabel({ err = null, reason = '', message = '' } = {}) {
   const explicit = String(err?.stage || err?.step || '').trim();
   if (explicit) return explicit;
   const text = `${reason} ${message}`.toLowerCase();
   if (text.includes('narasi voice-over') || text.includes('whisper')) return 'whisper_gate';
-  if (text.includes('gatekeeper') || text.includes('watermark') || text.includes('wajah') || text.includes('faceless')) return 'ai_gatekeeper';
+  if (text.includes('watermark') || text.includes('wajah') || text.includes('faceless') || text.includes('subtitle')) return 'ai_vision';
   if (text.includes('ai vision') || text.includes('bukti visual') || text.includes('frame kotor')) return 'ai_vision';
   if (text.includes('master qc') || text.includes('final_master_qc') || text.includes('durasi final')) return 'final_qc';
   if (text.includes('cuplikan') || text.includes('klip')) return 'storyboard_sources';

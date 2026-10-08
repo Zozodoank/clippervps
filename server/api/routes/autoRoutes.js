@@ -44,11 +44,7 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally,
-  filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
 } from '../../services/videoFilterService.js';
 import {
   getPublicIpAddress,
@@ -110,7 +106,6 @@ import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../../servic
 import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsedProductNounsToday } from '../../services/antiDupService.js';
 import { isValidHttpUrl, resolveOutputVideoPath, isVideoFilePath, isQuotaErrorMessage, sanitizeCaptionText } from '../../utils/jobHelpers.js';
 import { runStage1Pipeline, runAutoStage1Worker, runAutoRetryWorker, conformExistingJobEditToAudio, runProfessionalFinalQcWithRepair, syncVideoToAndroidStorage, processJobVoiceover } from '../../worker/pipelineWorker.js';
-import { isOracleOfflineCalibration } from '../../config/runtimeFlags.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -175,9 +170,7 @@ router.post('/auto/rejected-products/reset', (req, res) => {
 
 router.post('/auto/start', (req, res) => {
   reloadEnvironment();
-  if (isOracleOfflineCalibration(process.env)) {
-    return res.status(409).json({ error: 'Auto Mode dinonaktifkan selama ORACLE_OFFLINE_CALIBRATION=1. Gunakan job manual untuk kalibrasi lokal atau matikan kalibrasi agar Kaggle menjadi pemutus.' });
-  }
+
   const latest = getLatestAutoRun();
   if (latest && (latest.status === 'running' || latest.status === 'starting')) {
     if (req.body?.niche && latest.niche && latest.niche !== req.body.niche) {

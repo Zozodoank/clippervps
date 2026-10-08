@@ -45,11 +45,7 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally,
-  filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
 } from '../../services/videoFilterService.js';
 import {
   getPublicIpAddress,

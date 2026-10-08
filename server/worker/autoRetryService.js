@@ -38,11 +38,7 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally,
-  filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
 } from '../services/videoFilterService.js';
 import { classifyPipelineError, checkYouTubeHealth, getPublicIpAddress } from '../services/networkDiagnosticService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
@@ -146,6 +142,7 @@ export async function runAutoRetryWorker(jobId, run) {
       const candidates = await discoverYouTubeCandidatesForProduct({
         productTitle: targetTitle,
         productDescription: job.productDescription,
+        niche: job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools'),
         limit: 8,
         excludeVideoIds: usedVids,
         searchIteration: run.searchIteration,

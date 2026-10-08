@@ -1,41 +1,17 @@
 // ============================================================================
-// VLM Oracle Service — vonis frame oleh MODEL BESAR di luar perangkat.
-//
-// Kenapa ada file ini: perangkat user (Unisoc T7250 / CPU PC) tidak sanggup
-// menjalankan VLM sebagai gerbang per-scene. Terukur di Termux (llama-mtmd-cli
-// b11362 + SmolVLM2-500M Q4_K_M): 36-52 DETIK PER FRAME, dan biayanya per-gambar
-// (4 frame sekali panggil = 162 dtk), bukan per-proses. Solusi: bobot
-// Vision-Language (default Qwen2.5-VL-3B-Instruct fp16; override lewat ORACLE_MODEL_ID di
-// sisi notebook, dan TIDAK ada fallback antar-bobot lagi di sana) jalan di GPU Kaggle;
-// perangkat lokal hanya mengantre batch frame dan menunggu vonis.
-//
-// ARAH PANGGILAN DIPAKSA OLEH FISIKA JARINGAN: notebook Kaggle tidak punya
-// inbound, jadi notebook-lah yang menjadi KLIEN (claim -> unduh frame -> vonis ->
-// submit). Pipeline lokal tidak pernah "menelepon" Kaggle; ia hanya menulis ke
-// antrean SQLite dan membaca hasilnya. Konsekuensi bagus: notebook boleh mati
-// kapan saja tanpa merusak job.
-//
-// KEBIJAKAN FALLBACK (user mandate 2026-10 — STRICT ORACLE-ONLY, jangan dilonggarkan
-// tanpa izin eksplisit). "Fallback" di sini = perilaku saat oracle TIDAK menjawab:
-//   oracle menjawab        -> frame divonis KOTOR masuk daftar blacklist (veto).
-//   oracle diam/timeout/vonis tidak sah -> JOB DIHENTIKAN (OracleUnavailableError).
-//   DULU perilaku default-nya "lanjut dengan keputusan legacy" — itu TIDAK DIIZINKAN
-//   lagi: vonis model besar di Kaggle adalah satu-satunya gerbang verifikasi visual.
-//   Perilaku lama hanya dipertahankan untuk tooling kalibrasi yang mengirim
-//   `strict: false` eksplisit (mis. skrip di scratch/).
-//   (Bandingkan jalur 'smolvlm' yang MELEWATI legacy lalu fail-open saat VLM timeout —
-//   jalur itu juga ditolak: job dengan mode efektif bukan 'oracle' ditolak di gerbang
-//   stage1Render sebelum download.)
+// Kaggle Oracle queue and visual-verdict service. Kaggle is the sole visual decision maker.
+// Every frame is converted to an exact 9:16 JPEG before it can enter an Oracle batch.
+// Oracle errors and invalid verdicts stop the job; raw frames are never sent as fallback.
 // ============================================================================
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { buildVlmPrompt } from './vlmGateService.js';
+import { buildVlmPrompt } from './vlmOraclePrompt.js';
 import { getFFmpegPath } from './binaryChecker.js';
 import { tempDir } from '../utils/paths.js';
 import { planGrids, mapGridVerdictToFrames } from '../utils/frameGrid.js';
-import { isVlmOracleEnabled, isOraclePreflightEnabled, isOracleStrictMode, isOracleOfflineCalibration } from '../config/runtimeFlags.js';
+import { isVlmOracleEnabled, isOraclePreflightEnabled, isOracleStrictMode } from '../config/runtimeFlags.js';
 import {
   enqueueOracleBatch,
   waitForOracleVerdict,
@@ -73,7 +49,7 @@ export function resolveOracleConfig(env = process.env) {
     return Number.isFinite(v) && v > 0 ? v : fallback;
   };
   return {
-    enabled: isVlmOracleEnabled(env) && !isOracleOfflineCalibration(env),
+    enabled: isVlmOracleEnabled(env),
     grid: (() => {
       const raw = env.VLM_ORACLE_GRID;
       const n = raw === undefined || String(raw).trim() === '' ? 2 : Number(raw);
@@ -97,10 +73,10 @@ export function resolveOracleConfig(env = process.env) {
     staleMs: Math.max(30, sec('VLM_ORACLE_STALE_SEC', 300)) * 1000,
     maxAttempts: Math.max(1, sec('VLM_ORACLE_MAX_ATTEMPTS', 2)),
     baseUrl: String(env.VLM_ORACLE_BASE_URL || '').trim(),
-    // 0 = kirim mentah; selain 0 dikurung 240..720 (sama seperti normalizer snapshot).
+    // Tinggi target potret 9:16 yang dikirim ke Kaggle. Nilai 0 tidak boleh
+    // menonaktifkan transformasi rasio.
     frameHeight: (() => {
       const h = Math.round(Number(env.VLM_ORACLE_FRAME_HEIGHT));
-      if (h === 0) return 0;
       if (!Number.isFinite(h)) return 360;
       return Math.min(720, Math.max(240, h));
     })(),
@@ -134,9 +110,6 @@ export function resolveOracleConfig(env = process.env) {
  */
 export function assertOracleConnected({ logger = console, env = process.env } = {}) {
   const cfg = resolveOracleConfig(env);
-  if (isOracleOfflineCalibration(env)) {
-    return { ok: true, detail: 'offline_calibration', lastSeenAt: null, message: 'Kalibrasi lokal aktif; Oracle Kaggle dilewati.' };
-  }
   if (!cfg.enabled) {
     const mode = String(env.VISION_VERIFY_MODE || 'oracle').trim().toLowerCase();
     return {
@@ -197,7 +170,7 @@ export function pickEvenlySpaced(items = [], n = 0) {
  * Shape vonis yang WAJIB dikirim notebook (divalidasi LONGGAR tapi tidak naif):
  * { safe: bool, face/text/watermark/graphic: bool, reason?, perFrame?: [{index, safe, ...}],
  *   productMatch?: bool, matchScore?: 0-100, apparentQuality?: 0-100, lowQuality?: bool }
- * Key top-level sengaja SAMA dengan kontrak vlmGateService agar hilir cuma satu kosakata.
+ * Key top-level sengaja SAMA dengan skema JSON Oracle agar hilir cuma satu kosakata.
  *
  * `productMatch`/`matchScore` (Lapis 3) bersifat OPSIONAL di sini. Dua pass oracle yang
  * sudah ada (pool & audit klip) tidak pernah meminta konteks produk, jadi vonis tanpa
@@ -338,7 +311,6 @@ function makeBatchId(jobId, sceneIdx, framePaths = []) {
 // tetap lolos tanpa menambah root baru. File ASLI tidak pernah diubah/dihapus.
 // ---------------------------------------------------------------------------
 const RESIZE_TIMEOUT_MS = 20000;
-const SMALL_ENOUGH_BYTES = 200 * 1024; // sudah kecil -> tidak perlu diperkecil lagi
 const SWEEP_MAX_AGE_MS = 6 * 60 * 60 * 1000; // sapu salinan berusia > 6 jam
 
 // Cache per proses: frame yang sama dipakai ulang oleh pass pool DAN pass audit.
@@ -371,6 +343,11 @@ function sweepOldCopies(rootDir, logger, keepDir = '') {
   }
 }
 
+function portraitCanvas(height) {
+  const unit = Math.max(15, Math.round(Number(height) / 16));
+  return { width: 9 * unit, height: 16 * unit };
+}
+
 function runResize(srcPath, dstPath, height, timeoutMs = RESIZE_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let ffmpeg = '';
@@ -380,11 +357,14 @@ function runResize(srcPath, dstPath, height, timeoutMs = RESIZE_TIMEOUT_MS) {
     const finish = (ok) => { if (done) return; done = true; clearTimeout(timer); resolve(ok && fs.existsSync(dstPath)); };
     const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch {} finish(false); }, timeoutMs);
     let proc;
+    const canvas = portraitCanvas(height);
     try {
       proc = spawn(ffmpeg, [
         '-y', '-nostdin', '-i', srcPath,
-        // -2: tinggi tetap, lebar mengikuti rasio dan dibulatkan ke GENAP (wajib JPEG/FFmpeg).
-        '-vf', `scale=-2:${height}`, '-q:v', '4', dstPath,
+        // Pertahankan seluruh gambar, lalu letterbox ke kanvas 9:16; jangan
+        // crop produk atau kirim sumber mentah bila transformasi gagal.
+        '-vf', `scale=${canvas.width}:${canvas.height}:force_original_aspect_ratio=decrease,pad=${canvas.width}:${canvas.height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
+        '-frames:v', '1', '-q:v', '4', dstPath,
       ], { stdio: 'ignore' });
     } catch { clearTimeout(timer); resolve(false); return; }
     proc.on('error', () => finish(false));
@@ -398,36 +378,38 @@ function runResize(srcPath, dstPath, height, timeoutMs = RESIZE_TIMEOUT_MS) {
  * frame dengan `filePath` = path yang boleh di-download notebook, dan `originalBySent`
  * memetakan path kirim kembali ke path asli (veto harus mengenai frame asli).
  *
- * Tidak pernah melempar: kegagalan konversi = pakai file asli.
+ * Gagal tertutup: tidak ada frame mentah/rasio lain yang boleh masuk antrean Kaggle.
  */
 export async function prepareOracleFrames(frames = [], { height = 360, jobId = '', outDir = null, logger = console, env = process.env } = {}) {
   const list = (Array.isArray(frames) ? frames : []).filter((f) => f && f.filePath);
-  const h = Number.isFinite(Number(height)) ? Math.round(Number(height)) : 360;
-  const out = { sent: list.slice(), originalBySent: new Map(), converted: 0, failed: 0, outDir: '' };
-  for (const f of list) out.originalBySent.set(f.filePath, f.filePath);
-  if (!list.length || h <= 0) return out;
+  const h = Number.isFinite(Number(height)) && Number(height) > 0 ? Math.round(Number(height)) : 360;
+  const canvas = portraitCanvas(h);
+  const out = { sent: [], originalBySent: new Map(), converted: 0, failed: 0, outDir: '' };
+  if (!list.length) return out;
 
   const baseDir = outDir || path.join(tempDir, 'oracle_frames');
-  const dir = path.join(baseDir, `${safeJobSegment(jobId)}_h${h}`);
+  const dir = path.join(baseDir, `${safeJobSegment(jobId)}_portrait9x16_${canvas.width}x${canvas.height}`);
   out.outDir = dir;
   try {
     fs.mkdirSync(dir, { recursive: true });
     sweepOldCopies(baseDir, logger, dir);
   } catch (err) {
-    if (logger && logger.warn) logger.warn(`[Oracle] Gagal menyiapkan ${dir} (${err.message}) -> kirim frame mentah.`);
-    return out;
+    throw new OracleUnavailableError(`Gagal menyiapkan transformasi frame Oracle 9:16 (${err.message}).`, { reason: 'infra', jobId });
   }
 
   const work = [];
   for (const f of list) {
     let st = null;
     try { st = fs.statSync(f.filePath); } catch { st = null; }
-    if (!st || st.size <= SMALL_ENOUGH_BYTES) continue; // tidak ada / sudah kecil: kirim apa adanya
-    const key = `${f.filePath}|${h}|${st.mtimeMs}|${st.size}`;
+    if (!st || !st.isFile() || st.size <= 0) {
+      out.failed += 1;
+      continue;
+    }
+    const key = `portrait9x16|${f.filePath}|${canvas.width}x${canvas.height}|${st.mtimeMs}|${st.size}`;
     const cached = resizeCache.get(key);
     if (cached && fs.existsSync(cached)) {
       out.converted += 1;
-      out.sent = out.sent.map((x) => (x === f ? { ...x, filePath: cached, originalPath: f.filePath } : x));
+      out.sent.push({ ...f, filePath: cached, originalPath: f.filePath, oracleAspectRatio: '9:16' });
       out.originalBySent.set(cached, f.filePath);
       continue;
     }
@@ -447,7 +429,7 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
       if (ok) {
         resizeCache.set(item.key, item.dst);
         out.converted += 1;
-        out.sent = out.sent.map((x) => (x === item.frame ? { ...x, filePath: item.dst, originalPath: item.frame.filePath } : x));
+        out.sent.push({ ...item.frame, filePath: item.dst, originalPath: item.frame.filePath, oracleAspectRatio: '9:16' });
         out.originalBySent.set(item.dst, item.frame.filePath);
       } else {
         out.failed += 1;
@@ -455,8 +437,9 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
     });
   }
 
-  if (out.failed > 0 && logger && logger.warn) {
-    logger.warn(`[Oracle] ${out.failed} frame gagal dikecilkan ke ${h}p -> dikirim mentah (lebih besar, tapi job tidak dibatalkan).`);
+  if (out.failed > 0) {
+    logger?.warn?.(`[Oracle] ${out.failed} frame gagal dikonversi ke kanvas ${canvas.width}x${canvas.height} (9:16).`);
+    throw new OracleUnavailableError(`${out.failed} frame gagal dikonversi ke ukuran Oracle 9:16; frame mentah tidak dikirim.`, { reason: 'infra', jobId });
   }
   return out;
 }
@@ -468,21 +451,22 @@ function runGridCompose(inputFrames, dstPath, labels, timeoutMs = 30000) {
     if (!ffmpeg) return resolve(false);
     const args = ['-y', '-nostdin'];
     for (const frame of inputFrames) args.push('-loop', '1', '-framerate', '1', '-i', frame);
-    for (let i = inputFrames.length; i < 4; i++) args.push('-f', 'lavfi', '-i', 'color=c=black:s=426x240:r=1');
+    for (let i = inputFrames.length; i < 4; i++) args.push('-f', 'lavfi', '-i', 'color=c=black:s=270x480:r=1');
     const filters = [];
     for (let i = 0; i < 4; i++) {
-      filters.push(`[${i}:v]scale=426:240:force_original_aspect_ratio=decrease,pad=426:240:(ow-iw)/2:(oh-ih)/2[s${i}]`);
+      filters.push(`[${i}:v]scale=270:480:force_original_aspect_ratio=decrease,pad=270:480:(ow-iw)/2:(oh-ih)/2,setsar=1[s${i}]`);
     }
-    filters.push('[s0][s1][s2][s3]xstack=inputs=4:layout=0_0|426_0|0_240|426_240:fill=black[grid]');
+    // Empat tile potret menjadi satu kanvas potret: 540x960 = 9:16.
+    filters.push('[s0][s1][s2][s3]xstack=inputs=4:layout=0_0|270_0|0_480|270_480:fill=black[grid]');
     let output = '[grid]';
     if (labels) {
       const font = process.platform === 'win32'
         ? 'C\\:/Windows/Fonts/arial.ttf'
         : '/system/fonts/Roboto-Regular.ttf';
       const labelFilters = inputFrames.map((_, i) => {
-        const x = (i % 2) * 426 + 8;
-        const y = Math.floor(i / 2) * 240 + 8;
-        return `drawtext=fontfile='${font}':text='${i + 1}':x=${x}:y=${y}:fontsize=28:fontcolor=white:box=1:boxcolor=black@0.75`;
+        const x = (i % 2) * 270 + 8;
+        const y = Math.floor(i / 2) * 480 + 8;
+        return `drawtext=fontfile='${font}':text='${i + 1}':x=${x}:y=${y}:fontsize=36:fontcolor=white:box=1:boxcolor=black@0.75`;
       });
       filters.push(`[grid]${labelFilters.join(',')}[out]`);
       output = '[out]';
@@ -589,9 +573,6 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
   const {
     jobId = '', niche = 'kitchen_tools', facePolicy = 'strict',
     logger = console, env = process.env, onProgress = null, outDir = null,
-    // Ringkasan kecurigaan AI Local Gatekeeper (peran advisory) yang ikut ditulis ke prompt,
-    // supaya Qwen memeriksa aturan lokal itu sendiri alih-alih menerima pemutusan model kecil.
-    localHints = '',
     strict = isOracleStrictMode(env),
   } = opts;
   const cfg = resolveOracleConfig(env);
@@ -624,7 +605,7 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
   result.resizeFailed = prepared.failed;
 
   const t0 = Date.now();
-  const prompt = buildVlmPrompt(niche, facePolicy, { localHints });
+  const prompt = buildVlmPrompt(niche, facePolicy);
   const deadline = t0 + cfg.totalTimeoutMs;
   const gridMode = oracleGridAvailable(cfg);
   const submission = await prepareOracleSubmission(sendable, { cfg, jobId, outDir, logger, strict });
@@ -757,8 +738,8 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
  *
  * Mode oracle OFF -> `frames` dikembalikan utuh, tanpa efek samping apa pun.
  */
-export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', blacklisted = null, onProgress = null, logger = console, env = process.env, outDir = null, localHints = '', strict } = {}) {
-  const res = await sanitizePoolWithOracle(frames, { jobId, niche, facePolicy, onProgress, logger, env, outDir, localHints, strict });
+export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', blacklisted = null, onProgress = null, logger = console, env = process.env, outDir = null, strict } = {}) {
+  const res = await sanitizePoolWithOracle(frames, { jobId, niche, facePolicy, onProgress, logger, env, outDir, strict });
   if (!res.enabled) return { frames, ...res };
   if (res.blacklisted.length && blacklisted && typeof blacklisted.add === 'function') {
     for (const p of res.blacklisted) blacklisted.add(p);
@@ -790,7 +771,6 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
   const {
     jobId = '', niche = 'kitchen_tools', facePolicy = 'strict',
     logger = console, env = process.env, onProgress = null, outDir = null,
-    localHints = '',
     strict = isOracleStrictMode(env),
   } = opts;
   const cfg = resolveOracleConfig(env);
@@ -806,7 +786,7 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
 
   // Plafon total dibagi merata per klip; klip pendek tetap dapat minimal 2 titik.
   const perClipCap = Math.max(2, Math.floor(cfg.auditMaxFrames / list.length));
-  const prompt = buildVlmPrompt(niche, facePolicy, { localHints });
+  const prompt = buildVlmPrompt(niche, facePolicy);
   const t0 = Date.now();
   const deadline = t0 + cfg.totalTimeoutMs;
 
@@ -1107,12 +1087,19 @@ export async function preflightCandidatesWithOracle(candidates = [], opts = {}) 
       continue;
     }
 
-    const paths = chosen.map((f) => f.filePath);
+    const preparedFrames = await prepareOracleFrames(chosen, {
+      height: cfg.frameHeight, jobId, outDir: workDir, logger, env,
+    });
+    const oracleReadyFrames = preparedFrames.sent;
+    if (!oracleReadyFrames.length) {
+      throw new OracleUnavailableError(`Kandidat #${pos + 1} tidak memiliki frame yang berhasil dikonversi ke kanvas 9:16.`, { reason: 'infra', jobId });
+    }
+    const paths = oracleReadyFrames.map((f) => f.filePath);
     const id = makeBatchId(jobId, PREFLIGHT_SCENE_BASE + pos, paths);
     out.framesSent += paths.length;
     let entry = { index: pos, answered: false, clean: false, productMatch: null, matchScore: null, apparentQuality: null, lowQuality: null, qualityBlocked: false, reason: '', dirtyFrames: 0 };
     try {
-      const submission = await prepareOracleSubmission(chosen, { cfg, jobId, outDir: workDir, logger, strict });
+      const submission = await prepareOracleSubmission(oracleReadyFrames, { cfg, jobId, outDir: workDir, logger, strict });
       const batchFrames = submission.frames;
       const gridMode = submission.gridMode;
       const sourceFrames = sourceFramesForOracleBatch(batchFrames, gridMode);

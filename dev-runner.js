@@ -2,7 +2,6 @@ import { spawn } from 'child_process';
 import net from 'net';
 import os from 'os';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -85,99 +84,7 @@ function startServerProcess() {
   });
 }
 
-const GATEKEEPER_PORT = 5050;
-let gatekeeperProcess = null;
-
-// Baca KEY dari environment proses, lalu fallback ke file .env proyek
-// (server/.env lebih dulu, baru .env root). dev-runner TIDAK memuat dotenv, jadi
-// flag pengendali harus dibaca manual supaya bisa diset dari .env di PC/Termux.
-function readEnvFlagRaw(key) {
-  const fromProcess = String(process.env[key] || '').trim();
-  if (fromProcess) return fromProcess;
-  for (const f of [path.join(__dirname, 'server', '.env'), path.join(__dirname, '.env')]) {
-    try {
-      if (!fs.existsSync(f)) continue;
-      for (const line of fs.readFileSync(f, 'utf8').split(/\r?\n/)) {
-        const m = line.match(new RegExp('^\\s*' + key + '\\s*=\\s*(.*)$'));
-        if (m) return m[1].trim().replace(/^["']|["']$/g, '');
-      }
-    } catch { /* abaikan file yang tak terbaca */ }
-  }
-  return '';
-}
-
-// MANDEL user 2026-10: "saya tidak membutuhkan AI lokal lagi; filter frame
-// seluruhnya ditangani Qwen di Kaggle." Gatekeeper (:5050) kini TIDAK auto-start
-// kecuali flag GATEKEEPER_AUTO_START dinyalakan eksplisit ('1'/'true'). Aman karena
-// pipeline berjalan mode ADVISORY (videoFilterService meneruskan SEMUA frame ke
-// Oracle meski gatekeeper absent). Nyalakan lagi kapan pun: GATEKEEPER_AUTO_START=1.
-function gatekeeperAutoStartEnabled() {
-  const v = readEnvFlagRaw('GATEKEEPER_AUTO_START').toLowerCase();
-  return v === '1' || v === 'true';
-}
-
-async function startGatekeeperProcess() {
-  const gatekeeperScript = path.join(__dirname, 'server', 'gatekeeper', 'service.py');
-  if (!fs.existsSync(gatekeeperScript)) return;
-
-  const portFree = await isPortFree(GATEKEEPER_PORT);
-  if (!portFree) {
-    console.log(`🤖 AI Local Gatekeeper is already running on port ${GATEKEEPER_PORT}.`);
-    return;
-  }
-
-  const gatekeeperVenvPython = path.join(
-    __dirname,
-    'server',
-    'gatekeeper',
-    '.venv',
-    isWindows ? 'Scripts' : 'bin',
-    isWindows ? 'python.exe' : 'python3',
-  );
-  const pyCmd = fs.existsSync(gatekeeperVenvPython)
-    ? gatekeeperVenvPython
-    : (isWindows ? 'python' : 'python3');
-  console.log(`🤖 Starting AI Local Gatekeeper on port ${GATEKEEPER_PORT}...`);
-  gatekeeperProcess = spawn(pyCmd, [gatekeeperScript, '--port', String(GATEKEEPER_PORT)], {
-    cwd: path.join(__dirname, 'server', 'gatekeeper'),
-    env: {
-      ...process.env,
-      PYTHONUNBUFFERED: '1',
-      PYTHONIOENCODING: 'utf-8',
-      PYTHONUTF8: '1',
-      OMP_NUM_THREADS: '1',
-      OPENBLAS_NUM_THREADS: '1',
-      MKL_NUM_THREADS: '1',
-      ORT_LOGGING_LEVEL: '3',
-      ONNXRUNTIME_LOG_LEVEL: '3',
-      CUDA_VISIBLE_DEVICES: '',
-    },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  gatekeeperProcess.stdout.on('data', (d) => {
-    const text = d.toString().trim();
-    if (text) {
-      console.log(`[Gatekeeper] ${text}`);
-    }
-  });
-
-  gatekeeperProcess.stderr.on('data', (d) => {
-    const text = d.toString().trim();
-    if (!text) return;
-    // Suppress harmless GPU device discovery warnings on Android/Termux where /sys/class/drm is permission-denied
-    if (text.includes('device_discovery.cc') || text.includes('GPU device discovery failed') || text.includes('/sys/class/drm')) {
-      return;
-    }
-    console.error(`[Gatekeeper ERR] ${text}`);
-  });
-
-  gatekeeperProcess.on('exit', (code) => {
-    if (!isShuttingDown) {
-      console.log(`[dev-runner] Gatekeeper exited with code ${code}.`);
-    }
-  });
-}
+console.log('[dev-runner] Local Gatekeeper disabled; all visual verdicts are handled by Oracle Kaggle.');
 
 let ngrokProcess = null;
 
@@ -196,12 +103,6 @@ function startNgrokProcess(port) {
       console.log(`[dev-runner] Ngrok berhenti dengan kode ${code}.`);
     }
   });
-}
-
-if (gatekeeperAutoStartEnabled()) {
-  await startGatekeeperProcess();
-} else {
-  console.log('🚫 AI Local Gatekeeper TIDAK dinyalakan (GATEKEEPER_AUTO_START!=1). Seluruh filter frame ditangani Qwen/Oracle Kaggle (mode advisory). Set GATEKEEPER_AUTO_START=1 untuk memakai AI lokal lagi.');
 }
 
 // Tunnel dikelola terpisah oleh start-tunnel.sh/PM2 di Termux. Menyalakan ngrok
@@ -234,9 +135,6 @@ const cleanup = () => {
   isShuttingDown = true;
   console.log('\n🛑 Shutting down services...');
   if (serverProcess) serverProcess.kill();
-  if (gatekeeperProcess) {
-    try { gatekeeperProcess.kill(); } catch {}
-  }
   if (ngrokProcess) {
     try { ngrokProcess.kill(); } catch {}
   }

@@ -38,11 +38,7 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally,
-  filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
 } from '../services/videoFilterService.js';
 import { classifyPipelineError, checkYouTubeHealth } from '../services/networkDiagnosticService.js';
 import { trackSavedBandwidth } from '../services/bandwidthTracker.js';
@@ -311,6 +307,7 @@ export async function runAutoStage1Worker(run) {
 
       let candidates = await searchMultiEngineVideos(searchKeyword, {
         limit: 16,
+        niche: run.niche || 'kitchen_tools',
         excludeVideoIds: usedYouTubeVideoIds,
         strictIdentity: true,
         youtubeOnly: true,

@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // EVIDENCE MODE — Gemini TIDAK membaca ulang video penuh (fileUri stream /
 // File API upload). Yang dikirim ke Gemini hanyalah BUKTI VISUAL yang sudah
-// diekstrak & diverifikasi Gatekeeper lokal di disk:
+// diekstrak ke disk; keputusan visual menjadi tanggung jawab Oracle Kaggle:
 //   * 0 MB kuota internet tambahan (frame sudah tersdownload saat sampling).
 //   * Token Gemini turun drastis (puluhan gambar low-detail vs video utuh).
 // Flag GEMINI_INPUT_MODE ('evidence' default | 'stream' = perilaku lama),
@@ -251,7 +251,7 @@ export function formatCleanWindowsBySource(windows = [], sourceLabels = []) {
   const hasSourceTag = list.some((w) => Number.isFinite(Number(w.sourceVideoIndex)));
   if (!hasSourceTag) {
     // Perilaku lama (satu sumber): daftar flat.
-    return `\nCRITICAL MANDATE (VERIFIED CLEAN TEMPORAL SEGMENTS): AI Local Gatekeeper telah memverifikasi segmen-segmen waktu bersih berikut: [${list.map((w) => `${w.start}s-${w.end}s`).join(', ')}]. Anda HANYA BOLEH memilih timestamps di dalam rentang waktu yang terverifikasi bersih ini! DILARANG KERAS memilih timestamps di luar segmen bersih ini.\n`;
+    return `\nCRITICAL MANDATE (VERIFIED CLEAN TEMPORAL SEGMENTS): Oracle Kaggle telah memverifikasi segmen waktu berikut: [${list.map((w) => `${w.start}s-${w.end}s`).join(', ')}]. Anda HANYA BOLEH memilih timestamps di dalam rentang waktu yang terverifikasi bersih ini! DILARANG KERAS memilih timestamps di luar segmen bersih ini.\n`;
   }
 
   const bySource = new Map();
@@ -266,7 +266,7 @@ export function formatCleanWindowsBySource(windows = [], sourceLabels = []) {
       const label = sourceLabels[idx] ? ` [${String(sourceLabels[idx]).slice(0, 60)}]` : '';
       return `  VIDEO #${idx + 1}${label}: ${ws.map((w) => `${w.start}s-${w.end}s`).join(', ')}`;
     });
-  return `\nCRITICAL MANDATE (SOURCE-SCOPED VERIFIED CLEAN SEGMENTS): AI Local Gatekeeper memverifikasi segmen bersih BERDASARKAN VIDEO SUMBERNYA MASING-MASING:\n${blocks.join('\n')}\nAturan keras: (1) timestamps HANYA BOLEH dipilih di dalam segmen bersih video SUMBER yang sama; (2) batas waktu 10s-25s pada VIDEO #1 TIDAK BERLAKU untuk VIDEO #2, dst; (3) DILARANG KERAS memilih timestamp di luar daftar segmen sumber yang dipilih, dan wajib mengisi "sourceVideoIndex" sesuai video asalnya.\n`;
+  return `\nCRITICAL MANDATE (SOURCE-SCOPED VERIFIED CLEAN SEGMENTS): Oracle Kaggle memverifikasi segmen berdasarkan video sumber masing-masing:\n${blocks.join('\n')}\nAturan keras: (1) timestamps HANYA BOLEH dipilih di dalam segmen bersih video SUMBER yang sama; (2) batas waktu 10s-25s pada VIDEO #1 TIDAK BERLAKU untuk VIDEO #2, dst; (3) DILARANG KERAS memilih timestamp di luar daftar segmen sumber yang dipilih, dan wajib mengisi "sourceVideoIndex" sesuai video asalnya.\n`;
 }
 
 /**
@@ -301,12 +301,11 @@ export function shouldAllowRescue({ aiGaveVerdict = false, acceptedCount = 0, re
  * menambah mode baru di sini tidak mengubah keputusan Rescue Pipeline.
  * - product_verify : panggilan `verifyProductCandidateWithAI` (kecocokan produk, bukan
  *   vonis per-frame) pada frame bersih kandidat.
- * - vlm_local      : vonis per-scene oleh VLM LOKAL (SmolVLM2), tanpa Gemini sama sekali.
  * @param {{ mode?: string, usableFrames?: number, framesSent?: number, acceptedCount?: number, rejectedCount?: number, sourceCount?: number }} info
  */
 export function buildVisionProvenance(info = {}) {
   const num = (v) => (Number.isFinite(Number(v)) ? Math.max(0, Math.round(Number(v))) : 0);
-  const allowedModes = ['evidence', 'frames_stride', 'gemini_stream', 'gemini_stream_multi', 'product_verify', 'vlm_local'];
+  const allowedModes = ['evidence', 'frames_stride', 'gemini_stream', 'gemini_stream_multi', 'product_verify'];
   const mode = allowedModes.includes(String(info.mode)) ? String(info.mode) : 'unknown';
   return {
     mode,
@@ -320,7 +319,7 @@ export function buildVisionProvenance(info = {}) {
 
 /**
  * Gerbang vonis frame. HANYA mode yang berarti Gemini memberi vonis per-frame pada BUKTI
- * yang benar-benar terkirim. Ini alasan `product_verify` dan `vlm_local` sengaja TIDAK ada
+ * yang benar-benar terkirim. Ini alasan `product_verify` sengaja TIDAK ada
  * di daftar: keduanya adalah panggilan yang tidak menghasilkan vonis kebersihan per-frame
  * untuk Rescue Pipeline, sehingga menyalakan gerbang darinya akan mengubah keputusan
  * `shouldAllowRescue` tanpa dasar.

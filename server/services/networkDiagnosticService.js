@@ -179,22 +179,21 @@ export function classifyPipelineError(err, context = {}) {
 
   // ── KELOMPOK 2: PENOLAKAN FILTER KUALITAS & KONTEN (REJECT) ──
 
-  // 2.1 Filter Lokal Gatekeeper (Wajah, Teks Promosi, Subtitle, Slideshow)
+  // Visual content rejection from Kaggle Oracle.
   if (
     err?.isAiRejection ||
     lower.includes('analisa lokal ditolak') ||
-    lower.includes('ditolak ai gatekeeper') ||
     lower.includes('wajah') ||
     lower.includes('slideshow') ||
     lower.includes('subtitle')
   ) {
     return {
       sourceStatus: 'REJECT',
-      failureCode: 'LOCAL_FILTER_REJECT',
+      failureCode: 'VISUAL_CONTENT_REJECT',
       isNetworkOrIpIssue: false,
       analysisPerformed: true,
       userFriendlyReason: err?.rejectionReason || rawMessage,
-      actionableAdvice: 'Video berhasil diperiksa, tetapi mengandung wajah/subtitle/foto statis.',
+      actionableAdvice: 'Oracle Kaggle menilai video ini tidak memenuhi syarat visual.',
       rawMessage,
     };
   }

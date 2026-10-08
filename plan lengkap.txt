@@ -1,0 +1,98 @@
+Sebelum menyusun plan, saya verifikasi kondisi aktual di kode: (1) apakah SCRFD sudah benar-benar menggantikan YuNet, (2) bagaimana gerbang mode oracle menolak job tanpa Kaggle (kunci untuk "matikan sementara Kaggle"), (3) titik-titik perubahan grid/kirim frame.
+
+
+SCRFD memang sudah default di kode (L301: `GK_FACE_BACKEND` default `scrfd`) ✅. Sekarang saya petakan gerbang Kaggle dan struktur kirim frame/vonis:
+
+
+Konteks lengkap — kontrak vonis sudah punya `perFrame[]` (bagnode kunci: `index`), gerbang Kaggle terpusat di `stage1Render.js` L358–409, dan SCRFD memang sudah default di `service.py` L301. Saya sudah menimbang tiga sudut desain (kesederhanaan, performa, perubahan-minimal) dan memverifikasi kelayakannya di kode. Berikut plan finalnya.
+
+---
+
+# PLAN: Kalibrasi Lokal (Kaggle Mati) + Grid 2×2 @240p + Zone-Classifier Pengganti DBNet
+
+> **Catatan status:** YuNet → SCRFD sudah selesai Anda kerjakan (`GK_FACE_BACKEND` default `scrfd`, L301). Plan ini TIDAK mengulang itu — hanya memakai ulang benchmark untuk membuktikannya.
+
+## Fase 0 — Persiapan (prasyarat semua fase)
+1. **Sinkronkan copy kontainer Ubuntu HP** (`/root/clippervps`) dengan repo — hasil bench kemarin menunjukkan stage `yunet_crop/yunet_full`, artinya service.py di kontainer **lebih tua** dari perubahan SCRFD Anda. `git pull` di kontainer, verifikasi `pgrep service.py` lama mati, start ulang.
+2. Bersihkan komentar usang header `service.py` L5 ("MediaPipe & YuNet") — dokumentasi saja, tanpa perubahan perilaku.
+
+## Fase 1 — MODE KALIBRASI LOKAL: matikan Kaggle sementara (deliverable utama "melihat hasil output")
+Kebijakan Kaggle-only (mandate 2026-10) tidak boleh dilanggar diam-diam; maka dibuat **knob eksplisit yang beku per-job**, bukan mematikan `VISION_VERIFY_MODE`.
+
+| Berkas | Perubahan |
+|---|---|
+| `server/config/runtimeFlags.js` | Tambah flag `ORACLE_OFFLINE_CALIBRATION` di `FLAG_NORMALIZERS` (default `false`), helper `isOracleOfflineCalibration(env)`, dan modifikasi `localGatekeeperVetoMode()`: saat kalibrasi ON → paksa `'strict'` (Gatekeeper jadi pemutus, karena tidak ada pemutus lain). Snapshot otomatis mencakup via safety-net loop L265. |
+| `server/worker/stage1Render.js` | Gerbang L358–409: jika kalibrasi ON → **lewati** `assertOracleConnected`, zombie-probe, auto-launch; set `jobMeta.oracleCalibration = { skippedAt, gatekeeperBackend: 'local-strict' }` (forensik). `recordStageEvent` wajib menulis baris mencolok: `MODE KALIBRASI LOKAL — Kaggle DIMATIKAN`. |
+| Titik oracle berikutnya di `stage1Render.js` | `preflightCandidatesWithOracle` (L1491 — sudah berguard `isOraclePreflightEnabled`, cukup AND-kan `!kalibrasi` → kandidat turun ke jalur Gemini dorman yang masih utuh), blok veto pool (L1705 `if (isVlmOracleEnabled(...))` → AND `!kalibrasi`), pass `clip_audit` (`auditClipsWithOracle` → gerbang internal `resolveOracleConfig` mengembalikan `enabled:false, note` saat kalibrasi). |
+| `server/services/vlmOracleService.js` | `resolveOracleConfig()` membaca kalibrasi → `enabled: false` untuk SEMUA konsumen (satu sumber kebenaran, gerbang stage1Render tetap punya pesan sendiri). |
+| `server/.env.example` + `AGENTS.md` | Dokumentasikan: **hanya untuk kalibrasi**; vonis hasil kalibrasi tidak boleh dipakai sebagai bukti lolos produksi (jobMeta ditandai). |
+| Test | `configSnapshot.test.js` (flag baru beku + retry konsisten), `localVetoAdvisory.test.js` (kalibrasi ⇒ strict), test baru `oracleCalibrationGate.test.js` (gerbang lolos saat offline DAN terekam di meta). |
+
+**Hasil yang bisa Anda lihat:** job jalan end-to-end tanpa notebook Kaggle; filter = SCRFD + DBNet + MobileNetV3 (mode lama `strict` yang dorman — kodenya memang sengaja tidak dihapus, L367).
+
+## Fase 2 — Anggaran sampling 240p @50 frame/menit (konfigurasi saja, tanpa kode)
+`.env` server (nilai baru, semuanya sudah punya normalizer yang mendukung):
+```
+RENDER_SAMPLE_INTERVAL_SEC=1.2      (50 f/menit; clamp min 0.5 aman)
+VLM_ORACLE_FRAME_HEIGHT=240          (clamp 240..720 — pas di batas bawah)
+VLM_ORACLE_MAX_FRAMES=500            (plafon pool; tidak di-clamp, aman)
+VLM_ORACLE_AUDIT_MAX_FRAMES=240      (plafon maksimum klamp — ok)
+GK_MAX_BATCH_FRAMES=500              (cap agregat gatekeeper, jangan 240 lagi)
+SAMPLE_MAX_FRAMES=500
+VLM_ORACLE_TOTAL_TIMEOUT_SEC=1800    (600 TIDAK cukup utk 500 frame — lihat hasil bench: 500 f ≈ 18 mnt lokal)
+VLM_ORACLE_TIMEOUT_SEC=300           (per batch grid: 8 gambar×4 frame butuh lebih lama dari 1 frame)
+```
+⚠️ Bukti terukur kemarin: gatekeeper 2,35 s/frame ⇒ **kalau Gatekeeper ikut menganalisa semua frame, 500 frame = ±20 menit**. Rekomendasi: biarkan Gatekeeper tetap pada cap 240 (subsample merata) dan oracle yang makan 500 — tambahkan catatan di test `gatekeeperPipeline` bila perilaku ini diuji.
+
+## Fase 3 — Grid 2×2 untuk pengiriman Oracle (setelah Fase 1 terbukti)
+Prinsip desain: **grid adalah kendaraan angkut, kontrak vonis tidak berubah** — `perFrame[].index` tetap index frame asli; pemetaan sel dilakukan server.
+
+1. **`server/utils/frameGrid.js` (baru, pure function)** — `planGrids(frames, cells=4)` → `[{ gridPath, cells:[{index,sceneIdx,timestamp}], ... }]` row-major. Diuji unit penuh tanpa FFmpeg.
+2. **Menjahit gambar via FFmpeg** (bukan library Node baru — tidak ada sharp di proyek): fungsi `composeGridImages()` di `vlmOracleService.js` memakai FFmpeg yang sama seperti `extractFrames` L372: input image2 sequence → `-vf tile=2x2`, + `drawtext` angka sel bila font tersedia (fallback: tanpa label, prompt menegaskan urutan row-major). Grid 852×480 **tidak tersentuh** `MAX_SIDE=1024` notebook → detail per frame tetap ~130 token (sesuai hitungan kita).
+3. **Payload claim** (`vlmOracleRoutes.js` + builder batch): item batch = grid dengan field baru `cells:[index...]`; `url` menunjuk file grid. Route serving hanya menambah entri allowlist (pola sudah ada).
+4. **Prompt** (`vlmGateService.buildVlmPrompt` varian oracle / promptBuilders): "Jawab perFrame untuk SEMUA index yang tertera; gambar adalah grid 2×2 baris-demi-baris."
+5. **Normalisasi vonis** (`normalizeOracleVerdict` + `applyOracleVeto`): entri `perFrame` di-distribute ke frame asli via `cells`; index tak dikenal → dibuang; sel tanpa vonis → dianggap BELUM terverifikasi (semantik STRICT tidak dilonggarkan). Recovery single-image notebook tetap bekerja tanpa perubahan berarti.
+6. **Env**: `VLM_ORACLE_GRID=2` (0/1 = kirim terpisah — jalur lama tetap ada sebagai fallback darurat), masuk `FLAG_NORMALIZERS` + snapshot.
+7. **`kaggle/deploy.ps1` / notebook**: HANYA perlu update bila `protocolVersion` dinaikkan — naikkan konstanta dan terima keduanya sementara (notebook lama = kirim terpisah, tidak ada paksaan restart sesi).
+8. Test: `vlmOracleGrid.test.js` (grouping, distribusi vonis, vonis parsial, sel hilang STRICT), update fixture `vlmOracle.test.js`, `vlmOracleFlags`/configSnapshot untuk `VLM_ORACLE_GRID`.
+
+## Fase 4 — Zone-classifier MobileNetV3 pengganti DBNet (jalur independen)
+1. **Dataset distilasi**: `server/gatekeeper/make_zone_text_dataset.py` — jalankan DBNet atas `gatekeeper/dataset/` + `add_watermark_frames.py` → label 5 zona (bawah/atas/4 sudut) per frame crop.
+2. **Training**: `train_zone_text.py` (turunan `train_scene_filter.py`), satu backbone MobileNetV3-S + 5 kepala sigmoid (dijalankan per-crop 224), augmentasi blur/JPEG-low-quality meniru 240p. Ekspor `models/zonetext_v1.onnx` + entry `download_models.py`.
+3. **Integrasi `service.py`**: `GK_TEXT_BACKEND=dbnet|zonemob|sobel` (default tetap `dbnet` sampai zonemob tervalidasi); kelas path baru di `TextGatekeeper` dengan output bentuk sama (`suspicious, total_cov, bottom_cov, reason, cornerActivations`) → warisan stride & tracker sudut tidak berubah.
+4. **Pengiriman ke HP**: `sync-to-termux.ps1`步骤 5 hanya men-scp `*.gguf` — perlu diperluas ke `*.onnx` (atau handalkan `download_models.py` di perangkat).
+5. **Validasi ukur**: jalankan ulang `scratch/bench_gk.sh` (sudah terbukti jalan) → target: stage text < 100 ms/frame; total ±1 s/frame ⇒ 250 frame ≈ 4 mnt. Test Python setara `test_face_policy.py` + `gatekeeperPipeline.test.js` sisi Node (kontrak respons tidak berubah).
+
+## Fase 5 — Uji terima & perbandingan output
+- **Run A (Fase 1):** kandidat yang sama (`m-unxJ6icHc`), Kaggle mati, Gatekeeper strict → simpan video output + `benchmarks.stageMs`.
+- **Run B:** kandidat yang sama, oracle ON → bandingkan klip yang lolos/dibuang; catat false-positive/negative lokal di `scratch/calibration_diff.md`.
+- Kriteria lulus untuk mengaktifkan Fase 3–4 permanen: waktu analisa lokal ≤ 5 mnt/5 mnt video, dan tidak ada frame wajah/subtitle yang lolos yang TIDAK juga lolos saat oracle hidup.
+
+## Urutan & dependensi
+```
+Fase 0 ──► Fase 1 ──► Fase 5(run A)          [segera: "melihat output tanpa Kaggle"]
+              └────► Fase 2 ──► Fase 3 ──► Fase 5(run B)
+Fase 4 (paralel, butuh dataset + training; hanya butuh Fase 0 utk verifikasi device)
+```
+
+## Risiko & mitigasi
+| Risiko | Mitigasi |
+|---|---|
+| Mode kalibrasi dipakai diam-diam untuk produksi | Flag beku di snapshot + `jobMeta.oracleCalibration` + badge di riwayat job client; auto-run menolak kalibrasi (hanya explicit env) |
+| Model 3B salah mengikat sel grid | drawtext nomor sel + instruksi row-major eksplisit + sel tanpa vonis = BELUM terverifikasi (STRICT tidak melonggarkan) + jalur fallback `VLM_ORACLE_GRID=0` |
+| Retry job lama mencampur mode | `configSnapshot` sudah membekukan `ORACLE_OFFLINE_CALIBRATION` & `VLM_ORACLE_GRID` per-job |
+| Distilasi mewarisi blind-spot DBNet | Review manual 200 sampel acak + augmentasi sintetis; DBNet tetap selectable via env |
+| drawtext tanpa font di proot/Termux | Deteksi filter saat runtime → fallback grid tanpa label (prompt row-major) |
+| Kontainer HP berisi kode lama | Fase 0 `git pull` sebelum apa pun |
+
+## Alternatif yang ditolak (dan kenapa)
+- **Set `VISION_VERIFY_MODE=legacy`** untuk mematikan Kaggle → gerbang stage1Render secara desain MENOLAK mode itu (mandate 2026-10); melawannya sama dengan menghapus kebijakan.
+- **Matikan total Gatekeeper lalu lihat output** → tidak menghasilkan "filter" apa pun; output = tanpa kurasi sama sekali, tidak bisa dibandingkan.
+- **Stitching grid pakai sharp/jimp di Node** → dependensi native baru di dua lingkungan (Windows + Termux); FFmpeg sudah ada dan sudah dipakai frameExtractor.
+- **Kontrak notebook baru khusus-grid (`protocolVersion` tunggal)** → memaksa seluruh sesi Kaggle di-upgrade serentak; desain mapping di server membuat vonis tetap kompatibel.
+- **PP-OCRv5_mobile_det / CRAFT pengganti DBNet** → tetap pipeline segmentasi+post-processing berat (bukan akar masalah 741 ms/frame) / lebih berat.
+- **Mengganti wajah YuNet** — sudah Anda lakukan (SCRFD); hanya diverifikasi ulang di Fase 0.
+
+---
+
+Kalau Anda setuju urutan ini, mulai dari **Fase 0 + Fase 1** (paling cepat memberi Anda "output tanpa Kaggle"), lalu kita ukur Run A dengan `bench_gk.sh` yang sudah terbukti. Mau saya eksekusi Fase 1 sekarang?

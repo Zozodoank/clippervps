@@ -11,7 +11,7 @@
 
 Aplikasi dijalankan langsung di perangkat user (bukan di-hosting remote):
 
-* **PC Windows:** jalankan lewat [dev-runner.js](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/dev-runner.js) (`npm run dev`). Backend Express + Frontend Vite + Gatekeeper Python aktif satu perintah.
+* **PC Windows:** jalankan lewat [dev-runner.js](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/dev-runner.js) (`npm run dev`). Backend Express + Frontend Vite aktif satu perintah.
 * **HP Android / Termux:** ikuti [CARA_JALANKAN_TERMUX.md](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/CARA_JALANKAN_TERMUX.md). Setup sekali jalan via [setup-termux.sh](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/setup-termux.sh). Panel kontrol lokal tersedia di [menu-vps.sh](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/menu-vps.sh).
 
 ---
@@ -21,20 +21,16 @@ Aplikasi dijalankan langsung di perangkat user (bukan di-hosting remote):
 1. **Backend + Frontend (dev-runner.js):**
    * Express Backend (default port `5000`) + Vite Frontend (port `3000`).
    * FFmpeg, yt-dlp, dan integrasi Google Gemini / OpenRouter AI.
-2. **Gatekeeper (`server/gatekeeper/service.py`, port `5050`):**
-   * AI Local Frame Gatekeeper. Dip-auto-start-kan oleh `dev-runner.js`.
-   * Pipeline CPU vision: SCRFD default untuk wajah (MediaPipe/YuNet masih opsi fallback), DBNet PP-OCRv4 ONNX default untuk teks (Sobel tersedia sebagai fallback; zonemob eksperimental), dan MobileNetV3 untuk klasifikasi adegan. Saat Oracle aktif dalam mode advisory, Gatekeeper cukup menjalankan deteksi wajah pada crop yang akan dirender dan memakai target DBNet lebih ringan; pass full-frame serta DBNet 736px tetap aktif pada mode strict/kalibrasi.
-3. **Termux (opsional):** bisa dijalankan via **PM2** lewat `menu-vps.sh` untuk mode background + log real-time. Ini murni PM2 **di perangkat Termux itu sendiri**, bukan remote.
+2. **Oracle Kaggle:** satu-satunya pemutus visual. Semua frame yang dikirim harus berupa gambar JPEG berkanvas tepat 9:16. Sumber dipertahankan utuh dengan letterbox; kegagalan konversi menghentikan job dan frame mentah tidak dikirim.
+3. **Termux (opsional):** bisa dijalankan via **PM2** pada perangkat Termux itu sendiri, bukan remote.
 
-### Kolaborasi Gatekeeper + Kaggle
+### Verifikasi visual dan voice-over
 
-* Pada mode normal (`VISION_VERIFY_MODE=oracle`), Gatekeeper lokal memeriksa frame lebih dulu secara advisory. Temuannya ikut menjadi petunjuk bagi Oracle Kaggle/Qwen; Oracle memberi keputusan akhir.
-* `ORACLE_OFFLINE_CALIBRATION=1` adalah sakelar eksplisit untuk kalibrasi lokal. Kaggle dilewati, Gatekeeper menjadi pemutus strict, dan metadata job menandai hasil sebagai tidak layak dijadikan bukti lolos produksi. Default-nya mati.
-* Jangan memakai hasil job kalibrasi sebagai bukti lolos produksi. Matikan sakelar dan jalankan ulang dengan Oracle Kaggle aktif untuk keputusan produksi.
+* Gatekeeper lokal telah dihapus dari jalur runtime. Mode produksi wajib menggunakan Oracle Kaggle; kegagalan, timeout, atau vonis tidak sah menghentikan job tanpa fallback keputusan visual lokal.
+* Frame langsung dan setiap grid/montage yang diunggah ke Kaggle harus tepat 9:16.
+* Voice-over hanya memakai Gemini TTS. Jangan menambahkan atau mengaktifkan provider TTS lain.
 
----
-
-## 🔄 Alur Kerja Sinkronisasi Kode
+## ?? Alur Kerja Sinkronisasi Kode
 
 Semua perubahan kode di-commit dan di-push ke repo, lalu ditarik di masing-masing perangkat:
 
@@ -44,9 +40,7 @@ git pull origin main          # di perangkat tujuan (PC / Termux)
 npm run dev                   # jalankan ulang secara lokal
 ```
 
----
+## ?? Cara Akses Aplikasi
 
-## 🌐 Cara Akses Aplikasi
-
-1. **Di perangkat yang menjalankan:** `http://localhost:3000`.
-2. **Dari perangkat lain di Wi-Fi yang sama:** buka alamat `http://<IP-LAN>:3000` yang dicetak `dev-runner.js` di terminal.
+1. Di perangkat yang menjalankan: `http://localhost:3000`.
+2. Dari perangkat lain di Wi-Fi yang sama: `http://<IP-LAN>:3000`.

@@ -41,7 +41,7 @@ let lastLaunchAtMs = 0;
  * 'true' (dan root .env menimpa server/.env saat boot), sehingga auto-launch diam-diam
  * jadi flag_off -> kernel Kaggle tak pernah disentuh -> batch pre-flight tak diklaim ->
  * job mati "oracle tidak terhubung". Kini ikut konvensi boolean proyek yang lain
- * (lihat runtimeFlags GEMINI_SCENE_DISCOVERY): '1' ATAU 'true' (case-insensitive) = aktif.
+ * (legacy flag) tidak mengaktifkan jalur visual lokal.
  */
 export function isOracleAutoLaunchEnabled(env = process.env) {
   const v = String(env.ORACLE_AUTO_LAUNCH || '').trim().toLowerCase();

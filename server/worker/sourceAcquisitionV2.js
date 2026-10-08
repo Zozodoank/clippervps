@@ -7,8 +7,7 @@
 // pemanggil (stage1Render) — modul ini menerima `candidatePool` hasil L1.
 //
 // RANGKAIAN (keputusan user 1c/2b/3/4b):
-//   Pre-screen metadata (murah)  ->  ambil klip 15s crop 9:16  ->  GATEKEEPER
-//   PRE-FILTER lokal (1c, 0 token)  ->  VONIS BATCH Gemini (satu panggilan,
+//   Pre-screen metadata (murah)  ->  ambil klip preview 9:16 -> teruskan frame ke Oracle Kaggle (satu-satunya pemutus visual) ->
 //   produk + kebersihan)  ->  pilih >=2 sumber layak (4b)  ->  WINDOW UNIFORM
 //   (tengah video)  ->  zigzag per window (2b).
 //
@@ -18,7 +17,7 @@
 // Output: { sources, orderedWindows, scriptDraft, diagnostics } siap dipakai
 // tahap unduh-per-segmen (L4) & render (L6) yang ADA di stage1Render.
 //
-// Semantik error (P1-5): gangguan infrastruktur (gatekeeper/whisper/AI mati)
+// Semantik error (P1-5): gangguan infrastruktur (frame extraction/Whisper/Oracle tidak tersedia)
 // dilempar dengan flag `isInfraError` agar master loop TIDAK mem-blacklist; vonis
 // konten (produk tak cocok / frame kotor) cukup menjatuhkan kandidat tanpa throw.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,13 +28,13 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   fastProbeLocal,
-  mergeLocalSuspicion,
 } from '../services/videoFilterService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
-import { isVlmOracleEnabled, isLocalGatekeeperAdvisory } from '../config/runtimeFlags.js';
+import { isVlmOracleEnabled } from '../config/runtimeFlags.js';
 import { applyOracleVeto } from '../services/vlmOracleService.js';
 import {
   verdictCandidatesWithGemini,
+  analyzeYouTubeVideoWithGemini,
 } from '../services/aiService.js';
 
 // ── HELPER MURNI (diuji terpisah, tanpa I/O/jaringan) ────────────────────────
@@ -191,9 +190,6 @@ export async function runSourceAcquisitionV2(p) {
   }).filter(Boolean));
   const requiredSourceCount = Math.min(Math.max(1, Number(requireSources) || 1), sourceKeys.size);
   diagnostics.requiredSources = requiredSourceCount;
-  // Kecurigaan AI Local Gatekeeper per kandidat; dirangkum ke prompt Oracle (Qwen) supaya
-  // aturan lokal diperiksa model besar alih-alih memutuskan sendiri.
-  const localSuspicionNotes = [];
   if (!candidatePool.length) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
@@ -211,10 +207,32 @@ export async function runSourceAcquisitionV2(p) {
       const compliance = checkVideoMetadataCompliance(meta, productTitle, { ...options, isVisualSearch: Boolean(productImage), productImage, imageUrl: productImage });
       diagnostics.screened++;
       if (!compliance.eligible) continue; // vonis konten metadata -> drop tanpa throw
+      // Analyze the complete YouTube stream before downloading even the short gate
+      // preview. Gemini's selected timestamps become the only section plan for L4.
+      updateProgress({ step: 'full_video_gemini', message: `Gemini menganalisis video penuh (${meta.title}); memilih adegan sebelum unduh section...`, progress: 14 });
+      let fullVideoPlan;
+      try {
+        fullVideoPlan = await analyzeYouTubeVideoWithGemini({
+          youtubeUrl: cand.url, apiKey, productTitle, productDescription,
+          productImage, totalDuration: Number(meta.duration) || 0,
+          introCutoffSec: 10, outroCutoffSec: 10,
+          sceneDuration: Number(process.env.SCENE_DURATION_SEC) || 3.3,
+          allowFallbackClips: false, niche, onProgress: updateProgress,
+        });
+      } catch (analysisError) {
+        if (analysisError?.isAiRejection) {
+          diagnostics.fullVideoRejected = (diagnostics.fullVideoRejected || 0) + 1;
+          console.warn(`[Job ${jobId}] [V2] Kandidat ditolak Gemini dari analisis video penuh sebelum preview/section: ${analysisError.message}`);
+          continue;
+        }
+        analysisError.isInfraError = true;
+        throw analysisError;
+      }
+      if ((fullVideoPlan.clips || []).length < 4) continue;
       const sourceId = extractVideoId(cand.url) || cand.url;
       if (seenSourceIds.has(sourceId)) continue;
       seenSourceIds.add(sourceId);
-      screened.push({ url: cand.url, meta, sourceId, title: meta.title });
+      screened.push({ url: cand.url, meta, sourceId, title: meta.title, fullVideoPlan });
     } catch (err) {
       if (err?.isInfraError) throw err; // gangguan -> serahkan ke master loop (jangan blacklist)
       // metadata tak terbaca = kandidat buruk, lanjut.
@@ -224,8 +242,8 @@ export async function runSourceAcquisitionV2(p) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
 
-  // (L2 + 1c) klip 15s @9:16 -> gatekeeper pre-filter -> kumpulkan frame bersih.
-  updateProgress({ step: 'acquisition_v2_gate', message: `🔎 [V2] Klip 15s 9:16 + Gatekeeper pre-filter (${screened.length} kandidat)...`, progress: 18 });
+  // (L2) Klip preview @9:16 -> ekstrak frame tanpa screening lokal -> Oracle Kaggle.
+  updateProgress({ step: 'acquisition_v2_probe', message: `?? [V2] Mengekstrak frame preview untuk Oracle Kaggle (${screened.length} kandidat)...`, progress: 18 });
   const gatedCandidates = [];
   for (const cand of screened) {
     const preview = await downloadQuickPreview(cand.url, tempDir, `${jobId}_g`, {
@@ -240,44 +258,14 @@ export async function runSourceAcquisitionV2(p) {
     try {
       probe = await fastProbeLocal(preview.filePath, `${jobId}`, { onProgress: updateProgress, niche, durationSec: preview.actualDurationSec, sourceId: cand.sourceId });
     } catch (err) {
-      if (err?.isInfraError) throw err; // gatekeeper mati -> infra, jangan blacklist
+      if (err?.isInfraError) throw err; // Gangguan sistem tidak boleh dianggap penolakan produk.
       continue;
     }
-    if (!probe?.eligible || !Array.isArray(probe.cleanFrames) || probe.cleanFrames.length < 3) {
-      // PERAN VONIS LOKAL = ADVISORY (mandate user 2026-10): selama Oracle Kaggle aktif,
-      // tuduhan model kecil (MediaPipe/DBNet/MobileNet) BUKAN pemutus. Kandidat tetap
-      // dibawa ke Qwen memakai SELURUH frame probe, dan kecurigaan lokal dikirim sebagai
-      // bagian prompt agar Qwen memeriksa aturan itu sendiri pada frame. Hanya
-      // GK_LOCAL_VETO=strict yang masih membuang kandidat di sini (perilaku lama).
-      if (!isLocalGatekeeperAdvisory(process.env)) {
-        try { if (fs.existsSync(preview.filePath)) fs.unlinkSync(preview.filePath); } catch {}
-        continue; // frame kotor = vonis konten -> drop
-      }
-      if (probe?.localSuspicion) localSuspicionNotes.push(probe.localSuspicion);
-      // Pesan infrastruktur ("Gatekeeper tidak tersedia", "jumlah frame tidak mencukupi",
-      // "gagal mengekstrak frame") BUKAN tuduhan konten — jangan disematkan ke prompt
-      // Qwen sebagai aturan lokal (review putaran ke-2).
-      else if ((probe?.discardedFrames || []).some((f) => f && f.stage && f.stage !== 'io_error')) {
-        localSuspicionNotes.push(probe?.reason || 'frame dicurigai gatekeeper lokal');
-      }
-      console.log(`[Job ${jobId}] 🛰️ [V2][Vonis lokal => penasihat] ${probe?.reason || 'frame dicurigai'} — kandidat tetap dikirim ke Oracle Kaggle.`);
-      // Kirim SELURUH frame hasil probe (termasuk yang dituduh) supaya ada yang divisit Qwen.
-      usableFrames = (Array.isArray(probe?.frames) && probe.frames.length) ? probe.frames : (probe?.cleanFrames || []);
-    } else {
-      if (probe?.localSuspicion) localSuspicionNotes.push(probe.localSuspicion);
-      usableFrames = probe.cleanFrames;
-      // Kandidat dinyatakan layak tapi sebagian frame terbuang lokal: di mode advisory
-      // yang terbuang ikut ke Oracle, tidak hilang diam-diam (konsisten dgn stage1Render).
-      if (isLocalGatekeeperAdvisory(process.env)) {
-        const suspected = (probe.discardedFrames || []).filter((f) => f && f.filePath && f.stage !== 'io_error');
-        if (suspected.length) usableFrames = [...usableFrames, ...suspected];
-      }
-    }
+    // Tidak ada pemfilteran visual lokal; seluruh frame dikirim ke Oracle Kaggle.
+    usableFrames = (Array.isArray(probe?.frames) && probe.frames.length) ? probe.frames : (probe?.cleanFrames || []);
     if (!usableFrames.length) {
-      // Tidak ada satu frame pun yang berhasil diekstrak (preview rusak) - ini bukan vonis
-      // konten maupun infra, cukup lewati kandidat tanpa membakar antrean oracle.
-      try { if (fs.existsSync(preview.filePath)) fs.unlinkSync(preview.filePath); } catch {}
-      continue;
+      // Kegagalan ekstraksi bukan penolakan produk; hentikan sebagai gangguan sistem.
+      throw Object.assign(new Error(`Frame preview gagal diekstrak untuk kandidat ${cand.sourceId}; tidak ada frame yang dapat dikirim ke Oracle.`), { isInfraError: true });
     }
     diagnostics.gated++;
     gatedCandidates.push({
@@ -298,8 +286,8 @@ export async function runSourceAcquisitionV2(p) {
   // dilewati.
   // Kebijakan SAMA dengan stage1Render (STRICT, mandate 2026-10): oracle diam/timeout/
   // vonis tidak sah -> applyOracleVeto melempar OracleUnavailableError dan job BERHENTI
-  // (propagate ke pemanggil di stage1Render). Tidak ada lagi "keputusan gatekeeper lokal
-  // (L2a) + Gemini tetap berlaku".
+  // (propagate ke pemanggil di stage1Render). Tidak ada lagi "keputusan screening visual lokal
+  // + Gemini tetap berlaku".
   if (isVlmOracleEnabled(process.env)) {
     updateProgress({ step: 'vlm_oracle', message: '🛰️ [V2] Oracle Kaggle memvonis frame kandidat...', progress: 19 });
     const vetoed = [];
@@ -309,7 +297,6 @@ export async function runSourceAcquisitionV2(p) {
         niche,
         onProgress: updateProgress,
         logger: console,
-        localHints: mergeLocalSuspicion(localSuspicionNotes),
       });
       if (res.rejected > 0) {
         diagnostics.oracleVetoed = (diagnostics.oracleVetoed || 0) + res.rejected;
@@ -375,27 +362,16 @@ export async function runSourceAcquisitionV2(p) {
     const safeEnd = Math.max(safeStart + 3, vidDur - 10);
     const usableDur = safeEnd - safeStart;
     
-    const pointsCount = 10;
-    const windowDur = 3; // 3 detik per titik
-    
-    const windows = [];
-    if (usableDur <= pointsCount * windowDur) {
-      // Jika video pendek, potong berurutan saja
-      for (let t = safeStart; t + windowDur <= safeEnd; t += windowDur) {
-        windows.push({ startSec: Math.round(t * 10) / 10, endSec: Math.round((t + windowDur) * 10) / 10, scriptDraft: '' });
-      }
-    } else {
-      // Sebar merata di 10 titik
-      const step = (usableDur - windowDur) / (pointsCount - 1);
-      for (let i = 0; i < pointsCount; i++) {
-        const t = safeStart + (i * step);
-        windows.push({ startSec: Math.round(t * 10) / 10, endSec: Math.round((t + windowDur) * 10) / 10, scriptDraft: '' });
-      }
-    }
-    
-    if (!windows.length) {
-      // Fallback minimal absolut
-      windows.push({ startSec: vidDur * 0.25, endSec: Math.min(vidDur * 0.75, vidDur * 0.25 + windowDur), scriptDraft: '' });
+    // Do not invent uniform windows: use only scenes Gemini verified across the full video.
+    const windows = (cand.fullVideoPlan?.clips || []).map((clip) => ({
+      startSec: Number(clip.startSeconds),
+      endSec: Number(clip.endSeconds),
+      scriptDraft: clip.reason || '',
+    })).filter((w) => Number.isFinite(w.startSec) && Number.isFinite(w.endSec) &&
+      w.startSec >= 10 && w.endSec <= vidDur - 10 && w.endSec > w.startSec);
+    if (windows.length < 4) {
+      console.warn(`[Job ${jobId}] [V2] ${cand.sourceId} ditolak sebelum download section: hanya ${windows.length} timestamp Gemini yang memenuhi batas 10 detik.`);
+      continue;
     }
     diagnostics.transcribed++;
     sourcesData.push({

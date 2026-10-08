@@ -69,3 +69,6 @@ __pycache__/
 *.pyc
 scratch/
 *.bak
+
+# Salinan .env yang diambil dari Termux (berisi API key)
+.env-from-termux/

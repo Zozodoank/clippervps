@@ -44,11 +44,7 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally,
-  filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames
 } from './services/videoFilterService.js';
 import {
   getPublicIpAddress,
@@ -132,12 +128,11 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Directories
-import { tempDir, outputDir, uploadsDir, rejectedYunetDir, cookiesPath } from './utils/paths.js';
+import { tempDir, outputDir, uploadsDir, cookiesPath } from './utils/paths.js';
 
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
-if (!fs.existsSync(rejectedYunetDir)) fs.mkdirSync(rejectedYunetDir, { recursive: true });
 
 // Upload Multer untuk voiceover kini dikonfigurasi SEKALI di api/routes/voiceoverRoutes.js
 // (satu-satunya rute yang memakai upload.single). Duplikasi storage/upload di file-file
@@ -388,8 +383,6 @@ let currentBatchTTS = {
 
 
 
-// 8c. Serve & list rejected face frames (YuNet / Face Gatekeeper)
-app.use('/api/rejected-frames/yunet', express.static(rejectedYunetDir));
 
 
 
@@ -469,26 +462,4 @@ app.listen(PORT, '0.0.0.0', () => {
   }
   console.log(`======================================================\n`);
 
-  // ── HEALTH CHECK AI LOCAL GATEKEEPER (port 5050) ──
-  (async () => {
-    try {
-      const res = await fetch('http://127.0.0.1:5050/health', { signal: AbortSignal.timeout(5000) });
-      if (res.ok) {
-        const health = await res.json();
-        const m = health.models || {};
-        console.log(`🤖 AI Local Gatekeeper: ONLINE (face: ${m.face || '?'}, text: ${m.text || '?'}, scene: ${m.scene || '?'})`);
-        const weakBackends = [];
-        if (!m.face || m.face === 'none') weakBackends.push('face');
-        if (!m.text || m.text === 'gradient_fallback' || m.text === 'none') weakBackends.push('text');
-        if (!m.scene || m.scene === 'entropy_variance') weakBackends.push('scene');
-        if (weakBackends.length > 0) {
-          console.warn(`⚠️  Gatekeeper berjalan TANPA model AI untuk: [${weakBackends.join(', ')}]. Jalankan: bash setup-gatekeeper.sh agar akurasi filter lokal maksimal.`);
-        }
-      } else {
-        console.warn(`⚠️  AI Local Gatekeeper merespons HTTP ${res.status}.`);
-      }
-    } catch {
-      console.warn('⚠️  AI Local Gatekeeper (port 5050) OFFLINE.');
-    }
-  })();
 });

@@ -628,7 +628,7 @@ export function build7SlotStoryboardClips({
       // Slot 5: Action demo 3 (rinsing / proof / result)
       if (!frameObj && slotPolicy === 'presenter_only') {
         // FACE POLICY (Fase 4): slot review kamera (gadget slot 5) prioritaskan bukti kamera
-        // dari pool cameraResultEligible (wajah konten oke, wajah kreator tetap terblokir gatekeeper)
+        // dari pool cameraResultEligible (wajah konten oke, wajah kreator tetap terblokir Oracle visual policy)
         frameObj = validFrames.find(f => isCameraEligibleFrame(f) && !isForbiddenFrame(f)) || null;
       }
       if (!frameObj) {

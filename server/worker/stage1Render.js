@@ -6,7 +6,7 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, buildOracleCalibrationMeta, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isSmolvlmVerifyEnabled, isGeminiSceneDiscoveryEnabled, isVlmOracleEnabled, isOraclePreflightEnabled, isLocalGatekeeperAdvisory, isOracleOfflineCalibration } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isVlmOracleEnabled, isOraclePreflightEnabled } from '../config/runtimeFlags.js';
 import { applyOracleVeto, auditClipsWithOracle, preflightCandidatesWithOracle, orderCandidatesAfterPreflight, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
 import { maybeAutoLaunchOracle, waitForOracleOnline, probeOracleKernelAlive, isOracleAutoLaunchEnabled } from '../services/oracleLauncherService.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
@@ -28,8 +28,7 @@ import {
   verifyProductCandidateWithAI,
   verifyFinalRenderedFramesWithAI,
   getDirectGeminiApiKey,
-  preSelectTop2CandidatesWithGemini,
-  discoverSceneWindowsWithGemini
+  preSelectTop2CandidatesWithGemini
 } from '../services/aiService.js';
 import { generateSrtSubtitles } from '../services/subtitleService.js';
 import { loadEnglishDictionary, saveToEnglishDictionary } from '../services/dictionaryService.js';
@@ -51,17 +50,10 @@ import {
   fetchVideoMetadataAndStream,
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
-  inspectFramesLocally,
-  filterCandidateFramesPerFrame,
   poolMultiCandidateFrames,
-  callAIGatekeeperMicroservice,
-  sampleDenseClustersAroundCleanFrames,
   extractFastSnippetsForPreflight,
   fastProbeLocal,
-  mergeLocalSuspicion,
-  sampleFramesForWindows
 } from '../services/videoFilterService.js';
-import { verifyScene as verifySceneWithVlm, isVlmAvailable } from '../services/vlmGateService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
 // [NOTE] whisperGateService dihapus — gerbang narasi & kewajiban voice-over tidak lagi digunakan.
 // BLUEPRINT ALUR BARU (ACQUISITION_FLOW=v2) — orkestrasi L2->L5 & penyusun zigzag.
@@ -293,7 +285,6 @@ async function _runStage1Pipeline({
     } catch {}
   }
 
-  const calibrationMeta = buildOracleCalibrationMeta(process.env);
   const jobMeta = {
     jobId,
     stage: 'running',
@@ -322,7 +313,6 @@ async function _runStage1Pipeline({
     // P5: bekukan konfigurasi runtime saat create agar retry memakai setelan yang sama,
     // walau operator sudah mengubah .env. Dibaca ulang (bukan ditulis lagi) oleh jalur retry.
     configSnapshot: buildConfigSnapshot(process.env, { niche: options.niche, sourcePolicy: options.sourcePolicy }),
-    ...(calibrationMeta ? { oracleCalibration: calibrationMeta } : {}),
     createdAt: new Date().toISOString(),
     isOrphan: false,
     ...extraJobMeta,
@@ -359,7 +349,7 @@ async function _runStage1Pipeline({
 
     // ─── GERBANG KAGGLE-ONLY (user mandate 2026-10) ───
     // Job HANYA boleh jalan dengan Oracle Kaggle sebagai gerbang verifikasi visual:
-    //  1) mode efektif bukan 'oracle' (legacy/smolvlm — termasuk snapshot retry job lama)
+    //  1) mode efektif bukan 'oracle' (local legacy mode — termasuk snapshot retry job lama)
     //     -> DITOLAK sebelum kerja berat apa pun;
     //  2) API_ACCESS_TOKEN kosong atau notebook Kaggle tidak pernah memanggil API dalam
     //     window segar (heartbeat claim) -> job DIHENTIKAN. Tidak ada lagi "lanjut dengan
@@ -379,7 +369,7 @@ async function _runStage1Pipeline({
     // -> paksa jalur offline agar sesi baru ditendang. Probe bersifat read-only dan
     // konservatif ('unknown' saat CLI/error TIDAK memicu launch -> tak ada sesi ganda).
     let zombieConfirmed = false;
-    if (!isOracleOfflineCalibration(process.env) && oracleGate.ok && isOracleAutoLaunchEnabled(process.env)) {
+    if (oracleGate.ok && isOracleAutoLaunchEnabled(process.env)) {
       const probe = await probeOracleKernelAlive({ logger: console });
       if (probe.alive === false) {
         const ageSec = oracleGate.lastSeenAt ? Math.round((Date.now() - oracleGate.lastSeenAt) / 1000) : null;
@@ -394,7 +384,7 @@ async function _runStage1Pipeline({
     // (oracle-launch.sh; tanpa PC/browser). Job lalu MENUNGGU heartbeat sampai
     // ORACLE_AUTO_LAUNCH_WAIT_SEC (default 300 dtk) sebelum gerbang memutuskan.
     // Flag mati = perilaku lama persis: gagal seketika, tidak spawn apa pun.
-    if (!isOracleOfflineCalibration(process.env) && !oracleGate.ok && oracleGate.detail === 'notebook_offline') {
+    if (!oracleGate.ok && oracleGate.detail === 'notebook_offline') {
       const launch = maybeAutoLaunchOracle({ logger: console, force: zombieConfirmed });
       if (launch.triggered) {
         // afterMs = baseline heartbeat zombie; menunggu heartbeat MAJU (sesi baru
@@ -407,15 +397,8 @@ async function _runStage1Pipeline({
     if (!oracleGate.ok) {
       throw new OracleUnavailableError(`⛔ Job dihentikan (kebijakan Kaggle-only): ${oracleGate.message}`, { reason: oracleGate.detail, jobId });
     }
-    // Jejak forensik: gerbang pernah lolos dan melihat heartbeat kapan.
-    if (isOracleOfflineCalibration(process.env)) {
-      jobMeta.oracleCalibration = { ...jobMeta.oracleCalibration, ...buildOracleCalibrationMeta(process.env), gatekeeperVeto: 'strict' };
-      persistJob(jobId, jobMeta);
-      console.warn(`[Job ${jobId}] MODE KALIBRASI LOKAL — Kaggle DIMATIKAN; Gatekeeper menjadi pemutus strict. Hasil tidak sah sebagai bukti produksi.`);
-      recordStageEvent({ jobId, stage: 'oracle_calibration', message: 'MODE KALIBRASI LOKAL — Kaggle DIMATIKAN', meta: jobMeta.oracleCalibration });
-    } else {
-      jobMeta.oraclePreflight = { ok: true, lastSeenAt: oracleGate.lastSeenAt, checkedAt: new Date().toISOString() };
-    }
+    // Kaggle merupakan satu-satunya pemutus visual.
+    jobMeta.oraclePreflight = { ok: true, lastSeenAt: oracleGate.lastSeenAt, checkedAt: new Date().toISOString() };
 
     const existingVideoInTemp = (() => {
       try {
@@ -586,7 +569,7 @@ async function _runStage1Pipeline({
       // Hanya jalur frame (evidence/stride) yang memberi vonis per-frame. Stream video
       // penuh tidak mengembalikan daftar frame -> vonis frame dianggap belum terjadi.
       // Daftarnya hidup di satu tempat (isFrameVerdictMode) supaya mode pelaporan baru
-      // seperti product_verify/vlm_local tidak ikut menyalakan gerbang ini secara tidak sengaja.
+      // seperti product_verify tidak ikut menyalakan gerbang ini secara tidak sengaja.
       if (isFrameVerdictMode(prov.mode)) {
         visionState.aiGaveFrameVerdict = true;
         visionState.accepted = Math.max(visionState.accepted, prov.acceptedCount);
@@ -607,9 +590,6 @@ async function _runStage1Pipeline({
     // Tahap 1: Metadata Pre-Filter (0 kuota video, 0 token AI)
     // Tahap 2: Sampling 30 frame langsung dari stream URL via FFmpeg & Analisa Lokal 9:16 (~2MB kuota, 0 token AI)
     // Tahap 3: Verifikasi AI Vision (Quality Assurance Final, detail: 'low')
-    // Catatan vonis lokal (advisory): kecurigaan AI Local Gatekeeper dikumpulkan di sini agar
-    // bisa disertakan sebagai arahan di prompt Oracle Kaggle (lihat applyOracleVeto di bawah).
-    const localSuspicionNotes = [];
     const evaluateCandidate = async (targetUrl, candidateLabel = '', candidateExtra = {}) => {
       const isManualOem = candidateExtra?.source === 'manual_oem';
       const complianceContext = isManualOem ? 'oem' : 'auto';
@@ -666,91 +646,37 @@ async function _runStage1Pipeline({
       }
       console.log(`[Job ${jobId}] ✅ [Filter 1 Lolos] Metadata valid (${meta.title}, ${meta.duration}s).`);
 
-      // ── CABANG BARU (opt-in): GEMINI-FIRST + SmolVLM2, TANPA Whisper/gatekeeper lama ──
-      // Hanya berjalan bila mode smolvlm AKTIF dan biner/model VLM TERSEDIA. Bila VLM
+      // ── CABANG LEGACY (nonaktif): verifikasi visual lokal ──
+      // Legacy local verification path removed. dan biner/model VLM TERSEDIA. Bila VLM
       // belum ada, kita TETAP lanjut ke jalur legacy (jangan mematahkan produksi).
-      if (isSmolvlmVerifyEnabled(process.env) && isVlmAvailable(process.env)) {
-        const nicheForVlm = options.niche || 'kitchen_tools';
-        const clipSec = Number(process.env.SCENE_CLIP_DURATION_SEC) || 4;
-        const fps = Number(process.env.SCENE_SAMPLE_FPS) || 1;
-
-        // [1] Dapat window kandidat: Gemini discovery (opt-in) atau seragam hemat-intro.
-        let windows = [];
-        if (isGeminiSceneDiscoveryEnabled(process.env)) {
-          try {
-            const disc = await discoverSceneWindowsWithGemini({
-              youtubeUrl: targetUrl, productTitle, productDescription,
-              niche: nicheForVlm, clipSec, apiKey, onProgress: updateProgress,
-            });
-            windows = disc.windows || [];
-          } catch (discErr) {
-            console.warn(`[Job ${jobId}] ⚠️ Gemini discovery gagal (${discErr.message}) -> fallback window seragam.`);
-          }
-        }
-        if (windows.length === 0) {
-          // Fallback: jendela seragam ~1 per clipSec, lewati intro 6s & outro 8s, maks 10 window.
-          const safeStart = Math.min(6, Math.max(0, meta.duration * 0.04));
-          const safeEnd = Math.max(safeStart + clipSec, meta.duration - 8);
-          for (let t = safeStart; t + clipSec <= safeEnd && windows.length < 10; t += clipSec) {
-            windows.push({ startSec: t, endSec: t + clipSec, reason: 'uniform' });
-          }
-        }
-
-        // [2] Sampling per-window @fps (360p) + filter ringan.
-        const scenesOutDir = path.join(tempDir, `scenes_${Date.now()}`);
-        updateProgress({ step: 'scene_sampling', message: `🎬 Sampling ${windows.length} window scene @${fps} fps (360p)...`, progress: 44 });
-        const scenes = await sampleFramesForWindows(streamUrl, windows, { outDir: scenesOutDir, fps, clipDurationSec: clipSec, onProgress: updateProgress });
-
-        // [3] Verifikasi tiap scene dengan SmolVLM2.
-        const approvedClips = [];
-        for (const sc of scenes) {
-          const verdict = await verifySceneWithVlm(sc.frames.map((f) => f.filePath), { niche: nicheForVlm, facePolicy: 'strict' });
-          if (verdict.ok && verdict.safe === false) {
-            console.log(`[Job ${jobId}] ⛔ [VLM REJECT] scene ${sc.window.startSec.toFixed(1)}s (${['face','text','watermark','graphic'].filter((k) => verdict[k]).join(',') || 'dirty'})`);
-            continue;
-          }
-          if (!verdict.ok && !verdict.available) { console.warn(`[Job ${jobId}] ⚠️ VLM tak tersedia saat verifikasi scene -> FAIL-OPEN (dipertahankan, bukan vonis).`); }
-          if (verdict.infraError) console.warn(`[Job ${jobId}] ⚠️ [VLM infra] scene ${sc.window.startSec.toFixed(1)}s (${verdict.error}) -> FAIL-OPEN (dipertahankan).`);
-          approvedClips.push({
-            candidateUrl: targetUrl, sourceId: targetUrl,
-            startSeconds: sc.window.startSec, endSeconds: sc.window.endSec,
-            duration: Math.max(1, sc.window.endSec - sc.window.startSec), isClean: true,
-          });
-        }
-
-        if (approvedClips.length === 0) {
-          const err = new Error('SmolVLM2: tidak ada scene bersih yang lolos verifikasi.');
-          err.isAiRejection = true; err.rejectionReason = 'Frame kotor (VLM)';
-          throw err;
-        }
-        const bw = approvedClips[0];
-        const hl = {
-          clips: approvedClips,
-          bestWindow: { sourceId: targetUrl, startSec: bw.startSeconds, endSec: bw.endSeconds, durationSec: bw.duration },
-          whisperSegments: [],
-          narration: { hasNarration: true, coverage: 1 },
-          pipelineVersion: 'smolvlm_v1',
-          productHook: null,
-        };
-        noteVisionProvenance(hl, {
-          // Vonisnya per-scene dan datang dari VLM LOKAL, bukan Gemini. Mode baru ini sengaja
-          // TIDAK masuk daftar penyalakan `aiGaveFrameVerdict` ( itu khusus bukti yang dikirim
-          // ke Gemini), jadi keputusan Rescue Pipeline tetap seperti semula.
-          mode: 'vlm_local',
-          usableFrames: scenes.reduce((a, s) => a + s.frames.length, 0),
-          framesSent: scenes.reduce((a, s) => a + s.frames.length, 0),
-          framesRef: [],
-          origin: 'smolvlm_scenes',
+      // Analyze the complete public YouTube stream before preview/section downloads.
+      updateProgress({ step: 'full_video_gemini', message: 'Gemini menganalisis video penuh; 10 detik awal/akhir dikecualikan...', progress: 14 });
+      let fullVideoPlan;
+      try {
+        fullVideoPlan = await analyzeYouTubeVideoWithGemini({
+          youtubeUrl: targetUrl, apiKey, productTitle, productDescription,
+          productImage: effectiveProductImage,
+          totalDuration: Number(meta.duration) || 0,
+          introCutoffSec: 10, outroCutoffSec: 10,
+          sceneDuration: Number(process.env.SCENE_DURATION_SEC) || 3.3,
+          allowFallbackClips: false, niche: options.niche || 'kitchen_tools',
+          onProgress: updateProgress,
         });
-        if (!targetUrl || targetUrl === currentYoutubeUrl) gatesPassedThisRun = true;
-        console.log(`[Job ${jobId}] ✅ [SmolVLM2] ${approvedClips.length}/${scenes.length} scene lolos verifikasi (0 panggilan Whisper/gatekeeper).`);
-        return { approved: true, highlight: hl, videoMeta: meta, previewVideoPath: null, probe: { eligible: true, vlm: true } };
+      } catch (analysisError) {
+        if (!analysisError?.isAiRejection) analysisError.isInfraError = true;
+        throw analysisError;
       }
+      const selectedClips = (fullVideoPlan.clips || []).map((clip) => ({
+        ...clip, candidateUrl: targetUrl, sourceId: targetUrl, isClean: true,
+      }));
+      if (selectedClips.length < 4) {
+        const reject = new Error(`Gemini hanya menemukan ${selectedClips.length} adegan bersih di luar 10 detik awal/akhir; minimal 4 diperlukan.`);
+        reject.isAiRejection = true;
+        reject.rejectionReason = reject.message;
+        throw reject;
+      }
+      console.log(`[Job ${jobId}] [Full Video Gemini] ${selectedClips.length} adegan dipilih dari ${meta.duration}s sebelum unduh section.`);
 
-      // ── TAHAP 2: QUICK PREVIEW (gerbang awal, default 15s agar lebih jelas) ──
-      // P1: dulu 10s -> jendela sampling terlalu sempit (kata "review" pendek mudah sekali
-      // lolos/tidak lolos berdasar 1 titik tengah video). 15s = default baru; masih bisa
-      // dioverride via QUICK_PREVIEW_DURATION_SEC.
       const gatePreviewSec = Number(process.env.QUICK_PREVIEW_DURATION_SEC) || 15;
       updateProgress({ step: 'quick_preview', message: `⚡ Download preview ${gatePreviewSec} detik dari ${candidateLabel || 'kandidat'}...`, progress: 15 });
       const preview10s = await downloadQuickPreview(targetUrl, tempDir, jobId, {
@@ -777,40 +703,7 @@ async function _runStage1Pipeline({
         durationSec: preview10s.actualDurationSec,
         sourceId: targetUrl
       });
-      if (probe.localSuspicion) localSuspicionNotes.push(probe.localSuspicion);
-      if (!probe.eligible) {
-        // PERAN VONIS LOKAL = ADVISORY (default selama Oracle Kaggle aktif; mandate user
-        // 2026-10): model kecil di perangkat pernah menolak frame yang oleh Qwen dinyatakan
-        // bersih, dan kandidat gugur sebelum model besar sempat melihatnya. Jadi di mode ini
-        // vonis lokal TIDAK menghentikan kandidat: SEMUA frame hasil probe (bersih + yang
-        // dituduh) dipakai, kecurigaannya dicatat lalu dikirim sebagai bagian prompt Oracle
-        // supaya Qwen memeriksa aturan itu sendiri pada frame. 'strict' mengembalikan
-        // perilaku lama (lempar isAiRejection) bila operator mengisi GK_LOCAL_VETO=strict.
-        if (!isLocalGatekeeperAdvisory(process.env)) {
-          const err = new Error(`Frame kotor: ${probe.reason || `${probe.dirtyCount || '?'} dari 5 frame terdeteksi WM/wajah/logo`}`);
-          err.isAiRejection = true;
-          err.rejectionReason = probe.reason;
-          throw err;
-        }
-        // Catatan kecurigaan HANYA bila ada tuduhan per-frame yang nyata. probe.reason
-        // sering berisi pesan infrastruktur ("Gatekeeper tidak tersedia", "jumlah frame
-        // tidak mencukupi") — menyuntiknya ke prompt Qwen sebagai "aturan lokal"
-        // justru menipu model dengan tuduhan palsu.
-        const probeSuspicions = (probe.discardedFrames || []).filter((f) => f && f.stage && f.stage !== 'io_error');
-        if (!probe.localSuspicion && probeSuspicions.length) localSuspicionNotes.push(probe.reason || 'frame dicurigai filter lokal');
-        console.log(`[Job ${jobId}] 🛰️ [Vonis lokal => penasihat] ${probe.reason || 'frame dicurigai'} — diteruskan ke Oracle Kaggle sebagai arahan pemeriksaan, bukan penolakan.`);
-      }
-      // KRITIS (mandate advisory): frame yang DITUDUH lokal harus benar-benar ikut ke
-      // pool Oracle, bukan hanya dibatalkan veto-nya. Tanpa ini cleanFrames tetap isi
-      // gatekeeper saja dan Qwen tidak pernah melihat frame yang dibuang — persis
-      // masalah yang user laporkan ("Qwen bilang bersih, filter lokal tetap menolak").
-      if (isLocalGatekeeperAdvisory(process.env) && Array.isArray(probe.discardedFrames) && probe.discardedFrames.length) {
-        const suspected = probe.discardedFrames.filter((f) => f && f.filePath && f.stage !== 'io_error');
-        if (suspected.length) {
-          probe.cleanFrames = [...(probe.cleanFrames || []), ...suspected];
-          console.log(`[Job ${jobId}] 🛰️ [Advisory] ${suspected.length} frame dituduh filter lokal ikut dikirim ke Oracle — Qwen yang memvonis.`);
-        }
-      }
+      // Semua frame hasil probe diteruskan; tidak ada filter visual lokal.
       // FIX 2026-10-05: jumlah frame NYATA, bukan hardcoded '5' — dan log ini dicetak SEBELUM
       // Oracle dipanggil (pass pool/audit klip masih jauh di hilir), jadi jangan klaim
       // "vonis akhir" di titik yang belum melakukan panggilan Kaggle sama sekali.
@@ -818,29 +711,8 @@ async function _runStage1Pipeline({
 
       // ── TAHAP 5: CONTEXT PREVIEW (15s) — WINDOW DEFAULT (TANPA WHISPER) ──
       // Whisper dihapus: window terbaik ditentukan dari tengah video (hemat kuota/CPU).
-      const targetWindowSec = Number(process.env.BEST_WINDOW_DURATION_SEC) || 15;
-      updateProgress({ step: 'context_preview', message: `⚡ Download konteks ${targetWindowSec} detik...`, progress: 30 });
-      
-      const contextPreview = await downloadQuickPreview(targetUrl, tempDir, jobId + '_ctx', {
-        onProgress: updateProgress,
-        durationSec: targetWindowSec,
-        sourceDurationSec: meta.duration
-      });
-      
-      // Window = seluruh context preview yang diunduh (sudah dipilih dari tengah video
-      // oleh downloadQuickPreview). Tidak ada analisis narasi — semua video diterima.
-      const bestWindow = {
-        startSec: contextPreview.sourceStartSec,
-        endSec: contextPreview.sourceStartSec + (contextPreview.actualDurationSec || targetWindowSec),
-        durationSec: contextPreview.actualDurationSec || targetWindowSec
-      };
-      
-      console.log(`[Job ${jobId}] ✅ [Context Window] Window default: ${bestWindow.startSec}s - ${bestWindow.endSec}s (tanpa Whisper).`);
+      // Selected sections come from the preceding full-video Gemini analysis.
 
-      // ── TAHAP 6: GEMINI PRODUCT VERIFY ──
-      // Gunakan frame bersih dari probe yang lulus. Saat vonis lokal hanya penasihat dan probe
-      // menyatakan "tidak layak", pool bersih bisa kosong/kurang — pakai SELURUH frame probe
-      // agar Qwen (pass oracle berikutnya) yang menentukan, bukan model kecil.
       let verifiedCleanFrames = (probe.eligible && Array.isArray(probe.cleanFrames) && probe.cleanFrames.length)
         ? probe.cleanFrames
         : (Array.isArray(probe.frames) && probe.frames.length ? probe.frames : probe.cleanFrames || []);
@@ -877,19 +749,13 @@ async function _runStage1Pipeline({
       console.log(`[Job ${jobId}] 🎯 Kandidat Lolos Evaluasi!`);
       
       const hl = {
-        clips: [{
-          candidateUrl: targetUrl,
-          sourceId: targetUrl,
-          startSeconds: bestWindow.startSec,
-          endSeconds: bestWindow.endSec,
-          duration: bestWindow.durationSec,
-          isClean: true
-        }],
+        ...fullVideoPlan,
+        clips: selectedClips,
         bestWindow: {
           sourceId: targetUrl,
-          startSec: bestWindow.startSec,
-          endSec: bestWindow.endSec,
-          durationSec: bestWindow.durationSec
+          startSec: selectedClips[0].startSeconds,
+          endSec: selectedClips[selectedClips.length - 1].endSeconds,
+          durationSec: fullVideoPlan.duration
         },
         whisperSegments: [],
         narration: { hasNarration: true, coverage: 1 },
@@ -913,7 +779,7 @@ async function _runStage1Pipeline({
         approved: true,
         highlight: hl, 
         videoMeta: meta, 
-        previewVideoPath: contextPreview.filePath,
+        previewVideoPath: preview10s.filePath,
         probe: probe
       };
     };
@@ -934,55 +800,8 @@ async function _runStage1Pipeline({
           duration: rawDur,
         });
 
-        // Verifikasi filter lokal pada frame video cache (bebas teks mengambang & bebas wajah)
-        const localCacheCheckStartedAt = Date.now();
-        const localCacheCheck = await inspectFramesLocally(rawFrames, {
-          aspectRatio: options.aspectRatio || '9:16',
-          onProgress: updateProgress,
-        });
-        recordStageEvent({
-          jobId,
-          stage: 'gatekeeper',
-          durationMs: Date.now() - localCacheCheckStartedAt,
-          candidateCount: Array.isArray(rawFrames) ? rawFrames.length : 0,
-          acceptedCount: Array.isArray(localCacheCheck.cleanFrames) ? localCacheCheck.cleanFrames.length : 0,
-          rejectedCount: Array.isArray(rawFrames)
-            ? Math.max(0, rawFrames.length - (Array.isArray(localCacheCheck.cleanFrames) ? localCacheCheck.cleanFrames.length : 0))
-            : 0,
-          failureReason: localCacheCheck.eligible ? '' : localCacheCheck.reason,
-          meta: { origin: 'cached_raw_frames' },
-        });
-        // Kecurigaan per-frame selalu dicatat (walau cache dinyatakan layak): beberapa frame
-        // terbuang lokal tidak boleh hilang dari pengetahuan Qwen.
-        if (localCacheCheck.localSuspicion) localSuspicionNotes.push(localCacheCheck.localSuspicion);
-        if (!localCacheCheck.eligible || !Array.isArray(localCacheCheck.cleanFrames) || localCacheCheck.cleanFrames.length < 3) {
-          // Vonis lokal hanya penasihat (default selama oracle aktif): frame cache TIDAK
-          // dibuang lewat exception. Semua frame tetap dikirim ke AI storyboard dan Qwen
-          // yang memutuskan di pass oracle. GK_LOCAL_VETO=strict mengembalikan perilaku lama.
-          if (!isLocalGatekeeperAdvisory(process.env)) {
-            console.warn(`[Job ${jobId}] ⛔ [Cache Ditolak Lokal] ${rawVideoPath}: ${localCacheCheck.reason}`);
-            const localCacheErr = new Error(`Analisa lokal ditolak pada cache: ${localCacheCheck.reason}`);
-            localCacheErr.isAiRejection = true;
-            localCacheErr.rejectionReason = localCacheCheck.reason;
-            throw localCacheErr;
-          }
-          // Sama seperti TAHAP 4: jangan sematkan pesan infrastruktur ke prompt Qwen
-          // sebagai "kecurigaan konten" — hanya bila ada tuduhan per-frame nyata.
-          const cacheSuspicions = (localCacheCheck.discardedFrames || []).filter((f) => f && f.stage && f.stage !== 'io_error');
-          if (!localCacheCheck.localSuspicion && cacheSuspicions.length) localSuspicionNotes.push(localCacheCheck.reason || 'cache dicurigai filter lokal');
-          console.log(`[Job ${jobId}] 🛰️ [Vonis lokal => penasihat] cache: ${localCacheCheck.reason} — frame tetap dipakai, Qwen yang memvonis.`);
-        }
-
-        const cleanCacheFrames = (Array.isArray(localCacheCheck.cleanFrames) && localCacheCheck.cleanFrames.length >= 3)
-          ? localCacheCheck.cleanFrames
-          : null;
-        let cacheFrames = cleanCacheFrames || rawFrames;
-        // Mode advisory: frame cache yang dituduh lokal ikut diperiksa AI/Qwen, tidak
-        // dibuang diam-diam (jalur fallback <3 frame sudah mengirim SEMUA rawFrames).
-        if (cleanCacheFrames && isLocalGatekeeperAdvisory(process.env)) {
-          const suspected = (localCacheCheck.discardedFrames || []).filter((f) => f && f.filePath && f.stage !== 'io_error');
-          if (suspected.length) cacheFrames = [...cleanCacheFrames, ...suspected];
-        }
+        // Cache raw frames are passed to the mandatory Kaggle Oracle audit.
+        const cacheFrames = rawFrames;
 
         highlight = await selectHighlightWithAI({
           apiKey,
@@ -1063,7 +882,7 @@ async function _runStage1Pipeline({
         }
       } catch (initErr) {
         if (initErr.isInfraError) {
-          // P1-5: timeout yt-dlp / whisper.cpp crash / Gatekeeper mati adalah transien
+          // P1-5: timeout yt-dlp / whisper.cpp crash / Oracle Kaggle tidak tersedia adalah transien
           // INFRASTRUKTUR. Vonis "video buruk" (-> blacklist) harus tetap milik isAiRejection;
           // sebelumnya error infra di sini meleleh ke outer catch dan membatal-kan seluruh job.
           console.warn(`[Job ${jobId}] ⚠️ [Infra] Gangguan sementara saat menilai video awal (${initErr.message}). Tidak mem-blacklist; lanjut ke jalur kandidat.`);
@@ -1086,7 +905,7 @@ async function _runStage1Pipeline({
     let autoFinalError = null;
     const failedCandidateUrls = new Set();
     // P1-5: URL kandidat yang pernah kena error infrastruktur (timeout yt-dlp, whisper crash,
-    // Gatekeeper mati). Masing-masing dapat 1 percobaan ULANG sebelum dianggap gugur, supaya
+    // Oracle Kaggle tidak tersedia). Masing-masing dapat 1 percobaan ULANG sebelum dianggap gugur, supaya
     // jaringan sesaat tidak lagi membuang kandidat baik secara permanen di run ini.
     const infraRetriedUrls = new Set();
     let maxStreamVideos = explicitOnly ? 10 : (preferMultiVideo ? 5 : 3);
@@ -1099,7 +918,7 @@ async function _runStage1Pipeline({
     // AUTO & manual): setelah Gemini menyatakan kandidat "layak + produk cocok", backend HANYA
     // mengunduh window bagus lalu render - TANPA Master Loop 3x, TANPA Rescue storyboard, dan
     // TANPA Final QC pasca-render yang bisa menolak/menghapus hasil. Penyaringan frame level
-    // gatekeeper (wajah / subtitle terbakar) SEBELUM approval TETAP berjalan (tidak diubah).
+    // frame visual tetap dinilai oleh Oracle Kaggle sebelum approval.
     const RENDER_ON_APPROVAL = true;
     
     let isBrandDetected = false;
@@ -1203,6 +1022,7 @@ async function _runStage1Pipeline({
         const fresh = await discoverYouTubeCandidatesForProduct({
           productTitle,
           productDescription,
+          niche: options.niche,
           limit: 8,
           excludeVideoIds: usedVids,
           searchIteration,
@@ -1250,6 +1070,7 @@ async function _runStage1Pipeline({
           console.log(`[Job ${jobId}] Mencari kandidat cadangan multi-engine: "${altQuery}"...`);
           const altResults = await searchMultiEngineVideos(altQuery, {
             limit: 8,
+            niche: options.niche,
             excludeVideoIds: usedVids,
             strictIdentity: false,
             youtubeOnly: true,
@@ -1357,6 +1178,7 @@ async function _runStage1Pipeline({
             });
             const altResults = await searchMultiEngineVideos(query, {
               limit: 6,
+              niche: options.niche,
               excludeVideoIds: usedVids,
               strictIdentity: false,
               youtubeOnly: true,
@@ -1460,6 +1282,7 @@ async function _runStage1Pipeline({
           let fresh = await discoverYouTubeCandidatesForProduct({
             productTitle,
             productDescription,
+            niche: options.niche,
             limit: 8,
             excludeVideoIds: usedVids,
             searchIteration,
@@ -1548,7 +1371,7 @@ async function _runStage1Pipeline({
 
         // JALUR LAMA (Gemini pre-flight). KEBIJAKAN KAGGLE-ONLY: blok ini HANYA boleh
         // berjalan bila pre-flight Kaggle memang DIMATIKAN secara sah oleh operator
-        // (PREFLIGHT_ORACLE=0) atau oracle tidak aktif. Dengan PREFLIGHT_ORACLE=1,
+        // (legacy PREFLIGHT_ORACLE bypass) atau oracle tidak aktif. Dengan PREFLIGHT_ORACLE=1,
         // kandidat yang tidak ter-probe Kaggle TIDAK boleh dinilai Gemini (itu jalur
         // non-Kaggle) — mereka lanjut ke jalur normal yang tetap bergate veto pool +
         // audit klip Kaggle.
@@ -1689,7 +1512,12 @@ async function _runStage1Pipeline({
         if (bestVerified?.highlight?.pipelineVersion === 'whisper_first_v1' || bestVerified?.highlight?.pipelineVersion === 'visual_only_v2') {
           console.log(`[Job ${jobId}] ⚡ Visual-Only Pipeline: Menggabungkan ${preferredSoFar.length} kandidat lolos! Melewati AI Storyboard fallback...`);
           hl = {
-            clips: preferredSoFar.map(c => c.highlight.clips[0]),
+            clips: preferredSoFar.flatMap((c) => (c.highlight.clips || []).map((clip) => ({
+              ...clip,
+              candidateIndex: c.candidateIndex,
+              candidateTitle: c.candidate?.title || '',
+              candidate: c.candidate,
+            }))),
             bestWindow: bestVerified.highlight.bestWindow,
             whisperSegments: [],
             narration: bestVerified.highlight.narration,
@@ -1710,11 +1538,10 @@ async function _runStage1Pipeline({
           // dan rescue pool otomatis mengecalikannya.
           // STRICT (mandate 2026-10): oracle diam/timeout/vonis tidak sah -> applyOracleVeto
           // melempar OracleUnavailableError dan job BERHENTI. Tidak ada lagi "keputusan
-          // gatekeeper legacy + Gemini tetap berlaku".
+          // screening visual lokal berlaku".
           if (isVlmOracleEnabled(process.env)) {
             const veto = await applyOracleVeto(testPool, {
               jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
-              localHints: mergeLocalSuspicion(localSuspicionNotes),
             });
             testPool = veto.frames;
             if (veto.rejected > 0) {
@@ -1916,8 +1743,7 @@ async function _runStage1Pipeline({
           if (isVlmOracleEnabled(process.env)) {
             const veto = await applyOracleVeto(pooledFrames, {
               jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
-              localHints: mergeLocalSuspicion(localSuspicionNotes),
-            });
+              });
             pooledFrames = veto.frames;
             if (veto.rejected > 0) {
               console.log(`[Job ${jobId}] ⛔ [Oracle] ${veto.rejected}/${veto.checked} frame diveto (jalur storyboard cadangan).`);
@@ -2563,38 +2389,7 @@ async function _runStage1Pipeline({
           if (ok) testFrames.push({ filePath: framePath, timestamp: ts });
         }
 
-        // HARD MOTION GATE: a valid affiliate clip must contain real physical motion.
-        // Reject still photos with zoom/pan effects before any AI Gatekeeper result can
-        // accidentally classify the moving pixels as a legitimate video.
-        // ADVISORY (mandate 2026-10 + regresi review 2026-10-05, kasus kk5h0ug1): vonis
-        // SSIM lokal TIDAK BOLEH final selama Oracle aktif — mode advisory yang sudah
-        // benar di jalur fastProbe (L~756) & cache (L~923) dulu belum dipasang di sini,
-        // sehingga hero-shot kitchen tools yang nyaris diam dibuang tanpa Qwen pernah
-        // melihatnya. Di advisory: kecurigaan dicatat sebagai arahan prompt Oracle.
-        // GK_LOCAL_VETO=strict mengembalikan pembuangan keras seperti perilaku lama.
-        const motionAudit = auditRealMotionFromFrames(testFrames.map(f => f.filePath));
-        if (motionAudit.likelyStatic && !isLocalGatekeeperAdvisory(process.env)) {
-          console.warn(
-            `[ClipAudit] ⛔ [strict] Segment klip #${cIdx + 1} ditolak: kemungkinan foto/slideshow/Ken Burns (SSIM median=${motionAudit.median?.toFixed(4)}).`
-          );
-          discardedDirtyClips.push({
-            clip: c,
-            reason: 'STATIC_PHOTO_OR_KEN_BURNS',
-          });
-          continue;
-        }
-        if (motionAudit.likelyStatic) {
-          localSuspicionNotes.push(`klip #${cIdx + 1} diduga foto/slideshow/Ken Burns statis (SSIM median=${motionAudit.median?.toFixed(4)})`);
-          console.log(`[ClipAudit] 🛰️ [Vonis lokal => penasihat] Klip #${cIdx + 1} dicurigai foto statis (SSIM median=${motionAudit.median?.toFixed(4)}) — tetap dikirim ke Oracle Kaggle, Qwen yang memvonis.`);
-        }
-
-        // ─── CLIP AUDIT: GERBANG LOKAL HANYA MENOLAK FOTO STATIS / KEN BURNS ───
-        // Deteksi teks overlay & wajah TIDAK dilakukan oleh kode lokal di sini: dulu
-        // pemblokiran itu pernah dipasang dan hasilnya buruk (model lokal tidak layak,
-        // kuota sudah terlanjur terpakai setelah download). Yang menolak klip karena
-        // teks/wajah di tahap ini HANYA vonis oracle Kaggle (model besar di GPU) di
-        // blok [[ORACLE CLIP AUDIT]] di bawah — itu lapisan yang diizinkan. Selain itu
-        // satu-satunya pemblokiran lokal di sini tetap klip FOTO DIAM (motionAudit).
+        // Tidak ada gerbang visual lokal; seluruh keputusan konten diberikan ke Oracle Kaggle.
         cleanAuditedClips.push(c);
         oracleClips.push(c);
         oracleFrameGroups.push(testFrames);
@@ -2618,7 +2413,6 @@ async function _runStage1Pipeline({
         try {
           const audit = await auditClipsWithOracle(oracleClips, oracleFrameGroups, {
             jobId, niche: options.niche || 'kitchen_tools', onProgress: updateProgress,
-            localHints: mergeLocalSuspicion(localSuspicionNotes),
           });
           const dirtySlots = [];
           for (const [i, v] of audit.verdicts) {
