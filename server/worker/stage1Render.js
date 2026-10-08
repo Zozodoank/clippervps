@@ -391,7 +391,11 @@ async function _runStage1Pipeline({
       if (launch.triggered) {
         // afterMs = baseline heartbeat zombie; menunggu heartbeat MAJU (sesi baru
         // benar-benar memanggil API), bukan sekadar melihat yang basi jadi 'segar'.
-        oracleGate = await waitForOracleOnline({ logger: console, afterMs: oracleGate.lastSeenAt || 0 });
+        oracleGate = await waitForOracleOnline({
+          logger: console,
+          afterMs: oracleGate.lastSeenAt || 0,
+          launchId: launch.launchId,
+        });
       } else if (launch.reason === 'cooldown') {
         console.log(`[OracleAutoLaunch] sesi terakhir berumur < cooldown — job tetap memakai gerbang lama (${Math.round(launch.waitMs / 60000)} mnt lagi boleh launch).`);
       }

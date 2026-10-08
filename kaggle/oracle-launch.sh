@@ -32,6 +32,10 @@ stage_dir="$script_dir/.deploy"
 cfg_dir="$script_dir/.deploy-config"
 log_file="$root_dir/logs/oracle-launch.log"
 mkdir -p "$root_dir/logs" "$stage_dir" "$cfg_dir"
+request_id="${ORACLE_LAUNCH_REQUEST_ID:-manual}"
+request_id="$(printf '%s' "$request_id" | tr -cd 'A-Za-z0-9_.-')"
+[ -n "$request_id" ] || request_id="manual"
+status_file="$root_dir/logs/oracle-launch-${request_id}.status"
 
 DRY_RUN=0; WANT_LOGS=0; FORCE=0; SKIP_LIVE=1
 for a in "$@"; do
@@ -45,6 +49,17 @@ done
 
 log() { echo "[$(date '+%F %T')] $*" | tee -a "$log_file"; }
 
+# Launcher dipanggil detached oleh server. Status per permintaan membuat job
+# dapat menampilkan penyebab sebenarnya tanpa menaruh rahasia di log/UI.
+status() {
+  local state="$1"; shift
+  local message
+  message="$(printf '%s' "$*" | tr '\r\n\t' '   ')"
+  local tmp_file="${status_file}.tmp.$$"
+  printf '%s\t%s\t%s\n' "$state" "$(date +%s)" "$message" > "$tmp_file"
+  mv -f "$tmp_file" "$status_file"
+}
+
 # Baca KEY=value: server/.env dulu (authoritative), lalu .env root.
 envget() {
   local v=''
@@ -56,7 +71,8 @@ envget() {
   printf ''
 }
 
-fail() { log "GAGAL: $*"; exit 1; }
+fail() { log "GAGAL: $*"; status failed "$*"; exit 1; }
+status starting "launcher dimulai"
 
 # --- 1. Kaggle CLI ----------------------------------------------------------
 KBIN="${KAGGLE_BIN:-}"
@@ -167,10 +183,13 @@ json.dump(meta, open(sys.argv[2], 'w'), indent=2)
 PY
 if [ "$DRY_RUN" = 1 ]; then
   log "DRY-RUN: staging siap di $stage_dir — kernel TIDAK di-push (tidak ada sesi GPU baru)."
+  status dry_run "staging siap"
   exit 0
 fi
+status pushing "mengunggah konfigurasi dan kernel ke Kaggle"
 "$KBIN" kernels push -p "$stage_dir" >>"$log_file" 2>&1 || fail "kernels push gagal (lihat $log_file)"
 [ -n "$MODEL_SRC" ] && printf '%s' "$MODEL_SRC" > "$stage_dir/.model-source"
+status pushed "kernel berhasil dipush; menunggu boot dan heartbeat"
 log "PUSH OK — Kaggle menjalankan sesi baru: $KUSER/clippervps-vlm-oracle (GPU T4, self-stop ${MAX_MIN} mnt + idle-exit)."
 
 if [ "$WANT_LOGS" = 1 ]; then

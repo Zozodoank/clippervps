@@ -22,6 +22,7 @@
 // Tidak pernah melempar: kegagalan launcher dikembalikan sebagai objek.
 // ─────────────────────────────────────────────────────────────────────────
 import { spawn, execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -31,9 +32,38 @@ import { resolveOracleConfig } from './vlmOracleService.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_CMD = path.join(REPO_ROOT, 'kaggle', 'oracle-launch.sh');
+const LAUNCH_STATUS_DIR = path.join(REPO_ROOT, 'logs');
 
 // Timestamp launch terakhir (module-scope; cukup untuk satu proses server).
 let lastLaunchAtMs = 0;
+
+function launchStatusFile(launchId) {
+  const safeId = String(launchId || '').replace(/[^A-Za-z0-9_.-]/g, '');
+  return safeId ? path.join(LAUNCH_STATUS_DIR, `oracle-launch-${safeId}.status`) : '';
+}
+
+/** Status ditulis oleh oracle-launch.sh agar kegagalan detached tidak berubah timeout samar. */
+function readLaunchStatus(launchId) {
+  const file = launchStatusFile(launchId);
+  if (!file || !fs.existsSync(file)) return null;
+  try {
+    const [state = '', at = '', ...messageParts] = fs.readFileSync(file, 'utf8').trim().split('\t');
+    return { state, at: Number(at) || 0, message: messageParts.join('\t').trim() };
+  } catch {
+    return null;
+  }
+}
+
+function writeLaunchStatus(launchId, state, message) {
+  const file = launchStatusFile(launchId);
+  if (!file) return;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const text = `${state}\t${Math.floor(Date.now() / 1000)}\t${String(message || '').replace(/[\r\n\t]/g, ' ')}\n`;
+    fs.writeFileSync(`${file}.${process.pid}.tmp`, text, 'utf8');
+    fs.renameSync(`${file}.${process.pid}.tmp`, file);
+  } catch { /* status observability must not interrupt the job */ }
+}
 
 /**
  * Flag utama: fitur mati kecuali diaktifkan eksplisit lewat env.
@@ -160,18 +190,30 @@ export function maybeAutoLaunchOracle({ env = process.env, logger = console, now
 
   const cmd = String(env.ORACLE_AUTO_LAUNCH_CMD || '').trim() || DEFAULT_CMD;
   const sp = spawnFn || spawn;
+  if (!spawnFn && !fs.existsSync(cmd)) {
+    return { triggered: false, reason: 'launcher_missing', error: `Skrip launcher tidak ditemukan: ${cmd}` };
+  }
+  const launchId = `${now.toString(36)}-${randomUUID().slice(0, 8)}`;
   // force (zombie) -> beri '--force' supaya oracle-launch.sh MELONJAT skip-live-
   // nya sendiri (juga berbasis heartbeat) dan benar-benar men-push sesi baru.
   const argv = force ? [cmd, '--force'] : [cmd];
   try {
     // stdio 'ignore' + detached + unref: server TIDAK menggantung kalau CLI lambat;
     // launcher menulis log sendiri ke logs/oracle-launch.log.
-    const child = sp('bash', argv, { detached: true, stdio: 'ignore', cwd: REPO_ROOT });
-    child.on('error', (e) => logger?.log?.(`[OracleAutoLaunch] spawn error: ${e.message}`));
+    const child = sp('bash', argv, {
+      detached: true,
+      stdio: 'ignore',
+      cwd: REPO_ROOT,
+      env: { ...process.env, ORACLE_LAUNCH_REQUEST_ID: launchId },
+    });
+    child.on('error', (e) => {
+      writeLaunchStatus(launchId, 'failed', `proses launcher tidak dapat dimulai: ${e.message}`);
+      logger?.log?.(`[OracleAutoLaunch] spawn error: ${e.message}`);
+    });
     child.unref();
     lastLaunchAtMs = now;
     logger?.log?.(`[OracleAutoLaunch] 🚀 Menyalakan sesi Kaggle via '${cmd}'${force ? ' (force/zombie)' : ''} (detached). Tunggu heartbeat...`);
-    return { triggered: true, reason: 'launched', cmd, forced: !!force };
+    return { triggered: true, reason: 'launched', cmd, forced: !!force, launchId };
   } catch (e) {
     return { triggered: false, reason: 'spawn_failed', error: e.message };
   }
@@ -189,6 +231,7 @@ export async function waitForOracleOnline({
   pollMs = 5000,
   deadline = Date.now(),
   afterMs = 0,
+  launchId = '',
   lastSeenFn = oracleLastSeenMs,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 } = {}) {
@@ -196,6 +239,15 @@ export async function waitForOracleOnline({
   const hardStop = deadline + waitMs;
   let tick = 0;
   while (Date.now() <= hardStop) {
+    const launchStatus = readLaunchStatus(launchId);
+    if (launchStatus?.state === 'failed') {
+      return {
+        ok: false,
+        detail: 'launcher_failed',
+        lastSeenAt: oracleLastSeenMs() || null,
+        message: `Auto-launch Kaggle gagal: ${launchStatus.message || 'lihat logs oracle-launch'}`,
+      };
+    }
     const last = lastSeenFn();
     // 'afterMs' = baseline heartbeat SAAT launch dikirim. Heartbeat harus MAJU
     // melampaui baseline (buktinya notebook BARU benar-benar memanggil API lagi),
@@ -213,10 +265,12 @@ export async function waitForOracleOnline({
     await sleep(Math.min(pollMs, Math.max(250, hardStop - Date.now())));
   }
   const last = lastSeenFn();
+  const launchStatus = readLaunchStatus(launchId);
+  const launcherHint = launchStatus?.message ? ` Status launcher: ${launchStatus.message}` : '';
   return {
     ok: false,
     detail: 'notebook_offline',
     lastSeenAt: last || null,
-    message: `Auto-launch sudah dikirim tapi notebook belum memanggil API dalam ${Math.round(waitMs / 1000)} dtk. Cek logs/oracle-launch.log & 'kaggle kernels status'.`,
+    message: `Auto-launch sudah dikirim tapi notebook belum memanggil API dalam ${Math.round(waitMs / 1000)} dtk.${launcherHint} Cek logs/oracle-launch.log & 'kaggle kernels status'.`,
   };
 }
