@@ -2531,9 +2531,20 @@ async function _runStage1Pipeline({
         ['Sampel kamera', 'Sekarang video beralih ke sampel kamera; amati detail, pencahayaan, dan subjek yang tertangkap.'],
         ['Hasil kamera', 'Sebagai penutup, lihat hasil foto atau video ini, termasuk manusia jika memang tertangkap kamera.'],
       ];
+      const fallbackDurations = fallbackSmartphoneRows.map((_, index) =>
+        Math.max(1, Number(creativePlan?.shots?.[index]?.targetSec) || (actualSilentDuration / fallbackSmartphoneRows.length))
+      );
+      const fallbackDurationTotal = fallbackDurations.reduce((sum, duration) => sum + duration, 0) || 1;
+      const fallbackScale = actualSilentDuration / fallbackDurationTotal;
+      let fallbackCursor = 0;
+      const fallbackSceneStarts = fallbackDurations.map((duration) => {
+        const start = fallbackCursor;
+        fallbackCursor += duration * fallbackScale;
+        return Math.round(start);
+      });
       const fallbackSmartphoneScenes = fallbackSmartphoneRows.map(([topic, voiceover], index) => {
-        const start = index * 6;
-        const end = index === 7 ? Math.round(actualSilentDuration) : Math.min(Math.round(actualSilentDuration), start + 6);
+        const start = fallbackSceneStarts[index] || 0;
+        const end = fallbackSceneStarts[index + 1] ?? Math.round(actualSilentDuration);
         return {
           sceneNumber: index + 1,
           timeRange: `${formatSeconds(start)} - ${formatSeconds(end)}`,
@@ -2543,7 +2554,7 @@ async function _runStage1Pipeline({
         };
       });
       const fallbackVoiceScript = isGadget
-        ? fallbackSmartphoneRows.map(([, line], index) => `[${formatSeconds(index * 6)}] [neutral] ${line}`).join('\n')
+        ? fallbackSmartphoneRows.map(([, line], index) => `[${formatSeconds(fallbackSceneStarts[index] || 0)}] [neutral] ${line}`).join('\n')
         : `[${ts0}] [excited] ${fallbackHook}
 [${ts1}] [emphasis] Bentuk produk dan bagian utamanya terlihat jelas di sini.
 [${ts2}] [neutral] Sekarang perhatikan ${mechanismPhrase} saat digunakan.
@@ -2704,8 +2715,8 @@ async function _runStage1Pipeline({
 
         const hasVoiceover = ttsSucceeded && fs.existsSync(autoVoiceoverPath);
         const audioDurationSec = hasVoiceover ? (await getMediaDurationSec(autoVoiceoverPath)) || silentDurationSec : silentDurationSec;
-        if (isSmartphoneReview && (audioDurationSec < 45 || audioDurationSec > 60)) {
-          const durationErr = new Error(`Durasi voice-over smartphone ${audioDurationSec.toFixed(1)} detik; wajib 45-60 detik.`);
+        if (isSmartphoneReview && audioDurationSec < 45) {
+          const durationErr = new Error(`Durasi voice-over smartphone ${audioDurationSec.toFixed(1)} detik; minimal 45 detik.`);
           durationErr.isRenderPlanShortfall = true;
           durationErr.rejectionReason = durationErr.message;
           throw durationErr;

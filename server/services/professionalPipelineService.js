@@ -83,10 +83,20 @@ export function buildCreativeShotPlan({ fingerprint = {}, niche = 'kitchen_tools
       ['camera_sample', 'Sampel foto atau video hasil kamera ponsel'],
       ['camera_result', 'Review hasil kamera sebagai adegan terakhir'],
     ];
+    const presetSlots = getNichePreset(niche)?.slotsConfig || [];
     return {
       strategy: 'story_first',
       sourcePolicy: 'multi_angle_dynamic_preferred',
-      shots: topics.map(([role, purpose]) => ({ role, purpose, targetSec: 6, minSec: 5, maxSec: 7.5 })),
+      shots: topics.map(([role, purpose], index) => {
+        const slot = presetSlots[index] || {};
+        return {
+          role,
+          purpose,
+          targetSec: Number(slot.targetSec) || 6,
+          minSec: Number(slot.minSec) || 4.5,
+          maxSec: Number(slot.maxSec) || 8,
+        };
+      }),
     };
   }
 
@@ -201,9 +211,24 @@ export function conformClipsToVoiceover({ clips = [], script = '', audioDuration
   }
 
   const avgNeeded = audioDuration / targetClips.length;
-  const mins = targetClips.map((_, i) => Math.min(Number(planShots[i]?.minSec) || 1.5, Math.max(1.0, avgNeeded * 0.6)));
-  const maxs = targetClips.map((_, i) => Math.max(Number(planShots[i]?.maxSec) || 4.2, avgNeeded * 1.4));
+  const mins = targetClips.map((clip, i) => {
+    const planMin = Number(planShots[i]?.minSec) || 1.5;
+    const sourceLength = Number(clip.duration) || planMin;
+    return Math.min(planMin, Math.max(1.0, avgNeeded * 0.6), sourceLength);
+  });
+  const maxs = targetClips.map((clip, i) => {
+    const planMax = Math.max(Number(planShots[i]?.maxSec) || 4.2, avgNeeded * 1.4);
+    // Smartphone sections have already been downloaded and audited at this length;
+    // conformance may trim them, but must not expose unaudited source frames.
+    return strictSceneVoSync ? Math.min(Number(clip.duration) || planMax, planMax) : planMax;
+  });
   const fitted = distributeTotal(desired, audioDuration, mins, maxs);
+  if (strictSceneVoSync && Math.abs(fitted.reduce((sum, duration) => sum + duration, 0) - audioDuration) > 0.25) {
+    const durationError = new Error(`Durasi voice-over ${audioDuration.toFixed(1)}s melampaui footage smartphone yang sudah diaudit (${fitted.reduce((sum, duration) => sum + duration, 0).toFixed(1)}s).`);
+    durationError.isRenderPlanShortfall = true;
+    durationError.rejectionReason = durationError.message;
+    throw durationError;
+  }
 
   return targetClips.map((clip, i) => {
     const duration = Math.max(1.2, Number(fitted[i] || clip.duration || 3));

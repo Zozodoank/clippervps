@@ -385,6 +385,7 @@ export function build7SlotStoryboardClips({
   frames = [],
   totalDuration = 60,
   clipSec = 3.5,
+  sceneDurationsSec = [],
   introCutoffSec = 0,
   niche = 'kitchen_tools'
 }) {
@@ -570,6 +571,9 @@ export function build7SlotStoryboardClips({
       ? candIndices[sIdx % candIndices.length]
       : primaryCandidate;
     const config = slotsConfig[sIdx];
+    const slotClipSec = niche === 'gadget_smartphone'
+      ? Math.max(Number(config.minSec) || 4.5, Math.min(Number(config.maxSec) || 8, Number(sceneDurationsSec[sIdx]) || Number(config.targetSec) || clipSec))
+      : clipSec;
     let frameObj = null;
     let chosenIdx = rawSlotIndices[sIdx];
     const slotPolicy = slotFacePolicies[sIdx] || 'strict';
@@ -680,7 +684,7 @@ export function build7SlotStoryboardClips({
     const candDuration = frameObj?.candidate?.duration || totalDuration;
     const frameTs = frameObj.timestamp !== undefined ? frameObj.timestamp : (sIdx * (candDuration / Math.max(1, slotsConfig.length)));
 
-    let startSec = Math.max(0, Math.min(candDuration - clipSec, Math.round(frameTs * 10) / 10));
+    let startSec = Math.max(0, Math.min(candDuration - slotClipSec, Math.round(frameTs * 10) / 10));
     if (startSec < minSafeStart && config.slot !== 6 && !(niche === 'gadget_smartphone' && config.slot >= 7)) {
       startSec = minSafeStart;
     }
@@ -695,12 +699,12 @@ export function build7SlotStoryboardClips({
       continue;
     }
 
-    const endSec = Math.round((startSec + clipSec) * 10) / 10;
+    const endSec = Math.round((startSec + slotClipSec) * 10) / 10;
 
     const clipObj = {
       startSeconds: startSec,
       endSeconds: endSec,
-      duration: clipSec,
+      duration: slotClipSec,
       startTime: formatSeconds(startSec),
       endTime: formatSeconds(endSec),
       candidateIndex: candIdx,

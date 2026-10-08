@@ -29,6 +29,33 @@ import { isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
 import { isForbiddenSearchQuery } from '../config/forbiddenTerms.js';
 import { countUsableFrames, shouldPreferEvidence, pickEvidenceFrames, formatCleanWindowsBySource, mapFramesToBudgeted, buildVisionProvenance, sourceKeyOf } from './visionEvidenceService.js';
 
+function getSmartphoneSlotDurationSec(slotNumber, requestedDurationSec = null) {
+  const slot = getNichePreset('gadget_smartphone')?.slotsConfig?.[Number(slotNumber) - 1];
+  const fallback = Number(slot?.targetSec) || 6;
+  const requested = Number(requestedDurationSec);
+  const duration = Number.isFinite(requested) && requested > 0 ? requested : fallback;
+  return Math.max(Number(slot?.minSec) || 4.5, Math.min(Number(slot?.maxSec) || 8, duration));
+}
+
+function getSmartphoneDurationGuide() {
+  const slots = getNichePreset('gadget_smartphone')?.slotsConfig || [];
+  return slots.map((slot) => `${slot.slot}: target ${slot.targetSec}s (${slot.minSec}-${slot.maxSec}s)`).join('; ');
+}
+
+function getSmartphoneSceneStartSeconds(totalDurationSec = 49) {
+  const slots = getNichePreset('gadget_smartphone')?.slotsConfig || [];
+  const rawDurations = slots.map((slot) => Number(slot.targetSec) || 6);
+  const rawTotal = rawDurations.reduce((sum, duration) => sum + duration, 0) || 1;
+  const scale = Number(totalDurationSec) > 0 ? Number(totalDurationSec) / rawTotal : 1;
+  const starts = [];
+  let cursor = 0;
+  for (const duration of rawDurations) {
+    starts.push(cursor);
+    cursor += duration * scale;
+  }
+  return starts;
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -239,8 +266,8 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
 TIMELINE:
 - Inspect the complete video. Never select a section before ${introCutoffSec || 0}s or after ${Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0))}s.
-- Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.
-- ${isGadget ? 'Propose eight ordered 6-second smartphone-review sections when available: slots 1-2 screen/UI, 3-4 visible features, 5-6 RAM/storage evidence, 7-8 camera samples as the final scenes. Camera samples may show only captured photos/video without the phone in frame, including people as subjects.' : 'Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.'}
+- ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit at least 45 seconds; let the selected evidence determine the final duration, with no hard 60-second ceiling. Return each actual startSeconds and endSeconds.` : `Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.`}
+- ${isGadget ? 'Propose eight ordered smartphone-review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 RAM/storage evidence, 7-8 camera samples as the final scenes. Camera samples may show only captured photos/video without the phone in frame, including people as subjects.' : 'Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.'}
 - ${isGadget ? 'Tag each selectedClips entry with storyboardSlot 1 through 8 in that order. Do not classify people inside camera samples as presenters; Kaggle checks only whether a scene is self-recording presenter footage.' : 'Return timestamp proposals in scene order.'}
 - Do not make a product-match, face, overlay, subtitle, watermark, or source-quality verdict. Kaggle is the sole visual judge.
 - If no likely product section can be located, return an empty list; the backend will still submit sample timestamps to Kaggle.
@@ -253,7 +280,7 @@ Return ONLY JSON in this shape:
   "hasOpeningIntro": true,
   "introDurationSeconds": 5,
   "selectedClips": [
-    {"startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "storyboardSlot": 1, "reason": "Possible product scene"}
+    {"startSeconds": 12.0, "endSeconds": ${(12 + (isGadget ? getSmartphoneSlotDurationSec(1) : clipSec)).toFixed(1)}, "storyboardSlot": 1, "reason": "Possible product scene"}
   ],
   "timestamps": [12.0],
   "productHook": "<short hook>",
@@ -351,7 +378,8 @@ Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether
       ? parsed.clips
       : (Array.isArray(parsed.timestamps) ? parsed.timestamps : []));
   const firstSafeSec = Math.max(0, Number(introCutoffSec) || 0);
-  const lastSafeStart = Math.max(firstSafeSec, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0) - clipSec);
+  const maxSelectedClipSec = isGadget ? 8 : clipSec;
+  const lastSafeStart = Math.max(firstSafeSec, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0) - maxSelectedClipSec);
   const oracleProbeSections = rawSections.length > 0
     ? rawSections
     : Array.from({ length: isGadget ? 8 : 4 }, (_, i) => ({
@@ -374,29 +402,33 @@ Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether
   if (selectedSections.length > 0) {
     for (const { entry, sec, sectionIndex } of selectedSections) {
       if (isNaN(sec) || sec < 0 || sec > totalDuration) continue;
+      const storyboardSlot = Number(entry?.storyboardSlot) || sectionIndex + 1;
+      const requestedDuration = Number(entry?.endSeconds) - Number(entry?.startSeconds ?? sec);
+      const sectionDuration = isGadget
+        ? getSmartphoneSlotDurationSec(storyboardSlot, requestedDuration)
+        : clipSec;
       const maxSafeEnd = Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0));
-      if (sec < Math.max(0, Number(introCutoffSec) || 0) || sec + clipSec > maxSafeEnd) {
+      if (sec < Math.max(0, Number(introCutoffSec) || 0) || sec + sectionDuration > maxSafeEnd) {
         console.log(`[Gemini YouTube Stream] Discarding timestamp ${sec}s outside safe timeline ${introCutoffSec}-${maxSafeEnd}s`);
         continue;
       }
       const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
-      let startSec = Math.max(0, Math.min(totalDuration - clipSec, Math.round(sec * 10) / 10));
+      let startSec = Math.max(0, Math.min(totalDuration - sectionDuration, Math.round(sec * 10) / 10));
       if (startSec < minSafeStart) {
-        startSec = Math.min(totalDuration - clipSec, minSafeStart);
+        startSec = Math.min(totalDuration - sectionDuration, minSafeStart);
       }
       // Never turn several nearby timestamps into repeated copies of the same scene.
-      if (acceptedStarts.some((prev) => Math.abs(prev - startSec) < Math.max(clipSec, 4.0))) {
+      if (acceptedStarts.some((prev) => Math.abs(prev - startSec) < Math.max(sectionDuration, 4.0))) {
         continue;
       }
       acceptedStarts.push(startSec);
 
-      const endSec = Math.round((startSec + clipSec) * 10) / 10;
-      const storyboardSlot = Number(entry?.storyboardSlot) || sectionIndex + 1;
+      const endSec = Math.round((startSec + sectionDuration) * 10) / 10;
       const isCameraSample = isGadget && storyboardSlot >= 7;
       candidateClips.push({
         startSeconds: startSec,
         endSeconds: endSec,
-        duration: clipSec,
+        duration: sectionDuration,
         storyboardSlot: isGadget ? storyboardSlot : undefined,
         storyboardSlotKey: isGadget ? getNichePreset(niche)?.slotsConfig?.[storyboardSlot - 1]?.key : undefined,
         facePolicy: isCameraSample ? 'presenter_only' : 'strict',
@@ -550,7 +582,7 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
 TIMELINE AND SELECTION:
 - Inspect all supplied videos. Ignore the first ${introCutoffSec || 0} seconds and the final 10 seconds of each video.
-- Each selected section must be ${clipSec}s long. ${isGadget ? 'Return up to eight ordered smartphone review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 verified RAM/storage evidence, and 7-8 phone camera samples as the final scenes. Slots 1-6 must show the phone or its active interface. Slots 7-8 may show only captured photos/video without the phone in frame; people inside captured samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every section must show the target physical product clearly in active use.'}
+- ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. The complete edit must be at least 45 seconds, with no hard 60-second ceiling; return the actual startSeconds and endSeconds for every section.` : `Each selected section must be ${clipSec}s long.`} ${isGadget ? 'Return up to eight ordered smartphone review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 verified RAM/storage evidence, and 7-8 phone camera samples as the final scenes. Slots 1-6 must show the phone or its active interface. Slots 7-8 may show only captured photos/video without the phone in frame; people inside captured samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every section must show the target physical product clearly in active use.'}
 - Select only sections whose final 9:16 crop has no floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging. ${isGadget ? 'Faces are allowed inside a camera sample in slots 7-8; reject a face only when it is a reviewer filming themselves and speaking directly to the camera.' : 'Reject human faces and talking heads.'}
 - For horizontal footage assess the center 9:16 crop; for vertical footage assess the full frame.
 - Return every distinct clean section you can identify, including fewer than four. If none are identifiable in a source, simply return no section for that source.
@@ -561,7 +593,7 @@ Return ONLY JSON:
 {
   "status": "select",
   "selectedClips": [
-    {"sourceVideoIndex": 0, "startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "storyboardSlot": 1, "isCameraSample": false, "isSelfRecordingPresenter": false, "clean": true, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "hasFace": false, "hasFloatingOverlay": false, "hasTextOrSubtitles": false, "hasWatermark": false, "reason": "Clean product demonstration"}
+    {"sourceVideoIndex": 0, "startSeconds": 12.0, "endSeconds": ${(12 + (isGadget ? getSmartphoneSlotDurationSec(1) : clipSec)).toFixed(1)}, "storyboardSlot": 1, "isCameraSample": false, "isSelfRecordingPresenter": false, "clean": true, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "hasFace": false, "hasFloatingOverlay": false, "hasTextOrSubtitles": false, "hasWatermark": false, "reason": "Clean product demonstration"}
   ],
   "productHook": "<short hook>",
   "hasProductBrand": false,
@@ -665,25 +697,29 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
       const isCameraSample = isGadget && storyboardSlot >= 7 && clipData?.isCameraSample === true;
       const sec = Number(clipData.startSeconds ?? clipData.timestamp);
       const vidIdx = Number(clipData.sourceVideoIndex) || 0;
+      const requestedDuration = Number(clipData.endSeconds) - Number(clipData.startSeconds ?? sec);
+      const sectionDuration = isGadget
+        ? getSmartphoneSlotDurationSec(storyboardSlot, requestedDuration)
+        : clipSec;
       
       if (isNaN(sec) || sec < 0 || sec > totalDuration || vidIdx < 0 || vidIdx >= youtubeUrls.length) continue;
       if (!acceptedStartsByVideo[vidIdx]) acceptedStartsByVideo[vidIdx] = [];
 
 
       const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
-      let startSec = Math.max(0, Math.min(totalDuration - clipSec, Math.round(sec * 10) / 10));
-      if (startSec < minSafeStart) startSec = Math.min(totalDuration - clipSec, minSafeStart);
+      let startSec = Math.max(0, Math.min(totalDuration - sectionDuration, Math.round(sec * 10) / 10));
+      if (startSec < minSafeStart) startSec = Math.min(totalDuration - sectionDuration, minSafeStart);
       
-      if (acceptedStartsByVideo[vidIdx].some((prev) => Math.abs(prev - startSec) < Math.max(clipSec, 4.0))) continue;
+      if (acceptedStartsByVideo[vidIdx].some((prev) => Math.abs(prev - startSec) < Math.max(sectionDuration, 4.0))) continue;
       
       acceptedStartsByVideo[vidIdx].push(startSec);
-      const endSec = Math.round((startSec + clipSec) * 10) / 10;
+      const endSec = Math.round((startSec + sectionDuration) * 10) / 10;
       
       candidateClips.push({
         candidateUrl: youtubeUrls[vidIdx], // Penting agar videoFilterService / downloader bisa download URL yang benar
         startSeconds: startSec,
         endSeconds: endSec,
-        duration: clipSec,
+        duration: sectionDuration,
         storyboardSlot: isGadget ? storyboardSlot : undefined,
         storyboardSlotKey: isGadget ? getNichePreset(niche)?.slotsConfig?.[storyboardSlot - 1]?.key : undefined,
         facePolicy: isCameraSample ? 'presenter_only' : 'strict',
@@ -898,7 +934,7 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
 - Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
 CRITERION 5: ${isGadget ? 'EIGHT-SCENE SMARTPHONE REVIEW' : 'DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE'}
-- ${isGadget ? 'Select exactly eight non-overlapping 6-second scenes for a 48-second smartphone review: slots 1-2 screen/UI, 3-4 visible features, 5-6 RAM/storage capacity evidence, 7-8 camera samples as the final scenes. Camera samples may show captured people or scenery without the physical phone in frame.' : 'Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.'}
+- ${isGadget ? `Select exactly eight ordered smartphone scenes with natural, varied cut lengths (no hard 60-second ceiling; total must be at least 45 seconds). Slot duration guide: ${getSmartphoneDurationGuide()}. Use 1-2 for screen/UI, 3-4 for visible features, 5-6 for RAM/storage evidence, and 7-8 for camera samples as the final scenes. Camera samples may show captured people or scenery without the physical phone in frame.` : 'Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.'}
 - Each timestamp in "timestamps" MUST be free of subtitles, floating text, graphic overlays, colored cards, and watermarks. ${isGadget ? 'A human subject inside a phone camera sample is allowed; reject only a self-recording presenter speaking directly to camera.' : 'Selected scenes must be 100% faceless.'}
 - MOTION FIRST: Prioritize active hands-on demonstration (cutting, pressing, operating, tangible results) over frozen/static product displays.
 - ANTI-MONOTONOUS RULE: Each timestamp MUST represent a distinct action, phase, or camera angle. If the footage repeats the same static cut without diversity, REJECT IT:
@@ -1118,16 +1154,18 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         const sec = typeof rawTs === 'number' ? rawTs : parseTimeToSeconds(rawTs);
         if (isNaN(sec) || sec < 0 || sec > totalDuration) continue;
         const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
-        let startSec = Math.max(0, Math.min(totalDuration - clipSec, Math.round(sec * 10) / 10));
+        const storyboardSlot = isGadget ? timestampIndex + 1 : null;
+        const sectionDuration = isGadget ? getSmartphoneSlotDurationSec(storyboardSlot) : clipSec;
+        let startSec = Math.max(0, Math.min(totalDuration - sectionDuration, Math.round(sec * 10) / 10));
         if (startSec < minSafeStart) {
-          startSec = Math.min(totalDuration - clipSec, minSafeStart);
+          startSec = Math.min(totalDuration - sectionDuration, minSafeStart);
         }
-        const endSec = Math.round((startSec + clipSec) * 10) / 10;
+        const endSec = Math.round((startSec + sectionDuration) * 10) / 10;
         candidateClips.push({
           startSeconds: startSec,
           endSeconds: endSec,
-          duration: clipSec,
-          storyboardSlot: isGadget ? timestampIndex + 1 : undefined,
+          duration: sectionDuration,
+          storyboardSlot: isGadget ? storyboardSlot : undefined,
           storyboardSlotKey: isGadget ? getNichePreset(niche)?.slotsConfig?.[timestampIndex]?.key : undefined,
           facePolicy: isGadget && timestampIndex >= 6 ? 'presenter_only' : 'strict',
           isCameraResultSample: isGadget && timestampIndex >= 6,
@@ -1274,6 +1312,9 @@ export async function selectHighlightWithAI({
 
   const clipSec = niche === 'gadget_smartphone' ? 6 : Math.max(3.5, Math.min(5.0, Number(sceneDuration) || 4.8));
   const isGadget = niche === 'gadget_smartphone';
+  const sceneDurationsSec = isGadget
+    ? (getNichePreset(niche)?.slotsConfig || []).map((slot) => getSmartphoneSlotDurationSec(slot.slot))
+    : [];
   const isVideoFirstMode = Boolean(isVideoFirst || !shopeeLink);
 
   onProgress({
@@ -1869,6 +1910,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
         frames: evalFrames,
         totalDuration,
         clipSec,
+        sceneDurationsSec,
         introCutoffSec,
         niche
       });
@@ -1877,7 +1919,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
       if ((!candidateClips || candidateClips.length === 0) && selectedIndices.length > 0) {
         candidateClips = [];
         const fallbackFrameKeys = new Set();
-        for (const rawIdx of selectedIndices) {
+        for (const [selectedIndex, rawIdx] of selectedIndices.entries()) {
           const idx = typeof rawIdx === 'object'
             ? Number(rawIdx?.frameIndex ?? rawIdx?.frame ?? rawIdx?.index)
             : parseInt(rawIdx, 10);
@@ -1897,24 +1939,25 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
           }
           const ts = frameObj ? frameObj.timestamp : (idx * (totalDuration / evalFrames.length));
           const minSafeStart = Math.max(introCutoffSec || 0, 0);
-          const rawStart = Math.max(0, Math.min(totalDuration - clipSec, Math.round(ts * 10) / 10));
-          if (rawStart < minSafeStart) continue;
-
           const candIdx = frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : null;
           const frameKey = frameObj?.filePath || `${frameObj?.videoId || frameObj?.candidate?.id || candIdx}:${Math.round(ts * 10) / 10}`;
           if (fallbackFrameKeys.has(frameKey)) continue;
 
+          const storyboardSlot = isGadget ? Number(rawIdx?.storyboardSlot) || selectedIndex + 1 : undefined;
+          const sectionDuration = isGadget ? getSmartphoneSlotDurationSec(storyboardSlot) : clipSec;
+          const rawStart = Math.max(0, Math.min(totalDuration - sectionDuration, Math.round(ts * 10) / 10));
+          if (rawStart < minSafeStart) continue;
           const collides = candidateClips.some(c =>
             (c.candidateIndex === candIdx || (!c.candidateIndex && !candIdx)) &&
-            Math.abs(c.startSeconds - rawStart) < Math.max(clipSec, 4.0)
+            Math.abs(c.startSeconds - rawStart) < Math.max(sectionDuration, 4.0)
           );
           if (collides) continue;
 
-          const endSec = Math.round((rawStart + clipSec) * 10) / 10;
+          const endSec = Math.round((rawStart + sectionDuration) * 10) / 10;
           candidateClips.push({
             startSeconds: rawStart,
             endSeconds: endSec,
-            duration: clipSec,
+            duration: sectionDuration,
             startTime: formatSeconds(rawStart),
             endTime: formatSeconds(endSec),
             candidateIndex: frameObj?.candidateIndex !== undefined ? frameObj.candidateIndex : null,
@@ -1922,6 +1965,10 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
             candidateUrl: frameObj?.candidateUrl || '',
             videoId: frameObj?.videoId || '',
             candidate: frameObj?.candidate || null,
+            storyboardSlot,
+            storyboardSlotKey: isGadget ? getNichePreset(niche)?.slotsConfig?.[storyboardSlot - 1]?.key : undefined,
+            facePolicy: isGadget && storyboardSlot >= 7 ? 'presenter_only' : 'strict',
+            isCameraResultSample: isGadget && storyboardSlot >= 7,
             reason: `Frame #${idx} (${frameObj?.displayLabel || formatSeconds(rawStart)}) peragaan produk memuaskan`,
             isCleanAffiliateShot: true,
             hasProductBrand: Boolean(parsed.hasProductBrand),
@@ -2562,23 +2609,40 @@ export async function generateAdAdvisorScriptWithAI({
     ? creativePlan.shots.map((shot, index) => `${index + 1}. ${shot.purpose}`).join('\n')
     : '';
   const targetDuration = isGadget
-    ? Math.max(45, Math.min(60, Math.round(Number(segmentDuration) || 48)))
+    ? Math.max(45, Math.round(Number(segmentDuration) || 49))
     : Math.max(18, Math.min(45, Math.round(Number(segmentDuration) || 22)));
-  const effectiveSceneSec = isGadget ? 6 : Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
+  const effectiveSceneSec = isGadget
+    ? targetDuration / 8
+    : Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
   const sceneCount = isGadget ? 8 : Math.max(5, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
   const targetSpeechSec = Math.max(17, targetDuration - 1.5);
-  const targetWords = Math.round(targetSpeechSec * (isGadget ? 2.3 : 2.2));
-  const minWords = Math.max(isGadget ? 90 : 38, Math.round(targetSpeechSec * (isGadget ? 2.05 : 1.9)));
-  const maxWords = Math.max(isGadget ? 105 : 48, Math.round(targetSpeechSec * (isGadget ? 2.6 : 2.4)));
+  const targetWords = Math.round(targetSpeechSec * (isGadget ? 2.2 : 2.2));
+  const minWords = Math.max(isGadget ? 90 : 38, Math.round(targetSpeechSec * (isGadget ? 2.0 : 1.9)));
+  const maxWords = Math.max(isGadget ? 105 : 48, Math.round(targetSpeechSec * (isGadget ? 2.35 : 2.4)));
+  const minSmartphoneWordsPerLine = Math.max(10, Math.floor(minWords / 8));
+  const maxSmartphoneWordsPerLine = Math.ceil(maxWords / 8);
+  const smartphoneExampleLines = [
+    '[curious] Ikuti perpindahan menu saat jari menyentuh layar; susunan ikon dan responsnya tampak jelas di sini.',
+    '[calm] Saat halaman digulir, teks dan gambar bergerak; interaksi ini memperlihatkan pengalaman layar secara langsung.',
+    '[engaged] Tombol yang ditekan membuka menu fitur; amati perubahan tampilannya sebelum menyimpulkan fungsi perangkat.',
+    '[calm] Bagian perangkat yang terlihat memberi konteks fitur, sementara demonstrasi ini menunjukkan penggunaan yang sebenarnya.',
+    '[careful] Angka RAM hanya disebut jika informasinya terbaca jelas pada layar yang sedang ditampilkan.',
+    '[careful] Jika halaman penyimpanan tidak terbuka jelas, kita jelaskan tampilannya tanpa menebak kapasitas perangkat.',
+    '[interested] Sekarang perhatikan sampel kamera; warna, pencahayaan, dan subjek tampak sebagai hasil tangkapan ponsel.',
+    '[calm] Pada contoh terakhir, amati detail dan gerak subjek yang tertangkap dalam video kamera.',
+  ];
+  const smartphoneExampleVoiceover = getSmartphoneSceneStartSeconds(targetDuration)
+    .map((start, index) => `[${formatSeconds(Math.round(start))}] ${smartphoneExampleLines[index]}`)
+    .join('\\n');
 
   const systemPrompt = isGadget
-    ? `You are an Indonesian smartphone reviewer. Produce a grounded 45-60 second review with exactly 8 scene-aligned narration lines, about 6 seconds each.
+    ? `You are an Indonesian smartphone reviewer. Produce a grounded smartphone review of at least 45 seconds. There is no hard 60-second ceiling; derive the natural total duration from the footage and narration.
 
 ORDER IS FIXED: scenes 1-2 review the screen/UI; scenes 3-4 review visible features; scenes 5-6 review memory capacity; scenes 7-8 review camera samples and are the final scenes. Do not move camera earlier. No CTA, price, purchase invitation, or comment prompt anywhere in narration.
 
 Every narration line must describe the action or evidence visible in its corresponding frames. Use specific active verbs and natural reactions to what changes on screen; vary the opening and rhythm of each line. Do not repeat a stiff template such as starting every line with "Perhatikan" or merely announce a topic without describing what the scene shows. Never invent a spec. State RAM/storage numbers only if legible in the supplied frames or explicitly stated in product title/description. If memory capacity is not verifiable, say that the capacity is not clearly shown. Camera sample footage may include people as subjects in photos/videos captured by the phone. Reject only a reviewer/vlogger/presenter recording themselves while speaking directly to camera; do not reject people inside the phone's captured sample footage.
 
-Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. Make the voiceover span the full target duration with timestamps at exactly 00:00, 00:06, 00:12, 00:18, 00:24, 00:30, 00:36, and 00:42. Write 12-15 spoken words per line so the complete narration lasts 45-60 seconds at a calm, clear pace. Keep every line descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
+Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. The target runtime is ${targetDuration} seconds or longer when the visual evidence needs it. Choose eight varied scene boundaries based on visible action; do not space every cut exactly six seconds apart. Start at 00:00, use strictly increasing timestamps, and make the last scene finish near the target runtime. Write roughly ${minSmartphoneWordsPerLine}-${maxSmartphoneWordsPerLine} spoken words per line, varying sentence length to fit the scene and speak calmly. Keep every line descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
     : `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
@@ -2722,7 +2786,7 @@ Return strict JSON in this format:
       "adAdvisorNotes": "Tips sutradara (SFX / Text Overlay)"
     }
   ],
-  "voiceoverScript": "${isGadget ? '[00:00] [curious] Ikuti perpindahan menu saat jari menyentuh layar; susunan ikon dan responsnya tampak jelas di sini.\\n[00:06] [calm] Saat halaman digulir, teks dan gambar bergerak; interaksi ini memperlihatkan pengalaman layar secara langsung.\\n[00:12] [engaged] Tombol yang ditekan membuka menu fitur; amati perubahan tampilannya sebelum menyimpulkan fungsi perangkat.\\n[00:18] [calm] Bagian perangkat yang terlihat memberi konteks fitur, sementara demonstrasi ini menunjukkan penggunaan yang sebenarnya.\\n[00:24] [careful] Angka RAM hanya disebut jika informasinya terbaca jelas pada layar yang sedang ditampilkan.\\n[00:30] [careful] Jika halaman penyimpanan tidak terbuka jelas, kita jelaskan tampilannya tanpa menebak kapasitas perangkat.\\n[00:36] [interested] Sekarang perhatikan sampel kamera; warna, pencahayaan, dan subjek tampak sebagai hasil tangkapan ponsel.\\n[00:42] [calm] Pada contoh terakhir, amati detail dan gerak subjek yang tertangkap dalam video kamera.' : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
+  "voiceoverScript": "${isGadget ? smartphoneExampleVoiceover : '[00:00] Masih repot marut keju pakai alat lama?\\n[00:05] Kenalin parutan serbaguna ini...\\n[00:30] Cek produk di bawah sekarang!'}",
   "aiStudioPrompt": "Scene\\nStudio rekaman energik...\\n\\nSample Context\\nDurasi voice over ${targetDuration} detik...\\n\\nSpeaker 1\\n[00:00] [excited] Hook pembuka...",
   "caption": "${isGadget ? 'Review smartphone berdasarkan bukti visual.\\n\\nUrutan bahasan: layar dan antarmuka, fitur yang terlihat, kapasitas memori bila terverifikasi, lalu sampel kamera sebagai penutup.\\n\\n#reviewhp #smartphoneterbaru #gadgetindonesia #techreview' : '🔥 Masih repot pakai cara lama yang bikin boros & berantakan? 🧼✨\\n\\nKenalin solusinya! Produk ini bikin pekerjaan harian kamu jadi 2x lebih cepat, praktis, dan hasilnya jauh lebih rapi maksimal 😍\\n\\nKeunggulan Utama:\\n✅ Desain praktis, inovatif, dan mudah digunakan\\n✅ Kualitas bahan premium, awet, dan tahan lama\\n✅ Hemat waktu, tenaga, dan bikin lebih efisien\\n✅ Bikin ruangan jadi lebih bersih, rapi, dan estetik\\n\\nBuruan checkout sekarang mumpung lagi diskon spesial & gratis ongkir! 🔥\\n\\n🛒 Cek produk di bio / keranjang kuning sekarang sebelum kehabisan ya!\\n\\n#racunshopee #shopeehaul #spillracun #racuntiktok #racunbelanja #reelsviral #affiliateindonesia #barangunik #perabotandapur #dapurminimalis #fyp'}",
   "lexicon_to_replace": {
@@ -2793,21 +2857,27 @@ Return strict JSON in this format:
       }
 
       if (isGadget) {
-        const expectedTimestamps = ['00:00', '00:06', '00:12', '00:18', '00:24', '00:30', '00:36', '00:42'];
         const scriptLines = String(parsed.voiceoverScript || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
         const timestampedLines = scriptLines.map(line => line.match(/^\[(\d{2}:\d{2})\]\s*(.*)$/));
+        const sceneStarts = timestampedLines.map(match => match ? parseTimeToSeconds(match[1]) : NaN);
         const spokenWords = timestampedLines.map(match => (match?.[2] || '').replace(/\[[^\]]+\]/g, '').trim().split(/\s+/).filter(Boolean).length);
+        const sceneGaps = sceneStarts.map((start, index) => index + 1 < sceneStarts.length ? sceneStarts[index + 1] - start : targetDuration - start);
+        const validSceneTiming = sceneStarts.length === 8
+          && sceneStarts[0] === 0
+          && sceneStarts.every((start, index) => Number.isFinite(start) && (index === 0 || start > sceneStarts[index - 1]))
+          && sceneGaps.every(gap => gap >= 3.5)
+          && Math.max(...sceneGaps) - Math.min(...sceneGaps) >= 0.75;
         const hasForbiddenCta = /\b(keranjang|checkout|belanja|beli|komentar|komen|worth it|harga|diskon|link di bio)\b/i.test(String(parsed.voiceoverScript || ''));
         const validSmartphoneScript = Array.isArray(parsed.scenes)
           && parsed.scenes.length === 8
           && scriptLines.length === 8
-          && timestampedLines.every((match, index) => match && match[1] === expectedTimestamps[index])
-          && spokenWords.every(count => count >= 12 && count <= 15)
+          && validSceneTiming
+          && spokenWords.every(count => count >= minSmartphoneWordsPerLine && count <= maxSmartphoneWordsPerLine)
           && spokenWords.reduce((sum, count) => sum + count, 0) >= minWords
           && spokenWords.reduce((sum, count) => sum + count, 0) <= maxWords
           && !hasForbiddenCta;
         if (!validSmartphoneScript) {
-          throw new Error(`Naskah smartphone tidak valid: perlu 8 adegan, 8 timestamp berurutan, ${minWords}-${maxWords} kata, durasi 45-60 detik, dan tanpa CTA.`);
+          throw new Error(`Naskah smartphone tidak valid: perlu 8 adegan, timestamp dinamis dari 00:00, pacing bervariasi sampai target ${targetDuration}s, ${minWords}-${maxWords} kata, dan tanpa CTA.`);
         }
       }
 
@@ -2855,10 +2925,17 @@ Return strict JSON in this format:
     ['Sampel kamera', 'Contoh foto atau video yang diambil dengan kamera ponsel.'],
     ['Hasil kamera', 'Adegan terakhir menampilkan hasil kamera ponsel.'],
   ];
+  const parsedVoiceoverLines = String(parsed.voiceoverScript || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const parsedSceneStarts = parsedVoiceoverLines
+    .map((line) => line.match(/^\[(\d{2}:\d{2})\]/)?.[1])
+    .filter(Boolean)
+    .map(parseTimeToSeconds);
+  const defaultSmartphoneSceneStarts = getSmartphoneSceneStartSeconds(targetDuration);
+  const smartphoneSceneStarts = parsedSceneStarts.length === 8 ? parsedSceneStarts : defaultSmartphoneSceneStarts;
   const scenes = isGadget
     ? gadgetSceneRows.map(([label, fallbackVoiceover], index) => {
-        const startSec = index * 6;
-        const endSec = Math.min(targetDuration, startSec + 6);
+        const startSec = smartphoneSceneStarts[index] ?? defaultSmartphoneSceneStarts[index] ?? 0;
+        const endSec = smartphoneSceneStarts[index + 1] ?? targetDuration;
         const source = Array.isArray(parsed.scenes) ? parsed.scenes[index] || {} : {};
         return {
           sceneNumber: index + 1,
@@ -2877,14 +2954,7 @@ Return strict JSON in this format:
   if (!voiceoverScript) {
     const dynamicHook = productHook || getDynamicProductHookFallback(effectiveTitle, niche);
     voiceoverScript = isGadget
-      ? `[00:00] [neutral] Perhatikan layar dan antarmuka yang sedang dibuka.
-[00:06] [neutral] Gerakan pada layar terlihat saat menu berganti.
-[00:12] [emphasis] Di sini fitur perangkat sedang diperagakan.
-[00:18] [neutral] Perhatikan detail fungsi yang benar-benar tampak.
-[00:24] [neutral] Kapasitas memori hanya disebut bila angkanya terbaca.
-[00:30] [neutral] Tampilan penyimpanan memberi konteks kapasitas perangkat.
-[00:36] [soft] Sekarang terlihat sampel hasil kamera ponsel.
-[00:42] [soft] Sebagai penutup, perhatikan detail hasil kameranya.`
+      ? gadgetSceneRows.map(([, fallbackVoiceover], index) => `[${formatSeconds(Math.round(defaultSmartphoneSceneStarts[index] || 0))}] [neutral] ${fallbackVoiceover}`).join('\n')
       : `[00:00] [excited] ${dynamicHook}
 [00:03] [emphasis] Untung sekarang ada ${effectiveTitle} ini yang bikin praktis.
 [00:07] [soft] Busa melimpah, kotoran tebal langsung rontok seketika.
