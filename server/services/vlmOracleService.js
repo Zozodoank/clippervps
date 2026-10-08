@@ -829,11 +829,12 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
 
   // Plafon total dibagi merata per klip; klip pendek tetap dapat minimal 2 titik.
   const perClipCap = Math.max(2, Math.floor(cfg.auditMaxFrames / list.length));
-  const prompt = buildVlmPrompt(niche, facePolicy);
   const t0 = Date.now();
   const deadline = t0 + cfg.totalTimeoutMs;
 
   for (let i = 0; i < list.length; i++) {
+    const clipFacePolicy = list[i]?.facePolicy === 'presenter_only' ? 'presenter_only' : facePolicy;
+    const prompt = buildVlmPrompt(niche, clipFacePolicy);
     const group = Array.isArray(frameGroups[i]) ? frameGroups[i] : [];
     const frames = group.filter((f) => f && f.filePath && fs.existsSync(f.filePath));
     if (!frames.length) {
@@ -877,7 +878,7 @@ export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = 
           sceneIdx: 10000 + i * 100 + Math.floor(start / cfg.batchSize),
           // Batch-relatif — lihat komentar di sanitizePoolWithOracle (regresi index absolut).
           frames: queueFramesForOracleBatch(batchFrames, gridMode),
-          niche, facePolicy, prompt: gridMode ? gridPrompt(prompt, batchFrames) : prompt,
+          niche, facePolicy: clipFacePolicy, prompt: gridMode ? gridPrompt(prompt, batchFrames) : prompt,
         });
         const waited = await waitForOracleVerdict(id, {
           // Math.max(1, ...) sama seperti di sanitizePoolWithOracle: pastikan satu polling terjadi.
