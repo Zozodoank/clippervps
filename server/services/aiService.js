@@ -222,152 +222,46 @@ export async function analyzeYouTubeVideoWithGemini({
     progress: 46,
   });
 
-  const allViolationTimestamps = Array.from(new Set([
-    ...(Array.isArray(discardedFaceTimestamps) ? discardedFaceTimestamps : []),
-    ...(Array.isArray(discardedViolationTimestamps) ? discardedViolationTimestamps : [])
-  ])).map(t => Math.round(t)).sort((a, b) => a - b);
-
-  const violationBlacklistWarning = allViolationTimestamps.length > 0
-    ? `\nCRITICAL BLACKLIST (DETEKSI AI LOKAL: WAJAH, TEKS OVERLAY, PILLARBOX, DOKUMEN MANUAL): Frame visual pada detik [${allViolationTimestamps.join(', ')}s] terdeteksi melanggar aturan kualitas (wajah presenter / teks overlay / unboxing manual / pillarbox). DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
-    : '';
-
-  const cleanWindowsDirective = formatCleanWindowsBySource(cleanTimeWindows);
-
   const genAI = new GoogleGenerativeAI(geminiKey);
-  const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
-FULL VIDEO TIMELINE RULE: Analyze the complete video. Never select footage from the first ${introCutoffSec || 0} seconds or the final ${outroCutoffSec || 0} seconds. Every selected clip must fit entirely between those boundaries.
-Evaluate this YouTube video carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
-${violationBlacklistWarning}
-${cleanWindowsDirective}
+  const videoPrompt = `You are a scene selector for an affiliate video backend, not a video judge.
+Your ONLY task is to find timestamps of individual sections that the backend should download.
+Never accept/reject, approve/disapprove, or veto the whole source video. A face, vlogger, title card, subtitle, watermark, or other unsafe content in one part of the video says nothing about the other parts. Skip only the affected section and continue searching the full timeline for usable sections.
 
-${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
+TARGET PRODUCT: "${coreNoun}"
+PRODUCT LISTING: "${effectiveTitle}"
+${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
-CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP GEOMETRY RULE)
-- 9:16 CROP GEOMETRY MANDATE (HORIZONTAL 16:9 vs VERTICAL 9:16 SOURCE VIDEOS):
-  * HORIZONTAL 16:9 VIDEOS: The final Short uses ONLY the central 9:16 vertical strip (the middle 56.25% width: horizontal X from 22% to 78%). The entire outer left side (0% to 22%) and outer right side (78% to 100%) ARE COMPLETELY DISCARDED AND CUT OFF BY FFMPEG!
-    CRITICAL RULE: Channel logos, channel badges, subscriber icons, or watermarks located in the far-right corner (X > 78%, such as top-right or bottom-right creator icons) or far-left corner (X < 22%) WILL NEVER APPEAR in the 9:16 crop! DO NOT REJECT HORIZONTAL 16:9 VIDEOS FOR CORNER LOGOS LOCATED IN THE FAR-RIGHT (X > 78%) OR FAR-LEFT (X < 22%) EDGES! Only reject if a digital watermark or channel logo directly intrudes into the central 56% peragaan area.
-  * VERTICAL 9:16 VIDEOS (SHORTS / REELS / TIKTOK): ZERO HORIZONTAL CROPPING OCCURS! The full 100% width and all four corners remain completely visible in the final output!
-    THEREFORE: In vertical videos, ANY watermark, channel handle, or creator text overlay anywhere in the frame (including corners and margins) CANNOT be cropped out and MUST BE REJECTED IMMEDIATELY!
-- STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME (THE CENTRAL 56% ZONE):
-  * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH (area yang menutupi peragaan produk)!
-  * Setiap watermark atau logo yang benar-benar masuk ke dalam area tengah 9:16 wajib DITOLAK karena tidak bisa terpotong.
-- PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
-  * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "SilverCrest", "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
 
-CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GRAPHIC OVERLAYS
-- HARD REJECT CRITERIA (IMMEDIATE ZERO TOLERANCE INSIDE 9:16 CROP):
-  * TRANSLUCENT SPECIFICATION BOXES, DIMENSION LABELS, & CALLOUT OVERLAYS: Semi-transparent badges, gray/white floating boxes, or labels stating dimensions (e.g. '< 32cm', '24cm', '5L', 'Glass Lid', '1000W', arrow dimension indicators '<--->', or product specification tags) added in video post-production ARE 100% FORBIDDEN ARTIFICIAL OVERLAYS!
-  * NON-TEXT GRAPHIC OVERLAYS: Pointing arrows (panah penunjuk merah/kuning), highlight circles/rectangles, animated emojis, stickers, subscription/bell/like buttons, floating price badges, or discount callouts added by video editors.
-  * CREATOR PROMOTIONAL TEXT: "da di deskripsi", "link di bio", "klik keranjang kuning", "cek bio", "follow", or running text captions.
-  * STATIC TEXT BANNERS: Colored background cards (kotak warna kuning/merah/putih dengan tulisan), lower-third bars, or digital promo stickers.
-  * SPEECH DIALOGUE & SUBTITLES: Speech dialogue captions, translated subtitles, or lyric bars.
-- OPENING INTRO BUMPER / TITLE CARD TOLERANCE (CRITICAL MANDATE):
-  * JIKA VIDEO MEMILIKI KARTU INTRO / BUMPER PEMBUKA / LOGO CHANNEL ANIMASI DI DETIK 0 SAMPAI DETIK 5: JANGAN DITOLAK!
-  * Video TETAP DITERIMA (status: 'accept') asalkan bagian peragaan produk setelahnya bersih dan faceless.
-  * GEMINI WAJIB MEMBUANG INTRO TERSEBUT dengan cara: HANYA memilih timestamps klip yang dimulai SETELAH INTRO SELESAI (misal: mulai detik >= 5s, saat video sudah murni masuk ke peragaan produk fisik oleh tangan)!
-  * Timestamps di array "timestamps" TIDAK BOLEH memasukkan detik-detik kartu intro pembuka!
-- SELECTION MANDATE (CRITICAL):
-  * Every single timestamp you select MUST BE 100% FREE of any floating text, subtitles, dimension badges, or watermarks! If a scene has text overlay, DO NOT select it!
-- REJECT ENTIRE VIDEO IF:
-  * Kartu bumper foto / slide diam mendominasi isi video.
-  * Teks overlay, stiker, atau subtitle muncul mendominasi sehingga Anda TIDAK BISA menemukan minimal 4 cuplikan bersih (clean clips).
-- PHYSICAL PRODUCT TEXT EXCEPTION IS STRICT:
-  * "hasOnlyPhysicalProductText" ONLY applies to physical text manufactured, stamped, molded, or laser-engraved onto the metallic/plastic body of the physical product itself (like the brand name on the bottom of a pan or button labels). ANY floating digital box, callout card, or translucent badge on top of the video is NOT physical product text and MUST BE REJECTED! Paper manuals, brochures, and packaging labels are NOT exempt!
+TIMELINE:
+- Inspect the complete video. Never select a section before ${introCutoffSec || 0}s or after ${Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0))}s.
+- Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.
+- Select a section only when the target physical product is clearly visible and actively shown in that section.
+- Select only sections whose 9:16 output area contains no human face/talking head, floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging.
+- For a horizontal 16:9 source, assess the center 9:16 crop; logos outside that crop are irrelevant. For a vertical source, assess the full frame.
+- Prefer hands-on product demonstrations and varied angles. A vlogger elsewhere in the source is never a reason to omit clean product sections.
+- If the exact product is uncertain, return no section for that moment; do not issue a source-level rejection.
+- Return every distinct clean section you can identify, even if there are fewer than four. If none are identifiable, return empty arrays. The backend decides whether it has enough footage.
+- Do not return an overall cleanliness/product-match verdict. Ignore any temptation to set status to reject. Always use status "select".
 
-${buildFaceAndMotionCriterion(niche, clipSec)}
-
-CRITERION 4B: PRODUCT HANDS-ON SHOWCASE & CLEAN FOOTAGE (UNBOXING SHOWCASE WELCOMED)
-- VIDEO UNBOXING / HANDS-ON REVIEW SANGAT DITERIMA KARENA MEMILIKI VARIASI VISUAL PRODUK YANG KAYA (close-up fisik produk, variasi sudut/angle bodi, tes layar/tombol/fitur, peragaan fungsi).
-- YANG DILARANG HANYALAH KEMASAN KOSONG / KARDUS SAJA:
-  * Jangan pilih frame yang hanya menampilkan kardus kosong, resi pengiriman, robekan bubble wrap, atau buku manual kertas tanpa produk.
-  * Frame unboxing yang menampilkan PRODUK FISIK SECARA JELAS (misal: produk dipegang di tangan, diperlihatkan dari depan/belakang/samping, dinyalakan, diuji coba, diperagakan fungsinya) adalah FOOTAGE EMAS AFFILIATE dan 100% DIPERBOLEHKAN!
-  * Untuk video unboxing: adegan fisik produk (memegang produk, memamerkan bodi/layar/kamera, mengoperasikan fitur, mendemokan alat) WAJIB ditandai sebagai containsTargetProduct=true, isPackaging=false, dan isActiveProductDemo=true.
-- Jika frame awal menampilkan kardus/paket, cukup lewati frame kardus tersebut dan pilih frame-frame peragaan fisik produk yang variatif.
-- Slot 1 WAJIB berupa beauty shot / produk fisik yang jelas (bodi produk di tangan atau di atas meja; bebas kardus/bubble wrap kosong).
-
-CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOOTAGE
-- ZERO TOLERANCE FOR ROTATED OR SIDEWAYS FOOTAGE (MIRING / ROTATE 90 DERAJAT):
-  * DILARANG KERAS MEMILIH CUPLIKAN DENGAN ORIENTASI KAMERA MIRING / TERPUTAR 90 DERAJAT (SIDEWAYS ORIENTATION)!
-  * Permukaan meja kerja, kompor, wajan, talenan, atau tangan memegang HP HARUS berada pada posisi horizontal/vertikal normal (gravitasi bumi normal).
-- ZERO TOLERANCE FOR PILLARBOX & VERTICAL BLACK BARS:
-  * DILARANG KERAS video yang memiliki pilar / garis hitam vertikal tebal di sisi kiri dan kanan (pillarbox narrow slit)! Video harus mengisi penuh frame secara proporsional.
-- Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
-
-CRITERION 5: DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE
-- HARD REJECT (ZERO-TOLERANCE for selected clips):
-  * Every timestamp in "timestamps" MUST be 100% free of faces, subtitles, creator text, watermarks, pointing arrows, stickers, emojis, price tags, empty cardboard boxes, paper manuals, and static slides.
-- MOTION FIRST (ACTIVE DEMONSTRATION OVER FROZEN PRODUCT):
-  * Give highest priority to clips showing clear hands-on demonstration, crisp natural lighting, and active physical product motion (operating, cutting, pressing, demonstrating function).
-  * DO NOT select frozen or lifeless shots of the product sitting idly on a table.
-  * DILARANG MEMILIH SCENE TANPA PRODUK: setiap timestamp yang dipilih WAJIB menampilkan PRODUK UTAMA secara jelas di dalam frame. Dilarang memilih scene yang hanya berisi tangan kosong, latar/ruangan, orang tanpa produk, meja kosong, atau objek yang bukan produk target.
-- MANDATORY VISUAL & ACTION DIVERSITY (ANTI-MONOTONOUS RULE):
-  * Each selected timestamp MUST represent a genuinely distinct action, angle, or demonstration phase.
-  * DILARANG KERAS memilih cuplikan yang secara visual mengulang satu shot atau satu gerakan yang sama secara monoton!
-  * If the video merely repeats the same static cutting action without varied angles, phases, or functions, REJECT IT:
-    {"status": "reject", "reason": "Video ditolak: Footage monoton, hanya mengulang 1 gerakan/sudut yang sama tanpa variasi aksi yang memadai."}
-- ACTION PROGRESSION (NATURAL STORY FLOW):
-  * Order the selected timestamps to follow a coherent demonstration sequence:
-    1. Phase 1 (Product Overview / Hook): 1-2 clips introducing the complete physical product in action.
-    2. Phase 2 (Hands-on Preparation): Hands preparing, holding, or loading ingredients/product.
-    3. Phase 3 (Active Demonstration): Core action of the product operating (cutting, frying, blending, cleaning).
-    4. Phase 4 (Satisfying Result): Clear view of the final completed outcome.
-- Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.
-- If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.
-- For EVERY selected timestamp, return a matching "frameAudit" row containing timestamp + containsTargetProduct/isPackaging/isMachine/isActiveProductDemo.
-- A selected timestamp is invalid if the target product is not visibly present and actively demonstrated, or if empty packaging/machine footage dominates.
-
-Output valid JSON ONLY with this exact format:
-If ACCEPTED:
+Return ONLY JSON in this shape:
 {
-  "status": "accept",
-  "detectedProduct": "<nama produk>",
-  "isExactProductMatch": true,
-  "hasTargetProductInEverySelectedFrame": true,
-  "isFacelessIn916Frame": true,
-  "hasHumanOrFaceAnywhereInVideo": false,
-  "hasFaceIn916Frame": false,
-  "hasAnimatedGraphicOverlayIn916Frame": false,
-  "hasBumperPhotoInFrame": false,
-  "hasStaticChannelLogoIn916Frame": false,
-  "hasWatermarkIn916Frame": false,
-  "hasSocialOrChannelLogoIn916Frame": false,
-  "hasSubtitlesIn916Frame": false,
-  "hasFloatingTextIn916Frame": false,
-  "hasOnlyPhysicalProductText": true,
-  "isAiGeneratedOrSynthetic": false,
-  "timestamps": [10, 22, 35, 48, 62, 75, 90, 105, 120, 135],
-  "frameAudit": [
-    {"timestamp": 10, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true}
+  "status": "select",
+  "detectedProduct": "<short product identity or empty>",
+  "hasOpeningIntro": true,
+  "introDurationSeconds": 5,
+  "selectedClips": [
+    {"startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "clean": true, "reason": "Product is visible in a clean hands-on section"}
   ],
-  "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk (DILARANG pakai kata 'fix' / 'fiks'!)",
+  "timestamps": [12.0],
+  "frameAudit": [
+    {"timestamp": 12.0, "isClean": true, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "hasFace": false, "hasFloatingOverlay": false, "hasTextOrSubtitles": false, "hasWatermark": false}
+  ],
+  "productHook": "<short hook>",
   "hasProductBrand": false,
   "detectedBrand": "none"
 }
 
-If REJECTED:
-{
-  "status": "reject",
-  "detectedProduct": "<nama produk di video>",
-  "isExactProductMatch": true,
-  "hasTargetProductInEverySelectedFrame": false,
-  "isFacelessIn916Frame": false,
-  "hasHumanOrFaceAnywhereInVideo": false,
-  "hasFaceIn916Frame": false,
-  "hasAnimatedGraphicOverlayIn916Frame": false,
-  "hasBumperPhotoInFrame": false,
-  "hasStaticChannelLogoIn916Frame": false,
-  "hasWatermarkIn916Frame": false,
-  "hasSocialOrChannelLogoIn916Frame": false,
-  "hasSubtitlesIn916Frame": false,
-  "hasFloatingTextIn916Frame": false,
-  "hasOnlyPhysicalProductText": false,
-  "isAiGeneratedOrSynthetic": false,
-  "reason": "<PILIH SATU alasan akurat: 'Terdapat grafis animasi overlay/stiker di dalam frame 9:16 tengah' ATAU 'Foto bumper statis terdeteksi' ATAU 'Logo channel statis masuk ke frame 9:16' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Mengandung subtitle ucapan' ATAU 'Produk tidak cocok'>"
-}
-
-CRITICAL RULES FOR REJECTION OUTPUT:
-1. "isExactProductMatch": Set to true if the item demonstrated in the video matches "${coreNoun}", even if rejected for policy. Set to false ONLY if the product is physically different.
-2. "reason": DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA (seperti "produk tidak cocok dengan menampilkan wajah atau vlogger")! Berikan SATU alasan tunggal yang presisi. Stiker kartun, animasi, atau emoji BUKAN vlogger manusia!`;
+Each selectedClips row must have one matching frameAudit row. Include only clean sections in both arrays. Keep timestamps as numeric seconds. If no clean section is found, use status "select", selectedClips: [], timestamps: [], frameAudit: []. Never return status "reject".`;
 
   const candidateModels = [
     'gemini-2.5-flash',
@@ -455,132 +349,54 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     throw lastGeminiErr || new Error('Gemini YouTube Stream gagal menganalisa video.');
   }
 
-  const rawStatus = String(parsed.status || '').toLowerCase().trim();
-  const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
-  const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
-  const isMatchFalse =
-    parsed.isProductMatch === false ||
-    parsed.isExactProductMatch === false ||
-    parsed.hasTargetProductInEverySelectedFrame === false ||
-    isBulky ||
-    parsed.isUsableSourceVideo === false;
-  const hasFace = parsed.hasFaceIn916Frame === true ||
-    parsed.hasFaceOrHumanInSelectedFrames === true ||
-    parsed.hasFaceInSelectedClips === true;
-  const hasWatermarkInFrame = parsed.hasWatermarkIn916Frame === true || parsed.hasCenterObstructingWatermark === true;
-  const hasSocialOrChannelInFrame = parsed.hasSocialOrChannelLogoIn916Frame === true || parsed.hasSocialMediaOrChannelIdentityIn916Frame === true;
-  const hasSubtitles = parsed.hasSubtitlesIn916Frame === true || parsed.hasSubtitlesOrBurnedText === true || parsed.hasBurnedText === true;
-  const hasFloatingText = parsed.hasFloatingTextIn916Frame === true || parsed.hasTextOverlaysIn916Frame === true;
-  const hasGraphic = parsed.hasAnimatedGraphicOverlayIn916Frame === true;
-  const hasBumper = parsed.hasBumperPhotoInFrame === true || parsed.hasBumperPhotoOrIntroCard === true;
-  const hasStaticLogo = parsed.hasStaticChannelLogoIn916Frame === true;
-  const isSynthetic = parsed.isAiGeneratedOrSynthetic === true;
-  const reasonText = String(parsed.reason || parsed.rejectionReason || '').trim();
-  const reasonLower = reasonText.toLowerCase();
-
-  const mentionsGraphicInReason = isRejectStatus &&
-    (reasonLower.includes('animasi') || reasonLower.includes('grafis') || reasonLower.includes('overlay') || reasonLower.includes('stiker') || reasonLower.includes('kartun')) &&
-    (reasonLower.includes('9:16') || reasonLower.includes('tengah') || reasonLower.includes('menutupi') || reasonLower.includes('center')) &&
-    !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16') && !reasonLower.includes('tidak ada animasi') && !reasonLower.includes('bebas animasi');
-  const mentionsBumperInReason = reasonLower.includes('bumper') || reasonLower.includes('intro card') || reasonLower.includes('opening card') || reasonLower.includes('slide statis');
-  const mentionsFaceInReason = reasonLower.includes('wajah') || reasonLower.includes('face') || reasonLower.includes('manusia') || reasonLower.includes('orang');
-  const mentionsWatermarkInFrame = isRejectStatus && (reasonLower.includes('watermark') || reasonLower.includes('capcut')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
-  const mentionsLogoInFrame = (isRejectStatus || hasStaticLogo) && (reasonLower.includes('logo') || reasonLower.includes('tiktok') || reasonLower.includes('channel') || reasonLower.includes('identitas') || reasonLower.includes('sosmed')) && !reasonLower.includes('terpotong') && !reasonLower.includes('luar frame') && !reasonLower.includes('di luar 9:16');
-  const mentionsSubtitlesInReason = reasonLower.includes('subtitle') || reasonLower.includes('caption') || reasonLower.includes('teks berjalan') || reasonLower.includes('terjemahan') || reasonLower.includes('teks mengambang') || reasonLower.includes('floating text') || reasonLower.includes('stiker teks') || reasonLower.includes('teks promo') || reasonLower.includes('tulisan');
-
-  // USER MANDATE: Jangan tolak seluruh video jika ada bagian intro/frame yang memiliki wajah/teks.
-  // Hanya tolak jika terjadi fatal mismatch (produk berbeda, CGI/animasi, atau perabot besar).
-  const isFatalMismatch = isMatchFalse || isSynthetic || isBulky;
-  const hasUsableClipsOrTimestamps = (Array.isArray(parsed.timestamps) && parsed.timestamps.length >= 2) ||
-                                     (Array.isArray(parsed.clips) && parsed.clips.length >= 2);
-
-  const rawTimestampsForAudit = Array.isArray(parsed.timestamps)
-    ? parsed.timestamps.map((t) => typeof t === 'number' ? t : parseTimeToSeconds(t)).filter((t) => Number.isFinite(t))
-    : (Array.isArray(parsed.clips)
-      ? parsed.clips.map((c) => Number(c?.startSeconds ?? parseTimeToSeconds(c?.startTime))).filter((t) => Number.isFinite(t))
-      : []);
-
+  // Gemini is a SECTION SELECTOR here. Whole-video status/face/product flags never veto
+  // the source; only explicit per-section clean selections are passed to the backend.
   const streamFrameAudit = Array.isArray(parsed.frameAudit) ? parsed.frameAudit : [];
-  const auditEntriesValid = rawTimestampsForAudit.length === 0 || rawTimestampsForAudit.every((ts) =>
-    streamFrameAudit.some((a) =>
-      Number.isFinite(Number(a?.timestamp)) &&
-      Math.abs(Number(a.timestamp) - ts) <= 1.5 &&
-      a.containsTargetProduct === true &&
-      a.isPackaging !== true &&
-      a.isMachine !== true &&
-      a.isActiveProductDemo === true
-    )
+  const rawSections = Array.isArray(parsed.selectedClips)
+    ? parsed.selectedClips
+    : (Array.isArray(parsed.clips)
+      ? parsed.clips
+      : (Array.isArray(parsed.timestamps) ? parsed.timestamps : []));
+  const asTimestamp = (item) => {
+    if (typeof item === 'number' || typeof item === 'string') return parseTimeToSeconds(item);
+    return Number.isFinite(Number(item?.timestamp))
+      ? Number(item.timestamp)
+      : parseTimeToSeconds(item?.startSeconds ?? item?.startTime ?? item?.timestamp);
+  };
+  const sectionAuditFor = (sec) => streamFrameAudit.find((audit) =>
+    Number.isFinite(Number(audit?.timestamp)) && Math.abs(Number(audit.timestamp) - sec) <= 1.5
   );
-  const selectedProductProofFailure =
-    rawTimestampsForAudit.length >= 2 &&
-    (parsed.hasTargetProductInEverySelectedFrame === false || (streamFrameAudit.length > 0 && !auditEntriesValid));
-
-  const shouldReject =
-    isFatalMismatch ||
-    selectedProductProofFailure ||
-    (isRejectStatus && !hasUsableClipsOrTimestamps && !allowFallbackClips);
-
-  if (shouldReject) {
-    let rejectionMsg = reasonText;
-
-    // Sanitize nonsensical AI conflations (e.g. "produk tidak cocok dengan menampilkan wajah atau vlogger")
-    const lower = (rejectionMsg || '').toLowerCase();
-    const hasConflation = lower.includes('tidak cocok') && (lower.includes('wajah') || lower.includes('vlog') || lower.includes('manusia') || lower.includes('orang'));
-    const isGraphicMisclassifiedAsFace = (hasGraphic || mentionsGraphicInReason) && (lower.includes('wajah') || lower.includes('vlog') || lower.includes('manusia'));
-
-    if (hasConflation || isGraphicMisclassifiedAsFace || !rejectionMsg) {
-      if (hasGraphic || mentionsGraphicInReason) {
-        rejectionMsg = 'Video ditolak oleh AI: Mengandung grafis animasi overlay, stiker kartun, atau elemen grafis tempelan di frame 9:16.';
-      } else if (hasBumper || mentionsBumperInReason) {
-        rejectionMsg = 'Video ditolak oleh AI: Mengandung foto bumper atau kartu intro statis pada video.';
-      } else if (hasSocialOrChannelInFrame || hasStaticLogo || mentionsLogoInFrame) {
-        rejectionMsg = 'Video ditolak oleh AI: Mengandung logo media sosial atau identitas channel yang masuk ke frame 9:16.';
-      } else if (hasWatermarkInFrame || mentionsWatermarkInFrame) {
-        rejectionMsg = 'Video ditolak oleh AI: Mengandung watermark digital yang masuk ke dalam frame 9:16 output.';
-      } else if (hasSubtitles || hasFloatingText || mentionsSubtitlesInReason) {
-        rejectionMsg = 'Video ditolak oleh AI: Mengandung subtitle, teks mengambang, atau stiker teks editan pada frame 9:16.';
-      } else if (hasFace || mentionsFaceInReason) {
-        rejectionMsg = 'Video ditolak oleh AI: Video didominasi wajah/vlogger manusia tanpa cukup cuplikan peragaan tangan (wajib cuplikan tangan/hands-only bersih).';
-      } else if (isSynthetic) {
-        rejectionMsg = 'Video ditolak oleh AI: Terdeteksi video AI / animasi / CGI, bukan demonstrasi fisik nyata.';
-      } else if (isBulky) {
-        rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'perabot besar / produk set'}) tergolong perabot/rak besar atau paket/set/bundle yang dilarang.`;
-      } else if (selectedProductProofFailure) {
-        rejectionMsg = 'Video ditolak oleh AI: Ada timestamp terpilih yang tidak membuktikan produk target terlihat aktif, atau mengandung packaging/mesin.';
-      } else if (isMatchFalse) {
-        rejectionMsg = `Video ditolak oleh AI: Produk di video (${parsed.detectedProduct || 'tidak cocok'}) tidak cocok dengan link Shopee.`;
-      } else {
-        rejectionMsg = 'Video ditolak oleh AI: Tidak memenuhi syarat affiliate faceless / bersih.';
+  const selectedSections = rawSections.map((entry) => ({ entry, sec: asTimestamp(entry) }))
+    .filter(({ entry, sec }) => {
+      if (!Number.isFinite(sec)) return false;
+      const audit = sectionAuditFor(sec);
+      const evidence = [entry, audit].filter(Boolean);
+      const explicitlyDirty = evidence.some((item) =>
+        item.clean === false || item.isClean === false || item.containsTargetProduct === false ||
+        item.isPackaging === true || item.isMachine === true || item.isActiveProductDemo === false ||
+        item.hasFace === true || item.containsFace === true || item.hasHumanOrFace === true ||
+        item.hasFloatingOverlay === true || item.hasFloatingOverlayText === true ||
+        item.hasTextOrSubtitles === true || item.hasSubtitles === true || item.hasWatermark === true ||
+        item.hasChannelLogo === true || item.hasAnimatedGraphicOverlay === true
+      );
+      const explicitlyClean = evidence.some((item) => item.clean === true || item.isClean === true) ||
+        evidence.some((item) => item.containsTargetProduct === true && item.isActiveProductDemo === true &&
+          item.isPackaging !== true && item.isMachine !== true);
+      if (explicitlyDirty || !explicitlyClean) {
+        console.log(`[Gemini YouTube Stream] Lewati section ${sec}s: Gemini tidak menandainya sebagai bagian produk yang bersih.`);
+        return false;
       }
-    }
-    console.warn(`[Gemini YouTube Stream] ⛔ VIDEO RESMI DITOLAK OLEH AI: ${rejectionMsg}`);
-    const rejectError = new Error(`Video ditolak oleh Gemini: ${rejectionMsg}`);
-    rejectError.isAiRejection = true;
-    rejectError.rejectionReason = rejectionMsg;
-    throw rejectError;
-  }
-
-  let rawTimestamps = [];
-  if (Array.isArray(parsed.timestamps)) {
-    rawTimestamps = parsed.timestamps;
-  } else if (Array.isArray(parsed.clips)) {
-    rawTimestamps = parsed.clips.map((c) => c.startSeconds ?? c.startTime);
-  }
+      return true;
+    });
 
   let candidateClips = [];
   const acceptedStarts = [];
-  if (rawTimestamps.length > 0) {
-    for (const rawTs of rawTimestamps) {
-      const sec = typeof rawTs === 'number' ? rawTs : parseTimeToSeconds(rawTs);
+  if (selectedSections.length > 0) {
+    for (const { entry, sec } of selectedSections) {
       if (isNaN(sec) || sec < 0 || sec > totalDuration) continue;
       const maxSafeEnd = Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0));
       if (sec < Math.max(0, Number(introCutoffSec) || 0) || sec + clipSec > maxSafeEnd) {
         console.log(`[Gemini YouTube Stream] Discarding timestamp ${sec}s outside safe timeline ${introCutoffSec}-${maxSafeEnd}s`);
-        continue;
-      }
-      // Filter out timestamps colliding with locally detected violation frames (+- 3.0s)
-      if (allViolationTimestamps.length > 0 && allViolationTimestamps.some(vt => Math.abs(vt - sec) < 3.0)) {
-        console.log(`[Gemini YouTube Stream] Discarding timestamp ${sec}s because it collides with detected violation frame (+-3s)`);
         continue;
       }
       const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
@@ -601,7 +417,7 @@ CRITICAL RULES FOR REJECTION OUTPUT:
         duration: clipSec,
         startTime: formatSeconds(startSec),
         endTime: formatSeconds(endSec),
-        reason: `Cuplikan produk di detik ${formatSeconds(startSec)}`,
+        reason: String(entry?.reason || `Cuplikan produk di detik ${formatSeconds(startSec)}`),
         isCleanAffiliateShot: true,
         hasProductBrand: Boolean(parsed.hasProductBrand),
         reframe: {
@@ -622,8 +438,11 @@ CRITICAL RULES FOR REJECTION OUTPUT:
     hasProductBrand,
     allowHflip,
     sceneDuration: clipSec,
+    minimumClipCount: 0,
   });
   const duration = clips.reduce((total, clip) => total + (clip.endSeconds - clip.startSeconds), 0);
+  const firstClip = clips[0] || null;
+  const lastClip = clips[clips.length - 1] || null;
 
   onProgress({
     step: 'gemini_vision',
@@ -633,16 +452,16 @@ CRITICAL RULES FOR REJECTION OUTPUT:
 
   return {
     detectedProduct: (parsed.detectedProduct || '').trim() || productTitle,
-    startTime: clips[0].startTime,
-    endTime: clips[clips.length - 1].endTime,
-    startSeconds: clips[0].startSeconds,
-    endSeconds: clips[clips.length - 1].endSeconds,
+    startTime: firstClip?.startTime || '',
+    endTime: lastClip?.endTime || '',
+    startSeconds: firstClip?.startSeconds ?? 0,
+    endSeconds: lastClip?.endSeconds ?? 0,
     duration,
     productHook: parsed.productHook || getDynamicProductHookFallback(productTitle),
     hasProductBrand,
     detectedBrand,
     allowHflip,
-    reframe: clips[0].reframe,
+    reframe: firstClip?.reframe || { ...DEFAULT_REFRAME },
     clips,
   };
 }
@@ -732,96 +551,34 @@ export async function analyzeMultipleYouTubeVideosWithGemini({
     progress: 46,
   });
 
-  const allViolationTimestamps = Array.from(new Set([
-    ...(Array.isArray(discardedFaceTimestamps) ? discardedFaceTimestamps : []),
-    ...(Array.isArray(discardedViolationTimestamps) ? discardedViolationTimestamps : [])
-  ])).map(t => Math.round(t)).sort((a, b) => a - b);
-
-  const violationBlacklistWarning = allViolationTimestamps.length > 0
-    ? `\nCRITICAL BLACKLIST (DETEKSI AI LOKAL: WAJAH, TEKS OVERLAY, PILLARBOX, DOKUMEN MANUAL): Frame visual pada detik [${allViolationTimestamps.join(', ')}s] terdeteksi melanggar aturan kualitas. DILARANG KERAS memilih timestamps dalam rentang +-3 detik dari detik-detik ini!\n`
-    : '';
-
-  const cleanWindowsDirective = formatCleanWindowsBySource(cleanTimeWindows, youtubeUrls);
-
   const genAI = new GoogleGenerativeAI(geminiKey);
-  const videoPrompt = `You are an elite Quality Control (QC) Director for Affiliate Product Video Ads.
-Evaluate the provided ${youtubeUrls.length} YouTube videos carefully against the following 5 MANDATORY ACCEPTANCE CRITERIA:
-${violationBlacklistWarning}
-${cleanWindowsDirective}
+  const videoPrompt = `You are a section selector for an affiliate video backend, not a video judge.
+Your ONLY task is to return timestamps of clean individual sections that the backend should download.
+Never accept/reject, approve/disapprove, or veto any whole source video or the batch. A face or unsafe overlay in one section does not say anything about other sections. Skip only that section and keep looking through every supplied video.
 
-${buildNicheProductCriterion(niche, coreNoun, effectiveTitle, isVideoFirstMode, effectiveDesc)}
+TARGET PRODUCT: "${coreNoun}"
+PRODUCT LISTING: "${effectiveTitle}"
+${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
-CRITERION 2: WATERMARKS, SOCIAL MEDIA LOGOS, & CHANNEL IDENTITIES (9:16 CROP GEOMETRY RULE)
-- 9:16 CROP GEOMETRY MANDATE (HORIZONTAL 16:9 vs VERTICAL 9:16 SOURCE VIDEOS):
-  * HORIZONTAL 16:9 VIDEOS: The final Short uses ONLY the central 9:16 vertical strip (the middle 56.25% width: horizontal X from 22% to 78%). The entire outer left side (0% to 22%) and outer right side (78% to 100%) ARE COMPLETELY DISCARDED AND CUT OFF BY FFMPEG!
-    CRITICAL RULE: DO NOT REJECT HORIZONTAL 16:9 VIDEOS FOR CORNER LOGOS LOCATED IN THE FAR-RIGHT (X > 78%) OR FAR-LEFT (X < 22%) EDGES! Only reject if a digital watermark or channel logo directly intrudes into the central 56% peragaan area.
-  * VERTICAL 9:16 VIDEOS (SHORTS / REELS / TIKTOK): ZERO HORIZONTAL CROPPING OCCURS! ANY watermark or creator text overlay anywhere in the frame (including corners) CANNOT be cropped out and MUST BE REJECTED IMMEDIATELY!
-- STRICT ZERO-TOLERANCE INSIDE THE 9:16 OUTPUT FRAME (THE CENTRAL 56% ZONE):
-  * DILARANG KERAS jika watermark digital, logo TikTok/YouTube, atau identitas channel MASUK KE DALAM FRAME 9:16 TENGAH!
-- PHYSICAL PRODUCT BRANDING IS 100% ACCEPTABLE:
-  * Merek, logo, atau tulisan yang tercetak/terukir secara fisik pada bodi produk (misal: "SilverCrest", "Philips", "Joybos", "Xiaomi") BUKAN watermark dan 100% DITERIMA!
+TIMELINE AND SELECTION:
+- Inspect all supplied videos. Ignore the first ${introCutoffSec || 0} seconds and the final 10 seconds of each video.
+- Each selected section must be ${clipSec}s long and show the target physical product clearly in active use.
+- Select only sections whose final 9:16 crop has no human face/talking head, floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging.
+- For horizontal footage assess the center 9:16 crop; for vertical footage assess the full frame.
+- Return every distinct clean section you can identify, including fewer than four. If none are identifiable in a source, simply return no section for that source.
+- Never return an overall source or batch verdict. Always use status "select", including when selectedClips is empty.
 
-CRITERION 3: ZERO SUBTITLES, ZERO FLOATING TEXT, ZERO COLORED BANNERS, & ZERO GRAPHIC OVERLAYS
-- HARD REJECT CRITERIA (IMMEDIATE ZERO TOLERANCE INSIDE 9:16 CROP):
-  * TRANSLUCENT SPECIFICATION BOXES, DIMENSION LABELS, & CALLOUT OVERLAYS added in video post-production ARE 100% FORBIDDEN!
-  * NON-TEXT GRAPHIC OVERLAYS: Pointing arrows, highlight circles, animated emojis, stickers, or floating price badges.
-  * CREATOR PROMOTIONAL TEXT: "da di deskripsi", "link di bio", "klik keranjang kuning".
-  * STATIC TEXT BANNERS: Colored background cards or lower-third bars.
-  * SPEECH DIALOGUE & SUBTITLES: Speech dialogue captions, translated subtitles, or lyric bars.
-- SELECTION MANDATE (CRITICAL):
-  * Every single timestamp you select in 'selectedClips' MUST BE 100% FREE of any floating text, subtitles, dimension badges, or watermarks! If a scene has a text overlay, DO NOT select it!
-  * DILARANG MEMILIH SCENE TANPA PRODUK: setiap timestamp di 'selectedClips' WAJIB menampilkan PRODUK UTAMA secara jelas dalam frame. Dilarang memilih scene tanpa produk (hanya tangan kosong, latar/ruangan, orang tanpa produk, atau objek yang bukan produk target).
-- REJECT ENTIRE VIDEO IF:
-  * Teks overlay, stiker, atau subtitle mendominasi semua video sehingga Anda TIDAK BISA menemukan cuplikan yang benar-benar bersih.
-- PHYSICAL PRODUCT TEXT EXCEPTION IS STRICT:
-  * "hasOnlyPhysicalProductText" ONLY applies to physical text manufactured, stamped, molded, or laser-engraved onto the metallic/plastic body of the physical product itself.
-
-${buildFaceAndMotionCriterion(niche, clipSec)}
-
-CRITERION 4B: PRODUCT HANDS-ON SHOWCASE & CLEAN FOOTAGE (UNBOXING SHOWCASE WELCOMED)
-- VIDEO UNBOXING / HANDS-ON REVIEW SANGAT DITERIMA KARENA MEMILIKI VARIASI VISUAL PRODUK YANG KAYA.
-- YANG DILARANG HANYALAH KEMASAN KOSONG / KARDUS SAJA: Jangan pilih frame yang hanya menampilkan kardus kosong atau buku manual tanpa produk.
-- Frame unboxing yang menampilkan PRODUK FISIK SECARA JELAS (produk dipegang, dinyalakan, diuji coba) adalah FOOTAGE EMAS AFFILIATE!
-
-CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOOTAGE
-- DILARANG KERAS MEMILIH CUPLIKAN DENGAN ORIENTASI KAMERA MIRING 90 DERAJAT ATAU BER-PILLARBOX HITAM TEBAL!
-
-CRITERION 5: MULTI-VIDEO DIVERSITY & ANTI-REPETITION MANDATE (CRITICAL RULE!)
-- You have been provided with ${youtubeUrls.length} different videos. Your goal is to construct a highly engaging, varied product ad by extracting the best moments across ALL provided videos.
-- Every selected clip MUST specify "sourceVideoIndex" (0 to ${youtubeUrls.length - 1}) corresponding to the order of the videos provided.
-- MANDATORY VISUAL & ACTION DIVERSITY: Choose shots with distinct angles, backgrounds, or phases of demonstration. A combination of clips from DIFFERENT source videos is highly encouraged to maximize diversity!
-- Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long) from across the ${youtubeUrls.length} videos.
-
-Output valid JSON ONLY with this exact format:
-If ACCEPTED (found good clips from any of the videos):
+Return ONLY JSON:
 {
-  "status": "accept",
-  "detectedProduct": "<nama produk>",
-  "isExactProductMatch": true,
-  "hasTargetProductInEverySelectedFrame": true,
-  "isFacelessIn916Frame": true,
-  "hasHumanOrFaceAnywhereInVideo": false,
-  "hasOnlyPhysicalProductText": true,
+  "status": "select",
   "selectedClips": [
-    { "sourceVideoIndex": 0, "timestamp": 10, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "reason": "Hook pembuka produk" },
-    { "sourceVideoIndex": 1, "timestamp": 25, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "reason": "Variasi sudut dari video 2" },
-    { "sourceVideoIndex": 0, "timestamp": 45, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "reason": "Hasil akhir masakan" }
+    {"sourceVideoIndex": 0, "startSeconds": 12.0, "endSeconds": ${(12 + clipSec).toFixed(1)}, "clean": true, "containsTargetProduct": true, "isPackaging": false, "isMachine": false, "isActiveProductDemo": true, "hasFace": false, "hasFloatingOverlay": false, "hasTextOrSubtitles": false, "hasWatermark": false, "reason": "Clean product demonstration"}
   ],
-  "productHook": "Hook pembuka 3 detik yang dinamis, menarik, & relate dengan masalah produk",
+  "productHook": "<short hook>",
   "hasProductBrand": false,
   "detectedBrand": "none"
 }
-
-If REJECTED (Only reject if ALL videos are completely unusable):
-{
-  "status": "reject",
-  "detectedProduct": "<nama produk di video>",
-  "reason": "<PILIH SATU alasan akurat mengapa SEMUA video ditolak: 'Terdapat grafis animasi overlay/stiker di semua video' ATAU 'Menampilkan wajah orang/vlogger' ATAU 'Produk tidak cocok'>"
-}
-
-CRITICAL RULES FOR OUTPUT:
-1. "isExactProductMatch": Set to true if the item demonstrated in the videos matches "${coreNoun}".
-2. DILARANG KERAS MENGGABUNGKAN DUA ALASAN BERBEDA! Berikan SATU alasan tunggal yang presisi.`;
+If no section is clean, return {"status":"select","selectedClips":[]}. Never return status "reject".`;
 
   const candidateModels = [
     'gemini-2.5-flash',
@@ -899,42 +656,31 @@ CRITICAL RULES FOR OUTPUT:
     throw lastGeminiErr || new Error('Gemini Multi-Video Stream gagal menganalisa video.');
   }
 
-  const rawStatus = String(parsed.status || '').toLowerCase().trim();
-  const isRejectStatus = rawStatus === 'reject' || rawStatus === 'rejected' || rawStatus === 'ditolak';
-  const isBulky = isBulkyOrUnsuitableProduct(parsed.detectedProduct, { niche });
-  const isMatchFalse = parsed.isProductMatch === false || parsed.isExactProductMatch === false || isBulky || parsed.isUsableSourceVideo === false;
-  
-  const hasUsableClips = Array.isArray(parsed.selectedClips) && parsed.selectedClips.length >= 2;
-  
-  const auditEntriesValid = !hasUsableClips || parsed.selectedClips.every((a) =>
-      Number.isFinite(Number(a?.timestamp)) && a.containsTargetProduct === true && a.isPackaging !== true && a.isActiveProductDemo === true
-  );
-
-  const selectedProductProofFailure = hasUsableClips && !auditEntriesValid;
-  const isFatalMismatch = isMatchFalse || isBulky;
-  const shouldReject = isFatalMismatch || selectedProductProofFailure || (isRejectStatus && !hasUsableClips && !allowFallbackClips);
-
-  if (shouldReject) {
-    let rejectionMsg = String(parsed.reason || parsed.rejectionReason || '').trim() || 'Video ditolak oleh AI: Tidak memenuhi syarat affiliate faceless / bersih.';
-    console.warn(`[Gemini Multi-Video Stream] ⛔ VIDEO RESMI DITOLAK OLEH AI: ${rejectionMsg}`);
-    const rejectError = new Error(`Video ditolak oleh Gemini: ${rejectionMsg}`);
-    rejectError.isAiRejection = true;
-    rejectError.rejectionReason = rejectionMsg;
-    throw rejectError;
-  }
+  // Ignore every whole-video/batch verdict. Only individually clean sections are useful.
+  const selectedSections = (Array.isArray(parsed.selectedClips) ? parsed.selectedClips : [])
+    .filter((item) => {
+      const explicitlyDirty = item?.clean === false || item?.isClean === false ||
+        item?.containsTargetProduct === false || item?.isPackaging === true ||
+        item?.isMachine === true || item?.isActiveProductDemo === false ||
+        item?.hasFace === true || item?.containsFace === true || item?.hasHumanOrFace === true ||
+        item?.hasFloatingOverlay === true || item?.hasTextOrSubtitles === true ||
+        item?.hasSubtitles === true || item?.hasWatermark === true || item?.hasChannelLogo === true;
+      const explicitlyClean = item?.clean === true || item?.isClean === true ||
+        (item?.containsTargetProduct === true && item?.isActiveProductDemo === true);
+      return !explicitlyDirty && explicitlyClean;
+    });
 
   let candidateClips = [];
   const acceptedStartsByVideo = {};
   
-  if (Array.isArray(parsed.selectedClips)) {
-    for (const clipData of parsed.selectedClips) {
-      const sec = Number(clipData.timestamp);
+  if (Array.isArray(selectedSections)) {
+    for (const clipData of selectedSections) {
+      const sec = Number(clipData.startSeconds ?? clipData.timestamp);
       const vidIdx = Number(clipData.sourceVideoIndex) || 0;
       
       if (isNaN(sec) || sec < 0 || sec > totalDuration || vidIdx < 0 || vidIdx >= youtubeUrls.length) continue;
       if (!acceptedStartsByVideo[vidIdx]) acceptedStartsByVideo[vidIdx] = [];
 
-      if (allViolationTimestamps.length > 0 && allViolationTimestamps.some(vt => Math.abs(vt - sec) < 3.0)) continue;
 
       const minSafeStart = Math.max(introCutoffSec || 0, (parsed.hasOpeningIntro ? (Number(parsed.introDurationSeconds) || 5) : 0));
       let startSec = Math.max(0, Math.min(totalDuration - clipSec, Math.round(sec * 10) / 10));
@@ -970,6 +716,7 @@ CRITICAL RULES FOR OUTPUT:
     hasProductBrand,
     allowHflip,
     sceneDuration: clipSec,
+    minimumClipCount: 0,
   });
   
   const duration = clips.reduce((total, clip) => total + (clip.endSeconds - clip.startSeconds), 0);

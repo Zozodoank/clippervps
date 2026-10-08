@@ -6,8 +6,8 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isVlmOracleEnabled, isOraclePreflightEnabled } from '../config/runtimeFlags.js';
-import { applyOracleVeto, auditClipsWithOracle, preflightCandidatesWithOracle, orderCandidatesAfterPreflight, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isVlmOracleEnabled } from '../config/runtimeFlags.js';
+import { auditClipsWithOracle, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
 import { maybeAutoLaunchOracle, waitForOracleOnline, probeOracleKernelAlive, isOracleAutoLaunchEnabled } from '../services/oracleLauncherService.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
@@ -25,10 +25,8 @@ import {
   formatEnrichedCaption,
   formatSeconds,
   getDynamicProductHookFallback,
-  verifyProductCandidateWithAI,
   verifyFinalRenderedFramesWithAI,
-  getDirectGeminiApiKey,
-  preSelectTop2CandidatesWithGemini
+  getDirectGeminiApiKey
 } from '../services/aiService.js';
 import { generateSrtSubtitles } from '../services/subtitleService.js';
 import { loadEnglishDictionary, saveToEnglishDictionary } from '../services/dictionaryService.js';
@@ -52,7 +50,6 @@ import {
   checkVideoMetadataCompliance,
   sampleFramesFromStream,
   poolMultiCandidateFrames,
-  extractFastSnippetsForPreflight,
   fastProbeLocal,
 } from '../services/videoFilterService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
@@ -92,7 +89,6 @@ import {
   clearUsedKeywords,
   searchMultiEngineVideos
 } from '../services/discoveryService.js';
-import { fetchProductImageFromSearch } from '../services/imageSearchService.js';
 
 let preFlightDoneMap = new Map();
 
@@ -675,11 +671,10 @@ async function _runStage1Pipeline({
       const selectedClips = (fullVideoPlan.clips || []).map((clip) => ({
         ...clip, candidateUrl: targetUrl, sourceId: targetUrl, isClean: true,
       }));
-      if (selectedClips.length < 4) {
-        const reject = new Error(`Gemini hanya menemukan ${selectedClips.length} adegan bersih di luar 10 detik awal/akhir; minimal 4 diperlukan.`);
-        reject.isAiRejection = true;
-        reject.rejectionReason = reject.message;
-        throw reject;
+      if (selectedClips.length === 0) {
+        const noSections = new Error('Gemini tidak mengirim timestamp section bersih; backend mencoba kandidat berikutnya.');
+        noSections.isNoUsableSections = true;
+        throw noSections;
       }
       console.log(`[Job ${jobId}] [Full Video Gemini] ${selectedClips.length} adegan dipilih dari ${meta.duration}s sebelum unduh section.`);
 
@@ -709,89 +704,27 @@ async function _runStage1Pipeline({
         durationSec: preview10s.actualDurationSec,
         sourceId: targetUrl
       });
-      // Pemeriksaan visual lokal bersifat advisory. Vonis untuk frame preview ini
-      // dilakukan langsung oleh Qwen/Kaggle sebelum Gemini atau pemilihan section
-      // dapat membuang kandidat; hasil Gatekeeper tidak boleh menjadi veto.
+      // Ekstraksi preview hanya mengambil konteks. Keputusan visual dibuat dari section terpilih.
       const previewFrames = (Array.isArray(probe.frames) && probe.frames.length)
         ? probe.frames
         : (Array.isArray(probe.cleanFrames) ? probe.cleanFrames : []);
       if (!previewFrames.length) {
         throw Object.assign(new Error('Fast probe tidak menghasilkan frame untuk dikirim ke Qwen/Kaggle.'), { isInfraError: true });
       }
-      let qwenPreviewFrames = previewFrames;
-      if (isVlmOracleEnabled(process.env)) {
-        updateProgress({ step: 'vlm_oracle', message: `Qwen/Kaggle memeriksa ${previewFrames.length} frame preview sebelum kandidat dipilih...`, progress: 28 });
-        const previewOracle = await applyOracleVeto(previewFrames, {
-          jobId,
-          niche: options.niche || 'kitchen_tools',
-          onProgress: updateProgress,
-          logger: console,
-          outDir: outputDir,
-        });
-        qwenPreviewFrames = previewOracle.frames;
-        const previewRejected = new Set(previewOracle.blacklisted || []);
-        const previewAccepted = previewFrames.filter((f) => f?.filePath && !previewRejected.has(f.filePath));
-        noteVisionProvenance({
-          acceptedFrames: previewAccepted,
-          rejectedFrames: previewOracle.blacklisted || [],
-          visionEvidence: buildVisionProvenance({
-            mode: 'evidence',
-            usableFrames: previewFrames.length,
-            framesSent: previewOracle.checked || 0,
-            acceptedCount: previewAccepted.length,
-            rejectedCount: previewOracle.rejected || 0,
-            sourceCount: 1,
-          }),
-        }, { origin: 'candidate_preview', framesRef: previewFrames });
-        console.log(`[Job ${jobId}] [Qwen Preview] ${previewOracle.checked || 0} frame diperiksa, ${previewOracle.rejected || 0} ditolak Qwen, ${qwenPreviewFrames.length} diteruskan.`);
-        if (!qwenPreviewFrames.length) {
-          const reject = new Error(`Qwen menolak seluruh ${previewFrames.length} frame preview; kandidat dihentikan sebelum download section.`);
-          reject.isAiRejection = true;
-          reject.rejectionReason = reject.message;
-          throw reject;
-        }
-      }
-      // Gatekeeper tidak menghapus frame. Semua frame preview hanya disaring menurut
-      // vonis Qwen di atas; kandidat dengan frame yang Qwen setujui tetap berlanjut.
-      console.log(`[Job ${jobId}] ✅ [Fast Probe Selesai] ${previewFrames.length} frame dikumpulkan; ${qwenPreviewFrames.length} frame lolos vonis Qwen/Kaggle.`);
+      // Do not let a short opening preview veto a source whose selected sections may be clean.
+      // Oracle review runs on the actual Gemini-selected sections after they are downloaded.
+      const qwenPreviewFrames = previewFrames;
+      console.log(`[Job ${jobId}] Preview ${previewFrames.length} frame disimpan sebagai konteks; audit visual dilakukan pada section terpilih.`);
+      console.log(`[Job ${jobId}] Preview ${previewFrames.length} frame konteks; audit Oracle menunggu section terpilih.`);
 
-      // ── TAHAP 5: CONTEXT PREVIEW (15s) — WINDOW DEFAULT (TANPA WHISPER) ──
-      // Whisper dihapus: window terbaik ditentukan dari tengah video (hemat kuota/CPU).
-      // Selected sections come from the preceding full-video Gemini analysis.
-
-      let verifiedCleanFrames = qwenPreviewFrames;
-      
       updateProgress({
-        step: 'product_verify',
+        step: 'section_prepare',
         message: isManualJob
-          ? 'Sumber video dipilih operator; lanjut ke audit frame Oracle Kaggle...'
-          : '🤖 Gemini memverifikasi produk dan narasi...',
+          ? 'Sumber video dipilih operator; menyiapkan section untuk audit Oracle Kaggle...'
+          : 'Gemini memilih timestamp section; Oracle Kaggle menjadi pemeriksa visual...',
         progress: 40,
       });
-      if (!isManualOem && !isManualJob) {
-        const verification = await verifyProductCandidateWithAI({
-          frames: verifiedCleanFrames,
-          productTitle,
-          productDescription,
-          productImage: effectiveProductImage,
-          productFingerprint,
-          niche: options.niche || 'kitchen_tools',
-          apiKey,
-          aiProvider,
-        });
-        if (!verification.verified) {
-          const err = new Error(`Gemini menolak: ${verification.reason}`);
-          err.isAiRejection = true;
-          err.rejectionReason = verification.reason;
-          throw err;
-        }
-      } else {
-        console.log(`[Job ${jobId}] 🔒 Sumber manual dipilih operator: lewati verifikasi produk Gemini; Oracle Kaggle tetap mengaudit frame.`);
-      }
 
-      // ── TAHAP 7: KEMBALIKAN EVALUATOR RESULT ──
-      console.log(`[Job ${jobId}] 🎯 Kandidat Lolos Evaluasi!`);
-      
       const hl = {
         ...fullVideoPlan,
         clips: selectedClips,
@@ -807,17 +740,6 @@ async function _runStage1Pipeline({
         productHook: null 
       };
 
-      // Frame-nya benar-benar terkirim ke Gemini di atas (verifyProductCandidateWithAI), jadi
-      // tanpa label ini trace melaporkan "unknown: 0 frame dikirim" padahal 5-30 frame dipakai.
-      // Ini panggilan kecocokan PRODUK, bukan vonis kebersihan per-frame -> mode 'product_verify'
-      // (tidak menyalakan gerbang vonis frame, supaya Rescue Pipeline tidak berubah perilaku).
-      noteVisionProvenance(hl, {
-        mode: 'product_verify',
-        usableFrames: verifiedCleanFrames.length,
-        framesSent: verifiedCleanFrames.length,
-        framesRef: verifiedCleanFrames,
-        origin: 'candidate_frames',
-      });
       if (!targetUrl || targetUrl === currentYoutubeUrl) gatesPassedThisRun = true;
       return { 
         approved: true,
@@ -1318,7 +1240,7 @@ async function _runStage1Pipeline({
           meta: v2.diagnostics,
         });
         if (!v2.sources.length || !v2.orderedWindows.length) {
-          const v2Err = new Error('[V2] Tidak ada kandidat memenuhi vonis batch + narasi cukup.');
+          const v2Err = new Error('[V2] Tidak ada kandidat dengan section valid untuk diunduh.');
           const diagnostics = v2.diagnostics || {};
           const hasContentVerdict = Boolean(
             diagnostics.metadataRejected || diagnostics.fullVideoRejected ||
@@ -1396,143 +1318,9 @@ async function _runStage1Pipeline({
             break;
           }
         }
-        // --- FAST PRE-FLIGHT CHECK ---
-        const currentPoolCandidate = candidatePool[candidatePoolIndex];
-        const isCurrentOem = currentPoolCandidate && (options.oemUrls?.includes(currentPoolCandidate.url) || options.oemUrl1 === currentPoolCandidate.url || options.oemUrl2 === currentPoolCandidate.url);
+        // Inspect the complete video first. Short arbitrary previews cannot veto a source;
+        // Oracle audits only the sections Gemini selected and the backend downloaded.
 
-        // [Lapis 2 + 3] Pre-flight diambil alih Kaggle: 15 frame @1 fps dari tengah tiap
-        // kandidat dikirim sebagai batch frame, dan vonisnya membawa matchScore sehingga
-        // Kaggle-lah yang memeringkat. KEBIJAKAN STRICT (mandate 2026-10): bila oracle mati
-        // / tidak memvonis, job BERHENTI — blok Gemini di bawah tidak pernah lagi dipakai
-        // sebagai pengganti vonis (fallback lama "kembali ke Gemini" sudah dihapus).
-        if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem && !explicitOnly
-            && isOraclePreflightEnabled(process.env)) {
-          const pfStart = candidatePoolIndex;
-          try {
-            const pf = await preflightCandidatesWithOracle(
-              candidatePool.slice(pfStart, pfStart + 3),
-              { jobId, niche: options.niche || 'kitchen_tools', productName: coreProductNoun, outDir: outputDir, onProgress: updateProgress },
-            );
-            if (pf.enabled) {
-              if (pf.probed.length === 0) {
-                // Ekstraktor mengembalikan hasil tapi tidak ada posisi yang terpetakan —
-                // kondisi ini dulu lolos diam-diam ke blok Gemini di bawah. STRICT: berhenti.
-                throw new OracleUnavailableError('⛔ Pre-flight Kaggle aktif tetapi tidak ada satu pun kandidat ter-probe — job dihentikan; penilaian kandidat tanpa Kaggle tidak diizinkan.', { reason: 'infra', jobId });
-              }
-              const poolTail = candidatePool.slice(pfStart);
-              for (const rel of pf.probed) {
-                const cand = poolTail[rel];
-                if (!cand) continue;
-                // Ditandai walau TIDAK ada vonis: kandidat seperti ini harus tetap dicoba
-                // lewat jalur normal, bukan di-probe berulang kali (bug kelas indeks yang
-                // sudah diperbaiki di 4789c76 — acuan tetap posisi, bukan indeks array hasil).
-                cand.preFlightChecked = true;
-              }
-              // Fail-open (yang divisit tapi tidak dijawab TETAP di antrian, hanya `rejected`
-              // yang keluar) dijamin fungsi murni di service — lihat testenya di vlmOracle.test.js.
-              const orderedTail = orderCandidatesAfterPreflight(poolTail, pf);
-              for (const rel of pf.rejected) {
-                const cand = poolTail[rel];
-                const rec = pf.results.find((x) => x && x.index === rel);
-                if (cand) {
-                  console.log(`[Job ${jobId}] ⚠️ Membuang kandidat "${cand.title || cand.url}" karena pre-flight Kaggle: ${rec?.dropReason || rec?.reason || 'divonis model'} (skor ${rec?.matchScore ?? '—'}).`);
-                }
-              }
-              candidatePool.splice(pfStart, poolTail.length, ...orderedTail);
-              console.log(`[Job ${jobId}] 🛰️ Pre-flight Kaggle: ${pf.accepted.length} kandidat diterima, ${pf.rejected.length} dibuang, ${pf.untested.length} tanpa vonis (tetap dicoba), ${pf.framesSent} frame dikirim.`);
-              // Susunan antrian berubah -> nilai ulang kepala antrian dari atas.
-              continue;
-            }
-          } catch (pfErr) {
-            // STRICT: kegagalan pre-flight Kaggle = job berhenti, BUKAN "kembali ke Gemini".
-            // (preflightCandidatesWithOracle mode strict sudah melempar OracleUnavailableError;
-            // bungkus error lain agar auto-run tetap mengenali code-nya.)
-            if (pfErr instanceof OracleUnavailableError) throw pfErr;
-            throw new OracleUnavailableError(
-              `⛔ Pre-flight Kaggle gagal (${pfErr.message}) — job dihentikan; penilaian kandidat tanpa Kaggle tidak diizinkan.`,
-              { reason: 'infra', jobId },
-            );
-          }
-        }
-
-        // JALUR LAMA (Gemini pre-flight). KEBIJAKAN KAGGLE-ONLY: blok ini HANYA boleh
-        // berjalan bila pre-flight Kaggle memang DIMATIKAN secara sah oleh operator
-        // (legacy PREFLIGHT_ORACLE bypass) atau oracle tidak aktif. Dengan PREFLIGHT_ORACLE=1,
-        // kandidat yang tidak ter-probe Kaggle TIDAK boleh dinilai Gemini (itu jalur
-        // non-Kaggle) — mereka lanjut ke jalur normal yang tetap bergate veto pool +
-        // audit klip Kaggle.
-        if (currentPoolCandidate && !currentPoolCandidate.preFlightChecked && !isCurrentOem && !explicitOnly
-            && !isOraclePreflightEnabled(process.env)) {
-          console.log(`[Job ${jobId}] 🚀 Memulai Fast Pre-Flight Check untuk kandidat...`);
-          try {
-            updateProgress({ step: 'pre_flight', message: 'Mencari gambar produk & memotong cuplikan kandidat...', progress: 10 });
-            
-            const altImages = await fetchProductImageFromSearch(productTitle, outputDir);
-            const imageForGemini = (effectiveProductImage && fs.existsSync(effectiveProductImage)) 
-              ? effectiveProductImage 
-              : altImages;
-
-            const snippetUrls = candidatePool.slice(candidatePoolIndex, candidatePoolIndex + 3).map(c => c.url);
-            const snippets = await extractFastSnippetsForPreflight(snippetUrls, outputDir);
-
-            // `snippets` sudah DIFILTER (kandidat yang cuplikannya gagal ekstraksi dibuang), jadi
-            // posisi di array ini BUKAN posisi kandidat di `snippetUrls`. Yang boleh dipakai sebagai
-            // acuan hanyalah `snippet.index` (posisi asli di batch) — dan itu pula yang dikirim ke
-            // Gemini sebagai label "Kandidat Video dengan index".
-            // Sebelum 2026-10-03 kode di bawah memakai indeks array, sehingga saat satu ekstraksi
-            // gagal (mis. "Requested format is not available"): (a) flag preFlightChecked menempel
-            // ke kandidat yang salah, (b) kandidat yang TIDAK PERNAH dilihat Gemini ikut dibuang
-            // dengan pesan "ditolak oleh Pre-Flight Gemini", dan (c) lompatan cursor salah jumlah.
-            const judgedPositions = new Set(
-              snippets.map((s) => Number(s && s.index)).filter((n) => Number.isInteger(n) && n >= 0)
-            );
-
-            // Tandai kandidat yang telah diekstrak agar tidak diuji ulang
-            for (const s of snippets) {
-              const cand = candidatePool[candidatePoolIndex + Number(s.index)];
-              if (cand) cand.preFlightChecked = true;
-            }
-
-            updateProgress({ step: 'pre_flight', message: 'Memilih video terbaik dengan AI...', progress: 15 });
-            const topIndices = await preSelectTop2CandidatesWithGemini(imageForGemini, snippets, apiKey);
-            const acceptedPositions = new Set(
-              (Array.isArray(topIndices) ? topIndices : [])
-                .map((n) => Number(n))
-                .filter((n) => Number.isInteger(n) && n >= 0)
-            );
-
-            if (acceptedPositions.size > 0) {
-              const bestCandidates = [];
-              const untested = [];
-              for (let i = candidatePoolIndex; i < candidatePool.length; i++) {
-                const relativeIdx = i - candidatePoolIndex;
-                // Di luar batch yang di-probe, atau cuplikannya gagal => TIDAK boleh divonis.
-                if (relativeIdx >= snippetUrls.length || !judgedPositions.has(relativeIdx)) {
-                  untested.push(candidatePool[i]);
-                } else if (acceptedPositions.has(relativeIdx)) {
-                  bestCandidates.push(candidatePool[i]);
-                } else {
-                  console.log(`[Job ${jobId}] ⚠️ Membuang kandidat "${candidatePool[i].title || candidatePool[i].url}" karena ditolak oleh Pre-Flight Gemini.`);
-                }
-              }
-              candidatePool.splice(candidatePoolIndex, candidatePool.length - candidatePoolIndex, ...bestCandidates, ...untested);
-              console.log(`[Job ${jobId}] 🚀 Pre-Flight selesai! Urutan kandidat terbaik:`, bestCandidates.map(c => c.title || c.url));
-            } else if (snippets.length > 0) {
-              console.log(`[Job ${jobId}] ⚠️ Pre-Flight: Gemini menolak semua ${snippets.length} cuplikan kandidat awal (tidak cocok/kotor). Melewati kandidat yang benar-benar dinilai saja...`);
-              // Buang HANYA kandidat yang sungguh dinilai (punya cuplikan). Yang gagal ekstraksi
-              // dibiarkan di antrian agar tetap dicoba lewat jalur normal. Iterasi menurun karena
-              // splice menggeser posisi sisanya.
-              for (let rel = snippetUrls.length - 1; rel >= 0; rel--) {
-                if (judgedPositions.has(rel)) candidatePool.splice(candidatePoolIndex + rel, 1);
-              }
-              continue; // Langsung cari kandidat baru tanpa perlu streaming
-            }
-          } catch (err) {
-            console.warn(`[Job ${jobId}] ⚠️ Pre-Flight Check gagal, melanjutkan secara normal: ${err.message}`);
-            if (candidatePool[candidatePoolIndex]) candidatePool[candidatePoolIndex].preFlightChecked = true;
-          }
-        }
-        // -----------------------------
 
         const candidate = candidatePool[candidatePoolIndex++];
         const currentCandIdx = candidatePoolIndex - 1;
@@ -1629,22 +1417,7 @@ async function _runStage1Pipeline({
           let testPool = poolMultiCandidateFrames(preferredSoFar, { maxTotalFrames: 500, includeEligible: true })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
-          // ORACLE KAGGLE (VISION_VERIFY_MODE=oracle — satu-satunya mode yang diizinkan):
-          // lapisan veto SEBELUM storyboard. Model besar memvonis frame yang akan dipakai;
-          // yang KOTOR masuk blacklistedFramePaths yang SUDAH ada -> Gemini, retainedFrames,
-          // dan rescue pool otomatis mengecalikannya.
-          // STRICT (mandate 2026-10): oracle diam/timeout/vonis tidak sah -> applyOracleVeto
-          // melempar OracleUnavailableError dan job BERHENTI. Tidak ada lagi "keputusan
-          // screening visual lokal berlaku".
-          if (isVlmOracleEnabled(process.env)) {
-            const veto = await applyOracleVeto(testPool, {
-              jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
-            });
-            testPool = veto.frames;
-            if (veto.rejected > 0) {
-              console.log(`[Job ${jobId}] ⛔ [Oracle] ${veto.rejected}/${veto.checked} frame diveto model besar dan dikeluarkan dari bank footage.`);
-            }
-          }
+          // Preview frames are context only. Oracle audits downloaded, selected sections later.
 
           if (testPool.length >= 2) {
             // Label cabang untuk provenance. Variabelnya HARUS di luar `try` karena blok `catch`
@@ -1834,18 +1607,7 @@ async function _runStage1Pipeline({
           pooledFrames = poolMultiCandidateFrames(candidateResults, { maxTotalFrames: 500, includeEligible: true })
             .filter(f => !blacklistedFramePaths.has(f.filePath));
 
-          // Titik storyboard KE-DUA (setelah loop stream selesai tapi hl belum terbentuk).
-          // Veto oracle diterapkan di sini juga, kalau tidak, jalur cadangan ini lolos dari
-          // filter model besar sepenuhnya.
-          if (isVlmOracleEnabled(process.env)) {
-            const veto = await applyOracleVeto(pooledFrames, {
-              jobId, niche: options.niche || 'kitchen_tools', blacklisted: blacklistedFramePaths, onProgress: updateProgress,
-              });
-            pooledFrames = veto.frames;
-            if (veto.rejected > 0) {
-              console.log(`[Job ${jobId}] ⛔ [Oracle] ${veto.rejected}/${veto.checked} frame diveto (jalur storyboard cadangan).`);
-            }
-          }
+          // Preview frames remain context only; final downloaded sections receive Oracle audit.
 
           if (pooledFrames.length >= 2) {
             updateProgress({

@@ -30,12 +30,7 @@ import {
   fastProbeLocal,
 } from '../services/videoFilterService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
-import { isVlmOracleEnabled } from '../config/runtimeFlags.js';
-import { applyOracleVeto } from '../services/vlmOracleService.js';
-import {
-  verdictCandidatesWithGemini,
-  analyzeYouTubeVideoWithGemini,
-} from '../services/aiService.js';
+import { analyzeYouTubeVideoWithGemini } from '../services/aiService.js';
 
 // ── HELPER MURNI (diuji terpisah, tanpa I/O/jaringan) ────────────────────────
 
@@ -232,8 +227,8 @@ export async function runSourceAcquisitionV2(p) {
         analysisError.isInfraError = true;
         throw analysisError;
       }
-      if ((fullVideoPlan.clips || []).length < 4) {
-        diagnostics.fullVideoShortPlans = (diagnostics.fullVideoShortPlans || 0) + 1;
+      if ((fullVideoPlan.clips || []).length === 0) {
+        diagnostics.fullVideoEmptyPlans = (diagnostics.fullVideoEmptyPlans || 0) + 1;
         continue;
       }
       const sourceId = extractVideoId(cand.url) || cand.url;
@@ -252,7 +247,7 @@ export async function runSourceAcquisitionV2(p) {
   if (!screened.length) {
     const contentFailures = (diagnostics.metadataRejected || 0) +
       (diagnostics.fullVideoRejected || 0) +
-      (diagnostics.fullVideoShortPlans || 0);
+      (diagnostics.fullVideoEmptyPlans || 0);
     if (diagnostics.metadataInfraFailures > 0 && contentFailures === 0) {
       const infraErr = lastSourceInfraError || new Error('Akuisisi V2 gagal membaca kandidat karena gangguan sumber/AI.');
       infraErr.isInfraError = true;
@@ -262,8 +257,8 @@ export async function runSourceAcquisitionV2(p) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
 
-  // (L2) Klip preview @9:16 -> ekstrak frame tanpa screening lokal -> Oracle Kaggle.
-  updateProgress({ step: 'acquisition_v2_probe', message: `?? [V2] Mengekstrak frame preview untuk Oracle Kaggle (${screened.length} kandidat)...`, progress: 18 });
+  // (L2) Klip preview @9:16 -> frame konteks tanpa keputusan visual sumber.
+  updateProgress({ step: 'acquisition_v2_probe', message: `?? [V2] Mengekstrak frame konteks (${screened.length} kandidat)...`, progress: 18 });
   const gatedCandidates = [];
   for (const cand of screened) {
     let preview;
@@ -320,69 +315,15 @@ export async function runSourceAcquisitionV2(p) {
     return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
   }
 
-  // (L2b) ORACLE KAGGLE (VISION_VERIFY_MODE=oracle — satu-satunya mode yang diizinkan) —
-  // veto model besar SEBELUM vonis Gemini. Tanpa blok ini, ACQUISITION_FLOW=v2 lolos
-  // sepenuhnya dari filter model besar karena jalur lama (stage1Render storyboard) tidak
-  // dilewati.
-  // Kebijakan SAMA dengan stage1Render (STRICT, mandate 2026-10): oracle diam/timeout/
-  // vonis tidak sah -> applyOracleVeto melempar OracleUnavailableError dan job BERHENTI
-  // (propagate ke pemanggil di stage1Render). Tidak ada lagi "keputusan screening visual lokal
-  // + Gemini tetap berlaku".
-  if (isVlmOracleEnabled(process.env)) {
-    updateProgress({ step: 'vlm_oracle', message: '🛰️ [V2] Oracle Kaggle memvonis frame kandidat...', progress: 19 });
-    const vetoed = [];
-    for (const cand of gatedCandidates) {
-      const res = await applyOracleVeto(cand.cleanFrames, {
-        jobId,
-        niche,
-        onProgress: updateProgress,
-        logger: console,
-      });
-      if (res.rejected > 0) {
-        diagnostics.oracleVetoed = (diagnostics.oracleVetoed || 0) + res.rejected;
-        vetoed.push({
-          sourceId: cand.sourceId,
-          rejected: res.rejected,
-          checked: res.checked,
-          reason: res.blacklisted.length ? 'frame diveto model besar' : '',
-        });
-      }
-      cand.cleanFrames = res.frames;
-    }
-    // Ambang 3 frame sama dengan gate lokal di atas: kandidat yang tinggal sedikit
-    // frame bersihnya setelah veto tidak layak dikirim ke vonis batch.
-    const survivors = gatedCandidates.filter((c) => c.cleanFrames.length >= 3);
-    const dropped = gatedCandidates.length - survivors.length;
-    if (dropped > 0) {
-      console.warn(`[Job ${jobId}] [Oracle][V2] ${dropped} kandidat dibuang setelah veto (sisa frame < 3).`);
-      gatedCandidates.length = 0;
-      gatedCandidates.push(...survivors);
-    }
-    if (vetoed.length) console.log(`[Job ${jobId}] ⛔ [Oracle][V2] ${diagnostics.oracleVetoed} frame diveto model besar dari ${vetoed.length} kandidat.`);
-    if (!gatedCandidates.length) {
-      return { sources: [], orderedWindows: [], scriptDraft: '', diagnostics };
-    }
-  }
+  // A preview near the beginning of a video cannot veto clean sections elsewhere.
+  // Keep its frames as context; Oracle reviews the actual downloaded sections later.
 
-  // Operator-supplied manual sources are product-approved by the operator.
-  // Kaggle Oracle remains the frame-quality authority; don't ask Gemini to veto
-  // the manually selected product/source pair.
-  let accepted;
-  if (manualMode) {
-    accepted = gatedCandidates.slice(0, Math.max(1, Number(requireSources) || 1));
-    diagnostics.verdictEligible = accepted.length;
-    diagnostics.manualProductApproval = 'operator';
-    console.log(`[Job ${jobId}] [V2] Mode manual: melewati vonis produk Gemini; ${accepted.length} sumber memakai pilihan operator setelah audit frame Oracle.`);
-  } else {
-    // (L2c) VONIS BATCH Gemini — satu panggilan utk semua kandidat yang lolos gate.
-    const { verdicts } = await verdictCandidatesWithGemini({
-      apiKey, aiProvider, productImage, productTitle, productDescription, productFingerprint, niche,
-      candidates: gatedCandidates.map((c) => ({ sourceId: c.sourceId, frames: c.cleanFrames })),
-      onProgress: updateProgress,
-    });
-    diagnostics.verdictEligible = verdicts.filter((v) => v.eligible).length;
-    accepted = pickEligibleSources(verdicts, gatedCandidates, requireSources);
-  }
+  // Gemini supplies section timestamps only. It cannot issue a source/product veto.
+  // Candidate metadata was checked above; frame quality is decided by Kaggle Oracle.
+  const accepted = gatedCandidates.slice(0, Math.max(1, Number(requireSources) || 1));
+  diagnostics.verdictEligible = accepted.length;
+  if (manualMode) diagnostics.manualProductApproval = 'operator';
+  console.log(`[Job ${jobId}] [V2] ${accepted.length} sumber diteruskan setelah audit frame Oracle; tidak ada vonis sumber Gemini.`);
   diagnostics.acceptedSources = accepted.length;
   if (accepted.length < requiredSourceCount) {
     diagnostics.sourceShortfall = requiredSourceCount - accepted.length;
@@ -409,9 +350,9 @@ export async function runSourceAcquisitionV2(p) {
       scriptDraft: clip.reason || '',
     })).filter((w) => Number.isFinite(w.startSec) && Number.isFinite(w.endSec) &&
       w.startSec >= 10 && w.endSec <= vidDur - 10 && w.endSec > w.startSec);
-    if (windows.length < 4) {
-      console.warn(`[Job ${jobId}] [V2] ${cand.sourceId} ditolak sebelum download section: hanya ${windows.length} timestamp Gemini yang memenuhi batas 10 detik.`);
-      diagnostics.windowsRejected = (diagnostics.windowsRejected || 0) + 1;
+    if (windows.length === 0) {
+      console.warn(`[Job ${jobId}] [V2] ${cand.sourceId} tidak memiliki timestamp section Gemini yang valid; lanjut ke kandidat berikutnya.`);
+      diagnostics.emptySectionPlans = (diagnostics.emptySectionPlans || 0) + 1;
       continue;
     }
     diagnostics.transcribed++;

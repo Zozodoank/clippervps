@@ -7,7 +7,7 @@ export function formatSeconds(secs) {
   return `${m}:${s}`;
 }
 
-export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.5 } = {}) {
+export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = true, frameAudit = [], hasProductBrand = false, allowHflip = true, sceneDuration = 3.5, minimumClipCount = 4 } = {}) {
   // Adaptive cadence: individual clips may be shorter/longer according to creative role,
   // while the default stays around 3.0-3.5s.
   const defaultClipLength = Math.max(2.0, Math.min(4.0, Number(sceneDuration) || 3.2));
@@ -161,7 +161,8 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   }
 
   // Standar kualitas: Minimal 4 aksi berbeda (sekitar 12-14 detik) agar video tidak terlalu singkat
-  if (dedupedClips.length >= 4) {
+  const minCount = Math.max(0, Math.floor(Number(minimumClipCount) || 0));
+  if (dedupedClips.length >= minCount) {
     return dedupedClips;
   }
 
