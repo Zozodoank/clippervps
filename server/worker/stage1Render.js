@@ -492,7 +492,7 @@ async function _runStage1Pipeline({
     };
     // Standard niches cut every 3.5s; smartphone review uses eight 6s scenes to reach 48s total.
     const requestedSceneDuration = Number(options.sceneDuration);
-  const isSmartphoneReview = (options.niche || jobMeta.niche) === 'gadget_smartphone';
+    const isSmartphoneReview = (options.niche || jobMeta.niche) === 'gadget_smartphone';
     const sceneDuration = isSmartphoneReview
       ? 6.0
       : Math.max(3.0, Math.min(3.5, Number.isFinite(requestedSceneDuration) && requestedSceneDuration > 0 ? requestedSceneDuration : 3.5));
@@ -2422,7 +2422,6 @@ async function _runStage1Pipeline({
     );
     const finalPlannedDuration = highlight.clips.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
     highlight.duration = finalPlannedDuration;
-    const isSmartphoneReview = (options.niche || jobMeta.niche) === 'gadget_smartphone';
     const planTooShort = isSmartphoneReview
       ? (highlight.clips.length < 8 || finalPlannedDuration < 45)
       : (isAutoModeFallback && (highlight.clips.length < 3 || finalPlannedDuration < 20));
@@ -2519,14 +2518,14 @@ async function _runStage1Pipeline({
       const ts4 = formatSeconds(Math.round(Math.max(stepSec * 4, actualSilentDuration - 3.5)));
 
       const fallbackSmartphoneRows = [
-        ['Layar dan antarmuka', 'Perhatikan tampilan layar dan antarmuka yang sedang dibuka.'],
-        ['Detail layar', 'Gerakan pada layar terlihat jelas saat menu berganti.'],
-        ['Fitur perangkat', 'Di bagian ini, kita melihat fitur yang sedang digunakan.'],
-        ['Detail fitur', 'Perhatikan respons dan detail yang memang tampak di adegan.'],
-        ['Kapasitas memori', 'Informasi kapasitas hanya disebut jika angkanya terbaca jelas.'],
-        ['Detail penyimpanan', 'Tampilan penyimpanan ini memberi konteks kapasitas perangkat.'],
-        ['Sampel kamera', 'Sekarang terlihat sampel foto atau video hasil kamera ponsel.'],
-        ['Hasil kamera', 'Sebagai penutup, perhatikan detail hasil kamera pada cuplikan ini.'],
+        ['Layar dan antarmuka', 'Perhatikan layar utama saat menu terbuka; ikon dan susunannya terlihat jelas pada adegan ini.'],
+        ['Detail layar', 'Saat halaman digulir, ikuti perpindahan konten dan perubahan tampilan yang terlihat di layar.'],
+        ['Fitur perangkat', 'Di bagian ini, fitur yang sedang digunakan terlihat langsung tanpa menebak spesifikasinya.'],
+        ['Detail fitur', 'Perhatikan perubahan tampilan ketika fitur diaktifkan, lalu lihat respons perangkat pada cuplikan ini.'],
+        ['Kapasitas memori', 'Kapasitas memori hanya bisa disebut kalau angka RAM atau penyimpanan terbaca jelas di sini.'],
+        ['Detail penyimpanan', 'Jika angkanya tidak terlihat, jelaskan menu penyimpanan tanpa menyimpulkan kapasitas tertentu.'],
+        ['Sampel kamera', 'Sekarang video beralih ke sampel kamera; amati detail, pencahayaan, dan subjek yang tertangkap.'],
+        ['Hasil kamera', 'Sebagai penutup, lihat hasil foto atau video ini, termasuk manusia jika memang tertangkap kamera.'],
       ];
       const fallbackSmartphoneScenes = fallbackSmartphoneRows.map(([topic, voiceover], index) => {
         const start = index * 6;
@@ -2684,7 +2683,7 @@ async function _runStage1Pipeline({
     let autoFinalError = null;
     // Rekap jalur visual untuk record job (penanda durabel: evidence vs stream vs stride).
     visionSummary = summarizeVisionRuns(visionState.runs);
-    const shouldProceedToFinal = (ttsSucceeded && fs.existsSync(autoVoiceoverPath)) || isAutoModeFallback;
+    const shouldProceedToFinal = (ttsSucceeded && fs.existsSync(autoVoiceoverPath)) || (isAutoModeFallback && !isSmartphoneReview);
 
     if (shouldProceedToFinal) {
       try {
@@ -2701,6 +2700,12 @@ async function _runStage1Pipeline({
 
         const hasVoiceover = ttsSucceeded && fs.existsSync(autoVoiceoverPath);
         const audioDurationSec = hasVoiceover ? (await getMediaDurationSec(autoVoiceoverPath)) || silentDurationSec : silentDurationSec;
+        if (isSmartphoneReview && (audioDurationSec < 45 || audioDurationSec > 60)) {
+          const durationErr = new Error(`Durasi voice-over smartphone ${audioDurationSec.toFixed(1)} detik; wajib 45-60 detik.`);
+          durationErr.isRenderPlanShortfall = true;
+          durationErr.rejectionReason = durationErr.message;
+          throw durationErr;
+        }
 
         // EDIT CONFORM: actual speech timing controls the visual cut lengths.
         // This prevents looping/repeating footage when TTS runs longer than the first silent edit.

@@ -2531,9 +2531,9 @@ export async function generateAdAdvisorScriptWithAI({
   const effectiveSceneSec = isGadget ? 6 : Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
   const sceneCount = isGadget ? 8 : Math.max(5, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
   const targetSpeechSec = Math.max(17, targetDuration - 1.5);
-  const targetWords = Math.round(targetSpeechSec * 2.2);
-  const minWords = Math.max(38, Math.round(targetSpeechSec * 1.9));
-  const maxWords = Math.max(48, Math.round(targetSpeechSec * 2.4));
+  const targetWords = Math.round(targetSpeechSec * (isGadget ? 2.3 : 2.2));
+  const minWords = Math.max(isGadget ? 90 : 38, Math.round(targetSpeechSec * (isGadget ? 2.05 : 1.9)));
+  const maxWords = Math.max(isGadget ? 105 : 48, Math.round(targetSpeechSec * (isGadget ? 2.6 : 2.4)));
 
   const systemPrompt = isGadget
     ? `You are an Indonesian smartphone reviewer. Produce a grounded 45-60 second review with exactly 8 scene-aligned narration lines, about 6 seconds each.
@@ -2542,7 +2542,7 @@ ORDER IS FIXED: scenes 1-2 review the screen/UI; scenes 3-4 review visible featu
 
 Every narration line must describe the action or evidence visible in its corresponding frames. Never invent a spec. State RAM/storage numbers only if legible in the supplied frames or explicitly stated in product title/description. If memory capacity is not verifiable, say that the capacity is not clearly shown. Camera sample footage may include people as subjects in photos/videos captured by the phone. Reject only a reviewer/vlogger/presenter recording themselves while speaking directly to camera; do not reject people inside the phone's captured sample footage.
 
-Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. Make the voiceover span the full target duration with timestamps at approximately 00:00, 00:06, 00:12, 00:18, 00:24, 00:30, 00:36, and 00:42. Keep each line concise but descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
+Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. Make the voiceover span the full target duration with timestamps at exactly 00:00, 00:06, 00:12, 00:18, 00:24, 00:30, 00:36, and 00:42. Write 12-15 spoken words per line so the complete narration lasts 45-60 seconds at a calm, clear pace. Keep every line descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
     : `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
@@ -2593,7 +2593,7 @@ CRITICAL TIMING, LENGTH & PACING RULE (MANDATORY):
      * 'sceneNumber': integer (1, 2, 3... up to ${sceneCount})
      * 'timeRange': exact range e.g. "00:00 - 00:03", "00:03 - 00:07", etc.
      * 'visualDescription': Satisfying visual action happening in Indonesian.
-     * 'voiceover': Spoken narration line for this scene (hanya ~5-6 kata pendek, padat, dan jelas).
+     * 'voiceover': Spoken narration line for this scene (${isGadget ? '12-15 kata, jelas dan sesuai visual' : 'hanya ~5-6 kata pendek, padat, dan jelas'}).
      * 'adAdvisorNotes': Director notes for sound effects (SFX), visual text overlays (yellow/white text), or emotional pacing.
 
 3. 'voiceoverScript' (Naskah Voiceover Lengkap dengan Penanda Waktu & Tag Emosi):
@@ -2754,6 +2754,25 @@ Return strict JSON in this format:
 
       if (!parsed || (!parsed.sampleContext && !parsed.scenes && !parsed.voiceoverScript)) {
         throw new Error(`AI model ${activeModel} mengembalikan response kosong atau tidak lengkap.`);
+      }
+
+      if (isGadget) {
+        const expectedTimestamps = ['00:00', '00:06', '00:12', '00:18', '00:24', '00:30', '00:36', '00:42'];
+        const scriptLines = String(parsed.voiceoverScript || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+        const timestampedLines = scriptLines.map(line => line.match(/^\[(\d{2}:\d{2})\]\s*(.*)$/));
+        const spokenWords = timestampedLines.map(match => (match?.[2] || '').replace(/\[[^\]]+\]/g, '').trim().split(/\s+/).filter(Boolean).length);
+        const hasForbiddenCta = /\b(keranjang|checkout|belanja|beli|komentar|komen|worth it|harga|diskon|link di bio)\b/i.test(String(parsed.voiceoverScript || ''));
+        const validSmartphoneScript = Array.isArray(parsed.scenes)
+          && parsed.scenes.length === 8
+          && scriptLines.length === 8
+          && timestampedLines.every((match, index) => match && match[1] === expectedTimestamps[index])
+          && spokenWords.every(count => count >= 8 && count <= 20)
+          && spokenWords.reduce((sum, count) => sum + count, 0) >= minWords
+          && spokenWords.reduce((sum, count) => sum + count, 0) <= maxWords
+          && !hasForbiddenCta;
+        if (!validSmartphoneScript) {
+          throw new Error(`Naskah smartphone tidak valid: perlu 8 adegan, 8 timestamp berurutan, ${minWords}-${maxWords} kata, durasi 45-60 detik, dan tanpa CTA.`);
+        }
       }
 
       break; // success — exit retry loop
