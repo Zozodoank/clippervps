@@ -266,7 +266,7 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
 TIMELINE:
 - Inspect the complete video. Never select a section before ${introCutoffSec || 0}s or after ${Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0))}s.
-- ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit at least 45 seconds; let the selected evidence determine the final duration, with no hard 60-second ceiling. Return each actual startSeconds and endSeconds.` : `Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.`}
+- ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit within 45-60 seconds. Return each actual startSeconds and endSeconds.` : `Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.`}
 - ${isGadget ? 'Propose eight ordered smartphone-review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 RAM/storage evidence, 7-8 camera samples as the final scenes. Camera samples may show only captured photos/video without the phone in frame, including people as subjects.' : 'Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.'}
 - ${isGadget ? 'Tag each selectedClips entry with storyboardSlot 1 through 8 in that order. Do not classify people inside camera samples as presenters; Kaggle checks only whether a scene is self-recording presenter footage.' : 'Return timestamp proposals in scene order.'}
 - Do not make a product-match, face, overlay, subtitle, watermark, or source-quality verdict. Kaggle is the sole visual judge.
@@ -582,7 +582,7 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
 TIMELINE AND SELECTION:
 - Inspect all supplied videos. Ignore the first ${introCutoffSec || 0} seconds and the final 10 seconds of each video.
-- ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. The complete edit must be at least 45 seconds, with no hard 60-second ceiling; return the actual startSeconds and endSeconds for every section.` : `Each selected section must be ${clipSec}s long.`} ${isGadget ? 'Return up to eight ordered smartphone review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 verified RAM/storage evidence, and 7-8 phone camera samples as the final scenes. Slots 1-6 must show the phone or its active interface. Slots 7-8 may show only captured photos/video without the phone in frame; people inside captured samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every section must show the target physical product clearly in active use.'}
+- ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit within 45-60 seconds; return the actual startSeconds and endSeconds for every section.` : `Each selected section must be ${clipSec}s long.`} ${isGadget ? 'Return up to eight ordered smartphone review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 verified RAM/storage evidence, and 7-8 phone camera samples as the final scenes. Slots 1-6 must show the phone or its active interface. Slots 7-8 may show only captured photos/video without the phone in frame; people inside captured samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every section must show the target physical product clearly in active use.'}
 - Select only sections whose final 9:16 crop has no floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging. ${isGadget ? 'Faces are allowed inside a camera sample in slots 7-8; reject a face only when it is a reviewer filming themselves and speaking directly to the camera.' : 'Reject human faces and talking heads.'}
 - For horizontal footage assess the center 9:16 crop; for vertical footage assess the full frame.
 - Return every distinct clean section you can identify, including fewer than four. If none are identifiable in a source, simply return no section for that source.
@@ -934,7 +934,7 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
 - Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
 CRITERION 5: ${isGadget ? 'EIGHT-SCENE SMARTPHONE REVIEW' : 'DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE'}
-- ${isGadget ? `Select exactly eight ordered smartphone scenes with natural, varied cut lengths (no hard 60-second ceiling; total must be at least 45 seconds). Slot duration guide: ${getSmartphoneDurationGuide()}. Use 1-2 for screen/UI, 3-4 for visible features, 5-6 for RAM/storage evidence, and 7-8 for camera samples as the final scenes. Camera samples may show captured people or scenery without the physical phone in frame.` : 'Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.'}
+- ${isGadget ? `Select exactly eight ordered smartphone scenes with natural, varied cut lengths; the complete edit must be 45-60 seconds. Slot duration guide: ${getSmartphoneDurationGuide()}. Use 1-2 for screen/UI, 3-4 for visible features, 5-6 for RAM/storage evidence, and 7-8 for camera samples as the final scenes. Camera samples may show captured people or scenery without the physical phone in frame.` : 'Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.'}
 - Each timestamp in "timestamps" MUST be free of subtitles, floating text, graphic overlays, colored cards, and watermarks. ${isGadget ? 'A human subject inside a phone camera sample is allowed; reject only a self-recording presenter speaking directly to camera.' : 'Selected scenes must be 100% faceless.'}
 - MOTION FIRST: Prioritize active hands-on demonstration (cutting, pressing, operating, tangible results) over frozen/static product displays.
 - ANTI-MONOTONOUS RULE: Each timestamp MUST represent a distinct action, phase, or camera angle. If the footage repeats the same static cut without diversity, REJECT IT:
@@ -2609,7 +2609,7 @@ export async function generateAdAdvisorScriptWithAI({
     ? creativePlan.shots.map((shot, index) => `${index + 1}. ${shot.purpose}`).join('\n')
     : '';
   const targetDuration = isGadget
-    ? Math.max(45, Math.round(Number(segmentDuration) || 49))
+    ? Math.max(45, Math.min(60, Math.round(Number(segmentDuration) || 49)))
     : Math.max(18, Math.min(45, Math.round(Number(segmentDuration) || 22)));
   const effectiveSceneSec = isGadget
     ? targetDuration / 8
@@ -2636,13 +2636,13 @@ export async function generateAdAdvisorScriptWithAI({
     .join('\\n');
 
   const systemPrompt = isGadget
-    ? `You are an Indonesian smartphone reviewer. Produce a grounded smartphone review of at least 45 seconds. There is no hard 60-second ceiling; derive the natural total duration from the footage and narration.
+    ? `You are an Indonesian smartphone reviewer. Produce a grounded smartphone review between 45 and 60 seconds. Derive the natural total and varied scene lengths from the footage and narration, while keeping the complete runtime inside that range.
 
 ORDER IS FIXED: scenes 1-2 review the screen/UI; scenes 3-4 review visible features; scenes 5-6 review memory capacity; scenes 7-8 review camera samples and are the final scenes. Do not move camera earlier. No CTA, price, purchase invitation, or comment prompt anywhere in narration.
 
 Every narration line must describe the action or evidence visible in its corresponding frames. Use specific active verbs and natural reactions to what changes on screen; vary the opening and rhythm of each line. Do not repeat a stiff template such as starting every line with "Perhatikan" or merely announce a topic without describing what the scene shows. Never invent a spec. State RAM/storage numbers only if legible in the supplied frames or explicitly stated in product title/description. If memory capacity is not verifiable, say that the capacity is not clearly shown. Camera sample footage may include people as subjects in photos/videos captured by the phone. Reject only a reviewer/vlogger/presenter recording themselves while speaking directly to camera; do not reject people inside the phone's captured sample footage.
 
-Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. The target runtime is ${targetDuration} seconds or longer when the visual evidence needs it. Choose eight varied scene boundaries based on visible action; do not space every cut exactly six seconds apart. Start at 00:00, use strictly increasing timestamps, and make the last scene finish near the target runtime. Write roughly ${minSmartphoneWordsPerLine}-${maxSmartphoneWordsPerLine} spoken words per line, varying sentence length to fit the scene and speak calmly. Keep every line descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
+Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. Aim for ${targetDuration} seconds and keep total runtime between 45 and 60 seconds. Choose eight varied scene boundaries based on visible action; do not space every cut exactly six seconds apart. Start at 00:00, use strictly increasing timestamps, and make the last scene finish near the target runtime. Write roughly ${minSmartphoneWordsPerLine}-${maxSmartphoneWordsPerLine} spoken words per line, varying sentence length to fit the scene and speak calmly. Keep every line descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
     : `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
@@ -2877,7 +2877,7 @@ Return strict JSON in this format:
           && spokenWords.reduce((sum, count) => sum + count, 0) <= maxWords
           && !hasForbiddenCta;
         if (!validSmartphoneScript) {
-          throw new Error(`Naskah smartphone tidak valid: perlu 8 adegan, timestamp dinamis dari 00:00, pacing bervariasi sampai target ${targetDuration}s, ${minWords}-${maxWords} kata, dan tanpa CTA.`);
+          throw new Error(`Naskah smartphone tidak valid: perlu 8 adegan, timestamp dinamis sampai target ${targetDuration}s dalam rentang 45-60 detik, ${minWords}-${maxWords} kata, dan tanpa CTA.`);
         }
       }
 

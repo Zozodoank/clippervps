@@ -2715,8 +2715,8 @@ async function _runStage1Pipeline({
 
         const hasVoiceover = ttsSucceeded && fs.existsSync(autoVoiceoverPath);
         const audioDurationSec = hasVoiceover ? (await getMediaDurationSec(autoVoiceoverPath)) || silentDurationSec : silentDurationSec;
-        if (isSmartphoneReview && audioDurationSec < 45) {
-          const durationErr = new Error(`Durasi voice-over smartphone ${audioDurationSec.toFixed(1)} detik; minimal 45 detik.`);
+        if (isSmartphoneReview && (audioDurationSec < 45 || audioDurationSec > 60)) {
+          const durationErr = new Error(`Durasi voice-over smartphone ${audioDurationSec.toFixed(1)} detik; harus 45-60 detik.`);
           durationErr.isRenderPlanShortfall = true;
           durationErr.rejectionReason = durationErr.message;
           throw durationErr;

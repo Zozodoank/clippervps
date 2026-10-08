@@ -195,7 +195,7 @@ export const NICHE_PRESETS = {
       { slot: 7, key: 'clip7_camera_sample', fallbackKey: 'clip7', label: 'Sampel Hasil Kamera', role: 'action_demo', datasetTag: 'valid_result', targetSec: 8, minSec: 6.5, maxSec: 12, description: 'Foto atau video hasil kamera ponsel. Orang yang menjadi subjek hasil foto/video diperbolehkan.', facePolicy: 'presenter_only' },
       { slot: 8, key: 'clip8_camera_detail', fallbackKey: 'clip8', label: 'Review Kamera (Penutup)', role: 'action_demo', datasetTag: 'valid_result', targetSec: 8, minSec: 6.5, maxSec: 12, description: 'Sampel hasil foto/video kamera sebagai adegan terakhir; orang di dalam hasil kamera diperbolehkan.', facePolicy: 'presenter_only' }
     ],
-    storyboardInstructions: `Susun storyboard smartphone dengan durasi dinamis, minimal 45 detik, tanpa batas atas kaku. Biarkan panjang adegan mengikuti gerak dan bukti visual; target kasar sekitar 49 detik, bukan delapan potongan seragam:
+    storyboardInstructions: `Susun storyboard smartphone berdurasi dinamis 45-60 detik. Biarkan panjang adegan mengikuti gerak dan bukti visual; target kasar sekitar 49 detik, bukan delapan potongan seragam:
 - Slot 1-2: REVIEW LAYAR. Tampilkan layar aktif, navigasi UI, scrolling, atau detail tampilan yang benar-benar terlihat.
 - Slot 3-4: REVIEW FITUR. Tampilkan demonstrasi fitur dan detail fisik yang terlihat. Jangan mengarang chipset, refresh rate, baterai, atau performa.
 - Slot 5-6: KAPASITAS MEMORI. Sebut angka hanya bila terbaca pada layar atau dinyatakan eksplisit di metadata produk; jangan menafsirkan judul yang ambigu.
