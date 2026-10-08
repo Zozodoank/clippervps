@@ -462,6 +462,20 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     const prodInfo = extractCoreProductInfo(productTitle, metadata.description || '');
     const coreNounLower = (prodInfo.coreProductNoun || '').toLowerCase();
     const targetTitleLower = productTitle.toLowerCase();
+    const metadataIdentityText = normalizeText(combinedText);
+    const hasMetadataIdentity = (value) => {
+      const identity = normalizeText(value || '');
+      return !identity || (` ${metadataIdentityText} `).includes(` ${identity} `);
+    };
+
+    // Brand/model on the target listing are hard identity constraints. Visual-search
+    // provenance never allows a different model from passing this backend metadata gate.
+    if (prodInfo.brand && !hasMetadataIdentity(prodInfo.brand)) {
+      return { eligible: false, reason: `Metadata video tidak memuat merek target "${prodInfo.brand}".` };
+    }
+    if (prodInfo.model && !hasMetadataIdentity(prodInfo.model)) {
+      return { eligible: false, reason: `Metadata video tidak memuat model target "${prodInfo.model}".` };
+    }
 
     // Deteksi benturan jenis produk dapur yang tidak kompatibel (Hanya untuk kitchen_tools)
     if (!isGadget) {
