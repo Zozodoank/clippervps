@@ -4858,7 +4858,7 @@ export function isTitleMatchingProduct(candidateTitle, productWords = [], extraM
   // When candidates are found via Reverse Image Search, Bing Visual Search, Gemini Vision queries,
   // or when an official product image is being verified, the title may be OEM / global English.
   // We pass them through Filter 1 so AI Vision can verify physical product correspondence directly.
-  if (extraMeta?.isVisualSearch || extraMeta?.skipKeywordMatch || !Array.isArray(productWords) || productWords.length === 0) {
+  if ((extraMeta?.isVisualSearch && !extraMeta?.requireProductIdentity) || extraMeta?.skipKeywordMatch || !Array.isArray(productWords) || productWords.length === 0) {
     return true;
   }
 

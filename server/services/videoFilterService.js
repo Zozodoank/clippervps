@@ -509,6 +509,7 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
       description: metadata.description,
       tags: metadata.tags,
       isVisualSearch: Boolean(options.isVisualSearch),
+      requireProductIdentity: true,
       niche: options.niche,
     });
 
