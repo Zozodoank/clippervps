@@ -83,10 +83,27 @@ Untuk me-restart semua proses:
 pm2 restart all
 ```
 
-Simpan konfigurasi PM2 agar otomatis berjalan saat VPS reboot:
+Simpan konfigurasi PM2 agar otomatis berjalan saat VPS reboot (Systemd):
 ```bash
 pm2 save
-pm2 startup
+pm2 startup systemd
+```
+
+### D. Hardening & Ops (Log & Disk)
+
+**Rotasi Log (Wajib untuk VPS):**
+Gunakan `pm2-logrotate` agar log PM2 tidak memenuhi disk VPS.
+```bash
+pm2 install pm2-logrotate
+```
+
+**Pembersihan Disk Berkala (Cron):**
+Buat cron job mingguan untuk membersihkan folder temp dan job yang gagal agar storage tidak habis.
+Buka konfigurasi cron dengan `crontab -e` lalu tambahkan:
+```cron
+# Bersihkan temp file lama setiap hari Minggu jam 02:00
+0 2 * * 0 node /root/clippervps/server/clean-failed-jobs.js
+0 2 * * 0 find /root/clippervps/server/temp -type f -mtime +3 -delete
 ```
 
 ---
