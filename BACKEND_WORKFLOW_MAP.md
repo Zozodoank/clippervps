@@ -44,7 +44,7 @@ Urutan fase di bawah diambil dari penanda `updateProgress({ step })` nyata di ko
 
 ### Fase 2 — Analisa Cache & Pemilihan Highlight (L640–700)
 10. `step: 'frames_raw'` (L646) — `extractFrames()` (`frameExtractor.js`): interval 3.0 detik, cap 200 frame (hemat Termux).
-11. **Gatekeeper lokal** (L655, stage event `gatekeeper`) — `inspectFramesLocally()` → microservice Python port 5050 (`gatekeeper/service.py`) via `callAIGatekeeperMicroservice()`: SCRFD/BlazeFace (faceless), DBNet (subtitle terbakar & promo overlay), MobileNetV3 (natural vs kartun/bumper). **<3 frame bersih ⇒ throw `isAiRejection`**.
+11. **Oracle Lokal Qwen (VPS)** (L655, stage event `gatekeeper`) — `vlmOracleService.js` via `worker.py` lokal (port 5000 + llama.cpp port 8080) untuk memvonis frame. **<3 frame bersih ⇒ throw `isAiRejection`**.
 12. `selectHighlightWithAI()` (L679, `aiService.js`) — Gemini pilih jendela klip HANYA dari frame bersih; hasil `highlight.clips`.
 
 - [ ] Evaluasi Fase 2
@@ -110,7 +110,7 @@ Urutan fase di bawah diambil dari penanda `updateProgress({ step })` nyata di ko
 flowchart TD
     A["POST /generate atau /auto/start"] --> Q["heavyTaskQueue pLimit(1)"]
     Q --> P0["Fase 0: init + skrining bulky"]
-    P1 --> P2["Fase 2: frames_raw + Gatekeeper port 5050 + selectHighlightWithAI"]
+    P1 --> P2["Fase 2: frames_raw + Oracle Lokal Qwen (VPS) + selectHighlightWithAI"]
     P2 --> ML{"Master Loop: pool kandidat"}
     ML --> P3["Fase 3: pre-flight + harvest + unduh HD/segmen"]
     P3 --> P4["Fase 4: render silent + Gemini scripting + scene/VO conform"]

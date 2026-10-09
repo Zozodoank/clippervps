@@ -1,33 +1,31 @@
 # ClipperVPS - Project Identity & Architecture Guidelines
 
 > **Catatan untuk AI Agent:**
-> Project ini adalah **ClipperVPS** — aplikasi web AI Affiliate Clipper yang berjalan **sepenuhnya lokal** di mesin developer.
-> Target lingkungan runtime: **PC Windows** dan **HP Android via Termux**. Tidak ada server/cloud remote.
-> Repository: `https://github.com/Zozodoank/clippervps.git` (hanya sebagai sumber kode untuk `git pull` lokal).
+> Project ini adalah **ClipperVPS** — aplikasi web AI Affiliate Clipper yang berjalan di **VPS Ubuntu 22.04**.
+> Target lingkungan runtime: **VPS Ubuntu 22.04** (sebagai server backend + worker AI) dan **HP Android via Termux** (sebagai proxy yt-dlp).
+> Repository: `https://github.com/Zozodoank/clippervps.git`
 
 ---
 
 ## 🖥️ Lingkungan Runtime
 
-Aplikasi dijalankan langsung di perangkat user (bukan di-hosting remote):
+Aplikasi dijalankan di VPS dan diakses secara remote/lokal:
 
-* **PC Windows:** jalankan lewat [dev-runner.js](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/dev-runner.js) (`npm run dev`). Backend Express + Frontend Vite aktif satu perintah.
-* **HP Android / Termux:** ikuti [CARA_JALANKAN_TERMUX.md](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/CARA_JALANKAN_TERMUX.md). Setup sekali jalan via [setup-termux.sh](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/setup-termux.sh). Panel kontrol lokal tersedia di [menu-vps.sh](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/menu-vps.sh).
+* **VPS Ubuntu 22.04:** Target utama. Jalankan backend, `llama-server`, dan `worker.py` (Oracle Lokal) via **PM2**.
+* **HP Android / Termux:** Digunakan sebagai reverse tunnel (microsocks) untuk mem-bypass pemblokiran IP YouTube (HTTP 429). Ikuti skrip `scripts/phone-proxy-connect.sh`.
 
 ---
 
 ## ⚙️ Proses & Service (Semua Lokal)
 
-1. **Backend + Frontend (dev-runner.js):**
-   * Express Backend (default port `5000`) + Vite Frontend (port `3000`).
-   * FFmpeg, yt-dlp, dan integrasi Google Gemini / OpenRouter AI.
-2. **Oracle Kaggle:** satu-satunya pemutus visual. Semua frame yang dikirim harus berupa gambar JPEG berkanvas tepat 9:16. Sumber dipertahankan utuh dengan letterbox; kegagalan konversi menghentikan job dan frame mentah tidak dikirim.
-3. **Termux (opsional):** bisa dijalankan via **PM2** pada perangkat Termux itu sendiri, bukan remote.
+1. **Backend + Frontend:** Express (port `5000`) + Vite (port `3000`).
+2. **Oracle Lokal Qwen (VPS):** Satu-satunya pemutus visual. Menggunakan `worker.py` dan `llama-server` yang berjalan secara lokal di VPS (mem-bypass Kaggle). Semua frame yang dikirim harus berupa JPEG 9:16.
+3. **Termux Proxy:** Berjalan di HP, merutekan lalu lintas `yt-dlp` ke HP untuk menghindari 429 dari VPS.
 
 ### Verifikasi visual dan voice-over
 
-* Gatekeeper lokal telah dihapus dari jalur runtime. Mode produksi wajib menggunakan Oracle Kaggle; kegagalan, timeout, atau vonis tidak sah menghentikan job tanpa fallback keputusan visual lokal.
-* Frame langsung dan setiap grid/montage yang diunggah ke Kaggle harus tepat 9:16.
+* Gatekeeper lokal telah dihapus dari jalur runtime. Mode produksi wajib menggunakan Oracle lokal Qwen (VPS); kegagalan, timeout, atau vonis tidak sah menghentikan job.
+* Frame langsung dan setiap grid/montage yang diunggah ke Oracle harus tepat 9:16.
 * Voice-over hanya memakai Gemini TTS. Jangan menambahkan atau mengaktifkan provider TTS lain.
 
 ## ?? Alur Kerja Sinkronisasi Kode

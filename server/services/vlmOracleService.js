@@ -114,7 +114,7 @@ export function assertOracleConnected({ logger = console, env = process.env } = 
     const mode = String(env.VISION_VERIFY_MODE || 'oracle').trim().toLowerCase();
     return {
       ok: false, detail: 'mode_not_oracle', lastSeenAt: null,
-      message: `Verifikasi visual wajib lewat Oracle Kaggle (VISION_VERIFY_MODE=oracle). Mode terdeteksi: '${mode}'.`,
+      message: `Verifikasi visual wajib lewat Oracle lokal Qwen (VPS) (VISION_VERIFY_MODE=oracle). Mode terdeteksi: '${mode}'.`,
     };
   }
   if (!String(env.API_ACCESS_TOKEN || '').trim()) {
@@ -132,11 +132,11 @@ export function assertOracleConnected({ logger = console, env = process.env } = 
       : 'belum pernah memanggil API sama sekali';
     return {
       ok: false, detail: 'notebook_offline', lastSeenAt,
-      message: `Notebook Kaggle tidak terhubung (${seenDesc}; batas ${Math.round(freshMs / 1000)} dtk). Jalankan kernel oracle + tunnel, lalu ulangi job.`,
+      message: `Oracle lokal Qwen (VPS) tidak terhubung (${seenDesc}; batas ${Math.round(freshMs / 1000)} dtk). Jalankan worker.py, lalu ulangi job.`,
     };
   }
-  if (logger && logger.log) logger.log(`[Oracle] Preflight koneksi OK: notebook terlihat ${Math.round(ageMs / 1000)} dtk lalu.`);
-  return { ok: true, detail: 'connected', lastSeenAt, message: 'Oracle Kaggle terhubung.' };
+  if (logger && logger.log) logger.log(`[Oracle] Preflight koneksi OK: worker terlihat ${Math.round(ageMs / 1000)} dtk lalu.`);
+  return { ok: true, detail: 'connected', lastSeenAt, message: 'Oracle lokal Qwen (VPS) terhubung.' };
 }
 
 /**

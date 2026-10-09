@@ -151,6 +151,8 @@ const FLAG_NORMALIZERS = {
   SCENE_SAMPLE_FPS: (env) => Math.max(0.5, Number(env.SCENE_SAMPLE_FPS) || 1),
   // Jatah waktu VLM per frame (detik) untuk timeout subprocess llama-mtmd-cli. Default 10.
   GK_VLM_TIMEOUT_SEC_PER_FRAME: (env) => Math.max(1, Number(env.GK_VLM_TIMEOUT_SEC_PER_FRAME) || 10),
+  // downloader.js: YTDLP_PROXY_REQUIRED === '1'
+  YTDLP_PROXY_REQUIRED: (env) => env.YTDLP_PROXY_REQUIRED === '1',
 };
 
 export const SNAPSHOT_FLAG_KEYS = Object.keys(FLAG_NORMALIZERS);

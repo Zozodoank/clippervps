@@ -57,7 +57,7 @@ describe('classifyFailure — prioritas flag terstruktur', () => {
     // Marker infra menang walau kalimat pembungkusnya berbunyi "belum memiliki cukup cuplikan":
     // penyebab sebenarnya unduhan, bukan kontennya.
     expect(classifyFailureMessage(INFRA_MSG)).toBe('infra');
-    expect(classifyFailureMessage('Oracle Kaggle tidak terhubung')).toBe('infra');
+    expect(classifyFailureMessage('Oracle lokal Qwen (VPS) tidak terhubung')).toBe('infra');
     expect(classifyFailureMessage('YouTube membatasi IP: HTTP 429 too many requests')).toBe('infra');
     expect(classifyFailureMessage('Resource has exhausted quota for gemini')).toBe('infra');
     expect(classifyFailureMessage('currentCandIdx is not defined')).toBe('infra');

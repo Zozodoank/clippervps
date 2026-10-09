@@ -1,98 +1,144 @@
-Sebelum menyusun plan, saya verifikasi kondisi aktual di kode: (1) apakah SCRFD sudah benar-benar menggantikan YuNet, (2) bagaimana gerbang mode oracle menolak job tanpa Kaggle (kunci untuk "matikan sementara Kaggle"), (3) titik-titik perubahan grid/kirim frame.
+# Rencana: ClipperVPS di VPS Ubuntu 22.04 — Oracle Qwen2.5-VL-3B Lokal + yt-dlp via Jaringan HP
 
+## Ringkasan Keputusan Arsitektur (sudah diverifikasi terhadap kode)
 
-SCRFD memang sudah default di kode (L301: `GK_FACE_BACKEND` default `scrfd`) ✅. Sekarang saya petakan gerbang Kaggle dan struktur kirim frame/vonis:
-
-
-Konteks lengkap — kontrak vonis sudah punya `perFrame[]` (bagnode kunci: `index`), gerbang Kaggle terpusat di `stage1Render.js` L358–409, dan SCRFD memang sudah default di `service.py` L301. Saya sudah menimbang tiga sudut desain (kesederhanaan, performa, perubahan-minimal) dan memverifikasi kelayakannya di kode. Berikut plan finalnya.
+1. **Kontrak oracle TIDAK diubah sama sekali.** Notebook Kaggle hanyalah *klien* dari `server/api/routes/vlmOracleRoutes.js` (`claim` → unduh frame → `result`). Penggantinya adalah **worker Python lokal di VPS** yang memanggil `http://127.0.0.1:5000/api/vlm-oracle/claim` dengan `protocolVersion = '2026-10-06-grid-v1'` (konstanta `ORACLE_GRID_PROTOCOL` di `server/services/vlmOracleService.js` L23). Heartbeat (`touchOracleHeartbeat` di jobStore.js L631) otomatis terpelihara dari claim — gerbang strict di `stage1Render.js` L355–399 (`assertOracleConnected`) **tetap lulus tanpa perubahan 1 baris pun**.
+2. **Runtime model:** `llama.cpp` `llama-server` (API kompatibel OpenAI) + `Qwen2.5-VL-3B-Instruct` GGUF Q4_K_M + mmproj. Alasan: CPU VPS tidak butuh CUDA/torch/pip; RAM ±2,5 GB; satu biner, satu file konfigurasi.
+3. **Routing yt-dlp via HP:** HP (Termux) menjalankan SOCKS5 server (`microsocks` port 1080) dan SSH **reverse tunnel** `-R 10808:127.0.0.1:1080` ke VPS. `downloader.js` `getSmartProxyArgs()` (L90–106) SUDAH membaca `RESIDENTIAL_PROXY`/`PROXY_URL` dan memeriksa `/proc/net/tcp` sebelum memakai `--proxy` — di Ubuntu 22.04 mekanisme ini bekerja apa adanya; bila tunnel mati, yt-dlp diam-diam lanjut direct (tidak merusak job).
+4. **`VISION_VERIFY_MODE=oracle` tetap**, `ORACLE_AUTO_LAUNCH=0` (tidak ada kaggle CLI di VPS). Jalur Kaggle **tidak dihapus** — tetap tersedia sebagai fallback manual.
 
 ---
 
-# PLAN: Kalibrasi Lokal (Kaggle Mati) + Grid 2×2 @240p + Zone-Classifier Pengganti DBNet
+## Fase A — Persiapan VPS Ubuntu 22.04 (infrastruktur)
 
-> **Catatan status:** YuNet → SCRFD sudah selesai Anda kerjakan (`GK_FACE_BACKEND` default `scrfd`, L301). Plan ini TIDAK mengulang itu — hanya memakai ulang benchmark untuk membuktikannya.
+**Target:** SSH `ubuntu@208.76.40.194 -p 14115` (password ada di `server/.env` `VPS_PASSWORD`; executor wajib memakai password dari `.env`, bukan menyalinnya ke output/log).
 
-## Fase 0 — Persiapan (prasyarat semua fase)
-1. **Sinkronkan copy kontainer Ubuntu HP** (`/root/clippervps`) dengan repo — hasil bench kemarin menunjukkan stage `yunet_crop/yunet_full`, artinya service.py di kontainer **lebih tua** dari perubahan SCRFD Anda. `git pull` di kontainer, verifikasi `pgrep service.py` lama mati, start ulang.
-2. Bersihkan komentar usang header `service.py` L5 ("MediaPipe & YuNet") — dokumentasi saja, tanpa perubahan perilaku.
+1. **`A1. Buat skrip `setup-vps.sh`** di root repo (pola `setup-termux.sh`: idempoten, `set -e`, log per langkah). Isi:
+   - `sudo apt-get update && sudo apt-get install -y git curl wget ffmpeg python3 python3-venv python3-pip build-essential cmake pkg-config ca-certificates`
+   - Node.js 20 LTS via NodeSource (wajib ≥20: `better-sqlite3@13` di `server/package.json`), lalu `npm i -g pm2`.
+   - yt-dlp: unduh biner release terbaru ke `/usr/local/bin/yt-dlp` (`chmod +x`) — jangan pip (pip kadang lebih tua).
+   - Clone repo ke `/opt/clippervps`; `npm install` di `server/` dan `client/`.
+   - **whisper.cpp** (path `.env` sudah menunjuk `/root/clippervps/server/bin/whisper/whisper-cli` — sesuaikan agar cocok dengan layout `/opt/clippervps` ATAU simpan repo di `/root/clippervps` agar path `.env` lama tetap valid; rekomendasi: **clone ke `/root/clippervps`** supaya tidak perlu mengubah `WHISPER_CPP_BIN`/`WHISPER_MODEL`): clone `ggerganov/whisper.cpp`, `make`, unduh `ggml-base.bin` → `server/bin/whisper/models/`.
+   - **llama.cpp**: clone `ggerganov/llama.cpp`, `cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --config Release -j$(nproc)` → biner di `build/bin/llama-server`.
+2. **`A2. Unduh model** ke `/opt/clippervps-models/` (pakai `wget -c` agar resume):
+   - GGUF utama: repo `bartowski/Qwen2.5-VL-3B-Instruct-GGUF` file `Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf` (fallback bila nama file berbeda di HF: `ggml-org/Qwen2.5-VL-3B-Instruct-GGUF` atau `mradermacher/…`; verifikasi dengan `llama-server --version` + uji smoke Fase B).
+   - mmproj: `mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf` dari repo resmi `ggml-org`.
+3. **`A3. Verifikasi dasar:** `ffmpeg -version`, `yt-dlp --version`, `node -v` (≥20), `python3 --version`, `whisper-cli -h` jalan, `llama-server --version` jalan. Simpan bukti di log setup.
 
-## Fase 1 — MODE KALIBRASI LOKAL: matikan Kaggle sementara (deliverable utama "melihat hasil output")
-Kebijakan Kaggle-only (mandate 2026-10) tidak boleh dilanggar diam-diam; maka dibuat **knob eksplisit yang beku per-job**, bukan mematikan `VISION_VERIFY_MODE`.
+**Gerbang A:** semua biner tervalidasi; repo ter-clone; `npm test` di `server/` hijau (vitest, DB terisolasi — jangan sentuh `jobs.db`).
 
-| Berkas | Perubahan |
+---
+
+## Fase B — Oracle Lokal Qwen2.5-VL-3B (pengganti Kaggle)
+
+1. **`B1. Buat `server/oracle_local/worker.py`** — port TEPAT dari `kaggle/vlm_oracle_qwen.py` (jangan tulis ulang dari nol), ganti `ask()` transformers → HTTP ke llama-server. Kontrak fungsi yang wajib dipertahankan identik:
+   - `main()` loop: `POST {BASE_URL}/api/vlm-oracle/claim` body `{"workerId":"local-vps","protocolVersion":"2026-10-06-grid-v1","sourceHash":md5(__file__)}` header `x-api-token`; `claimed:false` → baca `pending`/`activeJobs`, sleep `ORACLE_POLL_SEC` (default 2 s; worker sistemd/PM2 selalu hidup, TIDAK ada idle-exit).
+   - `verdict_batch()`: unduh frame `GET {BASE_URL}{url}` (header token) → `prep_image` (MAX_SIDE=1024) → `ask()` batch → **recovery chain sama persis**: `prompt_retry` (compact prompt) → `split2` (chunk 2 frame) → `single_frame`; grid mode: `resolve_grid_cell_verdicts` + `infer_grid_cell` (crop sel dari grid `raw%03d.jpg`, `col=cell%2, row=cell//2`).
+   - `ask()` baru: `POST {LLAMA_SERVER_URL}/chat/completions` dengan `messages=[{role:"user", content:[{type:"image_url", image_url:{url:"data:image/jpeg;base64,…"}}…, {type:"text",text:prompt}]}]`, `temperature:0`, `max_tokens:ORACLE_MAX_NEW_TOKENS` (128). Pertahankan `looks_degenerate` + `extract_json` (bracket-balancing sadar-string) + `median_int` + `clamp_score` **byte-per-byte** dari notebook.
+   - `post_result()`: `POST {BASE_URL}/api/vlm-oracle/result` body `{batchId, attempt, workerId, protocolVersion, verdict|error}`; tangani 409 (expired/worker_mismatch) & 404 (pruned) & 426 (protocol mismatch) persis notebook.
+   - Env worker: `ORACLE_BASE_URL=http://127.0.0.1:5000`, `ORACLE_TOKEN` (dibaca dari `server/.env` `API_ACCESS_TOKEN`), `LLAMA_SERVER_URL=http://127.0.0.1:8080/v1`, `ORACLE_NO_MODEL=1` untuk dry-run (klaim+unduh+report TANPA model — sama dengan pola dry-run Kaggle).
+2. **`B2. Jalankan llama-server** via PM2 (bukan nohup):
+   `llama-server -m /opt/clippervps-models/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf --mmproj /opt/clippervps-models/mmproj-…-f16.gguf --host 127.0.0.1 --port 8080 --ctx-size 4096 --threads $(nproc) --parallel 1`
+3. **`B3. Smoke test dua lapis:**
+   - `curl http://127.0.0.1:8080/health` → `{"status":"ok"}`.
+   - Satu gambar uji 9:16 via `/v1/chat/completions` → JSON `{"safe":…}` ter-parse. **Bila format image gagal** (llama.cpp perlu format `image_url` data-URL), sesuaikan `ask()`; ini satu-satunya titik integrasi yang boleh berubah.
+   - Dry-run worker (`ORACLE_NO_MODEL=1`) + enqueue batch tiruan (pakai harness gaya `scratch/termux_repro_fg.sh`): pastikan claim→download→result tercatat di `server/logs/audit.log` dan `GET /api/vlm-oracle/status` menunjukkan `connected:true`, `workerId=local-vps`, `protocolVersion=2026-10-06-grid-v1`.
+4. **`B4. Daftarkan PM2**: `pm2 start worker.py --name oracle-local --interpreter python3`, lalu `llama-server` → nama `oracle-model`, `dev-runner.js` → `clipper`; `pm2 save`.
+
+**Gerbang B:** status oracle `connected:true` dengan worker `local-vps`; grid batch ter-claim (cek field `cells` di log claim); dry-run beres tanpa error.
+
+---
+
+## Fase C — Belokkan jaringan yt-dlp VPS ke HP (SOCKS5 reverse tunnel)
+
+1. **`C1. Sisi HP (Termux)** — buat `scripts/phone-proxy-connect.sh` + panduan di `ORACLE_VPS.md`:
+   - `pkg install openssh microsocks` (autossh opsional).
+   - `ssh-keygen` + `ssh-copy-id -p 14115 ubuntu@208.76.40.194` (sekali).
+   - Jalankan `microsocks -i 127.0.0.1 -p 1080` di sesi Termux (atau Termux:Boot).
+   - Jalankan tunnel persisten: `autossh -M 0 -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -R 10808:127.0.0.1:1080 -p 14115 ubuntu@208.76.40.194` (tanpa autossh: loop `ssh -N …` dengan retry). Skrip di HP boleh `.sh` sederhana; Termux:Boot script disertakan di panduan.
+2. **`C2. Sisi VPS**: `server/.env` tambah `PROXY_URL=socks5h://127.0.0.1:10808` (baris komentar lama di `.env` L35–38 sudah mendokumentasikan desain ini). **Tidak ada perubahan kode `downloader.js`.**
+3. **`C3. Verifikasi routing:**
+   - `curl --socks5-hostname 127.0.0.1:10808 https://api.ipify.org` → harus mengembalikan IP publik HP (bukan IP VPS).
+   - `yt-dlp --proxy socks5h://127.0.0.1:10808 --skip-download -O "%(title)s" <URL YouTube uji>` sukses.
+   - Matikan tunnel di HP → jalankan satu job tiruan download → pastikan `getSmartProxyArgs()` melewatkan `--proxy` (log `[Downloader] 🛡️` tidak muncul) dan job tidak crash.
+4. **`C4. (Opsional, dianjurkan) flag `YTDLP_PROXY_REQUIRED`**: di `downloader.js` `getSmartProxyArgs()`, bila proxy localhost diset TAPI tidak listening DAN `YTDLP_PROXY_REQUIRED==='1'` → throw error jelas "Proxy HP tidak tersambung" (fail-fast) alih-alih unduh direct dari IP datacenter (risiko blokir YouTube). Default `'0'` = perilaku lama. Tambah 3–5 unit test untuk `getSmartProxyArgs` (mock `fs.existsSync` + env) di `server/tests/downloaderProxy.test.js`; tambahkan ke `FLAG_NORMALIZERS` di `server/config/runtimeFlags.js` (nilai `=== '1'`) agar beku per-job.
+
+**Gerbang C:** IP lewat proxy = IP HP; download YouTube lewat HP sukses; fallback direct tetap berfungsi saat tunnel mati.
+
+---
+
+## Fase D — Penyesuaian Alur Kerja VPS (env + E2E job nyata)
+
+1. **`D1. `server/.env` (VPS, hasil akhir) — ubah hanya baris berikut** (sisanya biarkan):
+   ```
+   PROXY_URL=socks5h://127.0.0.1:10808
+   ORACLE_AUTO_LAUNCH=0                      # tidak ada kaggle CLI di VPS
+   VLM_ORACLE_BASE_URL=http://127.0.0.1:5000 # worker lokal, bukan tunnel
+   VLM_ORACLE_TOTAL_TIMEOUT_SEC=3600         # CPU 500 frame ± 125 pass grid
+   VLM_ORACLE_TIMEOUT_SEC=300                # per batch (sudah aman)
+   VLM_ORACLE_CONNECT_TIMEOUT_SEC=60         # worker lokal klaim < 5 dtk
+   APP_TIMEZONE=Asia/Jakarta                 # quota harian benar di VPS (UTC)
+   ```
+   Pertahankan: `VISION_VERIFY_MODE=oracle`, `VLM_ORACLE_GRID=2`, `VLM_ORACLE_MAX_FRAMES=500`, `VLM_ORACLE_AUDIT_MAX_FRAMES=240`, `VLM_ORACLE_FRAME_HEIGHT=240`, `RENDER_DOWNLOAD_SECTIONS=1`, `RENDER_NO_FULL_DOWNLOAD=1`, `API_ACCESS_TOKEN` (wajib — endpoint oracle menolak 503 tanpanya), `CLOUDFLARE_TUNNEL_URL`/`PUBLIC_BASE_URL` (untuk akses UI via ngrok; **matikan ngrok di HP/Termux dulu** — ngrok free hanya 1 sesi per domain).
+2. **`D2. Cosmetic (rendah risiko):** ubah teks pesan gerbang `assertOracleConnected` (vlmOracleService.js L111–140) dari "Oracle Kaggle" → "Oracle lokal Qwen (VPS)" agar log/riwayat job tidak menyesatkan. Jangan sentuh logika. Update string terkait di `stage1Discovery.js` L484. Jalankan `npm test` (test `vlmOracle.test.js` tidak mengunci teks — verifikasi dulu sebelum ubah; bila ada assertion teks, sesuaikan snapshot secara eksplisit).
+3. **`D3. Benchmark oracle lokal** — buat `scratch/bench_oracle_vps.sh`: enqueue N batch grid (8/16/32/64 frame) → catat `elapsedMs` per batch dari vonis (field sudah ada di `normalizeOracleVerdict`) → tabel tuning. Target awal: < 30 s per grid pass. Kalau > 60 s: turunkan `VLM_ORACLE_MAX_FRAMES` ke 240 dan/atau `VLM_ORACLE_FRAME_HEIGHT` tetap 240.
+4. **`D4. Job manual E2E nyata** (gerbang P1 yang selama ini terbuka — lihat `RANGKUMAN_CLIPPER.md` §13.6): 1 kandidat YouTube kitchen lewat UI (via tunnel) atau curl `POST /api/generate` dengan token. Cek urutan: download via proxy HP → `frames_raw` → oracle claim/result (`server/logs/job-trace.jsonl` + `audit.log`) → `cleanFrames≥3` → render → FINAL QC → `completed`. Bandingkan `GET /api/job-trace/<jobId>`: event lengkap, `provider=yt-dlp` dengan proxy aktif.
+5. **`D5. Auto mode E2E**: 1 produk via `/api/auto/start` → discovery → render → `completed`. Ledger `product_rejects.json` tidak mencatat kegagalan infra (perilaku sudah ada).
+
+**Gerbang D:** 1 job manual + 1 job auto `completed` dengan vonis lokal; trace job menunjukkan stage oracle lulus; tidak ada pesan "Kaggle" tersisa di log job baru.
+
+---
+
+## Fase E — Hardening Ops & Dokumentasi
+
+1. **`E1. Ekosistem PM2 di VPS**: `clipper` (dev-runner), `oracle-model` (llama-server), `oracle-local` (worker.py), `tunnel` (start-tunnel.sh auto). `pm2 startup systemd` + `pm2 save` → reboot VPS → semua hidup sendiri.
+2. **`E2. Rotasi log**: `pm2 install pm2-logrotate` (10 MB × 30 file) + pastikan `server/logs/audit.log` & `job-trace.jsonl` ikut rotasi (rotasi internal 2 MB sudah ada).
+3. **`E3. Disk**: pasang job cron mingguan memanggil `node server/clean-failed-jobs.js` + hapus `server/temp/*` > 3 hari (pola `cleaner.js`); pantau `df -h` di menu.
+4. **`E4. Dokumentasi (wajib, karena mandate user menang atas AGENTS.MD):**
+   - **BARU `ORACLE_VPS.md`**: runbook lengkap — setup, daftar PM2, cara cek `GET /api/vlm-oracle/status`, cara benchmark, cara rollback ke Kaggle, cara menyambung/memutus tunnel HP, troubleshooting (worker mati = job fail-closed dengan `reason:never_claimed`).
+   - **UPDATE `AGENTS.md` + `GEMINI.md`**: lingkungan runtime kini **VPS Ubuntu 22.04 sebagai target utama** (PC Windows & Termux tetap alternatif); "Oracle Kaggle" → "Oracle lokal Qwen2.5-VL-3B (llama.cpp) di VPS, kontrak `/api/vlm-oracle/*` tidak berubah"; tambah paragraf routing yt-dlp via HP.
+   - **UPDATE `server/.env.example`**: blok `ORACLE_LOCAL_*` + `PROXY_URL`/`YTDLP_PROXY_REQUIRED` + nilai VPS (`VLM_ORACLE_TOTAL_TIMEOUT_SEC=3600`).
+   - **UPDATE `BACKEND_WORKFLOW_MAP.md`**: titik "Oracle Kaggle" di Fase 2/3 menjadi "Oracle lokal VPS (worker.py → llama-server)".
+5. **`E5. Commit & push** per fase (konvensi repo: commit per batch, push `origin main`), dengan urutan: A, B, C, D, E. Jangan pernah commit `server/.env`, `jobs.db`, `product_rejects.json` (sudah di-gitignore — verifikasi).
+
+---
+
+## Dependensi & Urutan
+
+```
+Fase A (VPS siap) ──► Fase B (oracle lokal + smoke) ──► Fase C (tunnel HP; paralel-aman dengan B)
+        B+C ──► Fase D (env + benchmark + E2E manual + auto)
+        D ──► Fase E (hardening + dokumen; E5 commit menyertai tiap fase)
+```
+
+## Test Plan & Gerbang (urutan wajib)
+
+| Gerbang | Bukti lolos |
 |---|---|
-| `server/config/runtimeFlags.js` | Tambah flag `ORACLE_OFFLINE_CALIBRATION` di `FLAG_NORMALIZERS` (default `false`), helper `isOracleOfflineCalibration(env)`, dan modifikasi `localGatekeeperVetoMode()`: saat kalibrasi ON → paksa `'strict'` (Gatekeeper jadi pemutus, karena tidak ada pemutus lain). Snapshot otomatis mencakup via safety-net loop L265. |
-| `server/worker/stage1Render.js` | Gerbang L358–409: jika kalibrasi ON → **lewati** `assertOracleConnected`, zombie-probe, auto-launch; set `jobMeta.oracleCalibration = { skippedAt, gatekeeperBackend: 'local-strict' }` (forensik). `recordStageEvent` wajib menulis baris mencolok: `MODE KALIBRASI LOKAL — Kaggle DIMATIKAN`. |
-| Titik oracle berikutnya di `stage1Render.js` | `preflightCandidatesWithOracle` (L1491 — sudah berguard `isOraclePreflightEnabled`, cukup AND-kan `!kalibrasi` → kandidat turun ke jalur Gemini dorman yang masih utuh), blok veto pool (L1705 `if (isVlmOracleEnabled(...))` → AND `!kalibrasi`), pass `clip_audit` (`auditClipsWithOracle` → gerbang internal `resolveOracleConfig` mengembalikan `enabled:false, note` saat kalibrasi). |
-| `server/services/vlmOracleService.js` | `resolveOracleConfig()` membaca kalibrasi → `enabled: false` untuk SEMUA konsumen (satu sumber kebenaran, gerbang stage1Render tetap punya pesan sendiri). |
-| `server/.env.example` + `AGENTS.md` | Dokumentasikan: **hanya untuk kalibrasi**; vonis hasil kalibrasi tidak boleh dipakai sebagai bukti lolos produksi (jobMeta ditandai). |
-| Test | `configSnapshot.test.js` (flag baru beku + retry konsisten), `localVetoAdvisory.test.js` (kalibrasi ⇒ strict), test baru `oracleCalibrationGate.test.js` (gerbang lolos saat offline DAN terekam di meta). |
+| A3 | `node -v`≥20, `llama-server --version`, `whisper-cli` jalan, `npm test` hijau di VPS |
+| B3 | `llama-server /health` ok; smoke 1 gambar → JSON; dry-run worker claim→result di audit.log; `/api/vlm-oracle/status` `connected:true` worker `local-vps` |
+| C3 | `curl --socks5-hostname` → IP HP; yt-dlp via proxy sukses; tanpa tunnel → fallback direct tanpa crash |
+| D4/D5 | job manual & auto `completed`; trace job memuat stage oracle; `FINAL_QC` lulus |
+| E1 | reboot VPS → PM2 resurrect → 4 service up; heartbeat worker segar < 300 dtk |
 
-**Hasil yang bisa Anda lihat:** job jalan end-to-end tanpa notebook Kaggle; filter = SCRFD + DBNet + MobileNetV3 (mode lama `strict` yang dorman — kodenya memang sengaja tidak dihapus, L367).
+## Risiko & Mitigasi
 
-## Fase 2 — Anggaran sampling 240p @50 frame/menit (konfigurasi saja, tanpa kode)
-`.env` server (nilai baru, semuanya sudah punya normalizer yang mendukung):
-```
-RENDER_SAMPLE_INTERVAL_SEC=1.2      (50 f/menit; clamp min 0.5 aman)
-VLM_ORACLE_FRAME_HEIGHT=240          (clamp 240..720 — pas di batas bawah)
-VLM_ORACLE_MAX_FRAMES=500            (plafon pool; tidak di-clamp, aman)
-VLM_ORACLE_AUDIT_MAX_FRAMES=240      (plafon maksimum klamp — ok)
-GK_MAX_BATCH_FRAMES=500              (cap agregat gatekeeper, jangan 240 lagi)
-SAMPLE_MAX_FRAMES=500
-VLM_ORACLE_TOTAL_TIMEOUT_SEC=1800    (600 TIDAK cukup utk 500 frame — lihat hasil bench: 500 f ≈ 18 mnt lokal)
-VLM_ORACLE_TIMEOUT_SEC=300           (per batch grid: 8 gambar×4 frame butuh lebih lama dari 1 frame)
-```
-⚠️ Bukti terukur kemarin: gatekeeper 2,35 s/frame ⇒ **kalau Gatekeeper ikut menganalisa semua frame, 500 frame = ±20 menit**. Rekomendasi: biarkan Gatekeeper tetap pada cap 240 (subsample merata) dan oracle yang makan 500 — tambahkan catatan di test `gatekeeperPipeline` bila perilaku ini diuji.
-
-## Fase 3 — Grid 2×2 untuk pengiriman Oracle (setelah Fase 1 terbukti)
-Prinsip desain: **grid adalah kendaraan angkut, kontrak vonis tidak berubah** — `perFrame[].index` tetap index frame asli; pemetaan sel dilakukan server.
-
-1. **`server/utils/frameGrid.js` (baru, pure function)** — `planGrids(frames, cells=4)` → `[{ gridPath, cells:[{index,sceneIdx,timestamp}], ... }]` row-major. Diuji unit penuh tanpa FFmpeg.
-2. **Menjahit gambar via FFmpeg** (bukan library Node baru — tidak ada sharp di proyek): fungsi `composeGridImages()` di `vlmOracleService.js` memakai FFmpeg yang sama seperti `extractFrames` L372: input image2 sequence → `-vf tile=2x2`, + `drawtext` angka sel bila font tersedia (fallback: tanpa label, prompt menegaskan urutan row-major). Grid 852×480 **tidak tersentuh** `MAX_SIDE=1024` notebook → detail per frame tetap ~130 token (sesuai hitungan kita).
-3. **Payload claim** (`vlmOracleRoutes.js` + builder batch): item batch = grid dengan field baru `cells:[index...]`; `url` menunjuk file grid. Route serving hanya menambah entri allowlist (pola sudah ada).
-4. **Prompt** (`vlmGateService.buildVlmPrompt` varian oracle / promptBuilders): "Jawab perFrame untuk SEMUA index yang tertera; gambar adalah grid 2×2 baris-demi-baris."
-5. **Normalisasi vonis** (`normalizeOracleVerdict` + `applyOracleVeto`): entri `perFrame` di-distribute ke frame asli via `cells`; index tak dikenal → dibuang; sel tanpa vonis → dianggap BELUM terverifikasi (semantik STRICT tidak dilonggarkan). Recovery single-image notebook tetap bekerja tanpa perubahan berarti.
-6. **Env**: `VLM_ORACLE_GRID=2` (0/1 = kirim terpisah — jalur lama tetap ada sebagai fallback darurat), masuk `FLAG_NORMALIZERS` + snapshot.
-7. **`kaggle/deploy.ps1` / notebook**: HANYA perlu update bila `protocolVersion` dinaikkan — naikkan konstanta dan terima keduanya sementara (notebook lama = kirim terpisah, tidak ada paksaan restart sesi).
-8. Test: `vlmOracleGrid.test.js` (grouping, distribusi vonis, vonis parsial, sel hilang STRICT), update fixture `vlmOracle.test.js`, `vlmOracleFlags`/configSnapshot untuk `VLM_ORACLE_GRID`.
-
-## Fase 4 — Zone-classifier MobileNetV3 pengganti DBNet (jalur independen)
-1. **Dataset distilasi**: `server/gatekeeper/make_zone_text_dataset.py` — jalankan DBNet atas `gatekeeper/dataset/` + `add_watermark_frames.py` → label 5 zona (bawah/atas/4 sudut) per frame crop.
-2. **Training**: `train_zone_text.py` (turunan `train_scene_filter.py`), satu backbone MobileNetV3-S + 5 kepala sigmoid (dijalankan per-crop 224), augmentasi blur/JPEG-low-quality meniru 240p. Ekspor `models/zonetext_v1.onnx` + entry `download_models.py`.
-3. **Integrasi `service.py`**: `GK_TEXT_BACKEND=dbnet|zonemob|sobel` (default tetap `dbnet` sampai zonemob tervalidasi); kelas path baru di `TextGatekeeper` dengan output bentuk sama (`suspicious, total_cov, bottom_cov, reason, cornerActivations`) → warisan stride & tracker sudut tidak berubah.
-4. **Pengiriman ke HP**: `sync-to-termux.ps1`步骤 5 hanya men-scp `*.gguf` — perlu diperluas ke `*.onnx` (atau handalkan `download_models.py` di perangkat).
-5. **Validasi ukur**: jalankan ulang `scratch/bench_gk.sh` (sudah terbukti jalan) → target: stage text < 100 ms/frame; total ±1 s/frame ⇒ 250 frame ≈ 4 mnt. Test Python setara `test_face_policy.py` + `gatekeeperPipeline.test.js` sisi Node (kontrak respons tidak berubah).
-
-## Fase 5 — Uji terima & perbandingan output
-- **Run A (Fase 1):** kandidat yang sama (`m-unxJ6icHc`), Kaggle mati, Gatekeeper strict → simpan video output + `benchmarks.stageMs`.
-- **Run B:** kandidat yang sama, oracle ON → bandingkan klip yang lolos/dibuang; catat false-positive/negative lokal di `scratch/calibration_diff.md`.
-- Kriteria lulus untuk mengaktifkan Fase 3–4 permanen: waktu analisa lokal ≤ 5 mnt/5 mnt video, dan tidak ada frame wajah/subtitle yang lolos yang TIDAK juga lolos saat oracle hidup.
-
-## Urutan & dependensi
-```
-Fase 0 ──► Fase 1 ──► Fase 5(run A)          [segera: "melihat output tanpa Kaggle"]
-              └────► Fase 2 ──► Fase 3 ──► Fase 5(run B)
-Fase 4 (paralel, butuh dataset + training; hanya butuh Fase 0 utk verifikasi device)
-```
-
-## Risiko & mitigasi
 | Risiko | Mitigasi |
 |---|---|
-| Mode kalibrasi dipakai diam-diam untuk produksi | Flag beku di snapshot + `jobMeta.oracleCalibration` + badge di riwayat job client; auto-run menolak kalibrasi (hanya explicit env) |
-| Model 3B salah mengikat sel grid | drawtext nomor sel + instruksi row-major eksplisit + sel tanpa vonis = BELUM terverifikasi (STRICT tidak melonggarkan) + jalur fallback `VLM_ORACLE_GRID=0` |
-| Retry job lama mencampur mode | `configSnapshot` sudah membekukan `ORACLE_OFFLINE_CALIBRATION` & `VLM_ORACLE_GRID` per-job |
-| Distilasi mewarisi blind-spot DBNet | Review manual 200 sampel acak + augmentasi sintetis; DBNet tetap selectable via env |
-| drawtext tanpa font di proot/Termux | Deteksi filter saat runtime → fallback grid tanpa label (prompt row-major) |
-| Kontainer HP berisi kode lama | Fase 0 `git pull` sebelum apa pun |
+| Format image llama-server tidak kompatibel dengan klien port-an | Smoke test B3 sebelum apa pun; sesuaikan `ask()` saja (format `data:image/jpeg;base64`); pin versi llama.cpp yang terbukti di `ORACLE_VPS.md` |
+| CPU lambat → total timeout 1800 s jebol | Benchmark D3; naikkan `VLM_ORACLE_TOTAL_TIMEOUT_SEC=3600` (sudah default baru); turunkan `VLM_ORACLE_MAX_FRAMES` bila perlu |
+| Tunnel HP putus di tengah job | `getSmartProxyArgs` sudah melewatkan proxy (job lanjut direct); `YTDLP_PROXY_REQUIRED` (C4) untuk fail-fast bila operator maunya tegas; autossh/`ServerAliveInterval` menjaga tunnel hidup |
+| IP datacenter VPS diblokir YouTube saat proxy mati | Proxy = jalur utama (socks5h); cookies.txt tetap didukung (`findCookiesFile`); fallback `COBALT_API_URL` sudah ada di `downloader.js` |
+| Worker lokal mati → job menumpuk | Fail-closed bawaan: tanpa claim → gerbang menolak job baru `reason:never_claimed`; PM2 auto-restart worker + llama-server |
+| ngrok domain bentrok dengan sesi HP | Matikan tunnel ngrok di HP/Termux sebelum start di VPS (ngrok free 1 sesi); `start-tunnel.sh auto` di VPS via PM2 |
+| Path whisper `/root/clippervps/…` salah di VPS | Clone repo ke `/root/clippervps` (bukan `/opt`) agar path `.env` lama valid; atau bangun whisper.cpp ke path yang sama |
+| Job lama di-retry dengan snapshot mode lama | `configSnapshot` membekukan `VISION_VERIFY_MODE=oracle` + flag oracle — retry memakai nilai beku (sudah ada, `configSnapshot.test.js`) |
 
-## Alternatif yang ditolak (dan kenapa)
-- **Set `VISION_VERIFY_MODE=legacy`** untuk mematikan Kaggle → gerbang stage1Render secara desain MENOLAK mode itu (mandate 2026-10); melawannya sama dengan menghapus kebijakan.
-- **Matikan total Gatekeeper lalu lihat output** → tidak menghasilkan "filter" apa pun; output = tanpa kurasi sama sekali, tidak bisa dibandingkan.
-- **Stitching grid pakai sharp/jimp di Node** → dependensi native baru di dua lingkungan (Windows + Termux); FFmpeg sudah ada dan sudah dipakai frameExtractor.
-- **Kontrak notebook baru khusus-grid (`protocolVersion` tunggal)** → memaksa seluruh sesi Kaggle di-upgrade serentak; desain mapping di server membuat vonis tetap kompatibel.
-- **PP-OCRv5_mobile_det / CRAFT pengganti DBNet** → tetap pipeline segmentasi+post-processing berat (bukan akar masalah 741 ms/frame) / lebih berat.
-- **Mengganti wajah YuNet** — sudah Anda lakukan (SCRFD); hanya diverifikasi ulang di Fase 0.
+## Alternatif yang Ditolak
 
----
-
-Kalau Anda setuju urutan ini, mulai dari **Fase 0 + Fase 1** (paling cepat memberi Anda "output tanpa Kaggle"), lalu kita ukur Run A dengan `bench_gk.sh` yang sudah terbukti. Mau saya eksekusi Fase 1 sekarang?
+- **Menulis ulang kontrak oracle menjadi panggilan in-process Node ke llama-server** → menyentuh `vlmOracleService`/`stage1Render`/`jobStore` yang sudah teruji 157+ tes; kehilangan jejak audit claim/result; risk besar tanpa benefit.
+- **`ORACLE_OFFLINE_CALIBRATION=1` untuk "melihat output tanpa oracle"** → melanggar mandate strict oracle-only (ditolak eksplisit di `plan lengkap.txt` fase 1); tidak dipakai.
+- **transformers/torch CPU di VPS** → deps berat, fp16 6 GB RAM, jauh lebih lambat dari GGUF Q4 via llama.cpp.
+- **vLLM** → butuh GPU; VPS target adalah CPU.
+- **vite dev server untuk produksi** → dipertahankan sementara (terbukti di Termux via PM2); opsi lanjutan: `vite build` + serve `client/dist` dari Express (catat di `ORACLE_VPS.md` sebagai TODO, jangan dikerjakan sekarang).
+- **Proxy komersial sebagai ganti jaringan HP** → berbayar; user eksplisit minta jaringan HP.

@@ -97,6 +97,9 @@ export function getSmartProxyArgs() {
     if (fs.existsSync('/proc/net/tcp')) {
       const isListening = isLocalPortListening(port);
       if (!isListening) {
+        if (process.env.YTDLP_PROXY_REQUIRED === '1') {
+          throw new Error('Proxy HP tidak tersambung');
+        }
         return [];
       }
     }
