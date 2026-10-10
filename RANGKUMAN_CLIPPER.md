@@ -3,6 +3,8 @@
 > Dokumen inventaris seluruh modul ClipperVPS (backend, worker, services, gatekeeper, frontend, tooling) beserta diagram alur dan prioritas audit. Ukuran file menandai area berisiko/berdampak tinggi.
 >
 > **§11** = verifikasi temuan audit eksternal terhadap kode nyata (termasuk 1 kondisi **rusak sekarang**: urutan middleware auth). **§12** = todo plan perbaikan berprioritas (P0→P6) dengan gerbang verifikasi; belum dieksekusi.
+>
+> **CATATAN 2026-10 (VPS-only):** Vonis visual = **Oracle lokal Qwen di VPS** (`llama-server` + `server/oracle_local/worker.py`); Kaggle hanya arsip (`kaggle/DEPRECATED.md`), tunnel & proxy Termux OPSIONAL. Inventaris di dokumen ini tetap berlaku kecuali catatan tersebut.
 
 ---
 

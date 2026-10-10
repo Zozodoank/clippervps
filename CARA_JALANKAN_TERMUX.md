@@ -1,5 +1,9 @@
 # 📱 Panduan Menjalankan ClipperVPS Native di Termux (Android)
 
+> **CATATAN 2026-10:** Panduan ini adalah **mode LEGACY** (semua proses di HP). Jalur produksi
+> resmi kini **VPS-only** dengan Oracle lokal Qwen — lihat `ORACLE_VPS.md`. Termux tetap dipakai
+> hanya sebagai reverse proxy yt-dlp OPSIONAL (`scripts/phone-proxy-connect.sh`) saat YouTube 429.
+
 ClipperVPS berjalan **langsung di HP** melalui Termux — tanpa server remote. Semua proses (download YouTube, ekstraksi frame, render FFmpeg, AI Gemini) dieksekusi lokal di perangkat.
 
 ---

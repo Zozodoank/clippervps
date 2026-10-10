@@ -1,4 +1,9 @@
-# Ngrok untuk ClipperVPS (URL publik permanen untuk Oracle Kaggle)
+# Ngrok untuk ClipperVPS (URL publik tetap — kini OPSIONAL, hanya untuk akses UI jarak jauh)
+
+> **CATATAN 2026-10 (VPS-only):** Oracle kini **Qwen lokal di VPS** (`llama-server` +
+> `server/oracle_local/worker.py` via loopback) — alur kerja job TIDAK bergantung tunnel publik.
+> Bagian "Sambungkan ke Kaggle" di bawah adalah **arsip mode lama** (lihat `kaggle/DEPRECATED.md`).
+> Tunnel masih berguna untuk membuka dashboard dari luar jaringan lokal.
 
 Dokumen ini menggantikan kebiasaan "salin URL trycloudflare setiap restart". Ngrok plan gratis
 memberi **satu dev domain tetap** yang tidak berubah, jadi `VLM_ORACLE_BASE_URL` cukup diisi
