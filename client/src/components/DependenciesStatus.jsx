@@ -1,12 +1,16 @@
 import React from 'react';
-import { CheckCircle2, AlertTriangle, RefreshCw, Cpu, HardDrive } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, RefreshCw, Cpu, Brain } from 'lucide-react';
 
-export default function DependenciesStatus({ status, onRefresh, loading }) {
+export default function DependenciesStatus({ status, oracleStatus, onRefresh, loading }) {
   if (!status) return null;
 
   const ffmpegOk = status?.dependencies?.ffmpeg?.available || status?.ffmpeg?.available;
   const ytdlpOk = status?.dependencies?.ytdlp?.available || status?.ytdlp?.available;
   const openRouterOk = status?.openRouterKeyConfigured;
+  // Oracle lokal Qwen (VPS) = satu-satunya pemutus visual. 'connected' berasal dari
+  // /api/vlm-oracle/status (heartbeat worker segar). null/belum-terbaca dianggap offline
+  // (amber) - jujur ke operator bahwa vonis belum tentu jalan, bukan sekadar hides chip.
+  const oracleConnected = oracleStatus?.connected === true;
 
   return (
     <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
@@ -60,6 +64,28 @@ export default function DependenciesStatus({ status, onRefresh, loading }) {
               : 'bg-amber-500/10 text-amber-400'
           }`}>
             {openRouterOk ? 'Active' : 'Missing in .env'}
+          </span>
+        </div>
+
+        <span className="text-slate-500">|</span>
+
+        {/* Oracle lokal Qwen (VPS) - pemutus visual */}
+        <div className="flex items-center gap-1.5">
+          {oracleConnected ? (
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+          ) : (
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+          )}
+          <span className="text-slate-300 font-mono font-medium flex items-center gap-1">
+            <Brain className="w-3.5 h-3.5 text-slate-500" />
+            Oracle Qwen
+          </span>
+          <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+            oracleConnected
+              ? 'bg-emerald-500/10 text-emerald-400'
+              : 'bg-amber-500/10 text-amber-400'
+          }`} title={oracleStatus?.lastSeenAgeMs != null ? `heartbeat terakhir ${Math.round(oracleStatus.lastSeenAgeMs / 1000)} dtk lalu` : 'worker belum pernah memanggil API'}>
+            {oracleConnected ? 'Terhubung' : 'Offline'}
           </span>
         </div>
 

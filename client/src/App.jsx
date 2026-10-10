@@ -49,6 +49,7 @@ export default function App() {
 
   const [result, setResult] = useState(null);
   const [engineStatus, setEngineStatus] = useState(null);
+  const [oracleStatus, setOracleStatus] = useState(null);
   const [checkingEngine, setCheckingEngine] = useState(false);
   const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
   
@@ -83,6 +84,21 @@ export default function App() {
       }
     } catch (err) {
       console.warn('Could not fetch backend health:', err.message);
+    }
+    // Oracle lokal Qwen (VPS) = satu-satunya pemutus visual. Status dibaca dari
+    // /api/vlm-oracle/status (token otomatis disisipkan global fetch patch). Gagal
+    // membaca (mis. 401/503 saat token kosong) -> set null; chip tampil amber, bukan crash.
+    try {
+      const oracleRes = await fetch('/api/vlm-oracle/status');
+      if (oracleRes.ok) {
+        const oracleData = await oracleRes.json();
+        setOracleStatus(oracleData.oracle || null);
+      } else {
+        setOracleStatus(null);
+      }
+    } catch (err) {
+      console.warn('Could not fetch oracle status:', err.message);
+      setOracleStatus(null);
     } finally {
       setCheckingEngine(false);
     }
@@ -569,7 +585,7 @@ export default function App() {
       <Navbar onOpenSettings={() => setIsSettingsOpen(true)} engineStatus={engineStatus} />
 
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
-        <DependenciesStatus status={engineStatus} onRefresh={fetchEngineHealth} loading={checkingEngine} />
+        <DependenciesStatus status={engineStatus} oracleStatus={oracleStatus} onRefresh={fetchEngineHealth} loading={checkingEngine} />
 
         {/* Tab Navigation Menu */}
         <div className="flex justify-center mb-8">
