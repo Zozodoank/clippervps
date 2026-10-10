@@ -109,6 +109,22 @@ export function getSmartProxyArgs() {
 }
 
 /**
+ * Args proxy untuk FFmpeg saat ia menarik stream URL langsung dari jaringan (mis. sampling
+ * frame via streamUrl di videoFilterService). BEDA dari yt-dlp: FFmpeg HANYA memahami HTTP/
+ * HTTPS proxy (-http_proxy), bukan socks5://. Karena itu untuk mode "semua trafik lewat HP",
+ * jalankan bridge HTTP->SOCKS5 (privoxy) di VPS lalu set PROXY_URL=http://127.0.0.1:8118 supaya
+ * yt-dlp dan FFmpeg memakai exit IP yang SAMA (menghindari googlevideo 403 karena signature
+ * stream terikat IP). PROXY_URL socks5 => FFmpeg dilewati (diberi peringatan).
+ */
+export function getFfmpegProxyArgs() {
+  const proxy = (process.env.RESIDENTIAL_PROXY || process.env.PROXY_URL || '').trim();
+  if (!proxy) return [];
+  if (/^https?:\/\//i.test(proxy)) return ['-http_proxy', proxy];
+  console.warn(`[downloader] FFmpeg tidak dapat memakai proxy '${proxy}' (socks5). Pasang bridge HTTP (privoxy) dan set PROXY_URL=http://127.0.0.1:PORT agar byte-video juga lewat HP.`);
+  return [];
+}
+
+/**
  * Base yt-dlp args used for all requests (search + download).
  * Stripped of --remote-components and --js-runtimes which break on Android/Termux.
  */

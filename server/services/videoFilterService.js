@@ -8,7 +8,7 @@ import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
 import { tempDir } from '../utils/paths.js';
 import { trackBandwidth, trackSavedBandwidth } from './bandwidthTracker.js';
 import { extractCoreProductInfo, isTitleMatchingProduct, normalizeText } from './discoveryService.js';
-import { getSmartProxyArgs } from './downloader.js';
+import { getSmartProxyArgs, getFfmpegProxyArgs } from './downloader.js';
 import { classifyPipelineError } from './networkDiagnosticService.js';
 import { getNichePreset } from '../config/nichePresets.js';
 import { getMinVideoDurationSec, getMaxVideoDurationSec } from '../config/videoLimits.js';
@@ -618,7 +618,11 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
   const batchEnabled = process.env.SAMPLE_BATCH_MODE !== '0';
   const tempStreamFile = path.join(outputDir, '_stream_cache.mp4');
   let seekInput = streamUrl;
+  // Rutekan FFmpeg lewat proxy HTTP yang SAMA dengan yt-dlp saat ia menarik streamUrl langsung
+  // (getFfmpegProxyArgs hanya aktif utk http(s); socks5 butuh bridge privoxy — lihat ORACLE_VPS.md).
+  const ffmpegProxyArgs = getFfmpegProxyArgs();
   let networkArgs = [
+    ...ffmpegProxyArgs,
     '-user_agent', browserUserAgent, '-headers', browserHeaders,
     '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', isMobile ? '4' : '2',
   ];
@@ -631,6 +635,7 @@ export async function sampleFramesFromStream(streamUrl, outputDir, {
     const dlResult = await new Promise((resolve) => {
       const proc = spawn(ffmpegPath, [
         '-y',
+        ...ffmpegProxyArgs,
         '-user_agent', browserUserAgent, '-headers', browserHeaders,
         '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
         '-i', streamUrl,

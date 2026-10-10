@@ -32,6 +32,7 @@ vi.mock('../services/binaryChecker.js', () => ({
 }));
 vi.mock('../services/downloader.js', () => ({
   findCookiesFile: () => null,
+  getSmartProxyArgs: () => [],
 }));
 
 import fs from 'fs';

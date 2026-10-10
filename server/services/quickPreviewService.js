@@ -2,7 +2,7 @@ import { spawn, spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { getYtDlpPath, getFFmpegPath } from './binaryChecker.js';
-import { findCookiesFile } from './downloader.js';
+import { findCookiesFile, getSmartProxyArgs } from './downloader.js';
 
 // ♻️ Cache preview per-direktori-kerja. evaluateCandidate bisa memanggil kandidat yang SAMA
 // lebih dari sekali (retry infra 1x via candidatePoolIndex--, atau pemilihan ulang Pre-Flight).
@@ -125,6 +125,7 @@ export async function downloadQuickPreview(url, outputDir, jobId, {
   const cookieFile = findCookiesFile();
   const dlArgs = [
     '--no-playlist',
+    ...getSmartProxyArgs(),
     '--js-runtimes', 'node',
     '-f', 'best[height<=360][ext=mp4]/bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
     '--download-sections', `*${startSec}-${endSec}`,
