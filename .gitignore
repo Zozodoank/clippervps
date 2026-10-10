@@ -72,3 +72,6 @@ scratch/
 
 # Salinan .env yang diambil dari Termux (berisi API key)
 .env-from-termux/
+
+# Catatan lokal pribadi (tidak dilacak ke repo)
+syarat proxy sock5.txt
