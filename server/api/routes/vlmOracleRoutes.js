@@ -1,18 +1,18 @@
 // ============================================================================
-// VLM Oracle Routes — pintu masuk bagi NOTEBOOK KAGGLE yang memvonis frame.
+// VLM Oracle Routes — pintu masuk bagi WORKER ORACLE LOKAL yang memvonis frame.
 //
-// Arah koneksi: Kaggle tidak punya inbound, jadi notebook yang memanggil API ini
-// lewat URL publik (CLOUDFLARE_TUNNEL_URL). Pipeline lokal tidak pernah memanggil
-// Kaggle. Endpoint ini hanya melayani sisi READ/CLAIM/REPORT antrean Oracle.
+// Arah koneksi: worker lokal (oracle_local/worker.py) memanggil API ini
+// lewat 127.0.0.1 atau tunnel publik (CLOUDFLARE_TUNNEL_URL). Pipeline
+// hanya melayani sisi READ/CLAIM/REPORT antrean Oracle.
 //
 // PINTU KEAMANAN (sengaja lebih ketat dari endpoint lain):
 //  1) Endpoint TIDAK dimasukkan ke allowlist publik tokenAuth -> butuh token bila
 //     API_ACCESS_TOKEN diisi. Tapi bukan itu saja:
 //  2) Endpoint frame/claim MENOLAK layanan selama API_ACCESS_TOKEN KOSONG. Alasan:
-//     yang mengambil data di sini adalah mesin di luar jaringan Anda (cloud Kaggle),
-//     dan yang diserahkan adalah bingkai video milik Anda. Tanpa token, URL tunnel
-//     publik = siapa pun bisa menarik frame dan menyuntik vonis palsu. Mode 'open'
-//     untuk pemakaian lokal masih nyaman, tapi tidak untuk jalur keluar ini.
+//     yang mengambil data di sini adalah mesin worker yang mengakses frame video Anda,
+//     dan tanpa token, URL tunnel publik = siapa pun bisa menarik frame dan menyuntik
+//     vonis palsu. Mode 'open' untuk pemakaian lokal masih nyaman, tapi tidak untuk
+//     jalur keluar ini.
 //  3) Path frame divalidasi terhadap root yang dikenal (temp/output/rejected_frames)
 //     -> batch berisi path yang kita kirim sendiri, tetapi validasi ini menutup
 //     celah traversal bila ada pihak lain bisa menulis antrean / mengubah DB.
@@ -49,7 +49,7 @@ function requireOracleToken(req, res) {
   if (getApiAccessToken()) return true;
   res.status(503).json({
     success: false,
-    error: 'Oracle menolak melayani tanpa API_ACCESS_TOKEN: endpoint ini menyerahkan bingkai video Anda ke mesin di luar jaringan lokal. Set API_ACCESS_TOKEN di server/.env lalu restart, dan kirim token yang sama dari notebook (header x-api-token).',
+    error: 'Oracle menolak melayani tanpa API_ACCESS_TOKEN: endpoint ini menyerahkan bingkai video Anda. Set API_ACCESS_TOKEN di server/.env lalu restart, dan kirim token yang sama dari worker (header x-api-token).',
   });
   return false;
 }
@@ -73,25 +73,24 @@ export function isAllowedFramePath(filePath) {
 }
 
 /**
- * [1] CLAIM — notebook mengambil satu batch menunggu.
+ * [1] CLAIM — worker mengambil satu batch menunggu.
  * Response: { batchId, jobId, sceneIdx, prompt, frames: [{index, url}] } atau 204 bila kosong.
- * `url` relatif terhadap base API; notebook menempelkannya ke VLM_ORACLE_BASE_URL.
+ * `url` relatif terhadap base API; worker menempelkannya ke ORACLE_BASE_URL.
  */
 router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
   if (!requireOracleToken(req, res)) return undefined;
   const cfg = resolveOracleConfig(process.env);
-  const workerId = String((req.body && req.body.workerId) || req.headers['x-oracle-worker'] || 'kaggle').slice(0, 120);
+  const workerId = String((req.body && req.body.workerId) || req.headers['x-oracle-worker'] || 'local').slice(0, 120);
   const protocolVersion = String((req.body && req.body.protocolVersion) || '');
   const sourceHash = String((req.body && req.body.sourceHash) || '');
   // HEARTBEAT: setiap claim yang lewat — termasuk polling kosong (claimed:false) — adalah
-  // bukti notebook HIDUP. Satu-satunya sinyal koneksi yang jujur, karena arah panggilan
-  // dipaksa fisika jaringan (Kaggle tidak punya inbound). Dibaca gerbang stage1Render via
+  // bukti worker HIDUP. Satu-satunya sinyal koneksi yang jujur. Dibaca gerbang stage1Render via
   // oracleLastSeenMs(): tanpa heartbeat segar, job baru langsung dihentikan.
   touchOracleHeartbeat(workerId, protocolVersion, sourceHash);
   const batch = claimOracleBatch({ workerId, staleMs: cfg.staleMs, maxAttempts: cfg.maxAttempts });
   if (!batch) {
     // 200 (bukan 204) karena tetap mengirim ikhtisar antrean; 204 tidak boleh berbadan.
-    // `activeJobs` = sinyal HEMAT untuk idle-exit notebook: antrean kosong saat ada job
+    // `activeJobs` = sinyal HEMAT untuk idle-exit worker: antrean kosong saat ada job
     // berjalan (fase unduh/render panjang di antara tahap oracle) BUKAN waktunya membunuh
     // kernel - audit klip final akan mengantri batch beberapa menit/jam lagi.
     res.json({ success: true, claimed: false, pending: oracleQueueStats().counts.pending, activeJobs: countBusyOracleJobs() });
@@ -119,10 +118,10 @@ router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
 });
 
 /**
- * [2] REPORT — notebook mengirim vonis (atau error). Body:
+ * [2] REPORT — worker mengirim vonis (atau error). Body:
  *   { batchId, verdict: { safe, face, text, watermark, graphic, reason?, model?, perFrame? }, error? }
  * Vonis tidak divalidasi ketat di sini; sisi worker (normalizeOracleVerdict) yang
- * memutuskan sah/tidak, supaya notebook lama/baru tidak membuat endpoint 500.
+ * memutuskan sah/tidak, supaya worker lama/baru tidak membuat endpoint 500.
  */
 router.post('/vlm-oracle/result', resultLimiter, (req, res) => {
   if (!requireOracleToken(req, res)) return undefined;
@@ -131,7 +130,7 @@ router.post('/vlm-oracle/result', resultLimiter, (req, res) => {
   
   if (!supportedProtocols.has(protocolVersion)) {
     recordAuditEvent({ req, action: "vlm-oracle-result-rejected", detail: `batch=${batchId} reason=protocol_mismatch got=${protocolVersion}` });
-    return res.status(426).json({ success: false, error: 'Protocol version mismatch. Kaggle worker obsolete.' });
+    return res.status(426).json({ success: false, error: 'Protocol version mismatch. Oracle worker obsolete.' });
   }
 
   // Observability Log Server
@@ -148,7 +147,7 @@ router.post('/vlm-oracle/result', resultLimiter, (req, res) => {
     return res.status(404).json({ success: false, error: `Batch ${batchId} tidak dikenal (mungkin sudah di-prune).` });
   }
   if (!out.ok && out.status === 'expired') {
-    // BUKAN error fatal: worker sudah menyerah. Notebook cukup tahu kerjaannya tidak dipakai.
+    // BUKAN error fatal: worker sudah menyerah. Worker cukup tahu kerjaannya tidak dipakai.
     return res.status(409).json({ success: false, status: 'expired', error: 'Worker sudah berhenti menunggu batch ini; vonis diterima tapi tidak dipakai.' });
   }
   return res.json({ success: true, status: out.status, duplicate: !!out.duplicate });

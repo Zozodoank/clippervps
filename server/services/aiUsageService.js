@@ -7,7 +7,7 @@
 // di *.js, *.py, *.ipynb, *.md: 0 hasil). Angka yang ada hanyalah karangan:
 // `trackBandwidth('aiRequests', 2500, ...)` dan `(..., 3500, ...)` di aiService.js.
 // Akibatnya tidak ada cara untuk tahu panggilan mana yang membakar token, jadi
-// tidak ada dasar memutuskan mana yang harus dipindah ke Oracle Kaggle.
+// tidak ada dasar memutuskan mana yang harus dipindah ke Oracle lokal.
 //
 // JANJI DESAIN:
 //  1) TIDAK PERNAH melempar. Kegagalan pencatatan = hilang satu baris statistik,

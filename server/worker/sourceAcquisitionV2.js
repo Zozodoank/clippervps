@@ -6,7 +6,7 @@
 // pemanggil (stage1Render) — modul ini menerima `candidatePool` hasil L1.
 //
 // RANGKAIAN (keputusan user 1c/2b/3/4b):
-//   Pre-screen metadata (murah)  ->  ambil klip preview 9:16 -> teruskan frame ke Oracle Kaggle (satu-satunya pemutus visual) ->
+//   Pre-screen metadata (murah)  ->  ambil klip preview 9:16 -> teruskan frame ke Oracle lokal (satu-satunya pemutus visual) ->
 //   produk + kebersihan)  ->  pilih >=2 sumber layak (4b)  ->  WINDOW UNIFORM
 //   (tengah video)  ->  zigzag per window (2b).
 //
@@ -286,7 +286,7 @@ export async function runSourceAcquisitionV2(p) {
       }
       continue;
     }
-    // Tidak ada pemfilteran visual lokal; seluruh frame dikirim ke Oracle Kaggle.
+    // Tidak ada pemfilteran visual lokal; seluruh frame dikirim ke Oracle lokal.
     usableFrames = (Array.isArray(probe?.frames) && probe.frames.length) ? probe.frames : (probe?.cleanFrames || []);
     if (!usableFrames.length) {
       // Kegagalan ekstraksi bukan penolakan produk; hentikan sebagai gangguan sistem.
@@ -315,7 +315,7 @@ export async function runSourceAcquisitionV2(p) {
   // Keep its frames as context; Oracle reviews the actual downloaded sections later.
 
   // Gemini supplies section timestamps only. It cannot issue a source/product veto.
-  // Candidate metadata was checked above; frame quality is decided by Kaggle Oracle.
+  // Candidate metadata was checked above; frame quality is decided by Oracle lokal.
   const accepted = gatedCandidates.slice(0, Math.max(1, Number(requireSources) || 1));
   diagnostics.verdictEligible = accepted.length;
   if (manualMode) diagnostics.manualProductApproval = 'operator';

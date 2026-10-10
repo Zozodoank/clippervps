@@ -2101,7 +2101,7 @@ export async function discoverBrandedShopeeProduct({
       if (hasNonLatinOrForeignScript(rawTitle)) return false;
       if (isChineseSocialOrForeignMedia(rawTitle) || isChineseSocialOrForeignMedia(rawDesc)) return false;
       // Gerbang bahasa/pasar asing yang tetap memakai skrip Latin (Vietnam dll) —
-      // dibuang di sini supaya tidak menghabiskan 3 putaran stream + vonis Kaggle.
+      // dibuang di sini supaya tidak menghabiskan 3 putaran stream + vonis oracle.
       const foreignReason = detectForeignLanguageOrMarket(rawTitle, rawDesc);
       if (foreignReason) {
         console.log('[BrandedDiscovery] ⛔ Kandidat dibuang (bahasa/pasar asing: ' + foreignReason + '): ' + rawTitle.slice(0, 60));
@@ -2276,7 +2276,7 @@ export async function discoverYouTubeCandidatesForProduct({
         return vid && !excludeSet.has(vid);
       });
 
-      // Keep metadata-mismatched results in the pool; Kaggle decides visual/product suitability.
+      // Keep metadata-mismatched results in the pool; Oracle decides visual/product suitability.
       if (freshResults.length > 0) {
         candidates = freshResults;
         usedQuery = query;
@@ -2426,7 +2426,7 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
       // Gerbang relevansi (ditemukan 4 Okt 2026): Bing menyisipkan kartu trending/iklan berisi
       // ID YouTube yang sama sekali tidak berkaitan - query "hand blender" menghasilkan
       // "Made by Google '26" dan "GTA 6 Leak". Judul tanpa satu pun kata produk dibuang di
-      // sini, bukan disedot pre-flight Kaggle lalu dimuntahkan ulang.
+      // sini, bukan disedot pre-flight Oracle lalu dimuntahkan ulang.
       if (!titleRelevant(title)) return;
 
       // Filter out videos with known duration < min (default 5 mnt) or > max (default 15 mnt)
@@ -2452,7 +2452,7 @@ export async function searchBingVideos(query, { limit = 20, onProgress = () => {
 
     // FALLBACK REGEX "ambil semua link watch?v= dari halaman" DIHAPUS 4 Okt 2026: link yang
     // dipungut adalah trending/iklan tanpa judul terverifikasi (title=query, duration=0 sehingga
-    // lolos semua filter metadata). Di bawah pre-flight Kaggle yang STRICT kandidat buta ini
+    // lolos semua filter metadata). Di bawah pre-flight Oracle yang STRICT kandidat buta ini
     // hanya membuang kuota, waktu, dan mengundang throttle.
 
     return candidates;
@@ -2666,7 +2666,7 @@ export async function searchMultiEngineVideos(query, {
 
   // In strict identity mode, preserve the exact brand/model/type signal in the
   // query and never allow a broad product-family fallback to pass.
-  // Rank product-signal matches first, but keep all results for Kaggle's visual verdict.
+  // Rank product-signal matches first, but keep all results for Oracle's visual verdict.
   const ranked = allCandidates
     .map((candidate) => ({
       ...candidate,
@@ -4039,8 +4039,8 @@ export function isGenericShopeeTitle(title = '') {
 // Peralatan Dapur Lini") atau AGREGAT multi-produk/multi-merek ("Review Kompor Niko
 // Reflection Gold DAN Food Chopper Katana Pro Gold") LOLOS gerbang brand+type lama
 // karena productType masih terisi kata KATEGORI. Akibatnya: stream 3 video + preflight
-// Kaggle sia-sia, Qwen benar tidak menemukan satu produk spesifik yang cocok -> skip.
-// Gerbang ini MEMBUANG judul semacam itu SEBELUM streaming (hemat kuota Kaggle +
+// Oracle sia-sia, Qwen benar tidak menemukan satu produk spesifik yang cocok -> skip.
+// Gerbang ini MEMBUANG judul semacam itu SEBELUM streaming (hemat kuota Oracle +
 // naikkan rasio sukses). Presisi tinggi - hanya tolak:
 //   (a) AGREGAT: >= 2 kata benda produk BERBEDA yang disambung kata penghubung
 //       (dan / & / + / koma / garis miring). "Blender Mixer" SATU fungsi -> tetap lolos.

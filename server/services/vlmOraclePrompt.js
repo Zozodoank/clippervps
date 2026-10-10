@@ -1,4 +1,4 @@
-// Prompt contract consumed by Kaggle Oracle; no local vision inference lives here.
+// Prompt contract consumed by Oracle lokal Qwen (VPS); no local vision inference lives here.
 export function buildVlmPrompt(niche = 'kitchen_tools', facePolicy = 'strict', { productName = '', requireRanking = false } = {}) {
   const faceRule = facePolicy === 'presenter_only'
     ? 'Camera-sample policy: people appearing inside photos or video footage captured by the reviewed phone are allowed, including portraits and bystanders. REJECT only a reviewer/vlogger/presenter who is filming themselves and speaking directly to the camera. A face inside the phone camera sample is not a presenter.'

@@ -21,7 +21,7 @@ import { trackBandwidth } from './bandwidthTracker.js';
 // Pencatatan pemakaian AI SESUNGGUHNYA (usageMetadata) per panggilan Gemini.
 // `trackBandwidth` di atas memakai angka karangan (2500/3500) dan sengaja dibiarkan
 // apa adanya; kolom bytes di ai_usage_events-lah yang nanti jadi dasar keputusan
-// "panggilan mana yang harus dipindah ke Oracle Kaggle". Tidak pernah melempar.
+// "panggilan mana yang harus dipindah ke Oracle lokal". Tidak pernah melempar.
 import { recordGeminiCall, recordGeminiFailure } from './aiUsageService.js';
 import { extractCoreProductInfo, isBulkyOrUnsuitableProduct } from './discoveryService.js';
 import { getNichePreset } from '../config/nichePresets.js';
@@ -257,7 +257,7 @@ export async function analyzeYouTubeVideoWithGemini({
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are a scene selector for an affiliate video backend, not a video judge.
 Your ONLY task is to propose timestamps of sections that may contain a physical product demonstration.
-Never accept/reject, approve/disapprove, or veto the whole source. Do not screen sections for faces, text, subtitles, watermarks, packaging, or product identity; Kaggle makes those decisions after the footage is downloaded.
+Never accept/reject, approve/disapprove, or veto the whole source. Do not screen sections for faces, text, subtitles, watermarks, packaging, or product identity; Oracle makes those decisions after the footage is downloaded.
 
 TARGET PRODUCT: "${coreNoun}"
 PRODUCT LISTING: "${effectiveTitle}"
@@ -268,9 +268,9 @@ TIMELINE:
 - Inspect the complete video. Never select a section before ${introCutoffSec || 0}s or after ${Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0))}s.
 - ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit within 45-60 seconds. Return each actual startSeconds and endSeconds.` : `Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.`}
 - ${isGadget ? 'Propose eight ordered smartphone-review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 RAM/storage evidence, 7-8 camera samples as the final scenes. Camera samples may show only captured photos/video without the phone in frame, including people as subjects.' : 'Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.'}
-- ${isGadget ? 'Tag each selectedClips entry with storyboardSlot 1 through 8 in that order. Do not classify people inside camera samples as presenters; Kaggle checks only whether a scene is self-recording presenter footage.' : 'Return timestamp proposals in scene order.'}
-- Do not make a product-match, face, overlay, subtitle, watermark, or source-quality verdict. Kaggle is the sole visual judge.
-- If no likely product section can be located, return an empty list; the backend will still submit sample timestamps to Kaggle.
+- ${isGadget ? 'Tag each selectedClips entry with storyboardSlot 1 through 8 in that order. Do not classify people inside camera samples as presenters; Oracle checks only whether a scene is self-recording presenter footage.' : 'Return timestamp proposals in scene order.'}
+- Do not make a product-match, face, overlay, subtitle, watermark, or source-quality verdict. Oracle is the sole visual judge.
+- If no likely product section can be located, return an empty list; the backend will still submit sample timestamps to Oracle.
 - Always use status "select". Never return status "reject".
 
 Return ONLY JSON in this shape:
@@ -288,7 +288,7 @@ Return ONLY JSON in this shape:
   "detectedBrand": "none"
 }
 
-Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether their footage is usable. Never return status "reject".`;
+Keep timestamps numeric. Return only timestamp proposals; Oracle decides whether their footage is usable. Never return status "reject".`;
 
   const candidateModels = [
     'gemini-3.1-pro-preview',
@@ -371,7 +371,7 @@ Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether
     throw lastGeminiErr || new Error('Gemini YouTube Stream gagal menganalisa video.');
   }
 
-  // Gemini only proposes timestamps. Kaggle makes the cleanliness and product-match decisions.
+  // Gemini only proposes timestamps. Oracle makes the cleanliness and product-match decisions.
   const rawSections = Array.isArray(parsed.selectedClips)
     ? parsed.selectedClips
     : (Array.isArray(parsed.clips)
@@ -385,7 +385,7 @@ Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether
     : Array.from({ length: isGadget ? 8 : 4 }, (_, i) => ({
         startSeconds: firstSafeSec + ((lastSafeStart - firstSafeSec) * (i + 0.5) / (isGadget ? 8 : 4)),
         ...(isGadget ? { storyboardSlot: i + 1 } : {}),
-        reason: 'Timestamp sampel untuk penilaian Oracle Kaggle',
+        reason: 'Timestamp sampel untuk penilaian Oracle',
       }));
   const asTimestamp = (item) => {
     if (typeof item === 'number' || typeof item === 'string') return parseTimeToSeconds(item);
@@ -452,7 +452,7 @@ Keep timestamps numeric. Return only timestamp proposals; Kaggle decides whether
 
   const clips = normalizeClipPlan(candidateClips, totalDuration, {
     allowFallback: allowFallbackClips,
-    // Do not feed Gemini's visual flags into the local normalizer; Kaggle owns that verdict.
+    // Do not feed Gemini's visual flags into the local normalizer; Oracle owns that verdict.
     frameAudit: [],
     hasProductBrand,
     allowHflip,
@@ -1256,7 +1256,7 @@ export async function selectHighlightWithAI({
   const geminiKey = getDirectGeminiApiKey(apiKey);
 
   // EVIDENCE MODE (audit GPT 2026 — hemat token Gemini, 0 MB kuota tambahan):
-  // Kirim bukti visual dari frame yang sudah dipilih; vonis visual dilakukan Oracle Kaggle.
+  // Kirim bukti visual dari frame yang sudah dipilih; vonis visual dilakukan Oracle lokal.
   // dan SUDAH ada di disk — Gemini tidak membaca ulang video penuh via fileUri/File API.
   // Bila frame kurang dari EVIDENCE_MIN_FRAMES, otomatis jatuh ke jalur stream lama.
   const usableFrameCount = countUsableFrames(frames);
@@ -2306,7 +2306,7 @@ export function parseBatchVerdict(parsed, candidates) {
 /**
  * L2 — VONIS GEMINI BATCH: satu panggilan menilai SEMUA kandidat sekaligus terhadap
  * gambar produk + kebersihan visual (wajah/watermark/overlay/subtitle). Visual frame
- * decisions are made by Kaggle Oracle; this Gemini call evaluates product and script context.
+ * decisions are made by Oracle lokal; this Gemini call evaluates product and script context.
  * @returns {Promise<{ verdicts: Array, provider: string, model: string }>}
  */
 export async function verdictCandidatesWithGemini({

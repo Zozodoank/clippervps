@@ -273,7 +273,7 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
     return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal ${(maxDurSec / 60).toFixed(0)} menit (${maxDurSec} detik).` };
   }
 
-  // Production content/product decisions belong to Kaggle. YouTube metadata is
+  // Production content/product decisions belong to Oracle. YouTube metadata is
   // neither a visual verdict nor a reliable source-resolution measurement.
   if (options.oracleOwnsContentDecision) return { eligible: true };
 
@@ -1057,7 +1057,7 @@ function formatSecondsLocal(secs) {
 }
 
 /**
- * Melakukan sampling rapat di sekitar frame anchor sebelum Oracle Kaggle memberi vonis.
+ * Melakukan sampling rapat di sekitar frame anchor sebelum Oracle lokal memberi vonis.
  *
  * @param {string} streamUrl
  * @param {string} outputDir
@@ -1085,7 +1085,7 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
       const snippetPath = path.join(outputDir, `preflight_snippet_${index}_${Date.now()}.mp4`);
 
       // Selektor format + titik potong kini hidup di SATU tempat (resolvePreflightStream)
-      // karena dipakai dua jalur pre-flight: MP4 untuk Gemini dan frame untuk Kaggle.
+      // karena dipakai dua jalur pre-flight: MP4 untuk Gemini dan frame untuk Oracle.
       const { streamUrl, startSec } = await resolvePreflightStream(url, { ytDlpPath, execAsync });
 
       // FFmpeg menerima pemisah header sebagai dua karakter `\r\n` literally (bukan byte CR/LF);
@@ -1113,7 +1113,7 @@ export async function extractFastSnippetsForPreflight(urls, outputDir) {
 
 // ---------------------------------------------------------------------------
 // PRE-FLIGHT: SATU logika pencarian stream, DUA bentuk hasil — MP4 untuk File
-// API Gemini, JPEG untuk notebook Kaggle (Lapis 2).
+// API Gemini, JPEG untuk worker oracle lokal (Lapis 2).
 // ---------------------------------------------------------------------------
 
 // User agent meniru browser: tanpa ini googlevideo menolak sebagian link langsung.
@@ -1270,8 +1270,8 @@ function runFrameExtraction({ ffmpegPath, streamUrl, startSec, seconds, fps, hei
 
 /**
  * [Lapis 2] Ekstrak cuplikan tengah video kandidat menjadi FRAME JPEG (default 15 frame
- * @1 fps, tinggi 360 px) untuk dinilai notebook Kaggle lewat jalur batch frame yang SUDAH
- * ada. Kenapa frame dan bukan MP4: nol perubahan notebook, byte keluar perangkat turun
+ * @1 fps, tinggi 360 px) untuk dinilai worker oracle lewat jalur batch frame yang SUDAH
+ * ada. Kenapa frame dan bukan MP4: nol perubahan worker, byte keluar perangkat turun
  * ~5x, dan satu batch 15 frame muat dalam satu panggilan GPU (VLM_ORACLE_BATCH_SIZE
  * dijepit 16). Korbannya jujur: gerakan yang muncul <1 detik bisa lolos dari sampling 1 fps.
  *
@@ -1383,7 +1383,7 @@ export async function fastProbeLocal(videoFilePath, jobId, {
       '-i', videoFilePath,
       '-vframes', '1',
       '-q:v', '2',
-      '-vf', 'scale=-1:720', // Samakan tinggi sumber; 9:16 letterbox diterapkan sebelum upload Kaggle
+      '-vf', 'scale=-1:720', // Samakan tinggi sumber; 9:16 letterbox diterapkan sebelum upload Oracle
       '-y',
       outPath
     ];
@@ -1391,8 +1391,8 @@ export async function fastProbeLocal(videoFilePath, jobId, {
     // FIX 2026-10-05: dulu exit-code DIBUANG (proc.on('close', resolve)) dan frame diterima
     // hanya dengan fs.existsSync. Dengan -y, FFmpeg membuat/memotong file output SEBELUM
     // encoder gagal ("code 234 / Could not open encoder before EOF") -> file 0-byte diterima
-    // sebagai frame "valid" lalu base64 kosong dikirim ke Oracle Kaggle. Qwen menerima
-    // gambar rusak — itulah mekanisme di balik "frame tidak pernah benar-benar ke Kaggle".
+    // sebagai frame "valid" lalu base64 kosong dikirim ke Oracle lokal. Qwen menerima
+    // gambar rusak — itulah mekanisme di balik "frame tidak pernah benar-benar ke Oracle".
     let exitCode = -1;
     await new Promise((resolve) => {
       const proc = spawn(ffmpegPath, args);
@@ -1419,10 +1419,10 @@ export async function fastProbeLocal(videoFilePath, jobId, {
   }
 
   if (!frames.length) {
-    throw Object.assign(new Error('FFmpeg tidak menghasilkan frame probe untuk Oracle Kaggle.'), { isInfraError: true });
+    throw Object.assign(new Error('FFmpeg tidak menghasilkan frame probe untuk Oracle lokal.'), { isInfraError: true });
   }
   // Tidak ada inspeksi AI lokal. Seluruh frame probe diteruskan ke pipeline Oracle.
-  onProgress({ step: 'frame_probe', message: `Meneruskan ${frames.length} frame ke Oracle Kaggle...`, progress: 28 });
+  onProgress({ step: 'frame_probe', message: `Meneruskan ${frames.length} frame ke Oracle lokal...`, progress: 28 });
   return {
     eligible: true,
     cleanFrames: frames,
@@ -1437,7 +1437,7 @@ export async function fastProbeLocal(videoFilePath, jobId, {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-//  Legacy scene-window frame sampler; the production pipeline uses Kaggle Oracle.
+//  Legacy scene-window frame sampler; the production pipeline uses Oracle lokal.
 //  Sampling is per candidate @1fps (360p), not a visual verdict.
 //  video, kita HANYA mengambil klip pendek (2-5s) untuk window kandidat dari Gemini,
 //  ekstrak 1 frame/detik, lalu filter ringan (blank/statis/blur) sebelum VLM.

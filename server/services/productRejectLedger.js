@@ -7,7 +7,7 @@
 // (auto_9612bd95a8) dan ditolak lagi pada 09:26. Riwayat job tampak "kosong" karena
 // stage1Discovery menghapus job gagal tanpa media dari store (deleteJobFiles +
 // activeJobs.delete + deletePersistedJob), jadi tidak ada memori kolektif: tiap run
-// membakar 15-30 menit kuota Gemini/YouTube/GPU Kaggle untuk produk yang sama.
+// membakar 15-30 menit kuota Gemini/YouTube/GPU VPS untuk produk yang sama.
 //
 // SOLUSI: catatan persisten terpisah dari riwayat job. Hanya penolakan KONTEN yang
 // masuk ledger. Kegagalan INFRASTRUKTUR (yt-dlp mati, IP block, kuota habis, Oracle
@@ -73,7 +73,7 @@ const INFRA_REJECT_PATTERNS = [
   /file is empty/i,
   /memblokir ip|membatasi ip|bot detection/i,
   /http\s*4\d\d|429|too many requests|sign in to confirm/i,
-  /oracle (kaggle )?(tidak|offline|tak|unavailable|timeout)/i,
+  /oracle (kaggle |worker )?(tidak|offline|tak|unavailable|timeout)/i,
   /gatekeeper (?:unavailable|tidak tersedia|tidak bisa dihubungi|gagal merespons)/i, // classify historical service outages as infrastructure
   /kaggle.{0,30}(?:offline|timeout|unavailable|gagal|tidak terhubung)/i,
   /oracleunavailable/i,

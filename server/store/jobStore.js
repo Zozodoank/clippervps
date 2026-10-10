@@ -30,8 +30,8 @@ db.exec(`
     id TEXT PRIMARY KEY,
     data TEXT NOT NULL
   );
-  -- ORACLE KAGGLE (VISION_VERIFY_MODE=oracle): antrean batch frame yang menunggu vonis
-  -- model besar di luar perangkat. Notebook adalah KLIEN (Kaggle tidak punya inbound),
+  -- ORACLE LOKAL (VISION_VERIFY_MODE=oracle): antrean batch frame yang menunggu vonis
+  -- model besar Qwen2.5-VL. Worker lokal adalah KLIEN (memanggil API server),
   -- jadi dia yang mengklaim & melaporkan hasil. Status: pending -> claimed -> done,
   -- atau -> expired (worker menyerah / percobaan habis).
   -- CATATAN: komentar di dalam db.exec WAJIB '--' (bukan '//') karena ini SQL, bukan JS.
@@ -48,10 +48,10 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_vlm_oracle_status ON vlm_oracle_batches(status, created_at);
 
-  -- HEARTBEAT NOTEBOOK KAGGLE: satu baris per workerId, di-update setiap kali dia memanggil
-  -- POST /vlm-oracle/claim — TERMASUK polling kosong (200 claimed:false). Ini-sinyal jujur
-  -- "Kaggle terhubung": arah koneksi dipaksa fisika jaringan (notebook = klien), jadi tidak
-  -- ada cara lain mengetahui notebook hidup selain melihat dia terakhir bertanya.
+  -- HEARTBEAT WORKER ORACLE: satu baris per workerId, di-update setiap kali dia memanggil
+  -- POST /vlm-oracle/claim — TERMASUK polling kosong (200 claimed:false). Ini sinyal jujur
+  -- "oracle terhubung": worker = klien yang memanggil API server, jadi tidak
+  -- ada cara lain mengetahui worker hidup selain melihat dia terakhir bertanya.
   CREATE TABLE IF NOT EXISTS oracle_heartbeat (
     worker_id TEXT PRIMARY KEY,
     last_seen_at INTEGER NOT NULL
@@ -416,7 +416,7 @@ export function getLatestAutoRun() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ORACLE QUEUE (VISION_VERIFY_MODE=oracle) — antrean vonis frame oleh model besar
-// di notebook Kaggle. Sisi lokal = PRODUSEN (enqueue + menunggu), sisi Kaggle =
+// di worker oracle lokal. Sisi lokal = PRODUSEN (enqueue + menunggu), sisi worker =
 // KLIEN (claim + submit). Semua operasi berbasis statement SET (bukan iterate()+
 // write) karena koneksi yang sama tidak boleh dipakai menulis sambil cursor terbuka
 // (pernah menjatuhkan boot — lihat komentar loadJobsFromDisk).
@@ -572,7 +572,7 @@ export async function waitForOracleVerdict(id, { timeoutMs = 180_000, pollMs = 2
 }
 
 /**
- * Untuk idle-exit NOTEBOOK Kaggle: apakah masih ada job lokal yang mungkin segera
+ * Untuk idle-exit WORKER ORACLE: apakah masih ada job lokal yang mungkin segera
  * mengantri batch vonis? Antrean KOSONG bukan berarti tidak ada kerja - di antara
  * pre-flight -> pool -> render -> audit klip ada jeda menit-jam (unduh+render di
  * Termux) ketika antrean memang kosong. 'Sibuk' = stage tidak terminal DAN sempat
@@ -628,8 +628,8 @@ let inMemoryOracleInfo = { workerId: '', protocolVersion: '', sourceHash: '' };
 export function oracleHeartbeatInfo() {
   return inMemoryOracleInfo;
 }
-export function touchOracleHeartbeat(workerId = 'kaggle', protocolVersion = '', sourceHash = '', now = Date.now()) {
-  const id = String(workerId || 'kaggle').slice(0, 120) || 'kaggle';
+export function touchOracleHeartbeat(workerId = 'local', protocolVersion = '', sourceHash = '', now = Date.now()) {
+  const id = String(workerId || 'local').slice(0, 120) || 'local';
   heartbeatUpsert.run(id, now);
   inMemoryOracleInfo = { workerId: id, protocolVersion: String(protocolVersion || ''), sourceHash: String(sourceHash || '') };
   return { workerId: id, lastSeenAt: now };

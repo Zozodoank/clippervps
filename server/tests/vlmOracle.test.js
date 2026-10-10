@@ -6,7 +6,7 @@ import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 // ============================================================================
-// VLM ORACLE (Kaggle) - test kontrak antrean, normalisasi vonis, dan yang paling
+// VLM ORACLE (lokal) - test kontrak antrean, normalisasi vonis, dan yang paling
 // penting: JAMINAN STRICT oracle-only (mandate 2026-10). Kalau oracle tidak
 // menjawab, job DIHENTIKAN (OracleUnavailableError) - bukan diam-diam lanjut
 // dengan keputusan legacy. Perilaku lama tetap teruji lewat opsi strict:false
@@ -48,7 +48,7 @@ const {
   PREFLIGHT_SCENE_BASE,
 } = await import('../services/vlmOracleService.js');
 const { isAllowedFramePath } = await import('../api/routes/vlmOracleRoutes.js');
-const { maybeAutoLaunchOracle, waitForOracleOnline, probeOracleKernelAlive, __resetAutoLaunchCooldown } = await import('../services/oracleLauncherService.js');
+const { maybeAutoStartLocalOracle, waitForOracleOnline, probeLlamaServerHealth, __resetAutoLaunchCooldown, isLocalOracleAutoStartEnabled } = await import('../services/oracleLocalSupervisor.js');
 const { tempDir } = await import('../utils/paths.js');
 const { getFFmpegPath } = await import('../services/binaryChecker.js');
 
@@ -103,7 +103,7 @@ async function serveBatchAny(jobId, verdictFor) {
   return served;
 }
 
-describe('runtimeFlags - mode oracle (Kaggle-only, mandate 2026-10)', () => {
+describe('runtimeFlags - mode oracle (oracle-only, mandate 2026-10)', () => {
   it('default tidak-set/nilai aneh = oracle; hanya legacy/smolvlm eksplisit yang dikenali', () => {
     expect(buildConfigSnapshot({ ...ENV_OFF, VISION_VERIFY_MODE: 'oracle' }).VISION_VERIFY_MODE).toBe('oracle');
     expect(buildConfigSnapshot({ ...ENV_OFF, VISION_VERIFY_MODE: 'ORACLE ' }).VISION_VERIFY_MODE).toBe('oracle');
@@ -354,7 +354,7 @@ describe('jobStore oracle queue', () => {
 describe('sanitizePoolWithOracle / applyOracleVeto', () => {
   const MISSING = path.join(os.tmpdir(), 'oracle-frame-tidak-ada.jpg');
 
-  /** Simulasi notebook Kaggle: klaim batch milik `jobId` lalu kirim verdict. */
+  /** Simulasi worker oracle: klaim batch milik `jobId` lalu kirim verdict. */
   async function serveBatch(jobId, verdictFor) {
     for (let i = 0; i < 120; i++) {
       const batch = claimOracleBatch({ workerId: 'nb-' + jobId });
@@ -513,8 +513,8 @@ describe('sanitizePoolWithOracle / applyOracleVeto', () => {
 
   // ---- KEBIJAKAN STRICT (default produksi mode oracle, mandate 2026-10) ----
   // Dua test di bawah adalah INTI larangan "lanjut dengan keputusan legacy":
-  // kalau salah satunya berubah jadi lulus-diam, berarti job bisa lolos tanpa vonis Kaggle.
-  it('STRICT: notebook tidak pernah klaim -> LEMPAR OracleUnavailableError(never_claimed)', async () => {
+  // kalau salah satunya berubah jadi lulus-diam, berarti job bisa lolos tanpa vonis Oracle.
+  it('STRICT: worker tidak pernah klaim -> LEMPAR OracleUnavailableError(never_claimed)', async () => {
     const run = applyOracleVeto(frameFiles, {
       jobId: 'strictnc',
       env: { ...ENV_ON, VLM_ORACLE_TIMEOUT_SEC: '5', VLM_ORACLE_TOTAL_TIMEOUT_SEC: '6', VLM_ORACLE_MAX_FRAMES: '1', VLM_ORACLE_POLL_MS: '150' },
@@ -588,7 +588,7 @@ describe('flag VLM_ORACLE_FRAME_HEIGHT + VLM_ORACLE_AUDIT_MAX_FRAMES', () => {
   });
 });
 
-describe('prepareOracleFrames (kanvas JPEG 9:16 untuk Kaggle)', () => {
+describe('prepareOracleFrames (kanvas JPEG 9:16 untuk Oracle lokal)', () => {
   const FFMPEG = (() => { try { return getFFmpegPath(); } catch { return ''; } })();
 
   function jpegHeight(file) {
@@ -1410,7 +1410,7 @@ describe('countBusyOracleJobs - sinyal "jangan bunuh diri" untuk idle-exit noteb
   });
 });
 
-describe('assertOracleConnected - gerbang "Kaggle terhubung" sebelum kerja berat', () => {
+describe('assertOracleConnected - gerbang "Oracle lokal terhubung" sebelum kerja berat', () => {
   it('mode efektif bukan oracle -> ok:false detail mode_not_oracle', () => {
     const r = assertOracleConnected({ logger: silent, env: { ...ENV_OFF, API_ACCESS_TOKEN: 'x' } });
     expect(r.ok).toBe(false);
@@ -1431,97 +1431,82 @@ describe('assertOracleConnected - gerbang "Kaggle terhubung" sebelum kerja berat
     expect(r.detail).toBe('connected');
     expect(r.lastSeenAt).toBeGreaterThan(0);
   });
-  // CATATAN: cabang 'notebook_offline' sengaja TIDAK diuji eksplisit - oracleLastSeenMs
+  // CATATAN: cabang 'worker_offline' sengaja TIDAK diuji eksplisit - oracleLastSeenMs
   // adalah MAX lintas worker, jadi begitu satu heartbeat segar tertanam di DB tes yang
-  // sama ia tidak bisa dibuat basi lagi. Jalur itu ter-cover smoke manual (notebook mati).
+  // sama ia tidak bisa dibuat basi lagi. Jalur itu ter-cover smoke manual (worker mati).
 });
 
-describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (mandate 2026-10)', () => {
-  const ENV_LAUNCH = { ...ENV_ON, API_ACCESS_TOKEN: 'tok-tes', ORACLE_AUTO_LAUNCH: '1', ORACLE_AUTO_LAUNCH_CMD: '/tmp/fake-launch.sh' };
-  const mkSpawn = (calls) => (bin, args, opts) => { calls.push({ bin, args, opts }); return { on() {}, unref() {} }; };
+describe('oracleLocalSupervisor - auto-start oracle lokal via PM2 (mandate 2026-10)', () => {
+  const ENV_START = { ...ENV_ON, API_ACCESS_TOKEN: 'tok-tes', ORACLE_AUTO_LAUNCH: '1' };
+  const mkExecFile = (calls, errFn = null) => (bin, args, opts, cb) => {
+    calls.push({ bin, args, opts });
+    const shouldErr = typeof errFn === 'function' ? errFn(calls.length) : errFn;
+    cb(shouldErr || null);
+  };
 
-  it('flag OFF (default) -> flag_off, spawn TIDAK pernah dipanggil', () => {
+  it('flag OFF (default) -> flag_off, pm2 TIDAK pernah dipanggil', async () => {
     const calls = [];
-    const r = maybeAutoLaunchOracle({ env: { ...ENV_ON, API_ACCESS_TOKEN: 'tok' }, logger: silent, spawnFn: mkSpawn(calls) });
+    const r = await maybeAutoStartLocalOracle({ env: { ...ENV_ON, API_ACCESS_TOKEN: 'tok' }, logger: silent, execFileFn: mkExecFile(calls) });
     expect(r).toMatchObject({ triggered: false, reason: 'flag_off' });
     expect(calls).toHaveLength(0);
   });
 
-  it("ORACLE_AUTO_LAUNCH='true' (bukan cuma '1') -> TETAP aktif (regresi footgun .env Termux)", () => {
+  it("ORACLE_AUTO_LAUNCH='true' (bukan cuma '1') -> TETAP aktif (regresi footgun .env)", async () => {
     __resetAutoLaunchCooldown();
     const calls = [];
-    const r = maybeAutoLaunchOracle({ env: { ...ENV_LAUNCH, ORACLE_AUTO_LAUNCH: 'true' }, logger: silent, now: Date.now() + 10 * 60000, spawnFn: mkSpawn(calls) });
-    expect(r).toMatchObject({ triggered: true, reason: 'launched', cmd: '/tmp/fake-launch.sh' });
+    const r = await maybeAutoStartLocalOracle({ env: { ...ENV_START, ORACLE_AUTO_LAUNCH: 'true' }, logger: silent, now: Date.now() + 10 * 60000, execFileFn: mkExecFile(calls) });
+    expect(r).toMatchObject({ triggered: true, reason: 'launched' });
     expect(calls).toHaveLength(1);
     __resetAutoLaunchCooldown();
   });
 
-  it('token kosong -> token_kosong walau flag ON', () => {
+  it('token kosong -> token_kosong walau flag ON', async () => {
     const calls = [];
-    const r = maybeAutoLaunchOracle({ env: { ...ENV_LAUNCH, API_ACCESS_TOKEN: '' }, logger: silent, spawnFn: mkSpawn(calls) });
+    const r = await maybeAutoStartLocalOracle({ env: { ...ENV_START, API_ACCESS_TOKEN: '' }, logger: silent, execFileFn: mkExecFile(calls) });
     expect(r).toMatchObject({ triggered: false, reason: 'token_kosong' });
     expect(calls).toHaveLength(0);
   });
 
-  it('heartbeat masih segar -> notebook_alive, tidak ada sesi ganda', () => {
-    touchOracleHeartbeat('nb-launch', '', '', Date.now());
+  it('heartbeat masih segar -> oracle_alive, tidak ada restart sia-sia', async () => {
+    touchOracleHeartbeat('local-gate', '', '', Date.now());
     const calls = [];
-    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), spawnFn: mkSpawn(calls) });
-    expect(r).toMatchObject({ triggered: false, reason: 'notebook_alive' });
+    const r = await maybeAutoStartLocalOracle({ env: ENV_START, logger: silent, now: Date.now(), execFileFn: mkExecFile(calls) });
+    expect(r).toMatchObject({ triggered: false, reason: 'oracle_alive' });
     expect(calls).toHaveLength(0);
   });
 
-  it('heartbeat basi (now = +10 mnt) -> spawn detached bash <cmd>', () => {
+  it('heartbeat basi (now = +10 mnt) -> pm2 restart llama-server oracle-worker', async () => {
     __resetAutoLaunchCooldown();
     const calls = [];
-    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now() + 10 * 60000, spawnFn: mkSpawn(calls) });
-    expect(r).toMatchObject({ triggered: true, reason: 'launched', cmd: '/tmp/fake-launch.sh' });
+    const r = await maybeAutoStartLocalOracle({ env: ENV_START, logger: silent, now: Date.now() + 10 * 60000, execFileFn: mkExecFile(calls) });
+    expect(r).toMatchObject({ triggered: true, reason: 'launched' });
     expect(calls).toHaveLength(1);
-    expect(calls[0].bin).toBe('bash');
-    expect(calls[0].args).toEqual(['/tmp/fake-launch.sh']);
-    expect(calls[0].opts).toMatchObject({ detached: true, stdio: 'ignore' });
+    expect(calls[0].args).toEqual(['restart', 'llama-server', 'oracle-worker']);
   });
 
-  it('pemanggilan kedua dalam cooldown -> cooldown, tanpa spawn baru', () => {
+  it('pemanggilan kedua dalam cooldown -> cooldown, tanpa pm2 baru', async () => {
     const calls = [];
-    // lastLaunchAtMs masih +10 mnt dari tes sebelumnya; now sama -> selisih 0 < cooldown.
-    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now() + 10 * 60000, spawnFn: mkSpawn(calls) });
+    const r = await maybeAutoStartLocalOracle({ env: ENV_START, logger: silent, now: Date.now() + 10 * 60000, execFileFn: mkExecFile(calls) });
     expect(r).toMatchObject({ triggered: false, reason: 'cooldown' });
     expect(calls).toHaveLength(0);
     __resetAutoLaunchCooldown();
   });
 
-  // ─── ZOMBIE-PROOF (regresi idle-exit ~5 mnt = staleMs, 2026-10-04) ───
-  it('force=true (zombie dikonfirmasi) -> TETAP launch walau heartbeat segar + args dapat --force', () => {
+  it('pm2 ENOENT -> pm2_missing tanpa melempar', async () => {
     __resetAutoLaunchCooldown();
-    touchOracleHeartbeat('nb-zombie', '', '', Date.now()); // heartbeat sengaja SEGAR
-    const calls = [];
-    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), force: true, spawnFn: mkSpawn(calls) });
-    expect(r).toMatchObject({ triggered: true, reason: 'launched', cmd: '/tmp/fake-launch.sh', forced: true });
-    expect(calls).toHaveLength(1);
-    expect(calls[0].args).toEqual(['/tmp/fake-launch.sh', '--force']);
+    const enoent = Object.assign(new Error('spawn pm2 ENOENT'), { code: 'ENOENT' });
+    const r = await maybeAutoStartLocalOracle({ env: ENV_START, logger: silent, now: Date.now() + 10 * 60000, execFileFn: (b, a, o, cb) => cb(enoent) });
+    expect(r).toMatchObject({ triggered: false, reason: 'pm2_missing' });
     __resetAutoLaunchCooldown();
   });
 
-  it('force=false + heartbeat segar -> notebook_alive (guard lama UTUH, tak berubah)', () => {
-    __resetAutoLaunchCooldown();
-    touchOracleHeartbeat('nb-segar', '', '', Date.now());
-    const calls = [];
-    const r = maybeAutoLaunchOracle({ env: ENV_LAUNCH, logger: silent, now: Date.now(), spawnFn: mkSpawn(calls) });
-    expect(r).toMatchObject({ triggered: false, reason: 'notebook_alive' });
-    expect(calls).toHaveLength(0);
-  });
-
-  it('waitForOracleOnline(afterMs=baseline): heartbeat zombie yang TIDAK maju -> timeout; heartbeat maju -> terhubung', async () => {
-    const baseline = Date.now() - 30_000; // heartbeat zombie: 30 dtk lalu (masih < staleMs)
-    // (1) notebook belum benar-benar restart -> lastSeen tetap = baseline -> TOLAK,
-    //     meski usianya < staleMs. Inilah inti perbaikan zombie.
+  it('waitForOracleOnline(afterMs=baseline): heartbeat tidak maju -> timeout; heartbeat maju -> terhubung', async () => {
+    const baseline = Date.now() - 30_000;
     const rNo = await waitForOracleOnline({
       env: ENV_ON, logger: silent, waitMs: 200, pollMs: 40, deadline: Date.now(), afterMs: baseline,
       lastSeenFn: () => baseline, sleep: async () => {},
     });
-    expect(rNo).toMatchObject({ ok: false, detail: 'notebook_offline' });
-    // (2) sesi BARU memanggil API -> lastSeen MAJU melampaui baseline -> TERHUBUNG.
+    expect(rNo).toMatchObject({ ok: false, detail: 'worker_offline' });
     const rYes = await waitForOracleOnline({
       env: ENV_ON, logger: silent, waitMs: 1000, pollMs: 5, deadline: Date.now(), afterMs: baseline,
       lastSeenFn: () => Date.now() + 5000, sleep: async () => {},
@@ -1529,27 +1514,9 @@ describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (man
     expect(rYes).toMatchObject({ ok: true, detail: 'connected' });
   });
 
-  it('probeOracleKernelAlive: COMPLETE->false, RUNNING->true, keluaran kosong/err->unknown', async () => {
-    const execOk = (out) => (bin, args, opts, cb) => cb(null, out, '');
-    const envK = { KAGGLE_USER: 'u', KAGGLE_BIN: 'kg' };
-    const dead = await probeOracleKernelAlive({ env: envK, logger: silent, execFileFn: execOk('u/clippervps-vlm-oracle has status: KernelWorkerStatus.COMPLETE') });
-    expect(dead.alive).toBe(false);
-    const run = await probeOracleKernelAlive({ env: envK, logger: silent, execFileFn: execOk('u/clippervps-vlm-oracle has status: KernelWorkerStatus.RUNNING') });
-    expect(run.alive).toBe(true);
-    // Frasa menjebak 'not running' + COMPLETE -> harus MATI, bukan hidup.
-    const trap = await probeOracleKernelAlive({ env: envK, logger: silent, execFileFn: execOk('kernel is currently not running (COMPLETE)') });
-    expect(trap.alive).toBe(false);
-    // CLI error tanpa keluaran -> unknown (konservatif: JANGAN paksa launch).
-    const err = await probeOracleKernelAlive({ env: envK, logger: silent, execFileFn: (b, a, o, cb) => cb(new Error('boom'), '', '') });
-    expect(err.alive).toBe('unknown');
-    // User tak dikenal -> unknown (tak menyusun referensi kernel kosong).
-    const noUser = await probeOracleKernelAlive({ env: { KAGGLE_BIN: 'kg', HOME: '/nonexistent-zz' }, logger: silent, execFileFn: execOk('x') });
-    expect(noUser.alive).toBe('unknown');
-  });
-
   it('waitForOracleOnline: heartbeat muncul di tengah tunggu -> ok:true', async () => {
     let i = 0;
-    const seq = [0, 0, Date.now()]; // dua poll basi, lalu notebook terlihat
+    const seq = [0, 0, Date.now()];
     const r = await waitForOracleOnline({
       env: ENV_ON, logger: silent, waitMs: 5000, pollMs: 5, deadline: Date.now(),
       lastSeenFn: () => seq[Math.min(i++, seq.length - 1)], sleep: async () => {},
@@ -1557,13 +1524,24 @@ describe('oracleLauncherService - auto-launch sesi Kaggle saat job berjalan (man
     expect(r).toMatchObject({ ok: true, detail: 'connected' });
   });
 
-  it('waitForOracleOnline: deadline lewat tanpa heartbeat -> ok:false notebook_offline', async () => {
+  it('waitForOracleOnline: deadline lewat tanpa heartbeat -> ok:false worker_offline', async () => {
     const r = await waitForOracleOnline({
       env: ENV_ON, logger: silent, waitMs: 250, pollMs: 50, deadline: Date.now(),
       lastSeenFn: () => 0, sleep: async () => {},
     });
-    expect(r).toMatchObject({ ok: false, detail: 'notebook_offline' });
-    expect(r.message).toMatch(/Auto-launch sudah dikirim/);
+    expect(r).toMatchObject({ ok: false, detail: 'worker_offline' });
+    expect(r.message).toMatch(/Restart oracle lokal/);
+  });
+
+  it('probeLlamaServerHealth: 200->true, 503->false, fetch error->unknown, URL kosong->unknown', async () => {
+    const ok = await probeLlamaServerHealth({ env: { LLAMA_SERVER_URL: 'http://localhost:8080/v1' }, logger: silent, fetchFn: async () => ({ status: 200, text: async () => 'ok' }) });
+    expect(ok.alive).toBe(true);
+    const down = await probeLlamaServerHealth({ env: { LLAMA_SERVER_URL: 'http://localhost:8080/v1' }, logger: silent, fetchFn: async () => ({ status: 503, text: async () => 'no' }) });
+    expect(down.alive).toBe(false);
+    const err = await probeLlamaServerHealth({ env: { LLAMA_SERVER_URL: 'http://localhost:8080/v1' }, logger: silent, fetchFn: async () => { throw new Error('boom'); } });
+    expect(err.alive).toBe('unknown');
+    const empty = await probeLlamaServerHealth({ env: { LLAMA_SERVER_URL: '' }, logger: silent });
+    expect(empty.alive).toBe('unknown');
   });
 });
 

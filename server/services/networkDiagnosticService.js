@@ -179,7 +179,7 @@ export function classifyPipelineError(err, context = {}) {
 
   // ── KELOMPOK 2: PENOLAKAN FILTER KUALITAS & KONTEN (REJECT) ──
 
-  // Visual content rejection from Kaggle Oracle.
+  // Visual content rejection from Oracle lokal.
   if (
     err?.isAiRejection ||
     lower.includes('analisa lokal ditolak') ||
@@ -193,7 +193,7 @@ export function classifyPipelineError(err, context = {}) {
       isNetworkOrIpIssue: false,
       analysisPerformed: true,
       userFriendlyReason: err?.rejectionReason || rawMessage,
-      actionableAdvice: 'Oracle Kaggle menilai video ini tidak memenuhi syarat visual.',
+      actionableAdvice: 'Oracle lokal menilai video ini tidak memenuhi syarat visual.',
       rawMessage,
     };
   }

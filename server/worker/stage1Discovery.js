@@ -218,7 +218,7 @@ export async function runAutoStage1Worker(run) {
       }
 
       // ── GERBANG PRODUK KONKRET (opsi #1) ── Buang judul generik/agregat SEBELUM
-      // stream video + preflight Kaggle (hemat kuota). Qwen toh akan menolak footage
+      // stream video + preflight oracle (hemat kuota). Qwen toh akan menolak footage
       // yang tak cocok dengan "satu produk", jadi lebih baik disaring di sini.
       if (isVagueOrAggregateProduct({ title: shopeeCandidate.title, brand, productType, model })) {
         run.skippedProducts++;
@@ -472,16 +472,16 @@ export async function runAutoStage1Worker(run) {
 
         run.failures.push({ productTitle: currentCandidateTitle, error: err.message, time: new Date().toISOString() });
 
-        // 0. Oracle lokal Qwen (VPS) tidak terhubung / tidak memvonis (kebijakan KAGGLE-ONLY,
+        // 0. Oracle lokal Qwen (VPS) tidak terhubung / tidak memvonis (kebijakan oracle-only,
         // user mandate 2026-10): hentikan SELURUH auto-run, bukan cuma produk ini.
-        // Selama notebook oracle mati, semua job berikutnya akan gagal dengan reason
+        // Selama worker oracle mati, semua job berikutnya akan gagal dengan reason
         // yang sama — lanjut coba-coba hanya membakar kuota Gemini/YouTube. (Pola sama
         // dengan YouTube bot block: status 'stopped' + return.)
         if (err && err.code === 'ORACLE_UNAVAILABLE') {
           console.error(`[Auto] 🛑 Oracle lokal Qwen (VPS) tidak tersedia (${err.reason || 'unknown'}): ${err.message}`);
           updateAutoRun(run, {
             status: 'stopped',
-            message: `⛔ Auto Mode dihentikan: Oracle lokal Qwen (VPS) tidak terhubung / tidak memvonis (reason: ${err.reason || 'unknown'}). Nyalakan tunnel + kernel oracle (lihat /api/vlm-oracle/status), lalu jalankan ulang Auto Mode. (Berhasil: ${run.successfulJobs}, Gagal: ${run.failedJobs}).`,
+            message: `⛔ Auto Mode dihentikan: Oracle lokal Qwen (VPS) tidak terhubung / tidak memvonis (reason: ${err.reason || 'unknown'}). Jalankan pm2 restart oracle-worker (atau menu-vps.sh → Oracle Lokal), lalu jalankan ulang Auto Mode. (Berhasil: ${run.successfulJobs}, Gagal: ${run.failedJobs}).`,
             progress: 100,
             finishedAt: new Date().toISOString(),
             currentJobId: null,

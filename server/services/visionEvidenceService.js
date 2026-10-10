@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // EVIDENCE MODE — Gemini TIDAK membaca ulang video penuh (fileUri stream /
 // File API upload). Yang dikirim ke Gemini hanyalah BUKTI VISUAL yang sudah
-// diekstrak ke disk; keputusan visual menjadi tanggung jawab Oracle Kaggle:
+// diekstrak ke disk; keputusan visual menjadi tanggung jawab Oracle lokal:
 //   * 0 MB kuota internet tambahan (frame sudah tersdownload saat sampling).
 //   * Token Gemini turun drastis (puluhan gambar low-detail vs video utuh).
 // Flag GEMINI_INPUT_MODE ('evidence' default | 'stream' = perilaku lama),
@@ -251,7 +251,7 @@ export function formatCleanWindowsBySource(windows = [], sourceLabels = []) {
   const hasSourceTag = list.some((w) => Number.isFinite(Number(w.sourceVideoIndex)));
   if (!hasSourceTag) {
     // Perilaku lama (satu sumber): daftar flat.
-    return `\nCRITICAL MANDATE (VERIFIED CLEAN TEMPORAL SEGMENTS): Oracle Kaggle telah memverifikasi segmen waktu berikut: [${list.map((w) => `${w.start}s-${w.end}s`).join(', ')}]. Anda HANYA BOLEH memilih timestamps di dalam rentang waktu yang terverifikasi bersih ini! DILARANG KERAS memilih timestamps di luar segmen bersih ini.\n`;
+    return `\nCRITICAL MANDATE (VERIFIED CLEAN TEMPORAL SEGMENTS): Oracle lokal telah memverifikasi segmen waktu berikut: [${list.map((w) => `${w.start}s-${w.end}s`).join(', ')}]. Anda HANYA BOLEH memilih timestamps di dalam rentang waktu yang terverifikasi bersih ini! DILARANG KERAS memilih timestamps di luar segmen bersih ini.\n`;
   }
 
   const bySource = new Map();
@@ -266,7 +266,7 @@ export function formatCleanWindowsBySource(windows = [], sourceLabels = []) {
       const label = sourceLabels[idx] ? ` [${String(sourceLabels[idx]).slice(0, 60)}]` : '';
       return `  VIDEO #${idx + 1}${label}: ${ws.map((w) => `${w.start}s-${w.end}s`).join(', ')}`;
     });
-  return `\nCRITICAL MANDATE (SOURCE-SCOPED VERIFIED CLEAN SEGMENTS): Oracle Kaggle memverifikasi segmen berdasarkan video sumber masing-masing:\n${blocks.join('\n')}\nAturan keras: (1) timestamps HANYA BOLEH dipilih di dalam segmen bersih video SUMBER yang sama; (2) batas waktu 10s-25s pada VIDEO #1 TIDAK BERLAKU untuk VIDEO #2, dst; (3) DILARANG KERAS memilih timestamp di luar daftar segmen sumber yang dipilih, dan wajib mengisi "sourceVideoIndex" sesuai video asalnya.\n`;
+  return `\nCRITICAL MANDATE (SOURCE-SCOPED VERIFIED CLEAN SEGMENTS): Oracle lokal memverifikasi segmen berdasarkan video sumber masing-masing:\n${blocks.join('\n')}\nAturan keras: (1) timestamps HANYA BOLEH dipilih di dalam segmen bersih video SUMBER yang sama; (2) batas waktu 10s-25s pada VIDEO #1 TIDAK BERLAKU untuk VIDEO #2, dst; (3) DILARANG KERAS memilih timestamp di luar daftar segmen sumber yang dipilih, dan wajib mengisi "sourceVideoIndex" sesuai video asalnya.\n`;
 }
 
 /**

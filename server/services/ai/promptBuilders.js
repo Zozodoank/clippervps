@@ -584,7 +584,7 @@ export function build7SlotStoryboardClips({
 
     if (niche === 'gadget_smartphone') {
       // Smartphone slots 1-6 keep only Gemini's role-specific storyboard frame.
-      // Slots 7-8 may recover from another frame, but only from the Kaggle/Gemini
+      // Slots 7-8 may recover from another frame, but only from the Oracle/Gemini
       // camera-result pool; never relabel arbitrary late B-roll as a camera sample.
       if (config.slot >= 7 && (!frameObj || !isCameraEligibleFrame(frameObj))) {
         frameObj = validFrames.find((f) =>

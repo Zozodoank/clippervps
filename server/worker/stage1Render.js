@@ -8,7 +8,7 @@ import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js'
 import { planSectionDownloads } from '../services/renderSections.js';
 import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isVlmOracleEnabled } from '../config/runtimeFlags.js';
 import { auditClipsWithOracle, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
-import { maybeAutoLaunchOracle, waitForOracleOnline, probeOracleKernelAlive, isOracleAutoLaunchEnabled } from '../services/oracleLauncherService.js';
+import { isLocalOracleAutoStartEnabled, probeLlamaServerHealth, maybeAutoStartLocalOracle, waitForOracleOnline } from '../services/oracleLocalSupervisor.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
 import { extractFrames } from '../services/frameExtractor.js';
 // Pembungkus konteks job untuk pencatatan pemakaian AI (token/byte/biaya per job).
@@ -146,7 +146,7 @@ function auditRealMotionFromFrames(framePaths = []) {
 // offline, padahal sebab nyata berbeda. Sebab struktural disimpan, diringkas di log.
 const CLIP_AUDIT_REASON_LABELS = {
   STATIC_PHOTO_OR_KEN_BURNS: 'foto statis/slideshow/Ken Burns (SSIM lokal)',
-  ORACLE_DIRTY: 'teks overlay/wajah/bumper (vonis Oracle Kaggle)',
+  ORACLE_DIRTY: 'teks overlay/wajah/bumper (vonis Oracle lokal)',
 };
 function summarizeClipAuditReasons(discarded = []) {
   const labels = [...new Set((discarded || []).map((d) => CLIP_AUDIT_REASON_LABELS[d?.reason] || d?.reason || 'sebab tidak diketahui'))];
@@ -341,61 +341,44 @@ async function _runStage1Pipeline({
 
   try {
 
-    // ─── GERBANG KAGGLE-ONLY (user mandate 2026-10) ───
-    // Job HANYA boleh jalan dengan Oracle Kaggle sebagai gerbang verifikasi visual:
+    // ─── GERBANG ORACLE-ONLY (user mandate 2026-10, alur VPS-only) ───
+    // Job HANYA boleh jalan dengan Oracle lokal Qwen (VPS) sebagai gerbang verifikasi
+    // visual:
     //  1) mode efektif bukan 'oracle' (local legacy mode — termasuk snapshot retry job lama)
     //     -> DITOLAK sebelum kerja berat apa pun;
-    //  2) API_ACCESS_TOKEN kosong atau notebook Kaggle tidak pernah memanggil API dalam
+    //  2) API_ACCESS_TOKEN kosong atau worker.py lokal tidak pernah memanggil API dalam
     //     window segar (heartbeat claim) -> job DIHENTIKAN. Tidak ada lagi "lanjut dengan
-    //     keputusan legacy": vonis model besar di GPU adalah satu-satunya gerbang.
+    //     keputusan legacy": vonis model visual lokal adalah satu-satunya gerbang.
     // Sengaja DI DALAM try (setelah jobMeta di-persist): error gerbang lewat cabang
     // ORACLE_UNAVAILABLE di catch bawah -> riwayat job berisi alasan, bukan hilangkan
-    // senyap. Kode legacy di service/store TIDAK dihapus (dorman) — tetapi tidak ada
-    // satu pun jalur eksekusi produksinya.
+    // senyap.
     let oracleGate = assertOracleConnected({ logger: console });
-    // ZOMBIE-PROOF (regresi 2026-10-04): Kaggle kini idle-exit ~5 mnt = sama dengan
-    // ambang 'notebook hidup' (VLM_ORACLE_STALE_SEC=300 dtk). Notebook yang BARU mati
-    // masih menyimpan heartbeat 'segar' -> gerbang di atas salah bilang ONLINE ->
-    // auto-launch DILEWATI -> pipeline lanjut ke pre-flight -> batch tak pernah
-    // di-claim (kernel sebenarnya sudah COMPLETE) -> job mati 'never_claimed'.
-    // Bila perangkat ini punya auto-launch aktif (punya kaggle CLI + kredensial,
-    // yaitu Termux), cek status kernel SEJATI. Heartbeat segar + kernel mati = zombie
-    // -> paksa jalur offline agar sesi baru ditendang. Probe bersifat read-only dan
-    // konservatif ('unknown' saat CLI/error TIDAK memicu launch -> tak ada sesi ganda).
-    let zombieConfirmed = false;
-    if (oracleGate.ok && isOracleAutoLaunchEnabled(process.env)) {
-      const probe = await probeOracleKernelAlive({ logger: console });
-      if (probe.alive === false) {
-        const ageSec = oracleGate.lastSeenAt ? Math.round((Date.now() - oracleGate.lastSeenAt) / 1000) : null;
-        console.warn(`[OracleAutoLaunch] 🧟 Heartbeat masih segar${ageSec != null ? ` (${ageSec} dtk lalu)` : ''} TAPI kernel Kaggle = ${probe.state} (mati). Zombie pasca idle-exit -> pancing auto-launch sesi BARU alih-alih lanjut ke pre-flight yang pasti never_claimed.`);
-        zombieConfirmed = true;
-        oracleGate = { ok: false, detail: 'notebook_offline', lastSeenAt: oracleGate.lastSeenAt, message: 'Kernel Kaggle sudah mati meski heartbeat masih segar (zombie idle-exit) — menyalakan sesi baru.' };
-      }
-    }
-    // AUTO-LAUNCH ORACLE (ORACLE_AUTO_LAUNCH=1, khusus perangkat yang punya
-    // kaggle CLI + kredensial — Termux): notebook mati bukan lagi kegagalan, tapi
-    // sinyal untuk menyalakan sesi Kaggle sendiri lewat 'kaggle kernels push'
-    // (oracle-launch.sh; tanpa PC/browser). Job lalu MENUNGGU heartbeat sampai
-    // ORACLE_AUTO_LAUNCH_WAIT_SEC (default 300 dtk) sebelum gerbang memutuskan.
+    // AUTO-START ORACLE LOKAL (ORACLE_AUTO_LAUNCH=1): worker mati bukan lagi kegagalan
+    // instan, tapi sinyal untuk me-restart llama-server + worker.py lewat PM2
+    // (keduanya terdaftar di ecosystem.config.cjs). Job lalu MENUNGGU heartbeat sampai
+    // ORACLE_AUTO_LAUNCH_WAIT_SEC (default 900 dtk) sebelum gerbang memutuskan.
     // Flag mati = perilaku lama persis: gagal seketika, tidak spawn apa pun.
-    if (!oracleGate.ok && oracleGate.detail === 'notebook_offline') {
-      const launch = maybeAutoLaunchOracle({ logger: console, force: zombieConfirmed });
-      if (launch.triggered) {
-        // afterMs = baseline heartbeat zombie; menunggu heartbeat MAJU (sesi baru
+    if (!oracleGate.ok && oracleGate.detail === 'worker_offline' && isLocalOracleAutoStartEnabled(process.env)) {
+      const health = await probeLlamaServerHealth({ logger: console });
+      if (health.alive !== true) {
+        console.warn(`[OracleLocal] llama-server tidak sehat (${health.state || 'unknown'}) — mencoba PM2 restart llama-server + oracle-worker.`);
+      }
+      const start = await maybeAutoStartLocalOracle({ logger: console });
+      if (start.triggered) {
+        // afterMs = baseline heartbeat basi; menunggu heartbeat MAJU (worker baru
         // benar-benar memanggil API), bukan sekadar melihat yang basi jadi 'segar'.
         oracleGate = await waitForOracleOnline({
           logger: console,
           afterMs: oracleGate.lastSeenAt || 0,
-          launchId: launch.launchId,
         });
-      } else if (launch.reason === 'cooldown') {
-        console.log(`[OracleAutoLaunch] sesi terakhir berumur < cooldown — job tetap memakai gerbang lama (${Math.round(launch.waitMs / 60000)} mnt lagi boleh launch).`);
+      } else if (start.reason === 'cooldown') {
+        console.log(`[OracleLocal] restart terakhir < cooldown — job tetap memakai gerbang lama (${Math.round(start.waitMs / 60000)} mnt lagi boleh restart).`);
       }
     }
     if (!oracleGate.ok) {
-      throw new OracleUnavailableError(`⛔ Job dihentikan (kebijakan Kaggle-only): ${oracleGate.message}`, { reason: oracleGate.detail, jobId });
+      throw new OracleUnavailableError(`⛔ Job dihentikan (kebijakan oracle-only): ${oracleGate.message}`, { reason: oracleGate.detail, jobId });
     }
-    // Kaggle merupakan satu-satunya pemutus visual.
+    // Oracle lokal Qwen (VPS) merupakan satu-satunya pemutus visual.
     jobMeta.oraclePreflight = { ok: true, lastSeenAt: oracleGate.lastSeenAt, checkedAt: new Date().toISOString() };
 
     const existingVideoInTemp = (() => {
@@ -701,7 +684,7 @@ async function _runStage1Pipeline({
         ? probe.frames
         : (Array.isArray(probe.cleanFrames) ? probe.cleanFrames : []);
       if (!previewFrames.length) {
-        throw Object.assign(new Error('Fast probe tidak menghasilkan frame untuk dikirim ke Qwen/Kaggle.'), { isInfraError: true });
+        throw Object.assign(new Error('Fast probe tidak menghasilkan frame untuk dikirim ke Oracle.'), { isInfraError: true });
       }
       // Do not let a short opening preview veto a source whose selected sections may be clean.
       // Oracle review runs on the actual Gemini-selected sections after they are downloaded.
@@ -712,8 +695,8 @@ async function _runStage1Pipeline({
       updateProgress({
         step: 'section_prepare',
         message: isManualJob
-          ? 'Sumber video dipilih operator; menyiapkan section untuk audit Oracle Kaggle...'
-          : 'Gemini memilih timestamp section; Oracle Kaggle menjadi pemeriksa visual...',
+          ? 'Sumber video dipilih operator; menyiapkan section untuk audit Oracle lokal...'
+          : 'Gemini memilih timestamp section; Oracle lokal menjadi pemeriksa visual...',
         progress: 40,
       });
 
@@ -757,7 +740,7 @@ async function _runStage1Pipeline({
           duration: rawDur,
         });
 
-        // Cache raw frames are passed to the mandatory Kaggle Oracle audit.
+        // Cache raw frames are passed to the mandatory Oracle audit.
         const cacheFrames = rawFrames;
 
         highlight = await selectHighlightWithAI({
@@ -855,7 +838,7 @@ async function _runStage1Pipeline({
         }
       } catch (initErr) {
         if (initErr.isInfraError) {
-          // P1-5: timeout yt-dlp / Oracle Kaggle tidak tersedia adalah transien
+          // P1-5: timeout yt-dlp / Oracle lokal tidak tersedia adalah transien
           // INFRASTRUKTUR. Vonis "video buruk" (-> blacklist) harus tetap milik isAiRejection;
           // sebelumnya error infra di sini meleleh ke outer catch dan membatal-kan seluruh job.
           console.warn(`[Job ${jobId}] ⚠️ [Infra] Gangguan sementara saat menilai video awal (${initErr.message}). Tidak mem-blacklist; lanjut ke jalur kandidat.`);
@@ -880,7 +863,7 @@ async function _runStage1Pipeline({
     let hadRenderPlanShortfall = false;
     const failedCandidateUrls = new Set();
     // P1-5: URL kandidat yang pernah kena error infrastruktur (timeout yt-dlp, Oracle error,
-    // Oracle Kaggle tidak tersedia). Masing-masing dapat 1 percobaan ULANG sebelum dianggap gugur, supaya
+    // Oracle lokal tidak tersedia). Masing-masing dapat 1 percobaan ULANG sebelum dianggap gugur, supaya
     // jaringan sesaat tidak lagi membuang kandidat baik secara permanen di run ini.
     const infraRetriedUrls = new Set();
     let maxStreamVideos = explicitOnly ? 10 : (preferMultiVideo ? 5 : 3);
@@ -2205,7 +2188,7 @@ async function _runStage1Pipeline({
 
     // ── AUDIT MULTI-TITIK PASCA-DOWNLOAD (2,5 FPS PER KLIP, ANTI-TEKS & ANTI-WAJAH) ──
     // Mengekstrak frame tiap 0,40s dari file section/1080p yang baru diunduh untuk gerbang
-    // motion lokal (foto statis/Ken Burns), lalu vonis akhir teks/wajah oleh Oracle Kaggle.
+    // motion lokal (foto statis/Ken Burns), lalu vonis akhir teks/wajah oleh Oracle lokal.
     if (Array.isArray(highlight.clips) && highlight.clips.length > 0) {
       updateProgress({
         step: 'clip_audit',
@@ -2263,7 +2246,7 @@ async function _runStage1Pipeline({
           if (ok) testFrames.push({ filePath: framePath, timestamp: ts });
         }
 
-        // Tidak ada gerbang visual lokal; seluruh keputusan konten diberikan ke Oracle Kaggle.
+        // Tidak ada gerbang visual lokal; seluruh keputusan konten diberikan ke Oracle lokal.
         cleanAuditedClips.push(c);
         oracleClips.push(c);
         oracleFrameGroups.push(testFrames);
@@ -2272,7 +2255,7 @@ async function _runStage1Pipeline({
 
       // [[ORACLE CLIP AUDIT]] — veto klip final oleh model besar (VISION_VERIFY_MODE=oracle).
       // Frame-nya gratis: sudah diekstrak pada sampleStepSec 0.40 s di atas dari file
-      // section 1080p yang baru diunduh. Yang dikirim ke notebook versi 360p
+      // section 1080p yang baru diunduh. Yang dikirim ke worker versi 360p
       // (VLM_ORACLE_FRAME_HEIGHT). Klip yang divonis kotor masuk discardedDirtyClips
       // dan mesin recovery di bawah yang menangani sisanya (Slot 1 + pooledFrames).
       // STRICT (mandate 2026-10): oracle diam/timeout/vonis tidak sah -> job BERHENTI,
@@ -2280,7 +2263,7 @@ async function _runStage1Pipeline({
       if (isVlmOracleEnabled(process.env) && oracleClips.length > 0) {
         updateProgress({
           step: 'vlm_oracle',
-          message: '🛰️ Oracle Kaggle memvonis klip final (frame 2,5 fps dari file 1080p terunduh)...',
+          message: '🛰️ Oracle lokal memvonis klip final (frame 2,5 fps dari file 1080p terunduh)...',
           progress: 61,
           status: 'running'
         });
@@ -2299,12 +2282,12 @@ async function _runStage1Pipeline({
           });
           console.log(`[Job ${jobId}] 🛰️ [Oracle audit klip] ${audit.checked} frame divisit, ${dirtySlots.length} klip ditolak model besar, ${audit.timedOut} frame tak dijawab (dalam ${Math.round(audit.elapsedMs / 1000)}s).`);
         } catch (oracleErr) {
-          // STRICT: audit klip yang gagal divonis = job berhenti (klip tanpa vonis Kaggle
+          // STRICT: audit klip yang gagal divonis = job berhenti (klip tanpa vonis Oracle
           // tidak boleh dipakai). auditClipsWithOracle mode strict sudah melempar
           // OracleUnavailableError; error lain dibungkus agar code-nya dikenali hilir.
           if (oracleErr instanceof OracleUnavailableError) throw oracleErr;
           throw new OracleUnavailableError(
-            `⛔ [Oracle audit klip] gagal (${oracleErr.message}) — job dihentikan; klip tanpa vonis Kaggle tidak diizinkan.`,
+            `⛔ [Oracle audit klip] gagal (${oracleErr.message}) — job dihentikan; klip tanpa vonis Oracle tidak diizinkan.`,
             { reason: 'infra', jobId },
           );
         }
@@ -2403,7 +2386,7 @@ async function _runStage1Pipeline({
           }
         }
       } else {
-        console.log(`[ClipAudit] ✅ Seluruh ${highlight.clips.length} klip lolos audit${isVlmOracleEnabled(process.env) ? ' (motion lokal + vonis Oracle Kaggle)' : ' (gerbang motion lokal — Oracle nonaktif, vonis akhir di pass lain)'}.`);
+        console.log(`[ClipAudit] ✅ Seluruh ${highlight.clips.length} klip lolos audit${isVlmOracleEnabled(process.env) ? ' (motion lokal + vonis Oracle lokal)' : ' (gerbang motion lokal — Oracle nonaktif, vonis akhir di pass lain)'}.`);
       }
     }
 
@@ -3185,11 +3168,11 @@ async function _runStage1Pipeline({
       console.warn(`[Cleaner] Retaining failed manual job artifacts for ${jobId}: ${sessionTempDir}`);
     }
 
-    // KEBIJAKAN KAGGLE-ONLY: stop karena oracle bersifat TERMINAL untuk SEMUA kelas job
+    // KEBIJAKAN ORACLE-ONLY: stop karena oracle bersifat TERMINAL untuk SEMUA kelas job
     // (manual DAN auto). Tanpa cabang ini, job manual yang sudah punya rawVideoPath akan
     // di-downgrade ke 'awaiting_voiceover' di bawah -> retry manual / auto-retry melaporkan
-    // SUKSES padahal vonis Kaggle tidak pernah tiba, dan jalur TTS bisa merilis klip
-    // tanpa vonis. Video mentah tetap di disk (retry setelah notebook nyala tidak perlu
+    // SUKSES padahal vonis Oracle tidak pernah tiba, dan jalur TTS bisa merilis klip
+    // tanpa vonis. Video mentah tetap di disk (retry setelah worker nyala tidak perlu
     // unduh ulang), tapi statusnya error — bukan await voiceover.
     if (error && error.code === 'ORACLE_UNAVAILABLE') {
       const currentJob = activeJobs.get(jobId) || jobMeta || {};
