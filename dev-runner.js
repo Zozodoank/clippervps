@@ -84,7 +84,7 @@ function startServerProcess() {
   });
 }
 
-console.log('[dev-runner] Local Gatekeeper disabled; all visual verdicts are handled by Oracle Kaggle.');
+console.log('[dev-runner] Visual verdicts ditangani Oracle lokal Qwen (VPS) via llama-server + worker.py.');
 
 let ngrokProcess = null;
 
@@ -105,13 +105,11 @@ function startNgrokProcess(port) {
   });
 }
 
-// Tunnel dikelola terpisah oleh start-tunnel.sh/PM2 di Termux. Menyalakan ngrok
-// kedua dari dev-runner merebut domain yang sama; Oracle pun melihat tunnel lama
-// atau tidak tersambung. Jalur standalone (npm run dev) tetap auto-tunnel secara
-// default. Override eksplisit tersedia untuk operator.
-const runnerIsManaged = process.env.pm_id !== undefined || process.env.NODE_APP_INSTANCE !== undefined;
-const autoTunnel = process.env.DEV_RUNNER_AUTO_TUNNEL === '1' ||
-  (process.env.DEV_RUNNER_AUTO_TUNNEL !== '0' && !runnerIsManaged);
+// Tunnel dikelola terpisah oleh start-tunnel.sh/PM2 dan kini OPSIONAL (hanya untuk
+// akses UI jarak jauh - alur kerja job memakai oracle lokal via loopback). Karena itu
+// auto-tunnel menjadi opt-in eksplisit: hanya menyala bila DEV_RUNNER_AUTO_TUNNEL=1.
+// Tidak ada lagi cabang "standalone auto-on" yang diam-diam merebut domain ngrok.
+const autoTunnel = process.env.DEV_RUNNER_AUTO_TUNNEL === '1';
 if (autoTunnel) {
   startNgrokProcess(serverPort);
 } else {

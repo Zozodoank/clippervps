@@ -1,86 +1,92 @@
 # Panduan Setup Oracle Lokal (Qwen2.5-VL-3B) di VPS Ubuntu 22.04
 
-Dokumen ini adalah runbook lengkap untuk menyiapkan dan menjalankan **ClipperVPS** secara penuh di VPS Ubuntu 22.04, memindahkan beban kerja visual (VLM) yang sebelumnya di Kaggle ke VPS itu sendiri menggunakan `llama.cpp` dan `worker.py`.
+Dokumen ini adalah runbook lengkap untuk menyiapkan dan menjalankan **ClipperVPS** secara penuh di VPS Ubuntu 22.04. Semua vonis visual ditangani **Oracle lokal Qwen** (`llama-server` + `server/oracle_local/worker.py`) yang berjalan di VPS yang sama dengan backend. **Kaggle tidak ada di jalur produksi** (folder `kaggle/` hanya arsip, lihat `kaggle/DEPRECATED.md`).
 
 ## 1. Persiapan VPS (Otomatis)
 
-Jalankan skrip setup untuk menginstal semua dependensi, Node.js, yt-dlp, whisper.cpp, dan llama.cpp:
+Jalankan skrip setup untuk menginstal semua dependensi, Node.js, yt-dlp, whisper.cpp, llama.cpp, model GGUF, venv oracle worker, dan registrasi PM2:
 
 ```bash
 chmod +x setup-vps.sh
 ./setup-vps.sh
 ```
 
-**Model VLM:**
-Unduh model Qwen2.5-VL-3B-Instruct berformat GGUF ke dalam direktori `server/bin/llama/models/`:
-- `qwen2.5-vl-3b-instruct-q4_k_m.gguf`
-- `mmproj-qwen2.5-vl-3b-instruct-f16.gguf`
+Skrip bersifat idempoten (aman dijalankan berulang). Path resmi yang dipakai (jangan tulis path lain di dokumen/manuale — `ecosystem.config.cjs` adalah sumber kebenaran):
 
-## 2. Reverse Tunnel untuk yt-dlp (Termux)
+- `llama-server`: `/opt/clippervps-llama/build/bin/llama-server`
+- Model: `/opt/clippervps-models/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf` + `mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf`
+- Python worker: venv `/opt/clippervps-oracle-venv` (requests + Pillow)
 
-Karena VPS biasanya diblokir oleh YouTube (HTTP 429), yt-dlp harus merutekan traffic-nya melalui HP Android Anda menggunakan Termux.
+Verifikasi cepat setelah setup:
+
+```bash
+curl http://127.0.0.1:8080/health   # → {"status":"ok"} setelah llama-server online
+```
+
+## 2. Reverse Tunnel yt-dlp dari Termux (OPSIONAL)
+
+Hanya needed jika YouTube mulai menolak IP VPS (HTTP 429). Alur kerja normal mencoba download langsung dari IP VPS terlebih dahulu.
 
 1. Di HP Anda (Termux), jalankan:
    ```bash
    ./scripts/phone-proxy-connect.sh
    ```
-2. Skrip ini akan menjalankan `microsocks` di HP dan melakukan SSH Reverse Tunnel ke VPS (mem-forward port 10808 VPS ke port microsocks di HP).
-3. Di VPS, pastikan `.env` memiliki konfigurasi ini:
+2. Skrip ini menjalankan `microsocks` di HP dan melakukan SSH Reverse Tunnel ke VPS (mem-forward port 10808 VPS ke microsocks di HP).
+3. Di VPS, aktifkan proxy di `server/.env` **hanya saat 429 terjadi**:
    ```env
-   PROXY_URL=socks5h://127.0.0.1:10808
-   YTDLP_PROXY_REQUIRED=1
+   # PROXY_URL=socks5h://127.0.0.1:10808   ← uncomment saat proxy aktif
+   YTDLP_PROXY_REQUIRED=0                  # 0 = proxy opsional (default), 1 = wajib
    ```
+   `downloader.js` (`getSmartProxyArgs`) hanya memakai `PROXY_URL` bila port 10808 benar-benar listening, jadi mengomentarinya saat tidak ada tunnel adalah aman.
 
 ## 3. Menjalankan Layanan menggunakan PM2
 
-Kita menggunakan PM2 untuk menjalankan 3 komponen utama secara berbarengan:
-1. Backend Node.js (ClipperVPS)
-2. `llama-server` (Inference API lokal)
-3. `worker.py` (Oracle worker)
-
-### A. Start `llama-server`
+Jangan men-start `llama-server`/`worker.py`/backend satu per satu dengan perintah `pm2 start` manual — semuanya sudah terdaftar di **`ecosystem.config.cjs`** (root repo; berekstensi `.cjs` karena root package.json bertipe ESM):
 
 ```bash
-pm2 start ./server/bin/llama/llama-server \
-  --name "llama-server" \
-  -- \
-  -m ./server/bin/llama/models/qwen2.5-vl-3b-instruct-q4_k_m.gguf \
-  --mmproj ./server/bin/llama/models/mmproj-qwen2.5-vl-3b-instruct-f16.gguf \
-  -c 4096 -cb -port 8080
+cd /root/clippervps
+pm2 start ecosystem.config.cjs
+pm2 save
 ```
 
-Verifikasi `llama-server`:
-```bash
-curl http://127.0.0.1:8080/health
-```
+Tiga app yang dikelola PM2:
 
-### B. Start `worker.py` (Oracle Lokal)
+| Nama app          | Isi                                                         |
+|-------------------|-------------------------------------------------------------|
+| `llama-server`    | Inferensi Qwen2.5-VL-3B GGUF, loopback `127.0.0.1:8080`     |
+| `oracle-worker`   | `server/oracle_local/run-worker.sh` → venv python + `worker.py` |
+| `clipper`         | `dev-runner.js` (backend Express + Vite), tunnel OFF        |
 
-Pastikan virtual environment python aktif jika ada, lalu:
+`run-worker.sh` memuat `server/.env` (lalu root `.env`) dan meng-export `ORACLE_TOKEN=$API_ACCESS_TOKEN`, sehingga token tidak diduplikasi di konfigurasi PM2. Worker adalah **klien** yang mengklaim antrean batch via loopback `http://127.0.0.1:5000/api/vlm-oracle/*` — **tidak butuh tunnel publik**.
 
-```bash
-pm2 start server/oracle_local/worker.py \
-  --name "oracle-worker" \
-  --interpreter python3
-```
-
-### C. Start Backend ClipperVPS
+Verifikasi terhubungnya oracle (heartbeat worker maju tiap kali claim, termasuk polling kosong):
 
 ```bash
-pm2 start server/server.js \
-  --name "clippervps-backend"
+curl -s -H "x-api-token: $API_ACCESS_TOKEN" http://127.0.0.1:5000/api/vlm-oracle/status
+# → "connected": true dalam ≤ 30 detik setelah oracle-worker online
 ```
 
-## 4. Benchmark & Log
+## 4. Tunnel Publik (OPSIONAL — hanya akses UI jarak jauh)
+
+Job TIDAK bergantung tunnel. Nyalakan hanya jika ingin membuka dashboard dari luar jaringan lokal:
+
+```bash
+bash start-tunnel.sh auto     # ngrok URL tetap bila NGROK_DOMAIN terisi, else cloudflared
+```
+
+Detail instalasi ngrok/authtoken: lihat `ngrok.md`.
+
+## 5. Benchmark & Log
 
 Untuk melihat log semua proses:
 ```bash
 pm2 logs
+pm2 logs oracle-worker --lines 100   # vonis per batch + elapsedMs
 ```
 
-Untuk me-restart semua proses:
+Untuk me-restart oracle saja (mis. setelah ganti model):
 ```bash
-pm2 restart all
+pm2 restart llama-server oracle-worker
 ```
 
 Simpan konfigurasi PM2 agar otomatis berjalan saat VPS reboot (Systemd):
@@ -89,10 +95,10 @@ pm2 save
 pm2 startup systemd
 ```
 
-### D. Hardening & Ops (Log & Disk)
+### A. Hardening & Ops (Log & Disk)
 
 **Rotasi Log (Wajib untuk VPS):**
-Gunakan `pm2-logrotate` agar log PM2 tidak memenuhi disk VPS.
+`setup-vps.sh` sudah menginstall `pm2-logrotate`. Manual bila terlewat:
 ```bash
 pm2 install pm2-logrotate
 ```
@@ -107,4 +113,4 @@ Buka konfigurasi cron dengan `crontab -e` lalu tambahkan:
 ```
 
 ---
-**Catatan:** Pastikan `VLM_ORACLE_BASE_URL=http://127.0.0.1:5000` ada di `server/.env` agar `worker.py` dapat mengambil job dari backend lokal.
+**Catatan:** `VLM_ORACLE_BASE_URL=http://127.0.0.1:5000` dan `LLAMA_SERVER_URL=http://127.0.0.1:8080/v1` harus ada di `server/.env` agar `worker.py` mengambil job dari backend lokal dan memvonis lewat llama-server. `ORACLE_AUTO_LAUNCH=1` mengizinkan supervisor (`server/services/oracleLocalSupervisor.js`) me-restart `llama-server oracle-worker` via PM2 otomatis saat heartbeat oracle basi.

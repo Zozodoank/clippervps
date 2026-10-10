@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Jembatan publik untuk Oracle Kaggle: ngrok (URL TETAP) atau cloudflared (URL acak).
+# Tunnel publik OPSIONAL untuk akses UI jarak jauh: ngrok (URL TETAP) atau cloudflared (URL acak).
 #
 # MENGAPA SKRIP INI ADA
-# Pipeline lokal tidak pernah memanggil Kaggle - notebook-lah yang mengetuk API kita
-# (/api/vlm-oracle/claim, /vlm-oracle/frames/.., /vlm-oracle/result). Jadi perangkat yang
-# menjalankan server harus punya URL publik. Selama ini cloudflared quick tunnel dijalankan
-# manual dari riwayat shell dan namanya berganti setiap restart, sehingga
-# kaggle/deploy.ps1 -FromTermux wajib dijalankan ulang tiap hari. ngrok plan gratis memberi
-# satu dev domain yang tidak berubah -> URL didaftarkan sekali.
+# Sejak alur VPS-only (Oracle lokal Qwen), alur kerja job TIDAK lagi bergantung tunnel:
+# worker oracle memanggil API server via loopback 127.0.0.1:5000. Tunnel kini hanya
+# dibutuhkan operator untuk membuka dashboard dari luar jaringan lokal. Skrip ini
+# dipertahankan karena kebutuhan UI jarak jauh masih ada (mis. HP lain / PC lain).
+# cloudflared quick tunnel dijalankan manual dari riwayat shell dan namanya berganti
+# setiap restart; ngrok plan gratis memberi satu dev domain yang tidak berubah -> URL
+# didaftarkan sekali.
 #
 # Pemakaian (jalankan DI DALAM proot Ubuntu, tempat node/cloudflared berada):
 #   bash start-tunnel.sh              # auto: ngrok bila NGROK_DOMAIN terisi, else cloudflared
@@ -135,7 +136,7 @@ publish_url() {
       echo "           tidak bisa akses keluar (DNS/kuota). Coba: bash start-tunnel.sh status"
       ;;
   esac
-  echo "Next     : dari PC -> powershell -ExecutionPolicy Bypass -File kaggle/deploy.ps1 -FromTermux -NoModel -RunTimeoutSec 300 -Logs"
+  echo "Next     : tunnel hanya untuk akses UI; alur kerja job memakai Oracle lokal (127.0.0.1)."
 }
 
 # Carikan URL ngrok dari key yang sudah biasa dipakai operator: NGROK_URL (URL penuh)
