@@ -133,6 +133,39 @@ else
 fi
 
 echo "==================================================="
+echo "  [Opsional] Bridge proxy HTTP->SOCKS5 (privoxy) ke HP"
+echo "==================================================="
+# Aktif HANYA bila PHONE_SOCKS5="IP_HP:PORT_SOCKS5" diisi. Membungkus SOCKS5 HP jadi
+# HTTP proxy lokal (127.0.0.1:8118) agar yt-dlp DAN FFmpeg (via -http_proxy, lihat
+# getFfmpegProxyArgs di downloader.js) keluar lewat IP HP yang SAMA.
+# Cara pakai: PHONE_SOCKS5=10.0.0.5:9050 ./setup-vps.sh   (default: kosong = skip)
+PHONE_SOCKS5="${PHONE_SOCKS5:-}"
+PRIVOXY_LISTEN="${PRIVOXY_LISTEN:-127.0.0.1:8118}"
+if [ -n "$PHONE_SOCKS5" ]; then
+    echo "PHONE_SOCKS5=$PHONE_SOCKS5 -> instal & konfigurasi privoxy..."
+    sudo apt-get install -y privoxy
+    # Idempoten via marker 'clippervps-bridge' (config bawaan punya baris forward-socks5
+    # yang dikomentari, jadi cek nama itu tidak aman).
+    if ! grep -q "clippervps-bridge" /etc/privoxy/config; then
+        printf '\n# clippervps-bridge (routing yt-dlp+FFmpeg ke HP)\nforward-socks5 / %s .\nlisten-address %s\n' "$PHONE_SOCKS5" "$PRIVOXY_LISTEN" | sudo tee -a /etc/privoxy/config > /dev/null
+        echo "  Config privoxy ditambahkan (marker clippervps-bridge)."
+    else
+        echo "  Config privoxy clippervps-bridge sudah ada - tidak diulang."
+    fi
+    sudo systemctl enable privoxy > /dev/null 2>&1 || true
+    sudo systemctl restart privoxy
+    echo "  Verifikasi bridge (200/302 = SOCKS5 HP terjangkau):"
+    code=$(curl -s --max-time 20 --proxy "http://${PRIVOXY_LISTEN}" https://www.youtube.com -o /dev/null -w '%{http_code}' || echo '000')
+    echo "    HTTP $code"
+    if [ "$code" = "000" ]; then
+        echo "    !! Gagal. Cek: SOCKS5 HP harus REACHABLE dari VPS (bukan 127.0.0.1 HP / CGNAT)."
+    fi
+    echo "  LANGKAH LANJUT: set server/.env -> PROXY_URL=http://${PRIVOXY_LISTEN} + YTDLP_PROXY_REQUIRED=1, lalu pm2 restart clipper"
+else
+    echo "PHONE_SOCKS5 kosong -> lewati privoxy (tidak ada bridge HP). Ini default aman."
+fi
+
+echo "==================================================="
 echo "  Verifikasi Instalasi Dasar"
 echo "==================================================="
 ffmpeg -version | head -n 1

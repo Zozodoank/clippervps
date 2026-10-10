@@ -47,6 +47,8 @@ Kenapa tidak cukup `PROXY_URL=socks5://...`: FFmpeg **tidak** mendukung SOCKS5 l
 
 1. **SOCKS5 HP harus bisa dijangkau VPS.** Aplikasi SOCKS5 di Android umumnya hanya bind ke `127.0.0.1` HP atau LAN Wi-Fi. Pastikan VPS dapat menyentuh `IP_HP:PORT_SOCKS5` (Wi-Fi satu jaringan dengan router yang reachable, HP di-hotspot, atau port-forward). Bila HP di belakang CGNAT seluler dan tak reachable, model ini tidak bisa — pakai tunnel SSH (`scripts/phone-proxy-connect.sh`) sebagai gantinya.
 2. **Pasang & konfigurasi privoxy di VPS:**
+   > **Otomatis (direkomendasikan):** `setup-vps.sh` kini menyiapkan bridge ini saat `PHONE_SOCKS5` diisi — `PHONE_SOCKS5=IP_HP:PORT ./setup-vps.sh` memasang privoxy, menulis `forward-socks5` + `listen-address` (idempoten via marker `clippervps-bridge`), restart service, dan mengecek `curl --proxy`. Lewati bila `PHONE_SOCKS5` kosong.
+   Manual equivalent:
    ```bash
    sudo apt-get install -y privoxy
    ```
