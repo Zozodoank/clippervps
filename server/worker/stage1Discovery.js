@@ -505,16 +505,21 @@ export async function runAutoStage1Worker(run) {
         }
 
         if (isYouTubeAuthError) {
-          const isProxyActive = isLocalPortListening(10808) || Boolean(process.env.PROXY_URL || process.env.RESIDENTIAL_PROXY);
+          // Model VPS-only: proxy aktif berarti endpoint PROXY_URL/RESIDENTIAL_PROXY terisi
+          // (bridge privoxy HTTP->SOCKS5 ke HP, lazimnya 127.0.0.1:8118). Bila env kosong,
+          // cek apakah bridge privoxy default sedang listen (pengganti asumsi lama
+          // isLocalPortListening(10808) jaman SSH reverse proxy Termux).
+          const proxyEndpoint = String(process.env.RESIDENTIAL_PROXY || process.env.PROXY_URL || '').trim();
+          const isProxyActive = Boolean(proxyEndpoint) || isLocalPortListening(8118);
           const isCookiesDisabled = process.env.DISABLE_COOKIES === 'true' || process.env.NO_COOKIES === 'true';
 
           if (isProxyActive || isCookiesDisabled) {
-            console.warn(`[Auto] ⚠️ Video ini membutuhkan login / autentikasi. Melewati produk ini dan lanjut ke antrean berikutnya (Mode Proxy 10808 / Tanpa Cookies aktif).`);
+            console.warn(`[Auto] ⚠️ Video ini membutuhkan login / autentikasi. Melewati produk ini dan lanjut ke antrean berikutnya (Mode Proxy aktif / Tanpa Cookies aktif).`);
           } else {
             console.error('[Auto] ❌ YouTube membutuhkan autentikasi (cookies). Auto Mode dihentikan.');
             updateAutoRun(run, {
               status: 'stopped',
-              message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Solusi: Hubungkan SSH Reverse Proxy Termux (port 10808) atau upload cookies.txt.',
+              message: '⚠️ Auto Mode berhenti: YouTube membutuhkan cookies autentikasi. Solusi: Aktifkan bridge proxy ke HP (PROXY_URL/privoxy) atau upload cookies.txt.',
               progress: 100,
               finishedAt: new Date().toISOString(),
               currentJobId: null,

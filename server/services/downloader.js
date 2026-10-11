@@ -61,7 +61,7 @@ export function findCookiesFile() {
  * 5. Automatic detection of session cookies.txt across root and server/ folders
  */
 /**
- * Fast zero-overhead check if a local port is listening via /proc/net/tcp (Linux/Termux)
+ * Fast zero-overhead check if a local port is listening via /proc/net/tcp (Linux/VPS)
  */
 export function isLocalPortListening(port) {
   try {
@@ -84,8 +84,10 @@ export function isLocalPortListening(port) {
 
 /**
  * Returns proxy args with automatic fallback:
- * If a local reverse SOCKS5 proxy (e.g. 127.0.0.1:10808) is defined, checks if port is listening.
- * If not connected yet via SSH -R, safely omits --proxy to avoid connection refused errors.
+ * Model VPS-only: trafik YouTube di-belokkan ke HP lewat bridge privoxy HTTP->SOCKS5
+ * (lazimnya 127.0.0.1:8118, diset via PROXY_URL/RESIDENTIAL_PROXY). Untuk endpoint loopback
+ * TANPA port eksplisit, diasumsikan port bridge default (8118). Bila port itu belum listen,
+ * --proxy sengaja di-omit agar yt-dlp tidak gagal koneksi (kecuali YTDLP_PROXY_REQUIRED=1).
  */
 export function getSmartProxyArgs() {
   const proxy = (process.env.RESIDENTIAL_PROXY || process.env.PROXY_URL || '').trim();
@@ -93,7 +95,7 @@ export function getSmartProxyArgs() {
 
   if (proxy.includes('127.0.0.1') || proxy.includes('localhost')) {
     const match = proxy.match(/:(\d+)/);
-    const port = match ? parseInt(match[1], 10) : 10808;
+    const port = match ? parseInt(match[1], 10) : 8118;
     if (fs.existsSync('/proc/net/tcp')) {
       const isListening = isLocalPortListening(port);
       if (!isListening) {
