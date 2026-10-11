@@ -5,18 +5,24 @@ import { activeJobs } from '../store/jobStore.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outputDir = path.join(__dirname, '..', 'output'); // server/output
-const DEFAULT_DAILY_VIDEO_LIMIT = 20;
+// VPS-only mandate: TANPA batas harian secara default (unlimited). Batas hanya berlaku bila
+// DAILY_VIDEO_LIMIT di-set ke angka > 0. 'unlimited'/0/kosong/nilai invalid = tanpa batas.
+const DEFAULT_DAILY_VIDEO_LIMIT = Infinity;
 export function getDailyOutputVideoLimit() {
-  const envVal = parseInt(process.env.DAILY_VIDEO_LIMIT, 10);
-  return (!isNaN(envVal) && envVal > 0) ? envVal : DEFAULT_DAILY_VIDEO_LIMIT;
+  const raw = String(process.env.DAILY_VIDEO_LIMIT || '').trim().toLowerCase();
+  if (raw === '' || raw === 'unlimited') return DEFAULT_DAILY_VIDEO_LIMIT;
+  const envVal = parseInt(raw, 10);
+  return (Number.isFinite(envVal) && envVal > 0) ? envVal : DEFAULT_DAILY_VIDEO_LIMIT;
 }
 
 /**
  * Hitung jumlah video output unik yang berhasil diproduksi hari ini (kalender lokal).
- * Mencegah pemblokiran IP YouTube/API dengan membatasi maksimal 20 video sehari.
+ * Saat mandate VPS-only aktif, batas harian = unlimited (limit tak hingga): isLimitReached
+ * selalu false dan limit/remaining dinormalisasi ke null agar aman di-serialize ke JSON.
  */
 export function getDailyOutputVideoStats() {
   const limit = getDailyOutputVideoLimit();
+  const isUnlimited = !Number.isFinite(limit);
   const now = new Date();
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
   const startOfDayMs = startOfDay.getTime();
@@ -75,11 +81,12 @@ export function getDailyOutputVideoStats() {
   } catch {}
 
   const count = uniqueJobIdsToday.size;
-  const remaining = Math.max(0, limit - count);
-  const isLimitReached = count >= limit;
+  const remaining = isUnlimited ? null : Math.max(0, limit - count);
+  const isLimitReached = isUnlimited ? false : count >= limit;
 
   return {
-    limit,
+    limit: isUnlimited ? null : limit,
+    unlimited: isUnlimited,
     count,
     remaining,
     isLimitReached,

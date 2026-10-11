@@ -106,7 +106,7 @@ import { getAllUsedYouTubeVideoIds, getAllUsedBrandProductPairsToday, getAllUsed
 import { getDailyOutputVideoLimit, getDailyOutputVideoStats } from '../services/quotaService.js';
 
 import { tempDir, outputDir, uploadsDir, rejectedYunetDir, cookiesPath, serverRoot } from '../utils/paths.js';
-import { processJobVoiceover, runProfessionalFinalQcWithRepair } from './finalizationService.js';
+import { processJobVoiceover } from './finalizationService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2845,56 +2845,19 @@ async function _runStage1Pipeline({
           onProgress: updateProgress,
         });
 
-        // [RENDER-ON-APPROVAL] Final QC pasca-render + auto-repair DIMATIKAN untuk semua job:
-        // hasil render langsung diterima - tidak ada gerbang yang menghapus video / memicu restart.
-        let finalQc;
-        if (RENDER_ON_APPROVAL) {
-          finalQc = {
-            passed: true,
-            skipped: true,
-            disabled: true,
-            reason: 'Final QC pasca-render dinonaktifkan (render-on-approval).',
-            technical: { passed: true, skipped: true, issues: [] },
-            visual: { passed: true, skipped: true, reason: 'Final AI QC disabled (render-on-approval).' },
-          };
-          console.log(`[Job ${jobId}] ✅ [Render-on-Approval] Final QC dilewati - video hasil render langsung diterima.`);
-        } else {
-          finalQc = await runProfessionalFinalQcWithRepair({
-            jobId,
-            finalOutputPath,
-            silentVideoPath: silentOutputPath,
-            voiceoverAudioPath: autoVoiceoverPath,
-            srtPath,
-            expectedDurationSec: finalSilentDurationSec,
-            productTitle: highlight.detectedProduct || productTitle || videoMeta.title,
-            productFingerprint,
-            aiProvider,
-            apiKey,
-            niche: options.niche || 'kitchen_tools',
-            renderSourcePath: rawVideoPath,
-            clips: highlight.clips,
-            hflip: effectiveHflip,
-            reframe: effectiveReframe,
-            backgroundMusicPath,
-            musicVolume: Number(options.musicVolume || process.env.BACKGROUND_MUSIC_VOLUME || 0.10),
-            sfxEvents,
-            sceneVoSegments: jobMeta.sceneVoSegments || null,
-            sceneVoAlignment: jobMeta.sceneVoAlignment || null,
-            onProgress: updateProgress,
-          });
-
-          if (!finalQc.passed) {
-            try { fs.unlinkSync(finalOutputPath); } catch {}
-            const issues = [
-              ...(finalQc.technical?.issues || []),
-              ...(finalQc.visual?.reason ? [finalQc.visual.reason] : []),
-            ];
-            const qcError = new Error(`FINAL_MASTER_QC_FAILED: ${issues.join(', ')}`);
-            qcError.isFinalQcFailure = true;
-            qcError.finalQc = finalQc;
-            throw qcError;
-          }
-        }
+        // [VPS-only mandate] Final QC pasca-render DIHAPUS untuk semua job: hasil render
+        // langsung diterima - tidak ada gerbang yang menghapus video / memicu restart.
+        // Vonis visual satu-satunya sudah terjadi lebih awal di [[ORACLE CLIP AUDIT]]
+        // sebelum render, jadi tidak ada pemeriksaan pasca-render lagi.
+        const finalQc = {
+          passed: true,
+          skipped: true,
+          disabled: true,
+          reason: 'Final QC pasca-render dihapus (mandate VPS-only).',
+          technical: { passed: true, skipped: true, issues: [] },
+          visual: { passed: true, skipped: true, reason: 'Final AI QC removed (VPS-only mandate).' },
+        };
+        console.log(`[Job ${jobId}] ✅ Final QC dihapus - video hasil render langsung diterima.`);
 
         cleanupTempFiles([srtPath]);
         deleteJobTempDirectory(jobId, tempDir);

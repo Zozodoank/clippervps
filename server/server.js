@@ -293,8 +293,6 @@ setInterval(() => {
   pruneMap(autoRetryRuns);
 }, 10 * 60 * 1000);
 
-const DEFAULT_DAILY_VIDEO_LIMIT = 20;
-
 
 
 /** Helper: get all YouTube video IDs from existing active & successfully completed jobs across all multi-video harvesting clips */

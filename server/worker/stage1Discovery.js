@@ -276,7 +276,10 @@ export async function runAutoStage1Worker(run) {
       }
 
       const currentTargetIndex = run.successfulJobs + 1;
-      const targetLabel = isUnlimited ? `Hari ini: ${dailyStats.count}/${dailyStats.limit} video` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyStats.count}/${dailyStats.limit})`;
+      const dailyQuotaText = dailyStats.unlimited
+        ? `${dailyStats.count} video (tanpa batas)`
+        : `${dailyStats.count}/${dailyStats.limit} video`;
+      const targetLabel = isUnlimited ? `Hari ini: ${dailyQuotaText}` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyQuotaText})`;
 
       updateAutoRun(run, {
         message: `[${targetLabel}] Cari video: "${searchKeyword}" (brand/type)...`,

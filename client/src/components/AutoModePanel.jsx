@@ -26,7 +26,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [keywordStats, setKeywordStats] = useState({ totalUsedKeywords: 0, totalUsedTitles: 0 });
-  const [dailyStats, setDailyStats] = useState({ limit: 20, count: 0, remaining: 20, isLimitReached: false });
+  const [dailyStats, setDailyStats] = useState({ limit: null, unlimited: true, count: 0, remaining: null, isLimitReached: false });
   const [availableNiches, setAvailableNiches] = useState(DEFAULT_NICHES);
   const [selectedNiche, setSelectedNiche] = useState(() => {
     try {
@@ -211,7 +211,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
             </span>
           </div>
           <p className="text-xs text-slate-400 mt-1">
-            Mode Aman 1 Job: Pipeline 9:16 otomatis men-generate 1 video hingga benar-benar berhasil, lalu otomatis berhenti agar aman (maks. 20 video/hari).
+            Mode Aman 1 Job: Pipeline 9:16 otomatis men-generate 1 video hingga benar-benar berhasil, lalu otomatis berhenti agar aman (tanpa batas jumlah video harian).
           </p>
 
           <div className="flex flex-wrap items-center gap-2 mt-2.5">
@@ -224,7 +224,7 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
             >
               <Clock className="w-3.5 h-3.5 text-amber-400" />
               <span>
-                Batas Anti-Blokir: <strong>{dailyStats.count}/{dailyStats.limit}</strong> video/hari
+                Batas Anti-Blokir: <strong>{dailyStats.unlimited ? `${dailyStats.count} / ∞ (unlimited)` : `${dailyStats.count}/${dailyStats.limit}`}</strong> video/hari
               </span>
             </span>
 
