@@ -129,7 +129,7 @@ export async function runAutoStage1Worker(run) {
     const isUnlimited = run.maxJobs === 'unlimited' || run.maxJobs === Infinity || !run.maxJobs;
     updateAutoRun(run, {
       status: 'running',
-      message: isUnlimited ? 'Memulai pipeline Auto Mode (Unlimited)...' : 'Memulai pencarian produk viral Shopee...',
+      message: 'Auto Mode jalan — Mode Aman: cari produk & generate 1 video hingga benar-benar berhasil, lalu berhenti.',
       progress: 5,
     });
 

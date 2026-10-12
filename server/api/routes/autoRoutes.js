@@ -218,9 +218,7 @@ router.post('/auto/start', (req, res) => {
     niche: resolvedNiche,
     currentJobId: null,
     currentProductTitle: null,
-    message: isUnlimited
-      ? 'Memulai pipeline Auto Mode (Unlimited)...'
-      : `Memulai pipeline Auto Mode (target ${maxJobs} job)...`,
+    message: 'Memulai Auto Mode (Mode Aman: generate 1 video hingga benar-benar berhasil, lalu berhenti)...',
     progress: 0,
     startedAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
