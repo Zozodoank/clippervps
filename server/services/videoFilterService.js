@@ -89,6 +89,58 @@ function getYtDlpBaseArgs() {
 }
 
 /**
+ * ── TAHAP A (A2): helper murni sisi-terpendek ──
+ * min(w,h) mengukur TIER kualitas bukan orientasi: 1920×1080 & 1080×1920 keduanya
+ * mengembalikan 1080 (lolos); 1280×720 & 720×1280 mengembalikan 720 (ditolak).
+ * Jika salah satu sisi tak diketahui (0), pakai sisi yang diketahui (maks) agar
+ * probe tepercaya dengan tinggi saja tetap terukur.
+ */
+export function minShortEdge(w, h) {
+  const width = Number(w) || 0;
+  const height = Number(h) || 0;
+  if (!width || !height) return Math.max(width, height);
+  return Math.min(width, height);
+}
+
+/**
+ * ── TAHAP A (A2): gerbang mutu SUMBER pra-Gemini (murni, teruji) ──
+ * Vonis apakah sumber layak (>=1080p + floor bitrate) SEBELUM dikirim ke Gemini.
+ * - Hanya ditegakkan saat probe TERPERCAYA (enforceResolution/enforce true): daftar
+ *   format terpotong (anonim/geo) tidak boleh menolak massal.
+ * - Fail-open saat resolusi/bitrate tak diketahui (0) — jangan tolak yang tak terukur.
+ *   backstop ffprobe pasca-unduh (is1080pOrHigher / RENDER_MAX_HEIGHT) tetap ada.
+ */
+export function evaluateSourceQualityGate(metadata, opts = {}) {
+  const minShortEdgeThreshold =
+    Number(opts.minShortEdge ?? process.env.MIN_SOURCE_SHORT_EDGE) || 1080;
+  const minBitrateKbps =
+    Number(opts.minBitrateKbps ?? process.env.MIN_VIDEO_BITRATE_KBPS) || 2500;
+  const enforce = opts.enforce === true || opts.enforceResolution === true;
+
+  if (!enforce) {
+    return { pass: true, note: 'untrusted_probe' };
+  }
+
+  const maxHeight = Number(metadata?.maxHeight) || 0;
+  const maxWidth = Number(metadata?.maxWidth) || 0;
+  if (!maxHeight && !maxWidth) {
+    return { pass: true, note: 'unknown' };
+  }
+
+  const shortEdge = minShortEdge(maxWidth, maxHeight);
+  if (shortEdge > 0 && shortEdge < minShortEdgeThreshold) {
+    return { pass: false, reason: `Sumber <1080p (sisi terpendek ${shortEdge}px < ${minShortEdgeThreshold}px).` };
+  }
+
+  const bitrate = Number(metadata?.bestVideoBitrateKbps) || 0;
+  if (bitrate > 0 && bitrate < minBitrateKbps) {
+    return { pass: false, reason: `Bitrate 1080p terlalu rendah (${Math.round(bitrate)}kbps < ${minBitrateKbps}kbps).` };
+  }
+
+  return { pass: true };
+}
+
+/**
  * ── TAHAP 1: FETCH METADATA & DIRECT STREAM URL (0 VIDEO DOWNLOAD) ───────────
  * Fetches YouTube metadata and 360p direct HTTP stream URL using yt-dlp.
  */
@@ -152,12 +204,33 @@ export async function fetchVideoMetadataAndStream(url, { onProgress = () => {} }
     Number(metaResult.width) || 0,
     ...formats.map(f => Number(f.width) || 0)
   );
+
+  // ── TAHAP A (A1): sinyal MUTU sumber untuk gerbang pra-Gemini ──
+  // bestVideoBitrateKbps = bitrate (vbr utama, fallback tbr) TERBESAR dari format
+  // yang sisi-terpendek-nya memenuhi tier >=1080p. 0 bila tidak ada HD => gerbang
+  // treat sebagai tak-diketahui (fail-open), bukan penolakan.
+  const bitrateShortEdgeThreshold = Number(process.env.MIN_SOURCE_SHORT_EDGE) || 1080;
+  let bestVideoBitrateKbps = 0;
+  for (const f of formats) {
+    const se = minShortEdge(f.width, f.height);
+    if (se >= bitrateShortEdgeThreshold) {
+      const kb = Number(f.vbr) || Number(f.tbr) || 0;
+      if (kb > bestVideoBitrateKbps) bestVideoBitrateKbps = kb;
+    }
+  }
+  // hasFullFormatList: indikator daftar format lengkap/terpercaya (cookies tersedia
+  // atau terdeteksi >=1080p). Saat daftar terpotong (anonim/geo), gerbang tidak boleh
+  // menolak massal — ditegakkan lewat enforceResolution, bukan flag ini.
+  const hasFullFormatList = Boolean(findCookiesFile()) || maxAvailableHeight >= 1080 || maxAvailableWidth >= 1080;
+
   const metadata = {
     id: metaResult.id,
     title: metaResult.title || 'YouTube Video',
     duration,
     maxHeight: maxAvailableHeight,
     maxWidth: maxAvailableWidth,
+    bestVideoBitrateKbps,
+    hasFullFormatList,
     description: (metaResult.description || '').slice(0, 1000),
     channel: metaResult.uploader || metaResult.channel || '',
     tags: Array.isArray(metaResult.tags) ? metaResult.tags : [],
@@ -271,6 +344,16 @@ export function checkVideoMetadataCompliance(metadata, productTitle = '', option
   }
   if (duration > maxDurSec) {
     return { eligible: false, reason: `Durasi video terlalu panjang (${(duration / 60).toFixed(1)} menit). Durasi video dibatasi maksimal ${(maxDurSec / 60).toFixed(0)} menit (${maxDurSec} detik).` };
+  }
+
+  // ── TAHAP A (A3): GERBANG MUTU SUMBER PRA-GEMINI ──
+  // Vonis MUTU sumber (bukan keputusan konten), jadi jalankan SEBELUM bypass
+  // oracleOwnsContentDecision agar tetap berlaku pada jalur Auto. Dikontrol
+  // options.enforceResolution (bukan oracleOwnsContentDecision): hanya tegang saat
+  // probe tepercaya; gagal -> skip kandidat, cari video lain sebelum Gemini.
+  const qualityGate = evaluateSourceQualityGate(metadata, options);
+  if (!qualityGate.pass) {
+    return { eligible: false, reason: qualityGate.reason, sourceQualityRejected: true };
   }
 
   // Production content/product decisions belong to Oracle. YouTube metadata is

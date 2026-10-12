@@ -51,6 +51,7 @@ import {
   sampleFramesFromStream,
   poolMultiCandidateFrames,
   fastProbeLocal,
+  findCookiesFile,
 } from '../services/videoFilterService.js';
 import { downloadQuickPreview } from '../services/quickPreviewService.js';
 // BLUEPRINT ALUR BARU (ACQUISITION_FLOW=v2) — orkestrasi L2->L5 & penyusun zigzag.
@@ -204,6 +205,12 @@ async function _runStage1Pipeline({
   const isManualJob = !isAutoModeFallback;
   const manualDownloadQuality = isManualJob ? 'manual_best' : '1080p';
   if (isManualJob) options.enforceResolution = false;
+  // TAHAP A (A4): gerbang mutu sumber pra-Gemini hanya boleh TEWANG saat probe
+  // TERPERCAYA. Auto belum menyetel enforceResolution -> derive dari ketersediaan
+  // cookies (daftar format lengkap). Manual tetap false (Sumber dipilih operator).
+  if (!isManualJob && options.enforceResolution === undefined) {
+    options.enforceResolution = Boolean(findCookiesFile());
+  }
   const sessionTempDir = path.join(tempDir, `job_${jobId}`);
   const rawFramesDir = path.join(sessionTempDir, 'raw_frames');
   const trimmedFramesDir = path.join(sessionTempDir, 'trimmed_frames');

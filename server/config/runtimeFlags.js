@@ -37,6 +37,11 @@ const FLAG_NORMALIZERS = {
     const v = parseInt(env.RENDER_MAX_HEIGHT, 10);
     return Number.isFinite(v) && v > 0 ? v : 1080;
   },
+  // TAHAP A: gerbang mutu sumber pra-Gemini (videoFilterService.evaluateSourceQualityGate).
+  // Ambang tier sisi-terpendek (min(w,h)) — 1080 = tolak 720p, lolos 1920×1080 & 1080×1920.
+  MIN_SOURCE_SHORT_EDGE: (env) => Number(env.MIN_SOURCE_SHORT_EDGE) || 1080,
+  // Floor bitrate (kbps) pada track video >=1080p terbaik (vbr|tbr). 0/tak-diketahui = fail-open.
+  MIN_VIDEO_BITRATE_KBPS: (env) => Number(env.MIN_VIDEO_BITRATE_KBPS) || 2500,
   // downloader.js render path: env RENDER_VIDEO_ONLY !== '0' (default ON buang audio).
   // Bekukan supaya retry di Termux (mis. 1080p + audio-on) tidak tiba-tiba berubah format.
   RENDER_VIDEO_ONLY: (env) => env.RENDER_VIDEO_ONLY !== '0',
