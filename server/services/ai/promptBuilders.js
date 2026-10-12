@@ -762,6 +762,54 @@ export function build7SlotStoryboardClips({
     selectedTimestampsByCandidate.get(selectedCand).push(selectedTs);
 
     storyboardClips.push(clipObj);
+
+    // B8 montase fallback (jalur frame): slot montase (config.montage) WAJIB membawa lebih dari
+    // satu sub-klip agar kontrak Scene<->VO (montageMin..montageMax) tetap sah walau Gemini
+    // stream tidak terpakai. Sub-klip tambahan memakai mekanisme chooseDistinctFrame yang sama
+    // (jarak >= 8s, policy sama); bila tak ada frame layak, berhenti - gerbang floor D2 yang menilai.
+    if (config.montage === true) {
+      const extraWanted = Math.max(1, Number(config.montageMin) || 2) - 1;
+      for (let mIdx = 0; mIdx < extraWanted; mIdx++) {
+        const mFrame = chooseDistinctFrame(null, candIdx, slotPolicy);
+        if (!mFrame) break;
+        const mCandIdx = mFrame?.candidateIndex !== undefined ? mFrame.candidateIndex : candIdx;
+        const mCandDuration = mFrame?.candidate?.duration || totalDuration;
+        const mClipSec = Math.max(Number(config.minSec) || 4, Math.min(Number(config.maxSec) || 8, 5));
+        const mFrameTs = mFrame.timestamp !== undefined ? mFrame.timestamp : (mIdx + 1) * 12;
+        let mStart = Math.max(0, Math.min(mCandDuration - mClipSec, Math.round(mFrameTs * 10) / 10));
+        if (mStart < minSafeStart) mStart = minSafeStart;
+        // Aturan anti-tumpang-tindih yang sama dengan klip utama (satu video, jarak >= 8.0s).
+        if (storyboardClips.some((sc) => sc.candidateIndex === mCandIdx && Math.abs(sc.startSeconds - mStart) < 8.0)) break;
+        const mEnd = Math.round((mStart + mClipSec) * 10) / 10;
+        selectedFrameKeys.add(getFrameKey(mFrame));
+        const mCandSel = mFrame?.candidateIndex !== undefined ? mFrame.candidateIndex : mCandIdx;
+        if (!selectedTimestampsByCandidate.has(mCandSel)) selectedTimestampsByCandidate.set(mCandSel, []);
+        selectedTimestampsByCandidate.get(mCandSel).push(Number(mFrame?.timestamp) || mStart);
+        storyboardClips.push({
+          startSeconds: mStart,
+          endSeconds: mEnd,
+          duration: mClipSec,
+          startTime: formatSeconds(mStart),
+          endTime: formatSeconds(mEnd),
+          candidateIndex: mCandIdx,
+          candidateTitle: mFrame?.candidateTitle || mFrame?.candidate?.title || '',
+          candidateUrl: mFrame?.candidateUrl || mFrame?.candidate?.url || '',
+          videoId: mFrame?.videoId || mFrame?.candidate?.id || '',
+          candidate: mFrame?.candidate || null,
+          sourceFramePath: mFrame?.filePath || '',
+          storyboardSlot: config.slot,
+          storyboardSlotKey: config.key,
+          storyboardRole: config.role,
+          facePolicy: slotPolicy,
+          sourceFrameIndex: validFrames.indexOf(mFrame) + 1,
+          datasetTag: config.datasetTag,
+          reason: `${config.label} [Slot #${config.slot} | sub-klip montase #${mIdx + 2} | ${config.datasetTag}]`,
+          isCleanAffiliateShot: true,
+          hasProductBrand: Boolean(parsed?.hasProductBrand),
+          reframe: clipObj.reframe,
+        });
+      }
+    }
   }
 
   return storyboardClips;

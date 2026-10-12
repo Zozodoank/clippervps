@@ -56,7 +56,7 @@ describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
     // Kontrak: slot strict gadget HANYA memakai frame storyboard pilihan Gemini (indeks 1-based
     // ke validFrames). Slot tidak diisi B-roll asing bila pilihan tak valid ("do not fill
     // missing scenes"). Karena itu test supply storyboard eksplisit untuk tiap slot.
-    it('gadget: slot kamera (4) mengambil frame camera-eligible; total 5 klip', () => {
+    it('gadget: slot kamera (4) mengambil frame camera-eligible; montase slot 1 menghasilkan 2 sub-klip (total 6)', () => {
       const frames = makePool(true);
       // idx 1..12 = frame aman (ts 8..107), idx 13 = frame camera-eligible (ts 150).
       const parsed = {
@@ -74,7 +74,12 @@ describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
       expect(cameraClip).toBeTruthy();
       expect(cameraClip.storyboardSlot).toBe(4);
       expect(clips.filter(c => c.startSeconds === 150).length).toBe(1);
-      expect(clips.length).toBe(5);
+      // B8 fallback montase: slot 1 (montageMin 2) wajib menghasilkan 2 klip bertanda slot 1.
+      const slot1 = clips.filter(c => c.storyboardSlot === 1);
+      expect(slot1.length).toBe(2);
+      expect(slot1.every(c => c.storyboardSlotKey === 'clip1_opening_spec')).toBe(true);
+      expect(Math.abs(slot1[1].startSeconds - slot1[0].startSeconds)).toBeGreaterThanOrEqual(8);
+      expect(clips.length).toBe(6);
     });
 
     it('gadget: slot non-kamera tetap strict walau frame eligible ada di pool (fallback tidak mencuri)', () => {

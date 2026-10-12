@@ -3,8 +3,12 @@ import {
   scenesToSlotKeys,
   validateScriptSlotAlignment,
   buildSceneVoSegments,
+  groupClipsBySlot,
+  assessStoryboardPlan,
+  assembleStoryboardClips,
 } from '../services/professionalPipelineService.js';
 import { build7SlotStoryboardClips } from '../services/ai/promptBuilders.js';
+import { getNichePreset } from '../config/nichePresets.js';
 
 const GADGET_SLOT2 = 'clip2_memory';
 
@@ -72,14 +76,146 @@ describe('Face Policy (Fase 5) - Scene<->VO lockstep', () => {
 
     it('gerbang face policy: slot kamera (4) presenter_only BOLEH memakai frame camera-eligible', () => {
       const eligible = new Set(['/f/kamera.jpg']);
-      const clips = Array.from({ length: 5 }, (_, i) => ({
-        storyboardSlot: i + 1,
-        duration: 3,
-        sourceFramePath: i === 3 ? '/f/kamera.jpg' : `/f/clean_${i}.jpg`,
-      }));
+      // Model grup-per-slot: slot 1 montase butuh 2 klip (montageMin), slot 2-5 satu klip per slot.
+      const clips = [
+        { storyboardSlot: 1, duration: 3, sourceFramePath: '/f/clean_0.jpg' },
+        { storyboardSlot: 1, duration: 3, sourceFramePath: '/f/clean_1.jpg' },
+        ...Array.from({ length: 4 }, (_, i) => ({
+          storyboardSlot: i + 2,
+          duration: 3,
+          sourceFramePath: i === 2 ? '/f/kamera.jpg' : `/f/clean_${i + 2}.jpg`,
+        })),
+      ];
       const res = validateScriptSlotAlignment({ clips, creativePlan, scenes: makeScenes(5), niche: 'gadget_smartphone', eligibleFramePaths: eligible });
       expect(res.errors).toEqual([]);
       expect(res.ok).toBe(true);
+    });
+
+    it('montase valid: 6 klip / 5 grup slot (slot 1 dua klip) dengan 5 scene = lulus tanpa error', () => {
+      const clips = [
+        { storyboardSlot: 1, duration: 4, startSeconds: 10 },
+        { storyboardSlot: 1, duration: 5, startSeconds: 30 },
+        { storyboardSlot: 2, duration: 8, startSeconds: 50 },
+        { storyboardSlot: 3, duration: 7, startSeconds: 70 },
+        { storyboardSlot: 4, duration: 9, startSeconds: 90 },
+        { storyboardSlot: 5, duration: 7, startSeconds: 110 },
+      ];
+      const res = validateScriptSlotAlignment({ clips, creativePlan, scenes: makeScenes(5), niche: 'gadget_smartphone' });
+      expect(res.errors).toEqual([]);
+      expect(res.ok).toBe(true);
+    });
+
+    it('montase kurang dari montageMin (slot 1 cuma 1 klip) = error; non-montase 2 klip = error', () => {
+      const tooFew = [
+        { storyboardSlot: 1, duration: 3 },
+        ...Array.from({ length: 4 }, (_, i) => ({ storyboardSlot: i + 2, duration: 3 })),
+      ];
+      const resFew = validateScriptSlotAlignment({ clips: tooFew, creativePlan, scenes: makeScenes(5), niche: 'gadget_smartphone' });
+      expect(resFew.ok).toBe(false);
+      expect(resFew.errors.some(e => e.includes('montase'))).toBe(true);
+
+      const dupSlot2 = [
+        { storyboardSlot: 1, duration: 3 },
+        { storyboardSlot: 1, duration: 3 },
+        { storyboardSlot: 2, duration: 3 },
+        { storyboardSlot: 2, duration: 3 },
+        { storyboardSlot: 3, duration: 3 },
+        { storyboardSlot: 4, duration: 3 },
+        { storyboardSlot: 5, duration: 3 },
+      ];
+      const resDup = validateScriptSlotAlignment({ clips: dupSlot2, creativePlan, scenes: makeScenes(5), niche: 'gadget_smartphone' });
+      expect(resDup.ok).toBe(false);
+      expect(resDup.errors.some(e => e.includes('non-montase'))).toBe(true);
+    });
+
+    it('urutan slot dengan pengulangan montase (1,1,2,3,4,5) bukan penurunan = tidak ada error urutan', () => {
+      const clips = [
+        { storyboardSlot: 1, duration: 3 },
+        { storyboardSlot: 1, duration: 3 },
+        { storyboardSlot: 2, duration: 3 },
+        { storyboardSlot: 3, duration: 3 },
+        { storyboardSlot: 4, duration: 3 },
+        { storyboardSlot: 5, duration: 3 },
+      ];
+      const res = validateScriptSlotAlignment({ clips, creativePlan, scenes: makeScenes(5), niche: 'gadget_smartphone' });
+      expect(res.errors.some(e => e.includes('turun'))).toBe(false);
+    });
+  });
+
+  describe('kontrak montase - helper grup & kecukupan rencana (D2)', () => {
+    const gadgetSlots = getNichePreset('gadget_smartphone')?.slotsConfig || [];
+
+    it('groupClipsBySlot: slot sama dikumpulkan, slot 0 paling belakang, input tak memutasi', () => {
+      const clips = [
+        { storyboardSlot: 2, id: 'a' },
+        { storyboardSlot: 1, id: 'b' },
+        { id: 'noslot' },
+        { storyboardSlot: 1, id: 'c' },
+      ];
+      const frozen = JSON.stringify(clips);
+      const groups = groupClipsBySlot(clips);
+      expect(groups.map(g => g.slot)).toEqual([1, 2, 0]);
+      expect(groups[0].clips.map(c => c.id)).toEqual(['b', 'c']);
+      expect(JSON.stringify(clips)).toBe(frozen);
+    });
+
+    it('assessStoryboardPlan: slot lengkap + durasi >= 45s = ok; montase <2 atau durasi kurang = gagal', () => {
+      const full = [
+        { storyboardSlot: 1, duration: 6 },
+        { storyboardSlot: 1, duration: 6 },
+        { storyboardSlot: 2, duration: 12 },
+        { storyboardSlot: 3, duration: 10 },
+        { storyboardSlot: 4, duration: 11 },
+        { storyboardSlot: 5, duration: 9 },
+      ];
+      const okRes = assessStoryboardPlan(full, gadgetSlots, { requiredTotalSec: 45 });
+      expect(okRes.ok).toBe(true);
+      expect(okRes.totalDurationSec).toBeGreaterThanOrEqual(45);
+      expect(okRes.missingSlots).toEqual([]);
+
+      const shortDur = full.map((c) => ({ ...c, duration: 3 }));
+      const shortRes = assessStoryboardPlan(shortDur, gadgetSlots, { requiredTotalSec: 45 });
+      expect(shortRes.ok).toBe(false);
+      expect(shortRes.durationShort).toBe(true);
+
+      const noMontage = full.slice(1);
+      const montageRes = assessStoryboardPlan(noMontage, gadgetSlots, { requiredTotalSec: 0 });
+      expect(montageRes.ok).toBe(false);
+      expect(montageRes.missingSlots.some((s) => s.includes('montase'))).toBe(true);
+
+      const missingSlot3 = full.filter((c) => c.storyboardSlot !== 3);
+      const missRes = assessStoryboardPlan(missingSlot3, gadgetSlots, { requiredTotalSec: 0 });
+      expect(missRes.missingSlots).toContain('clip3_durability');
+    });
+
+    it('assembleStoryboardClips: gabungan 2 sumber jadi satu grup per slot (montase 2-4 sumber sama, slot lain 1 klip)', () => {
+      const merged = [
+        // Sumber 0: montase slot 1 (3 klip) + slot 2-5
+        ...[0, 1, 2].map((i) => ({ storyboardSlot: 1, duration: 5 + i, startSeconds: 10 + i * 20, candidateIndex: 0, candidateUrl: 'u0' })),
+        { storyboardSlot: 2, duration: 8, startSeconds: 80, candidateIndex: 0, candidateUrl: 'u0' },
+        { storyboardSlot: 3, duration: 7, startSeconds: 90, candidateIndex: 0, candidateUrl: 'u0' },
+        { storyboardSlot: 4, duration: 9, startSeconds: 100, candidateIndex: 0, candidateUrl: 'u0' },
+        { storyboardSlot: 5, duration: 6, startSeconds: 110, candidateIndex: 0, candidateUrl: 'u0' },
+        // Sumber 1: tumpang tindih slot yang sama (klip lebih panjang) - tidak boleh grup ganda
+        { storyboardSlot: 2, duration: 12, startSeconds: 40, candidateIndex: 1, candidateUrl: 'u1' },
+        { storyboardSlot: 5, duration: 11, startSeconds: 60, candidateIndex: 1, candidateUrl: 'u1' },
+      ];
+      const out = assembleStoryboardClips(merged, gadgetSlots);
+      const slotsOut = out.map((c) => c.storyboardSlot);
+      expect(groupClipsBySlot(out).map((g) => g.slot)).toEqual([1, 2, 3, 4, 5]);
+      expect(out.find((c) => c.storyboardSlot === 2).candidateIndex).toBe(1); // klip terpanjang menang
+      expect(out.find((c) => c.storyboardSlot === 5).candidateIndex).toBe(1);
+      const montage = out.filter((c) => c.storyboardSlot === 1);
+      expect(montage.length).toBeGreaterThanOrEqual(2);
+      expect(montage.length).toBeLessThanOrEqual(4);
+      expect(montage.every((c) => c.candidateIndex === 0)).toBe(true); // prioritas satu sumber
+      expect(slotsOut.every((s) => s >= 1 && s <= 5)).toBe(true);
+    });
+
+    it('assembleStoryboardClips: klip tanpa slot (kitchen) dikembalikan apa adanya', () => {
+      const plain = [{ startSeconds: 1 }, { startSeconds: 2 }];
+      expect(assembleStoryboardClips(plain, [])).toEqual(plain);
+      expect(assembleStoryboardClips(plain, gadgetSlots)).toEqual(plain);
     });
   });
 
@@ -127,7 +263,9 @@ describe('Face Policy (Fase 5) - Scene<->VO lockstep', () => {
         },
       };
       const clips = build7SlotStoryboardClips({ parsed, frames, totalDuration: 240, niche: 'gadget_smartphone' });
-      expect(clips.length).toBe(5);
+      // Slot 1 montase menghasilkan 2 sub-klip (B8) -> total 6 klip, tetap 5 grup slot.
+      expect(clips.length).toBe(6);
+      expect(groupClipsBySlot(clips).map((g) => g.slot)).toEqual([1, 2, 3, 4, 5]);
       expect(clips.every(c => typeof c.sourceFramePath === 'string' && c.sourceFramePath.endsWith('.jpg'))).toBe(true);
 
       const cameraClip = clips.find(c => c.sourceFramePath === '/f/kamera.jpg');

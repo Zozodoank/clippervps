@@ -97,7 +97,9 @@ import {
   conformClipsToVoiceover,
   choosePreferredCandidateSet,
   validateScriptSlotAlignment,
-  buildSceneVoSegments
+  buildSceneVoSegments,
+  assessStoryboardPlan,
+  assembleStoryboardClips
 } from '../services/professionalPipelineService.js';
 import { runFinalMasterQc } from '../services/finalMasterQcService.js';
 import { activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, patchJob, deletePersistedJob, updateJobProgress, updateAutoRun } from '../store/jobStore.js';
@@ -1084,7 +1086,11 @@ async function _runStage1Pipeline({
       const targetMultiSources = options.singleVideoOnly === true
         ? 1
         : Math.max(1, Number(nichePresetForSource?.minVerifiedSources) || 2);
-      const harvestStreamBudget = Math.min(maxStreamVideos, Math.max(6, targetMultiSources * 3));
+      const harvestStreamBudget = (options.niche || '') === 'gadget_smartphone'
+              // D2: gadget mencari video baru MAKSIMAL 5 kandidat sampai semua slot terisi +
+              // durasi rencana >= 45s. Di atas 5 kandidat, rencana final dinilai gerbang floor.
+              ? Math.min(maxStreamVideos, 5)
+              : Math.min(maxStreamVideos, Math.max(6, targetMultiSources * 3));
 
       // Helper: Pemanenan adaptif video pengganti di YouTube jika AI menolak frame atau slot kurang
       const harvestAdaptiveReplacementCandidates = async ({
@@ -1373,18 +1379,29 @@ async function _runStage1Pipeline({
         }
 
         if (bestVerified?.highlight?.pipelineVersion === 'visual_only_v2') {
-          if (selectedClipCount < (options.niche === 'gadget_smartphone' ? 8 : 4) && streamedCount < harvestStreamBudget && !explicitOnly) {
-            console.warn(`[Job ${jobId}] Hanya ${selectedClipCount} klip terpilih sejauh ini; lanjut panen kandidat hingga rencana cukup.`);
+          const mergedClips = preferredSoFar.flatMap((c) => (c.highlight.clips || []).map((clip) => ({
+            ...clip,
+            candidateIndex: c.candidateIndex,
+            candidateTitle: c.candidate?.title || '',
+            candidate: c.candidate,
+          })));
+          // D2 floor gadget: rencana DINYATAKAN CUKUP bila kelima slot terisi (montase >= 2
+          // klip) dan total durasi rencana >= 45s — bukan jumlah klip mentah lagi. Bila belum
+          // cukup dan kuota stream tersisa, panen kandidat video baru hingga 5.
+          const isGadgetNiche = options.niche === 'gadget_smartphone';
+          const gadgetSlotsCfg = isGadgetNiche ? (getNichePreset('gadget_smartphone')?.slotsConfig || []) : [];
+          const planAssessment = isGadgetNiche ? assessStoryboardPlan(mergedClips, gadgetSlotsCfg, { requiredTotalSec: 45 }) : null;
+          const planEnough = isGadgetNiche ? planAssessment.ok : selectedClipCount >= 4;
+          if (!planEnough && streamedCount < harvestStreamBudget && !explicitOnly) {
+            console.warn(`[Job ${jobId}] ${isGadgetNiche ? `Rencana gadget belum cukup (slot kurang: [${planAssessment.missingSlots.join(', ')}]; durasi rencana ${planAssessment.totalDurationSec}s < 45s); lanjut panen kandidat hingga ${harvestStreamBudget}.` : `Hanya ${selectedClipCount} klip terpilih sejauh ini; lanjut panen kandidat hingga rencana cukup.`}`);
             continue;
           }
           console.log(`[Job ${jobId}] ⚡ Visual-Only Pipeline: Menggabungkan ${preferredSoFar.length} kandidat lolos! Melewati AI Storyboard fallback...`);
           hl = {
-            clips: preferredSoFar.flatMap((c) => (c.highlight.clips || []).map((clip) => ({
-              ...clip,
-              candidateIndex: c.candidateIndex,
-              candidateTitle: c.candidate?.title || '',
-              candidate: c.candidate,
-            }))),
+            // Montase gadget: rakit SATU grup per slot (slot montase 2-4 klip dari sumber yang
+            // sama, slot lain satu klip terpanjang) agar gabungan multi-sumber tidak
+            // memvalidasi lockstep Scene<->VO di finalization.
+            clips: isGadgetNiche ? assembleStoryboardClips(mergedClips, gadgetSlotsCfg) : mergedClips,
             bestWindow: bestVerified.highlight.bestWindow,
             narration: bestVerified.highlight.narration,
             pipelineVersion: 'visual_only_v2',
@@ -1818,6 +1835,21 @@ async function _runStage1Pipeline({
         },
       });
 
+      // D2 (gerbang final floor gadget): setelah seluruh kandidat (maks 5) diperiksa,
+      // rencana wajib 5 slot terisi + durasi >= 45s. Bila tidak, job gagal sebagai
+      // render-plan-shortfall (master loop boleh mencoba penemuan baru) — JANGAN pernah
+      // merender gadget lebih pendek dari 45 detik.
+      if (options.niche === 'gadget_smartphone' && !isManualJob && Array.isArray(hl?.clips) && hl.clips.some((c) => (Number(c?.storyboardSlot) || 0) > 0)) {
+        const gadgetSlotsCfgFinal = getNichePreset('gadget_smartphone')?.slotsConfig || [];
+        const finalAssessment = assessStoryboardPlan(hl.clips, gadgetSlotsCfgFinal, { requiredTotalSec: 45 });
+        if (!finalAssessment.ok) {
+          const shortfallErr = new Error(`Floor gadget tidak terpenuhi setelah ${streamedCount} stream kandidat: ${finalAssessment.missingSlots.length ? `slot kurang [${finalAssessment.missingSlots.join(', ')}]; ` : ''}durasi rencana ${finalAssessment.totalDurationSec}s < 45s.`);
+          shortfallErr.isRenderPlanShortfall = true;
+          shortfallErr.rejectionReason = shortfallErr.message;
+          throw shortfallErr;
+        }
+      }
+
       // Targeted Download: Unduh 1080p HANYA untuk kandidat yang klipnya terpilih oleh AI!
       const neededIndices = [...new Set(hl.clips.map(c => c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0))];
       if (neededIndices.length < 1) {
@@ -2019,6 +2051,15 @@ async function _runStage1Pipeline({
         };
       }).filter(Boolean);
 
+      // URUTKAN TIMELINE PER-SLOT (montase ke 00:00). Gemini boleh mengirim 2-4 klip slot-1
+      // yang timestamp sumbernya tersebar; renderer meng-concat sesuai URUTAN ARRAY, jadi kita
+      // susun ulang berdasarkan storyboardSlot agar slot 1 (montase pembuka) selalu paling awal.
+      // Sort V8 STABIL: urutan dalam-satu-slot (urutan montase dari Gemini) terjaga. Untuk storyboard
+      // yang sudah terurut (kitchen / satu klip per slot) operasi ini no-op.
+      hl.clips = [...hl.clips].sort(
+        (a, b) => (Number(a.storyboardSlot) || 99) - (Number(b.storyboardSlot) || 99)
+      );
+
       // NEVER manufacture extra scenes by copying an existing clip.
       // Minimum 3 adegan unik fisik produk untuk menghasilkan reel/short affiliate berkualitas tinggi (13-25 detik).
       //
@@ -2131,6 +2172,10 @@ async function _runStage1Pipeline({
               const { _cluster, ...rest } = c;
               return { ...rest, videoPath: _cluster.videoPath, sourceOffsetSec: _cluster.sourceOffsetSec };
             });
+            // Samai jalur Auto: susun ulang per-slot agar montase slot-1 tampil paling awal (00:00).
+            highlight.clips = [...highlight.clips].sort(
+              (a, b) => (Number(a.storyboardSlot) || 99) - (Number(b.storyboardSlot) || 99)
+            );
             rawVideoPath = firstSeg;
             sectionsDone = true;
             if (okCount < clusters.length) {
