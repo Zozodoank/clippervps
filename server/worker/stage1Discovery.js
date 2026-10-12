@@ -279,7 +279,9 @@ export async function runAutoStage1Worker(run) {
       const dailyQuotaText = dailyStats.unlimited
         ? `${dailyStats.count} video (tanpa batas)`
         : `${dailyStats.count}/${dailyStats.limit} video`;
-      const targetLabel = isUnlimited ? `Hari ini: ${dailyQuotaText}` : `${currentTargetIndex}/${run.maxJobs} (Hari ini: ${dailyQuotaText})`;
+      // Label jujur: Mode Aman berhenti setelah 1 video sukses, jadi jangan tampilkan
+      // "target N/maxJobs" yang memberi kesan ada beberapa job yang harus dikejar.
+      const targetLabel = `Hari ini: ${dailyQuotaText}`;
 
       updateAutoRun(run, {
         message: `[${targetLabel}] Cari video: "${searchKeyword}" (brand/type)...`,
@@ -617,7 +619,7 @@ export async function runAutoStage1Worker(run) {
     }
 
     const finalStatus = run.status === 'stopping' ? 'stopped' : 'completed';
-    const totalDisplay = isUnlimited ? `${run.successfulJobs} video (Mode Unlimited)` : `${run.successfulJobs}/${run.maxJobs}`;
+    const totalDisplay = `${run.successfulJobs} video`; // Mode Aman: selalu berhenti setelah 1 sukses.
     updateAutoRun(run, {
       status: finalStatus,
       message: `Auto Mode selesai. Berhasil: ${totalDisplay}, Gagal: ${run.failedJobs}, Dilewati: ${run.skippedProducts}.`,
