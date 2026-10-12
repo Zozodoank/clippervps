@@ -48,7 +48,7 @@ describe('Kontrak struktur setiap preset niche', () => {
     const preset = NICHE_PRESETS[id];
     expect(preset.id).toBe(id);
     expect(Array.isArray(preset.slotsConfig)).toBe(true);
-    expect(preset.slotsConfig.length).toBe(id === 'gadget_smartphone' ? 8 : 7);
+    expect(preset.slotsConfig.length).toBe(id === 'gadget_smartphone' ? 5 : 7);
     preset.slotsConfig.forEach((slot, idx) => {
       expect(slot.slot).toBe(idx + 1);
       expect(typeof slot.key).toBe('string');
@@ -85,9 +85,11 @@ describe('getSlotFacePolicy — default strict, data-driven per slot', () => {
     expect(getSlotFacePolicy(NICHE_PRESETS.kitchen_tools, 'key-tak-dikenal')).toBe('strict');
   });
 
-  it('hanya slot sampel kamera gadget yang presenter_only', () => {
-    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip7_camera_sample')).toBe('presenter_only');
-    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip8_camera_detail')).toBe('presenter_only');
+  it('hanya slot sampel kamera gadget (slot 4) yang presenter_only', () => {
+    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip4_camera')).toBe('presenter_only');
+    // Slot kamera lama (clip7/clip8) tidak lagi ada di preset 5-slot.
+    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip7_camera_sample')).toBe('strict');
+    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip8_camera_detail')).toBe('strict');
   });
 
   it('kitchen_tools: SEMUA slot strict (tidak ada facePolicy non-strict)', () => {

@@ -30,39 +30,60 @@ function makePool(withEligible) {
 
 describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
   describe('getSlotFacePolicy (preset contract)', () => {
-    it('hanya slot sampel kamera gadget yang presenter_only; semua slot kitchen strict', () => {
+    it('hanya slot kamera gadget (slot 4) yang presenter_only; semua slot gadget lain & kitchen strict', () => {
       const gadget = getNichePreset('gadget_smartphone');
       const kitchen = getNichePreset('kitchen_tools');
-      expect(getSlotFacePolicy(gadget, 'clip7_camera_sample')).toBe('presenter_only');
-      expect(getSlotFacePolicy(gadget, 'clip8_camera_detail')).toBe('presenter_only');
-      for (const s of gadget.slotsConfig.filter(x => !['clip7_camera_sample', 'clip8_camera_detail'].includes(x.key))) {
+      expect(getSlotFacePolicy(gadget, 'clip4_camera')).toBe('presenter_only');
+      for (const s of gadget.slotsConfig.filter((x) => x.key !== 'clip4_camera')) {
         expect(getSlotFacePolicy(gadget, s.key)).toBe('strict');
       }
       for (const s of kitchen.slotsConfig) {
         expect(getSlotFacePolicy(kitchen, s.key)).toBe('strict');
       }
     });
+
+    it('gadget slotsConfig kini 5 slot: slot 1 montage, kamera = slot 4', () => {
+      const gadget = getNichePreset('gadget_smartphone');
+      expect(gadget.slotsConfig.length).toBe(5);
+      expect(gadget.slotsConfig[0].key).toBe('clip1_opening_spec');
+      expect(gadget.slotsConfig[0].montage).toBe(true);
+      expect(gadget.slotsConfig[3].key).toBe('clip4_camera');
+      expect(gadget.slotsConfig[4].key).toBe('clip5_price_cta');
+    });
   });
 
   describe('build7SlotStoryboardClips - pool kamera khusus slot presenter_only', () => {
-    it('gadget: slot kamera mengambil frame camera-eligible, slot lain tidak menyentuhnya', () => {
+    // Kontrak: slot strict gadget HANYA memakai frame storyboard pilihan Gemini (indeks 1-based
+    // ke validFrames). Slot tidak diisi B-roll asing bila pilihan tak valid ("do not fill
+    // missing scenes"). Karena itu test supply storyboard eksplisit untuk tiap slot.
+    it('gadget: slot kamera (4) mengambil frame camera-eligible; total 5 klip', () => {
       const frames = makePool(true);
-      const clips = build7SlotStoryboardClips({ parsed: {}, frames, totalDuration: 240, niche: 'gadget_smartphone' });
+      // idx 1..12 = frame aman (ts 8..107), idx 13 = frame camera-eligible (ts 150).
+      const parsed = {
+        storyboard: {
+          clip1_opening_spec: 1,
+          clip2_memory: 4,
+          clip3_durability: 7,
+          clip4_camera: 13,
+          clip5_price_cta: 10,
+        },
+      };
+      const clips = build7SlotStoryboardClips({ parsed, frames, totalDuration: 240, niche: 'gadget_smartphone' });
 
       const cameraClip = clips.find(c => c.startSeconds === 150);
       expect(cameraClip).toBeTruthy();
-      expect([7, 8]).toContain(cameraClip.storyboardSlot);
+      expect(cameraClip.storyboardSlot).toBe(4);
       expect(clips.filter(c => c.startSeconds === 150).length).toBe(1);
-      expect(clips.length).toBe(8);
+      expect(clips.length).toBe(5);
     });
 
-    it('gadget: slot lain tetap strict walau frame eligible ada di pool (fallback tidak mencuri)', () => {
+    it('gadget: slot non-kamera tetap strict walau frame eligible ada di pool (fallback tidak mencuri)', () => {
       // Pool di mana frame biasa HABIS (semua bentrok), hanya eligible yang tersisa untuk fallback
       const frames = makePool(true).map(f => (f.isCameraResultEligible ? f : { ...f, timestamp: 8 }));
       const clips = build7SlotStoryboardClips({ parsed: {}, frames, totalDuration: 240, niche: 'gadget_smartphone' });
-      // Hanya slot kamera 7-8 yang boleh pakai eligible.
+      // Hanya slot kamera (4) yang boleh pakai eligible.
       for (const c of clips) {
-        if (c.storyboardSlot >= 7) continue;
+        if (c.storyboardSlot === 4) continue;
         expect(c.startSeconds).not.toBe(150);
       }
     });
@@ -73,14 +94,20 @@ describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
       expect(clips.every(c => c.startSeconds !== 150)).toBe(true);
     });
 
-    it('AI memilih index frame eligible untuk slot strict: solver menggantinya dengan frame bersih', () => {
+    it('AI memilih frame camera-eligible untuk slot strict: slot tidak mencurinya (dilewati, bukan diisi B-roll)', () => {
       const frames = makePool(true);
-      const eligibleIdx = frames.length; // frameIndex 1-based dari akhir pool
-      const parsed = { storyboard: { clip3_action_demo: eligibleIdx } };
+      const eligibleIdx = frames.length; // frameIndex 1-based (frame kamera di ujung pool)
+      const parsed = { storyboard: { clip2_memory: eligibleIdx } };
       const clips = build7SlotStoryboardClips({ parsed, frames, totalDuration: 240, niche: 'gadget_smartphone' });
-      const slot3 = clips.find(c => c.storyboardSlot === 3);
-      expect(slot3).toBeTruthy();
-      expect(slot3.startSeconds).not.toBe(150);
+      const slot2 = clips.find(c => c.storyboardSlot === 2);
+      // Slot strict menolak frame kamera; tanpa frame bersih lain ia DILEWATI (kontrak anti-mencuri),
+      // bukan dipaksa memakai B-roll tak relevan.
+      expect(slot2).toBeUndefined();
+      // Frame camera (ts 150) hanya boleh menempel di slot presenter_only (4).
+      for (const c of clips) {
+        if (c.storyboardSlot === 4) continue;
+        expect(c.startSeconds).not.toBe(150);
+      }
     });
   });
 
@@ -97,12 +124,34 @@ describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
       expect(out.some(c => c.isConformedLoop === true)).toBe(true);
     });
 
-    it('gadget (strictSceneVoSync): jumlah klip TIDAK diekspansi, durasi tetap di-fit ke audio', () => {
-      const out = conformClipsToVoiceover({ clips: baseClips, script: '', audioDurationSec: 28, niche: 'gadget_smartphone' });
+    it('gadget (strictSceneVoSync): jumlah klip TIDAK diekspansi, durasi di-fit dalam batas footage teraudit', () => {
+      // Footage teraudit (4 klip x 8s = 32s) >= audio (28s) -> boleh di-TRIM, tidak ada ekspansi.
+      const gadgetClips = Array.from({ length: 4 }, (_, i) => ({
+        startSeconds: i * 9,
+        duration: 8,
+        candidateIndex: 0,
+      }));
+      const out = conformClipsToVoiceover({ clips: gadgetClips, script: '', audioDurationSec: 28, niche: 'gadget_smartphone' });
       expect(out.length).toBe(4);
       expect(out.some(c => c.isConformedLoop === true)).toBe(false);
       const total = out.reduce((s, c) => s + c.duration, 0);
       expect(total).toBeCloseTo(28, 0);
+    });
+
+    it('gadget (strictSceneVoSync): VO lebih panjang dari footage teraudit -> tolak (isRenderPlanShortfall)', () => {
+      // Footage (4 x 3.5s = 14s) < audio (28s) dan ekspansi dilarang -> wajib ditolak, bukan
+      // memaksakan frame yang belum diaudit ke timeline.
+      const shortClips = Array.from({ length: 4 }, (_, i) => ({
+        startSeconds: i * 4,
+        duration: 3.5,
+        candidateIndex: 0,
+      }));
+      expect(() => conformClipsToVoiceover({ clips: shortClips, script: '', audioDurationSec: 28, niche: 'gadget_smartphone' })).toThrow();
+      try {
+        conformClipsToVoiceover({ clips: shortClips, script: '', audioDurationSec: 28, niche: 'gadget_smartphone' });
+      } catch (err) {
+        expect(err.isRenderPlanShortfall).toBe(true);
+      }
     });
 
     it('niche tidak dikenal: fail-safe ke perilaku lama (expansion diizinkan)', () => {

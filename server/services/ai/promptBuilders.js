@@ -70,13 +70,13 @@ ${effectiveDesc ? `- Description: "${effectiveDesc}"` : ''}
 - ACCEPTANCE STANDARD:
   * ACCEPT smartphone review B-roll, hands-on physical demonstrations, screen 120Hz smooth scrolling, gaming tests in hands, and unboxing B-roll (cherry-pick active usage/chassis shots, discard cardboard packaging and paper manuals).
   * HARDWARE VISIBILITY BY STORYBOARD ROLE:
-    Slots 1-6 (screen, features, and memory) must show the physical smartphone or its active interface. Slots 7-8 are camera reviews and may show only photos/video captured by that phone, even when the phone itself is not in the sample frame.
+    Slots 1-3 and 5 (opening montage, memory, durability, and closing hero) must show the physical smartphone or its active interface. Slot 4 is the camera review and may show only photos/video captured by that phone, even when the phone itself is not in the sample frame.
   * CAMERA SAMPLE PEOPLE ARE ALLOWED:
     People appearing as subjects inside photos or footage captured by the reviewed phone are valid camera evidence. Do not treat a photographed face as a reviewer. Reject a camera scene only when a reviewer/vlogger is filming themselves and speaking directly to the camera.
   * In "detectedProduct", output the specific model name (e.g. "Infinix Note 40 Pro", "Poco X6 5G", "Samsung Galaxy A15 5G", "Redmi Note 13 Pro 5G").
   * In "detectedBrand", output the brand (e.g. "Infinix", "Xiaomi", "Samsung", "Poco", "Realme", "Vivo", "Tecno").
 - REJECTION STANDARD:
-  * Reject unrelated scenic B-roll in slots 1-6. In camera-review slots 7-8, captured scenery, portraits, people, and other camera-test subjects are valid evidence even when the phone is absent from the captured image.
+  * Reject unrelated scenic B-roll in the hardware slots (1-3, 5). In the camera-review slot (4), captured scenery, portraits, people, and other camera-test subjects are valid evidence even when the phone is absent from the captured image.
   * PILLARBOX & BLACK BARS BAN: REJECT IMMEDIATELY if the video has vertical black bars (pillarbox) on the left and right sides.
   * ROTATED / SIDEWAYS 90° FOOTAGE BAN: REJECT IMMEDIATELY if the video or gameplay is rotated sideways 90 degrees.
   * REJECT IF TALKING HEAD / PODCAST: REJECT if the video is pure talking-head presenter without hands-on close-up B-roll of the physical smartphone.
@@ -135,10 +135,10 @@ export function buildFaceAndMotionCriterion(niche = 'kitchen_tools', clipSec = 4
     return `CRITERION 4: VLOGGER TALKING-HEAD BAN & PHYSICAL HARDWARE FOCUS (SMARTPHONE NICHE)
 - MANDATORY SHORT-FORM VIDEO STANDARD:
   * This is an automated smartphone showcase video. The core focus MUST be physical hardware B-roll: hands holding the device, bezel, back cover, 120Hz scrolling, physical gaming in hands.
-  * Slots 1-6 must show physical phone hardware, active screen interaction, or a verifiable memory screen. Camera review slots 7-8 may show the phone's captured photo/video without the device in frame.
+  * Slots 1-3 and 5 must show physical phone hardware, active screen interaction, or a verifiable memory screen. The camera review slot (4) may show the phone's captured photo/video without the device in frame.
   * Camera sample footage may contain people, portraits, bystanders, or scenery. A face in captured footage is not a face-to-camera presenter.
   * REJECT ONLY a reviewer/vlogger filming themselves while speaking directly to the camera, or a source that has no usable phone review evidence. Do not reject a phone camera sample because it contains a person or lacks the physical phone in that sample.
-  * Prefer moving hands-on footage for the first six slots. Camera review slots may use still photos or video samples captured by the phone; use motion only when it is present in the source.
+  * Prefer moving hands-on footage for the hardware slots (1-3, 5). The camera review slot may use still photos or video samples captured by the phone; use motion only when it is present in the source.
   * In rejection output, set reason to: "Menampilkan vlogger talking-head studio tanpa B-roll fisik HP yang cukup"`;
   }
 
@@ -583,10 +583,11 @@ export function build7SlotStoryboardClips({
     }
 
     if (niche === 'gadget_smartphone') {
-      // Smartphone slots 1-6 keep only Gemini's role-specific storyboard frame.
-      // Slots 7-8 may recover from another frame, but only from the Oracle/Gemini
-      // camera-result pool; never relabel arbitrary late B-roll as a camera sample.
-      if (config.slot >= 7 && (!frameObj || !isCameraEligibleFrame(frameObj))) {
+      // Smartphone non-camera slots keep only Gemini's role-specific storyboard frame.
+      // The presenter_only camera slot (data-driven; no longer a fixed slot number) may
+      // recover from another frame, but only from the Oracle/Gemini camera-result pool;
+      // never relabel arbitrary late B-roll as a camera sample.
+      if (slotPolicy === 'presenter_only' && (!frameObj || !isCameraEligibleFrame(frameObj))) {
         frameObj = validFrames.find((f) =>
           isCameraEligibleFrame(f) &&
           !isForbiddenFrame(f, slotPolicy) &&
@@ -665,7 +666,8 @@ export function build7SlotStoryboardClips({
     let distinctFrame = null;
     if (frameObj && isUsableDistinctFrame(frameObj, slotPolicy)) {
       distinctFrame = frameObj;
-    } else if (niche === 'gadget_smartphone' && config.slot >= 7) {
+    } else if (niche === 'gadget_smartphone' && slotPolicy === 'presenter_only') {
+      // Slot kamera (presenter_only, kini slot 4) boleh memakai stok frame berbeda.
       distinctFrame = chooseDistinctFrame(frameObj, targetCandidate, slotPolicy);
     } else if (niche === 'gadget_smartphone') {
       // Do not fill missing screen, feature, or memory scenes with unrelated B-roll.
@@ -685,7 +687,7 @@ export function build7SlotStoryboardClips({
     const frameTs = frameObj.timestamp !== undefined ? frameObj.timestamp : (sIdx * (candDuration / Math.max(1, slotsConfig.length)));
 
     let startSec = Math.max(0, Math.min(candDuration - slotClipSec, Math.round(frameTs * 10) / 10));
-    if (startSec < minSafeStart && config.slot !== 6 && !(niche === 'gadget_smartphone' && config.slot >= 7)) {
+    if (startSec < minSafeStart && config.slot !== 6 && !(niche === 'gadget_smartphone' && slotPolicy === 'presenter_only')) {
       startSec = minSafeStart;
     }
 

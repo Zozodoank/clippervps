@@ -827,7 +827,7 @@ async function _runStage1Pipeline({
         const initialClips = initialRes.highlight?.clips || [];
         const initialDuration = initialClips.reduce((acc, c) => acc + (c.duration || sceneDuration), 0);
         const isGadgetReview = (options.niche || jobMeta.niche) === 'gadget_smartphone';
-        const minRequiredClips = isGadgetReview ? 8 : (options.singleVideoOnly ? 3 : 5);
+        const minRequiredClips = isGadgetReview ? 5 : (options.singleVideoOnly ? 3 : 5);
         const minRequiredDur = isGadgetReview ? 45.0 : (options.singleVideoOnly ? 15.0 : 25.0);
         if (initialClips.length >= minRequiredClips && initialDuration >= minRequiredDur) {
           highlight = initialRes.highlight;
@@ -2303,12 +2303,14 @@ async function _runStage1Pipeline({
       if (discardedDirtyClips.length > 0) {
         console.log(`[ClipAudit] Berhasil membuang ${discardedDirtyClips.length} klip kotor (sebab: ${summarizeClipAuditReasons(discardedDirtyClips)}). Tersisa ${cleanAuditedClips.length} klip bersih.`);
 
-        // 1. Pastikan Slot 1 (Visual Produk Utuh) tetap ada!
+        // 1. Pastikan Slot 1 tetap ada (peran mengikuti preset niche, bukan dipatok
+        // 'full_product': gadget slot 1 = clip1_opening_spec / montage 'feature').
         const hasSlot1 = cleanAuditedClips.some(c => c.storyboardSlot === 1);
         if (!hasSlot1 && cleanAuditedClips.length > 0) {
-          console.warn(`[ClipAudit] ⚠️ Slot 1 (Hero Produk Utuh) terbuang pada audit. Memulihkan Slot 1 dari klip pertama bersih...`);
+          console.warn(`[ClipAudit] ⚠️ Slot 1 terbuang pada audit. Memulihkan Slot 1 dari klip pertama bersih...`);
+          const slot1Role = getNichePreset(options.niche || jobMeta.niche || 'kitchen_tools')?.slotsConfig?.[0]?.role || 'full_product';
           cleanAuditedClips[0].storyboardSlot = 1;
-          cleanAuditedClips[0].storyboardRole = 'full_product';
+          cleanAuditedClips[0].storyboardRole = slot1Role;
         }
 
         // Adaptive clip pacing: minimal durasi video adalah 18.0 detik

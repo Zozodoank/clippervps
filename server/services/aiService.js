@@ -266,9 +266,9 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
 TIMELINE:
 - Inspect the complete video. Never select a section before ${introCutoffSec || 0}s or after ${Math.max(0, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0))}s.
-- ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit within 45-60 seconds. Return each actual startSeconds and endSeconds.` : `Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.`}
-- ${isGadget ? 'Propose eight ordered smartphone-review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 RAM/storage evidence, 7-8 camera samples as the final scenes. Camera samples may show only captured photos/video without the phone in frame, including people as subjects.' : 'Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.'}
-- ${isGadget ? 'Tag each selectedClips entry with storyboardSlot 1 through 8 in that order. Do not classify people inside camera samples as presenters; Oracle checks only whether a scene is self-recording presenter footage.' : 'Return timestamp proposals in scene order.'}
+- ${isGadget ? `Use dynamic section lengths based on the visible action, not equal uniform cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit within 45-60 seconds. Return each actual startSeconds and endSeconds.` : `Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.`}
+- ${isGadget ? 'Propose five ordered smartphone-review scenes: (1) OPENING MONTAGE - return 2-4 sequential entries that are ALL storyboardSlot:1 (physical body -> weight/dimensions -> screen -> battery info), each with its real startSeconds/endSeconds taken from anywhere in the source; the backend re-sequenced them to the start (00:00); (2) RAM/storage evidence; (3) durability/IP rating (e.g. IP68/IP69) only if actually shown, never invented; (4) camera samples - captured photos/video may include people as subjects; (5) closing hero shot of the whole product (price/CTA is delivered later by voice-over, so do NOT pick a clip showing on-screen price text/numbers).' : 'Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.'}
+- ${isGadget ? 'Tag each selectedClips entry with storyboardSlot 1 through 5 (slot 1 may repeat for the opening-montage clips). Do not classify people inside camera samples as presenters; Oracle checks only whether a scene is self-recording presenter footage.' : 'Return timestamp proposals in scene order.'}
 - Do not make a product-match, face, overlay, subtitle, watermark, or source-quality verdict. Oracle is the sole visual judge.
 - REFRAME: the final clip is vertical 9:16 where the source is kept as a centered SHARP panel (aspect 45:64) with blurred fill above and below it. Prefer sections where the product and its action are well-centered and stay fully inside that sharp panel; do not rely on detail pressed against the top/bottom blur margins or the far left/right edges.
 - If no likely product section can be located, return an empty list; the backend will still submit sample timestamps to Oracle.
@@ -379,12 +379,16 @@ Keep timestamps numeric. Return only timestamp proposals; Oracle decides whether
       ? parsed.clips
       : (Array.isArray(parsed.timestamps) ? parsed.timestamps : []));
   const firstSafeSec = Math.max(0, Number(introCutoffSec) || 0);
-  const maxSelectedClipSec = isGadget ? 8 : clipSec;
+  // Margin keamanan garis waktu untuk titik sampel fallback. Untuk gadget mengikuti
+  // maxSec terbesar di slotsConfig (mis. kamera/hero lebih panjang) agar sampel tidak
+  // start terlalu mepet ke ujung & terbuang oleh cek batas aman di bawah.
+  const gadgetMaxClipSec = Math.max(8, ...((getNichePreset(niche)?.slotsConfig || []).map((s) => Number(s?.maxSec) || 0)));
+  const maxSelectedClipSec = isGadget ? gadgetMaxClipSec : clipSec;
   const lastSafeStart = Math.max(firstSafeSec, Number(totalDuration) - Math.max(0, Number(outroCutoffSec) || 0) - maxSelectedClipSec);
   const oracleProbeSections = rawSections.length > 0
     ? rawSections
-    : Array.from({ length: isGadget ? 8 : 4 }, (_, i) => ({
-        startSeconds: firstSafeSec + ((lastSafeStart - firstSafeSec) * (i + 0.5) / (isGadget ? 8 : 4)),
+    : Array.from({ length: isGadget ? 5 : 4 }, (_, i) => ({
+        startSeconds: firstSafeSec + ((lastSafeStart - firstSafeSec) * (i + 0.5) / (isGadget ? 5 : 4)),
         ...(isGadget ? { storyboardSlot: i + 1 } : {}),
         reason: 'Timestamp sampel untuk penilaian Oracle',
       }));
@@ -425,7 +429,7 @@ Keep timestamps numeric. Return only timestamp proposals; Oracle decides whether
       acceptedStarts.push(startSec);
 
       const endSec = Math.round((startSec + sectionDuration) * 10) / 10;
-      const isCameraSample = isGadget && storyboardSlot >= 7;
+      const isCameraSample = isGadget && storyboardSlot === 4;
       candidateClips.push({
         startSeconds: startSec,
         endSeconds: endSec,
@@ -583,11 +587,11 @@ ${effectiveDesc ? `PRODUCT DESCRIPTION: "${effectiveDesc}"` : ''}
 
 TIMELINE AND SELECTION:
 - Inspect all supplied videos. Ignore the first ${introCutoffSec || 0} seconds and the final 10 seconds of each video.
-- ${isGadget ? `Use dynamic section lengths based on the visible action, not eight equal cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit within 45-60 seconds; return the actual startSeconds and endSeconds for every section.` : `Each selected section must be ${clipSec}s long.`} ${isGadget ? 'Return up to eight ordered smartphone review sections: slots 1-2 screen/UI, 3-4 visible features, 5-6 verified RAM/storage evidence, and 7-8 phone camera samples as the final scenes. Slots 1-6 must show the phone or its active interface. Slots 7-8 may show only captured photos/video without the phone in frame; people inside captured samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every section must show the target physical product clearly in active use.'}
-- Select only sections whose final sharp content panel (centered 45:64 within the 9:16 frame) has no floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging. ${isGadget ? 'Faces are allowed inside a camera sample in slots 7-8; reject a face only when it is a reviewer filming themselves and speaking directly to the camera.' : 'Reject human faces and talking heads.'}
+- ${isGadget ? `Use dynamic section lengths based on the visible action, not equal uniform cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit within 45-60 seconds; return the actual startSeconds and endSeconds for every section.` : `Each selected section must be ${clipSec}s long.`} ${isGadget ? 'Return up to five ordered smartphone review scenes: (1) OPENING MONTAGE - return 2-4 sequential entries that are ALL storyboardSlot:1 (physical body -> weight/dimensions -> screen -> battery info), each from anywhere in the sources; the backend re-sequenced them to the start (00:00); (2) verified RAM/storage evidence; (3) durability/IP rating only if actually shown; (4) phone camera samples; (5) a closing hero shot of the whole product (price/CTA comes from voice-over, so do NOT pick a clip with on-screen price text/numbers). Slots 2-3 must show the phone or its active interface. Slot 4 may show only captured photos/video without the phone in frame; people inside captured samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every section must show the target physical product clearly in active use.'}
+- Select only sections whose final sharp content panel (centered 45:64 within the 9:16 frame) has no floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging. ${isGadget ? 'Faces are allowed inside a camera sample in slot 4; reject a face only when it is a reviewer filming themselves and speaking directly to the camera.' : 'Reject human faces and talking heads.'}
 - REFRAME: the final clip is vertical 9:16 where the source is kept as a centered SHARP panel (aspect 45:64) with blurred fill above and below it. For horizontal footage assess only that centered sharp panel (ignore the top/bottom blur margins and the far left/right edges); for vertical footage assess the full frame. Prefer sections where the product stays fully visible inside the sharp panel.
 - Return every distinct clean section you can identify, including fewer than four. If none are identifiable in a source, simply return no section for that source.
-- ${isGadget ? 'For camera slots 7-8, set isCameraSample=true and storyboardSlot to 7 or 8. Set isSelfRecordingPresenter=true only when a person is filming themselves and speaking directly to camera.' : 'Return storyboardSlot matching the requested shot role.'}
+- ${isGadget ? 'For the camera scene (slot 4), set isCameraSample=true and storyboardSlot to 4. Set isSelfRecordingPresenter=true only when a person is filming themselves and speaking directly to camera.' : 'Return storyboardSlot matching the requested shot role.'}
 - Never return an overall source or batch verdict. Always use status "select", including when selectedClips is empty.
 
 Return ONLY JSON:
@@ -677,7 +681,7 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
   const selectedSections = (Array.isArray(parsed.selectedClips) ? parsed.selectedClips : [])
     .filter((item, index) => {
       const slot = Number(item?.storyboardSlot) || index + 1;
-      const cameraSample = isGadget && slot >= 7 && item?.isCameraSample === true && item?.isSelfRecordingPresenter !== true;
+      const cameraSample = isGadget && slot === 4 && item?.isCameraSample === true && item?.isSelfRecordingPresenter !== true;
       const explicitlyDirty = item?.clean === false || item?.isClean === false ||
         (!cameraSample && item?.containsTargetProduct === false) || item?.isPackaging === true ||
         item?.isMachine === true || (!cameraSample && item?.isActiveProductDemo === false) ||
@@ -695,7 +699,7 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
   if (Array.isArray(selectedSections)) {
     for (const [sectionIndex, clipData] of selectedSections.entries()) {
       const storyboardSlot = Number(clipData?.storyboardSlot) || sectionIndex + 1;
-      const isCameraSample = isGadget && storyboardSlot >= 7 && clipData?.isCameraSample === true;
+      const isCameraSample = isGadget && storyboardSlot === 4 && clipData?.isCameraSample === true;
       const sec = Number(clipData.startSeconds ?? clipData.timestamp);
       const vidIdx = Number(clipData.sourceVideoIndex) || 0;
       const requestedDuration = Number(clipData.endSeconds) - Number(clipData.startSeconds ?? sec);
@@ -920,8 +924,8 @@ CRITERION 4B: UNBOXING & PACKAGING DISCARD MANDATE (CHERRY-PICK ACTIVE USAGE, DI
 - MANDAT PEMBUANGAN PROSES UNBOXING:
   * AI WAJIB MEMBUANG DAN MENYINGKIRKAN SEMUA SCENE YANG MENAMPILKAN PROSES UNBOXING, KOTAK KARDUS, KEMASAN PAKET, BUBBLE WRAP, BUKU PANDUAN MANUAL KERTAS, KARTU GARANSI, ATAU BUSA PACKAGING!
   * Timestamps di array "timestamps" DILARANG KERAS memasukkan proses unboxing, buku panduan manual kertas, atau menyorot kotak kardus/kemasan!
-  * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN / DIDEMONSTRASIKAN. ${isGadget ? 'Pengecualian: dua adegan terakhir boleh berupa hasil foto/video yang diambil kamera ponsel, tanpa ponsel di dalam hasil tangkapan.' : ''}
-  * ${isGadget ? 'Slot 1-6 WAJIB menunjukkan ponsel/UI/kapasitas yang relevan; slot kamera 7-8 dinilai sebagai sampel hasil kamera. Subjek manusia di dalam sampel tersebut diperbolehkan.' : 'Setiap timestamp yang dipilih WAJIB menampilkan PRODUK UTAMA secara jelas di dalam frame.'}
+  * HANYA pilih timestamps ketika produk fisik di luar kemasan SEDANG DIGUNAKAN / DIDEMONSTRASIKAN. ${isGadget ? 'Pengecualian: adegan kamera (slot 4) boleh berupa hasil foto/video yang diambil kamera ponsel, tanpa ponsel di dalam hasil tangkapan.' : ''}
+  * ${isGadget ? 'Slot 2-3 WAJIB menunjukkan ponsel/UI/kapasitas yang relevan; slot 4 (kamera) dinilai sebagai sampel hasil kamera; slot 1 (montage pembuka) & slot 5 (hero penutup) menampilkan fisik produk. Subjek manusia di dalam sampel kamera diperbolehkan.' : 'Setiap timestamp yang dipilih WAJIB menampilkan PRODUK UTAMA secara jelas di dalam frame.'}
   * DILARANG KERAS memilih scene di mana produk hanya BERSALIN, TERSEDIA, tersimpan, diletakkan, didisplay di rak, meja, laci, atau counter TANPA ada tangan yang mengoperasikan atau mendemonstrasikannya. Shot "produk statis pajangan" = TIDAK VALID. Yang diterima hanyalah produk yang SEDANG DIPAKAI atau SEDANG DISENTUH/DIOPERASIKAN.
 - TOLAK (status: 'reject') HANYA JIKA:
   * 100% seluruh isi video HANYA unboxing paket / membaca buku manual tanpa ada sedikit pun demonstrasi fungsi fisik produk.
@@ -934,13 +938,13 @@ CRITERION 4C: NORMAL CAMERA ORIENTATION & ZERO PILLARBOX / ZERO ROTATED 90° FOO
   * DILARANG KERAS video yang memiliki pilar / garis hitam vertikal tebal di sisi kiri dan kanan (pillarbox narrow slit)! Video harus mengisi penuh frame secara proporsional.
 - Jika video secara keseluruhan direkam/diupload miring 90 derajat atau ber-pillarbox hitam tebal: VIDEO WAJIB LANGSUNG DITOLAK: {"status": "reject", "reason": "Video ditolak: Orientasi kamera miring 90 derajat atau terdapat pillarbox hitam tebal di sisi samping."}.
 
-CRITERION 5: ${isGadget ? 'EIGHT-SCENE SMARTPHONE REVIEW' : 'DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE'}
-- ${isGadget ? `Select exactly eight ordered smartphone scenes with natural, varied cut lengths; the complete edit must be 45-60 seconds. Slot duration guide: ${getSmartphoneDurationGuide()}. Use 1-2 for screen/UI, 3-4 for visible features, 5-6 for RAM/storage evidence, and 7-8 for camera samples as the final scenes. Camera samples may show captured people or scenery without the physical phone in frame.` : 'Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.'}
+CRITERION 5: ${isGadget ? 'FIVE-SCENE SMARTPHONE REVIEW' : 'DIVERSE ACTION DEMONSTRATION & ANTI-REPETITION MANDATE'}
+- ${isGadget ? `Select five ordered smartphone review scenes with natural, varied cut lengths; the complete edit must be 45-60 seconds. Slot duration guide: ${getSmartphoneDurationGuide()}. Slot 1 is an OPENING MONTAGE - return 2-4 sequential timestamps that are ALL storyboardSlot 1 (body -> weight -> screen -> battery), each kept short (~4-8s); the backend re-sequenced them to the start. Slot 2 RAM/storage, slot 3 durability/IP, slot 4 camera samples (may show captured people or scenery without the physical phone in frame), slot 5 closing hero shot (price/CTA comes from voice-over, so never pick on-screen price text).` : 'Determine 4 to 8 clean, strong non-overlapping segments (each 2 to 5 seconds long according to natural shot boundaries) to construct a high-retention video ad.'}
 - Each timestamp in "timestamps" MUST be free of subtitles, floating text, graphic overlays, colored cards, and watermarks. ${isGadget ? 'A human subject inside a phone camera sample is allowed; reject only a self-recording presenter speaking directly to camera.' : 'Selected scenes must be 100% faceless.'}
 - MOTION FIRST: Prioritize active hands-on demonstration (cutting, pressing, operating, tangible results) over frozen/static product displays.
 - ANTI-MONOTONOUS RULE: Each timestamp MUST represent a distinct action, phase, or camera angle. If the footage repeats the same static cut without diversity, REJECT IT:
   {"status": "reject", "reason": "Video ditolak: Footage monoton, hanya mengulang 1 gerakan tanpa variasi aksi yang memadai."}
-- ${isGadget ? 'Return exactly eight timestamps in the required topic order. Do not reject captured sample photos/video because the device is absent from the captured image.' : 'If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.'}
+- ${isGadget ? 'Return the five scenes in the required topic order (slot 1 may repeat for the opening montage). Do not reject captured sample photos/video because the device is absent from the captured image.' : 'If the video does NOT contain at least 4 genuinely distinct clean product demonstration clips inside the 9:16 frame: MUST BE REJECTED.'}
 
 Output valid JSON ONLY with this exact format:
 If ACCEPTED:
@@ -1427,10 +1431,10 @@ CRITERIA FOR ACCEPTANCE (ALL MUST BE TRUE):
    - MARKET COMPATIBILITY: The product demonstrated MUST match generic OEM / white-label household gadgets, kitchen tools, or daily appliances widely sold across Shopee regional markets (Shopee Indonesia, Malaysia, Thailand, Vietnam, Philippines, Singapore, Taiwan, Brazil).
    - Multi-country Shopee / Asian OEM demonstration videos (hands-on tabletop demos from SEA/Asian sellers or creators) are 100% WELCOME and ACCEPTABLE.
    - STRICTLY REJECT US/Western-exclusive retail items: If the video clearly shows an exclusive US/Western retail product or retail packaging with Amazon, Walmart, Target, Home Depot, or Best Buy branding not found on Shopee, output status reject.
-2. Clean Hands-On Demonstration in Selected Frames: ${isGadget ? 'Slots 1-6 must show the smartphone, active interface, or memory evidence. Slots 7-8 may show photos/video captured by its camera, and people or faces inside those samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.'}
+2. Clean Hands-On Demonstration in Selected Frames: ${isGadget ? 'Slots 1-3 & 5 must show the smartphone body/interface, memory-durability evidence, or the closing hero product. Slot 4 (camera) may show photos/video captured by its camera, and people or faces inside those samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.'}
 3. 100% Clean from hardburned speech subtitles/captions and colored text banner boxes inside 9:16 frame (physical text/labels on the product are 100% allowed).
 4. 100% Clean from watermarks, social media logos, and channel identities inside the 9:16 central frame (outer left/right watermarks that get cropped/covered are acceptable).
-5. ${isGadget ? 'Smartphone review: exactly eight ordered scene slots covering screen, features, memory capacity, then camera samples as the final two slots.' : 'Real authentic physical demonstration (5 to 8 clean clips across the storyboard for full 30 to 35 second video ad).'}
+5. ${isGadget ? 'Smartphone review: five ordered scenes - slot 1 opening montage (body/weight/screen/battery, 2-4 clips), slot 2 memory, slot 3 durability/IP, slot 4 camera samples, slot 5 closing hero (price via voice-over).' : 'Real authentic physical demonstration (5 to 8 clean clips across the storyboard for full 30 to 35 second video ad).'}
 
 Output strictly valid JSON with this exact schema:
 {
@@ -1476,10 +1480,10 @@ ${preset.slotsConfig.map((slot, index) => `    "${slot.key}": ${index + 1}`).joi
 CRITICAL MANDATE FOR FRAME AUDIT & REJECTION REPORTING:
 1. "rejectedFrames": You MUST inspect every single frame and list ALL frames that violate QC (human faces/heads, dialogue subtitles, promo cards, watermarks, floating numbers/stickers like '99', tape measures/rulers, or empty packaging without target product).
    Specify "frameIndex" (1-indexed matching frame #1, #2, ...), "timestamp" (approx seconds), and an explicit "reason".
-2. "acceptedFrames": ${isGadget ? 'List every clean frame matching its smartphone storyboard role; people inside camera samples in slots 7-8 are allowed.' : 'List every clean, faceless, hands-on demonstration frame index.'}
-3. "missingSlots": If the pool of clean frames cannot fill all 7 diverse storyboard slots without repetition, list the unfilled slot keys (e.g. ["clip3_action_demo", "clip4_action_demo_diff"]).
+2. "acceptedFrames": ${isGadget ? 'List every clean frame matching its smartphone storyboard role; people inside the camera scene (slot 4) samples are allowed.' : 'List every clean, faceless, hands-on demonstration frame index.'}
+3. "missingSlots": If the pool of clean frames cannot fill all required storyboard slots without repetition, list the unfilled slot keys (e.g. ["clip3_action_demo", "clip4_action_demo_diff"]).
 4. "suggestedSearchQueries": Suggest 1-3 targeted YouTube search queries for backend to search replacement demonstration footage. WAJIB GUNAKAN merk dan tipe produk ("${effectiveTitle}") secara utuh dan akurat, meskipun nama merk berbahasa Inggris. Padukan dengan kata kunci pencarian dalam Bahasa Indonesia (contoh: "${effectiveTitle} demo produk", "review ${effectiveTitle} indonesia") agar sesuai dengan audiens Shopee lokal. DILARANG memakai kata cara/tutorial/diy/servis/reparasi/rusak/perbaikan - query semacam itu otomatis dibuang backend.
-5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! ${isGadget ? 'People inside camera-result samples in slots 7-8 are allowed and must not be listed as face violations.' : ''} Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
+5. DO NOT REJECT WHOLE VIDEO IF PRODUCT MATCHES: As long as the physical product demonstrated matches ("isExactProductMatch": true), NEVER output fatal status "reject" just because some frames have faces/text! ${isGadget ? 'People inside the camera-scene (slot 4) result samples are allowed and must not be listed as face violations.' : ''} Output status "accept" or "partial" and populate "rejectedFrames" and "acceptedFrames" so backend can harvest replacement footage adaptively!`;
 
   // Batasi keyframes untuk API. Evidence mode: pemilih cluster-aware (tiap kluster
   // jendela bersih terwakili proporsional + boundary awal/akhir selalu ikut).
@@ -1575,8 +1579,8 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 4. Watermark & Logo QC (9:16 Crop Tolerance):
    - Watermark/logo di pojok kiri/kanan video (di luar area 9:16 tengah) TETAP DITERIMA karena akan terpotong saat di-crop ke format vertikal 9:16.
    - Jika ada watermark di tengah pada satu frame, abaikan frame tersebut dan pilih frame lain yang bersih dari video yang sama!
-5. MANDATORY ${isGadget ? '8-SLOT SMARTPHONE REVIEW STORYBOARD' : '7-SLOT AFFILIATE STORYBOARD ARCHITECTURE'}:
-   ${isGadget ? 'Smartphone review terdiri dari delapan adegan enam detik (total 48 detik sebelum conform), mengikuti layar → fitur → kapasitas memori → kamera. Kamera hanya di slot 7-8.' : 'Video reels/shorts affiliate WAJIB berganti adegan setiap ~3-5 detik dan DILARANG KERAS monoton!'}
+5. MANDATORY ${isGadget ? '5-SLOT SMARTPHONE REVIEW STORYBOARD' : '7-SLOT AFFILIATE STORYBOARD ARCHITECTURE'}:
+   ${isGadget ? 'Smartphone review terdiri dari LIMA adegan berdurasi dinamis (total 45-60 detik), mengikuti montage pembuka (fisik/bobot/layar/baterai) → memori → daya tahan/IP → kamera → hero penutup. Slot 1 boleh beberapa klip pendek (semua storyboardSlot 1); kamera hanya di slot 4.' : 'Video reels/shorts affiliate WAJIB berganti adegan setiap ~3-5 detik dan DILARANG KERAS monoton!'}
    - ATURAN SUDUT PANDANG & VARIASI PERSPEKTIF (CRITICAL UNTUK RETENSI REELS):
      * DILARANG KERAS memilih 2 frame berurutan dengan sudut kamera & jarak yang sama persis (terutama sudut top-down tegak lurus dari atas meja).
      * WAJIB kombinasikan tipe visual berbeda sesuai peran slot:
@@ -1585,17 +1589,17 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
        3) Dynamic Action Shot: Tangan memutar rak saji carousel/lazy susan, membuka penutup, menyajikan makanan, atau fungsi mekanik.
        4) Angle Variety: Sudut 45 derajat (miring elegan) atau perspektif meja makan.
    - DILARANG KERAS FRAME METERAN JAHIT / PENGGARIS: Dilarang memilih frame orang memegang meteran jahit kuning / mengukur mangkuk / membaca buku manual!
-   - ${isGadget ? 'Slot 1-6 wajib menampilkan perangkat atau UI aktif yang mendukung layar, fitur, dan memori. Slot 7-8 boleh menampilkan hanya foto/video yang diambil oleh kamera ponsel, tanpa perangkat fisik di dalam hasil tangkapan.' : 'ATURAN KHUSUS SLOT 1: "clip1_full_product" WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH. DILARANG kardus kosong, bubble wrap tanpa produk, meteran, atau resi pengiriman.'}
+   - ${isGadget ? 'Slot 2-3 wajib menampilkan perangkat atau UI aktif yang mendukung memori & daya tahan. Slot 4 (kamera) boleh menampilkan hanya foto/video yang diambil oleh kamera ponsel, tanpa perangkat fisik di dalam hasil tangkapan. Slot 1 (montage pembuka) menampilkan fisik/body, bobot, layar, dan baterai; Slot 5 menampilkan fisik produk utuh sebagai penutup.' : 'ATURAN KHUSUS SLOT 1: "clip1_full_product" WAJIB MENAMPILKAN FISIK PRODUK SECARA UTUH. DILARANG kardus kosong, bubble wrap tanpa produk, meteran, atau resi pengiriman.'}
    ${preset.storyboardInstructions}
 5B. TARGET PRODUCT EVIDENCE BY STORYBOARD ROLE:
-   - ${isGadget ? 'Slot 1-6 harus menunjukkan perangkat/UI; slot 7-8 dinilai sebagai hasil kamera sehingga foto/video tangkapan ponsel adalah bukti yang sah walau ponsel tidak tampak di dalam gambar.' : 'Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.'}
+   - ${isGadget ? 'Slot 1-3 & 5 harus menunjukkan perangkat/UI atau fisik produk; slot 4 (kamera) dinilai sebagai hasil kamera sehingga foto/video tangkapan ponsel adalah bukti yang sah walau ponsel tidak tampak di dalam gambar.' : 'Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.'}
    - ${isGadget ? 'Orang, wajah, potret, atau subjek lain di dalam sampel kamera diperbolehkan. Tolak hanya presenter/vlogger yang sedang merekam diri dan berbicara langsung ke kamera.' : ''}
    - REJECT frame yang hanya menampilkan tangan kosong, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus kosong, bubble wrap tanpa produk, resi paket, meteran pengukur, atau mesin industri/peralatan lain tanpa produk target.
    - Untuk kitchen_tools: jangan pernah menganggap aktivitas memasak sebagai bukti produk. Jika produk target tidak terlihat dan dioperasikan, frame TIDAK valid.
-   - Set hasTargetProductInEverySelectedFrame true bila semua frame sesuai aturan bukti per slot; hasil kamera pada slot 7-8 dihitung sebagai bukti kamera smartphone.
+   - Set hasTargetProductInEverySelectedFrame true bila semua frame sesuai aturan bukti per slot; hasil kamera pada slot kamera smartphone dihitung sebagai bukti yang sah.
 
 6. 100% PRODUCT VISUAL CONSISTENCY & MULTI-VIDEO HARVESTING:
-   - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh adegan harus mendukung produk target "${coreNoun}". ${isGadget ? 'Hasil kamera pada slot 7-8 adalah bukti review yang sah dan tidak harus menampilkan badan ponsel.' : 'Setiap slot harus menampakkan model produk fisik yang sama.'}
+   - KONSISTENSI PRODUK ADALAH ATURAN NOMOR 1: Seluruh adegan harus mendukung produk target "${coreNoun}". ${isGadget ? 'Hasil kamera pada slot 4 adalah bukti review yang sah dan tidak harus menampilkan badan ponsel.' : 'Setiap slot harus menampakkan model produk fisik yang sama.'}
    - DILARANG KERAS MENCAMPUR PRODUK BERBEDA DI ANTARA POTONGAN KLIP! Jika ada kandidat video yang produk fisiknya berbeda tipe/warna/model dengan produk target, JANGAN pilih frame dari video tersebut!
    - ATURAN PEMILIHAN SUMBER VIDEO (MULTI-VIDEO HARVESTING):
      * JIKA FRAME BERASAL DARI LEBIH DARI 1 VIDEO KANDIDAT (misal: "Video #1" dan "Video #2"):
@@ -1746,7 +1750,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
           const frameIndex = typeof rawIdx === 'object'
             ? Number(rawIdx?.frameIndex ?? rawIdx?.frame ?? rawIdx?.index)
             : Number(rawIdx);
-          if (slot >= 7 && auditByFrameIndex.get(frameIndex)?.isCameraSample === true && auditByFrameIndex.get(frameIndex)?.isSelfRecordingPresenter !== true) {
+          if (slot === 4 && auditByFrameIndex.get(frameIndex)?.isCameraSample === true && auditByFrameIndex.get(frameIndex)?.isSelfRecordingPresenter !== true) {
             cameraSampleFrameIndexes.add(frameIndex);
           }
         });
@@ -2612,25 +2616,23 @@ export async function generateAdAdvisorScriptWithAI({
   const targetDuration = isGadget
     ? Math.max(45, Math.min(60, Math.round(Number(segmentDuration) || 49)))
     : Math.max(18, Math.min(45, Math.round(Number(segmentDuration) || 22)));
+  const smartphoneSlotCount = (getNichePreset('gadget_smartphone')?.slotsConfig || []).length || 5;
   const effectiveSceneSec = isGadget
-    ? targetDuration / 8
+    ? targetDuration / smartphoneSlotCount
     : Math.max(2.5, Math.min(4.5, Number(sceneDuration) || 3.3));
-  const sceneCount = isGadget ? 8 : Math.max(5, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
+  const sceneCount = isGadget ? smartphoneSlotCount : Math.max(5, Math.min(8, Math.round(targetDuration / effectiveSceneSec)));
   const targetSpeechSec = Math.max(17, targetDuration - 1.5);
   const targetWords = Math.round(targetSpeechSec * (isGadget ? 2.2 : 2.2));
   const minWords = Math.max(isGadget ? 90 : 38, Math.round(targetSpeechSec * (isGadget ? 2.0 : 1.9)));
   const maxWords = Math.max(isGadget ? 105 : 48, Math.round(targetSpeechSec * (isGadget ? 2.35 : 2.4)));
-  const minSmartphoneWordsPerLine = Math.max(10, Math.floor(minWords / 8));
-  const maxSmartphoneWordsPerLine = Math.ceil(maxWords / 8);
+  const minSmartphoneWordsPerLine = Math.max(10, Math.floor(minWords / smartphoneSlotCount));
+  const maxSmartphoneWordsPerLine = Math.ceil(maxWords / smartphoneSlotCount);
   const smartphoneExampleLines = [
-    '[curious] Ikuti perpindahan menu saat jari menyentuh layar; susunan ikon dan responsnya tampak jelas di sini.',
-    '[calm] Saat halaman digulir, teks dan gambar bergerak; interaksi ini memperlihatkan pengalaman layar secara langsung.',
-    '[engaged] Tombol yang ditekan membuka menu fitur; amati perubahan tampilannya sebelum menyimpulkan fungsi perangkat.',
-    '[calm] Bagian perangkat yang terlihat memberi konteks fitur, sementara demonstrasi ini menunjukkan penggunaan yang sebenarnya.',
-    '[careful] Angka RAM hanya disebut jika informasinya terbaca jelas pada layar yang sedang ditampilkan.',
-    '[careful] Jika halaman penyimpanan tidak terbuka jelas, kita jelaskan tampilannya tanpa menebak kapasitas perangkat.',
-    '[interested] Sekarang perhatikan sampel kamera; warna, pencahayaan, dan subjek tampak sebagai hasil tangkapan ponsel.',
-    '[calm] Pada contoh terakhir, amati detail dan gerak subjek yang tertangkap dalam video kamera.',
+    '[curious] Aku mulai dari fisiknya: bodi dan bobotnya di tangan, lalu layar menyala menampilkan antarmuka, dan keterangan baterainya terlihat di sini.',
+    '[careful] Soal memori, angka RAM dan penyimpanan hanya aku sebut kalau memang terbaca jelas di layar atau ditulis di deskripsi produk.',
+    '[calm] Untuk ketahanan, sertifikasi tahan air dan debu seperti IP68 aku bahas hanya kalau benar-benar dinyatakan, tidak mengarang.',
+    '[interested] Sekarang lihat sampel kameranya; warna, pencahayaan, dan subjek tampak sebagai hasil tangkapan ponsel ini.',
+    '[calm] Sebagai penutup, ini bodi utuh perangkatnya; soal harga dan ketersediaan aku arahkan ke info di bawah.',
   ];
   const smartphoneExampleVoiceover = getSmartphoneSceneStartSeconds(targetDuration)
     .map((start, index) => `[${formatSeconds(Math.round(start))}] ${smartphoneExampleLines[index]}`)
@@ -2639,11 +2641,11 @@ export async function generateAdAdvisorScriptWithAI({
   const systemPrompt = isGadget
     ? `You are an Indonesian smartphone reviewer. Produce a grounded smartphone review between 45 and 60 seconds. Derive the natural total and varied scene lengths from the footage and narration, while keeping the complete runtime inside that range.
 
-ORDER IS FIXED: scenes 1-2 review the screen/UI; scenes 3-4 review visible features; scenes 5-6 review memory capacity; scenes 7-8 review camera samples and are the final scenes. Do not move camera earlier. No CTA, price, purchase invitation, or comment prompt anywhere in narration.
+ORDER IS FIXED: scene 1 is the OPENING MONTAGE (physical body, weight, screen, then battery info); scene 2 reviews memory capacity (RAM/storage); scene 3 reviews durability/IP certification; scene 4 reviews camera samples; scene 5 is the closing hero shot of the whole product. Do not move camera earlier than scene 4. No CTA text, on-screen price, purchase invitation, or comment prompt anywhere in narration; the price/CTA is delivered only as voice-over pointing to the info below.
 
 Every narration line must describe the action or evidence visible in its corresponding frames. Use specific active verbs and natural reactions to what changes on screen; vary the opening and rhythm of each line. Do not repeat a stiff template such as starting every line with "Perhatikan" or merely announce a topic without describing what the scene shows. Never invent a spec. State RAM/storage numbers only if legible in the supplied frames or explicitly stated in product title/description. If memory capacity is not verifiable, say that the capacity is not clearly shown. Camera sample footage may include people as subjects in photos/videos captured by the phone. Reject only a reviewer/vlogger/presenter recording themselves while speaking directly to camera; do not reject people inside the phone's captured sample footage.
 
-Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. Aim for ${targetDuration} seconds and keep total runtime between 45 and 60 seconds. Choose eight varied scene boundaries based on visible action; do not space every cut exactly six seconds apart. Start at 00:00, use strictly increasing timestamps, and make the last scene finish near the target runtime. Write roughly ${minSmartphoneWordsPerLine}-${maxSmartphoneWordsPerLine} spoken words per line, varying sentence length to fit the scene and speak calmly. Keep every line descriptive enough to match the visible scene. Return exactly 8 scene entries and 8 timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
+Use natural Indonesian, no generic hype, no unsupported claims, no long SEO title. Aim for ${targetDuration} seconds and keep total runtime between 45 and 60 seconds. Choose ${sceneCount} varied scene boundaries based on visible action; do not space every cut equally. Start at 00:00, use strictly increasing timestamps, and make the last scene finish near the target runtime. Write roughly ${minSmartphoneWordsPerLine}-${maxSmartphoneWordsPerLine} spoken words per line, varying sentence length to fit the scene and speak calmly. Keep every line descriptive enough to match the visible scene. Return exactly ${sceneCount} scene entries and ${sceneCount} timestamped voiceover lines. Caption may summarize verified evidence but must not add CTA, price, or unverified specs. Return valid JSON only.`
     : `You are a Senior Creative Director and Ad Advisor specializing in Indonesian Short-Form Affiliate Video Marketing (Shopee Video, TikTok Shop, Instagram Reels).
 
 You will receive the explicit Product Title, Product Description, and the sampled frames of a ${targetDuration}-second video clip (${sceneCount} fast scenes of ~${effectiveSceneSec.toFixed(1)}s each).
@@ -2738,7 +2740,7 @@ Output MUST be strictly valid JSON matching the requested schema.`;
 Judul / Nama Produk: "${effectiveTitle}"
 ${effectiveDesc ? `Deskripsi & Spesifikasi Produk: "${effectiveDesc}"` : 'Deskripsi: (Analisis dari visual frame video)'}
 Visual Hook: "${isGadget ? 'Review dimulai dari tampilan layar yang terlihat' : (productHook || 'Racun Viral Wajib Punya!')}"
-${isGadget ? `KONTRAK SMARTPHONE: tepat 8 adegan berurutan (2 layar, 2 fitur, 2 kapasitas memori, 2 hasil kamera sebagai penutup), tanpa CTA/harga/ajakan komentar. Angka kapasitas hanya dari bukti terbaca atau deskripsi eksplisit. Orang dalam sampel foto/video kamera diperbolehkan; tolak hanya vlogger yang berbicara ke kamera.\nRencana adegan: ${smartphoneShotPlan}` : ''}
+${isGadget ? `KONTRAK SMARTPHONE: tepat ${sceneCount} adegan berurutan (1 montage pembuka fisik/bobot/layar/baterai, 2 kapasitas memori, 3 daya tahan/IP, 4 hasil kamera, 5 hero penutup), tanpa CTA teks/harga on-screen/ajakan komentar. Harga & ajakan cek produk disampaikan lewat voice-over. Angka kapasitas hanya dari bukti terbaca atau deskripsi eksplisit. Orang dalam sampel foto/video kamera diperbolehkan; tolak hanya vlogger yang berbicara ke kamera.\nRencana adegan: ${smartphoneShotPlan}` : ''}
 Durasi Video Potongan: ${targetDuration} detik (Wajib naskah dengan panjang ${minWords} - ${maxWords} kata, target ideal: ~${targetWords} kata)
 
 Visual Frames of the concatenated 5-second AI-selected product clips (${trimmedFrames.length} frames):
@@ -2858,27 +2860,28 @@ Return strict JSON in this format:
       }
 
       if (isGadget) {
+        const smartphoneSlotCount = (getNichePreset('gadget_smartphone')?.slotsConfig || []).length || 5;
         const scriptLines = String(parsed.voiceoverScript || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
         const timestampedLines = scriptLines.map(line => line.match(/^\[(\d{2}:\d{2})\]\s*(.*)$/));
         const sceneStarts = timestampedLines.map(match => match ? parseTimeToSeconds(match[1]) : NaN);
         const spokenWords = timestampedLines.map(match => (match?.[2] || '').replace(/\[[^\]]+\]/g, '').trim().split(/\s+/).filter(Boolean).length);
         const sceneGaps = sceneStarts.map((start, index) => index + 1 < sceneStarts.length ? sceneStarts[index + 1] - start : targetDuration - start);
-        const validSceneTiming = sceneStarts.length === 8
+        const validSceneTiming = sceneStarts.length === smartphoneSlotCount
           && sceneStarts[0] === 0
           && sceneStarts.every((start, index) => Number.isFinite(start) && (index === 0 || start > sceneStarts[index - 1]))
           && sceneGaps.every(gap => gap >= 3.5)
           && Math.max(...sceneGaps) - Math.min(...sceneGaps) >= 0.75;
         const hasForbiddenCta = /\b(keranjang|checkout|belanja|beli|komentar|komen|worth it|harga|diskon|link di bio)\b/i.test(String(parsed.voiceoverScript || ''));
         const validSmartphoneScript = Array.isArray(parsed.scenes)
-          && parsed.scenes.length === 8
-          && scriptLines.length === 8
+          && parsed.scenes.length === smartphoneSlotCount
+          && scriptLines.length === smartphoneSlotCount
           && validSceneTiming
           && spokenWords.every(count => count >= minSmartphoneWordsPerLine && count <= maxSmartphoneWordsPerLine)
           && spokenWords.reduce((sum, count) => sum + count, 0) >= minWords
           && spokenWords.reduce((sum, count) => sum + count, 0) <= maxWords
           && !hasForbiddenCta;
         if (!validSmartphoneScript) {
-          throw new Error(`Naskah smartphone tidak valid: perlu 8 adegan, timestamp dinamis sampai target ${targetDuration}s dalam rentang 45-60 detik, ${minWords}-${maxWords} kata, dan tanpa CTA.`);
+          throw new Error(`Naskah smartphone tidak valid: perlu ${smartphoneSlotCount} adegan, timestamp dinamis sampai target ${targetDuration}s dalam rentang 45-60 detik, ${minWords}-${maxWords} kata, dan tanpa CTA.`);
         }
       }
 
@@ -2917,14 +2920,11 @@ Return strict JSON in this format:
   }
 
   const gadgetSceneRows = [
-    ['Review layar', 'Tampilan layar dan antarmuka yang sedang dibuka.'],
-    ['Detail layar', 'Gerakan dan perubahan menu yang terlihat pada layar.'],
-    ['Review fitur', 'Fitur yang sedang ditunjukkan pada adegan ini.'],
-    ['Detail fitur', 'Perhatikan fungsi perangkat yang benar-benar tampak.'],
-    ['Kapasitas memori', 'Angka kapasitas hanya disebut jika terbaca jelas.'],
-    ['Detail penyimpanan', 'Tampilan penyimpanan menjadi bukti untuk pembahasan memori.'],
+    ['Montage pembuka', 'Fisik/body, bobot, tampilan layar, dan kapasitas baterai yang sedang terlihat.'],
+    ['Memori', 'Kapasitas RAM atau penyimpanan; angka hanya disebut jika terbaca jelas.'],
+    ['Daya tahan', 'Sertifikasi tahan air/debu hanya bila terbukti dinyatakan.'],
     ['Sampel kamera', 'Contoh foto atau video yang diambil dengan kamera ponsel.'],
-    ['Hasil kamera', 'Adegan terakhir menampilkan hasil kamera ponsel.'],
+    ['Penutup', 'Visual produk utuh sebagai adegan penutup review.'],
   ];
   const parsedVoiceoverLines = String(parsed.voiceoverScript || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const parsedSceneStarts = parsedVoiceoverLines
@@ -2932,7 +2932,8 @@ Return strict JSON in this format:
     .filter(Boolean)
     .map(parseTimeToSeconds);
   const defaultSmartphoneSceneStarts = getSmartphoneSceneStartSeconds(targetDuration);
-  const smartphoneSceneStarts = parsedSceneStarts.length === 8 ? parsedSceneStarts : defaultSmartphoneSceneStarts;
+  const smartphoneSceneCount = defaultSmartphoneSceneStarts.length;
+  const smartphoneSceneStarts = parsedSceneStarts.length === smartphoneSceneCount ? parsedSceneStarts : defaultSmartphoneSceneStarts;
   const scenes = isGadget
     ? gadgetSceneRows.map(([label, fallbackVoiceover], index) => {
         const startSec = smartphoneSceneStarts[index] ?? defaultSmartphoneSceneStarts[index] ?? 0;

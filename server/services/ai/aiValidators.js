@@ -159,7 +159,10 @@ export function normalizeClipPlan(rawClips, totalDuration, { allowFallback = tru
   const dedupedClips = [];
   for (const c of normalized) {
     const isDup = dedupedClips.some(e => {
-      // Keep closing storyboard roles distinct, including smartphone's camera slots 7-8.
+      // Keep closing storyboard roles distinct. In the 7-slot kitchen layout the
+      // hero/CTA slots (>= 6) may sit close in time yet must not merge; the 5-slot
+      // smartphone layout has no slot >= 6, so its montage slot-1 clips instead
+      // survive this guard by being sampled at well-separated timestamps.
       if (hasStoryboardSlots && Number(c.storyboardSlot) >= 6) {
         if (e.storyboardSlot === c.storyboardSlot) return true;
         if (Math.abs(e.startSeconds - c.startSeconds) < 1.0) return true;
