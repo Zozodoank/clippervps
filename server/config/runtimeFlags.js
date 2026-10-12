@@ -26,8 +26,10 @@ const FLAG_NORMALIZERS = {
     const n = Number(raw);
     return Number.isFinite(n) ? Math.min(2, Math.max(0, Math.round(n))) : 2;
   },
-  // stage1Render: process.env.RENDER_DOWNLOAD_SECTIONS === '1'
-  RENDER_DOWNLOAD_SECTIONS: (env) => env.RENDER_DOWNLOAD_SECTIONS === '1',
+  // stage1Render: process.env.RENDER_DOWNLOAD_SECTIONS !== '0' (DEFAULT ON — hemat kuota;
+  // hanya '0' yang mematikan. Absen/''/ '1' => true). Normalizer MENIRU konsumen agar snapshot
+  // reproduksiidentik: default-ON berarti env kosong pun membekukan true.
+  RENDER_DOWNLOAD_SECTIONS: (env) => env.RENDER_DOWNLOAD_SECTIONS !== '0',
   // stage1Render: process.env.RENDER_NO_FULL_DOWNLOAD === '1'
   RENDER_NO_FULL_DOWNLOAD: (env) => env.RENDER_NO_FULL_DOWNLOAD === '1',
   // videoFilterService: Math.max(20, Number(process.env.SAMPLE_MAX_FRAMES) || 500)

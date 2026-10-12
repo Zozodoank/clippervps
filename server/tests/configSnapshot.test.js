@@ -15,8 +15,8 @@ import {
 describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
   it('memberi default aman saat env kosong (tanpa flag)', () => {
     const s = buildConfigSnapshot({});
-    expect(s.RENDER_DOWNLOAD_SECTIONS).toBe(false);   // === '1'
-    expect(s.RENDER_NO_FULL_DOWNLOAD).toBe(false);
+    expect(s.RENDER_DOWNLOAD_SECTIONS).toBe(true);     // !== '0' (DEFAULT ON — hemat kuota)
+    expect(s.RENDER_NO_FULL_DOWNLOAD).toBe(false);     // === '1'
     expect(s.SAMPLE_MAX_FRAMES).toBe(500);            // Math.max(20, Number(undefined)||500)
     expect(s.GK_MAX_BATCH_FRAMES).toBe(240);
     expect(s.ORACLE_OFFLINE_CALIBRATION).toBe(false);
@@ -28,10 +28,22 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(s._frozenAt).toBeTruthy();
   });
 
-  it('RENDER flag hanya aktif saat persis "1"', () => {
+  it('RENDER_DOWNLOAD_SECTIONS default-ON: hanya "0" yang mematikan; RENDER_NO_FULL_DOWNLOAD hanya "1"', () => {
+    // Unduh section kini DEFAULT ON (hanya '0' memaksa unduh penuh).
+    expect(buildConfigSnapshot({}).RENDER_DOWNLOAD_SECTIONS).toBe(true);
     expect(buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: '1' }).RENDER_DOWNLOAD_SECTIONS).toBe(true);
-    expect(buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: 'true' }).RENDER_DOWNLOAD_SECTIONS).toBe(false);
+    expect(buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: 'true' }).RENDER_DOWNLOAD_SECTIONS).toBe(true);
+    expect(buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: '' }).RENDER_DOWNLOAD_SECTIONS).toBe(true);
+    expect(buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: '0' }).RENDER_DOWNLOAD_SECTIONS).toBe(false);
+    // Mode tegas tetap opt-in: hanya persis '1'.
     expect(buildConfigSnapshot({ RENDER_NO_FULL_DOWNLOAD: '1' }).RENDER_NO_FULL_DOWNLOAD).toBe(true);
+    expect(buildConfigSnapshot({ RENDER_NO_FULL_DOWNLOAD: '0' }).RENDER_NO_FULL_DOWNLOAD).toBe(false);
+    // Round-trip patch<->normalizer stabil (patch true->'1', false->'0'; konsumen !== '0').
+    for (const on of [true, false]) {
+      const snap = buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: on ? '1' : '0' });
+      const repatched = buildConfigSnapshot(configSnapshotToEnvPatch(snap));
+      expect(repatched.RENDER_DOWNLOAD_SECTIONS).toBe(on);
+    }
   });
 
   it('VLM_ORACLE_GRID mendukung grid 2x2 dan fallback frame tunggal, lalu ikut snapshot', () => {
@@ -109,7 +121,10 @@ describe('configSnapshotToEnvPatch — retry dapat mereproduksi setelan', () => 
   });
 
   it('boolean false -> string "0"/"false" (bukan dihilangkan), supaya override deterministik', () => {
-    const patch = configSnapshotToEnvPatch(buildConfigSnapshot({}));
+    // RENDER_DOWNLOAD_SECTIONS default-ON saat env kosong -> true -> patch '1'.
+    expect(configSnapshotToEnvPatch(buildConfigSnapshot({})).RENDER_DOWNLOAD_SECTIONS).toBe('1');
+    // Nilai false harus ditulis eksplisit ('0'), bukan dihilangkan, agar retry deterministik.
+    const patch = configSnapshotToEnvPatch(buildConfigSnapshot({ RENDER_DOWNLOAD_SECTIONS: '0' }));
     expect(patch.RENDER_DOWNLOAD_SECTIONS).toBe('0');
     expect(patch.FINAL_AI_QC).toBe('true'); // default aktif
   });

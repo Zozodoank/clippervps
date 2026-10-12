@@ -1840,8 +1840,10 @@ async function _runStage1Pipeline({
       // mengakses peta yang terisi, bukan Map kosong dari scope luar.
       downloadedCandidatesMap = new Map();
 
-      // #1 Download per-segmen (hemat kuota). DEFAULT OFF → jalur render identik dengan sebelumnya.
-      const useSections = process.env.RENDER_DOWNLOAD_SECTIONS === '1';
+      // #1 Download per-segmen (hemat kuota). DEFAULT ON — hanya '0' yang memaksa unduh penuh.
+      // Fallback aman tetap ada: non-strict (tanpa RENDER_NO_FULL_DOWNLOAD) akan unduh penuh
+      // bila sebuah cluster gagal, jadi reliabilitas render tidak dikorbankan.
+      const useSections = process.env.RENDER_DOWNLOAD_SECTIONS !== '0';
       // Mode TEGAS: JANGAN PERNAH unduh video penuh. Hanya berlaku bersama useSections.
       // Manual operators explicitly inspected the source; a failed section request
       // must be allowed to retry with a full best-available download.
@@ -2087,9 +2089,9 @@ async function _runStage1Pipeline({
     // TAHAP 2: AI telah menyetujui video! Backend langsung mengunduh video 1080p Full HD asli dari YouTube untuk rendering
     if (!rawVideoPath) {
       // ── MODE HEMAT KUOTA UNTUK MANUAL/SINGLE-VIDEO ──
-      // Samai jalur auto: bila RENDER_DOWNLOAD_SECTIONS=1, unduh HANYA segmen klip terpilih
-      // (bukan video penuh). RENDER_NO_FULL_DOWNLOAD=1 melarang keras fallback unduh penuh.
-      const mUseSections = process.env.RENDER_DOWNLOAD_SECTIONS === '1';
+      // Samai jalur auto: RENDER_DOWNLOAD_SECTIONS default ON (hanya '0' memaksa unduh penuh),
+      // unduh HANYA segmen klip terpilih (bukan video penuh). RENDER_NO_FULL_DOWNLOAD=1 melarang keras fallback unduh penuh.
+      const mUseSections = process.env.RENDER_DOWNLOAD_SECTIONS !== '0';
       const mNoFullDl = process.env.RENDER_NO_FULL_DOWNLOAD === '1' && !isManualJob;
       const mPad = Number(process.env.RENDER_SECTION_PAD || 2) || 2;
       const mTailPad = Number(process.env.RENDER_SECTION_TAIL_PAD || 5) || 5;
