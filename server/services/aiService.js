@@ -257,7 +257,8 @@ export async function analyzeYouTubeVideoWithGemini({
   const genAI = new GoogleGenerativeAI(geminiKey);
   const videoPrompt = `You are a scene selector for an affiliate video backend, not a video judge.
 Your ONLY task is to propose timestamps of sections that may contain a physical product demonstration.
-Never accept/reject, approve/disapprove, or veto the whole source. Do not screen sections for faces, text, subtitles, watermarks, packaging, or product identity; Oracle makes those decisions after the footage is downloaded.
+Never accept/reject, approve/disapprove, or veto the whole source — Oracle makes the FINAL visual decisions after the footage is downloaded; you only PROPOSE timestamps.
+Still PREFER the cleanest footage: among candidate moments, choose those least likely to carry hardburned subtitles, floating/colored text or promo banners, channel watermarks/logos, or a presenter's face talking to camera, because clean sections clip better and waste less review quota. Faces that are only SUBJECTS inside camera-sample footage (smartphone slot 4) are expected and must NOT be avoided.
 
 TARGET PRODUCT: "${coreNoun}"
 PRODUCT LISTING: "${effectiveTitle}"
@@ -269,7 +270,8 @@ TIMELINE:
 - ${isGadget ? `Use dynamic section lengths based on the visible action, not equal uniform cuts. Slot duration guide: ${getSmartphoneDurationGuide()}. Keep the complete smartphone edit within 45-60 seconds. Return each actual startSeconds and endSeconds.` : `Each selected section must be ${clipSec}s long, fit inside the timeline, and not overlap another selected section.`}
 - ${isGadget ? 'Propose five ordered smartphone-review scenes: (1) OPENING MONTAGE - return 2-4 sequential entries that are ALL storyboardSlot:1 (physical body -> weight/dimensions -> screen -> battery info), each with its real startSeconds/endSeconds taken from anywhere in the source; the backend re-sequenced them to the start (00:00); (2) RAM/storage evidence; (3) durability/IP rating (e.g. IP68/IP69) only if actually shown, never invented; (4) camera samples - captured photos/video may include people as subjects; (5) closing hero shot of the whole product (price/CTA is delivered later by voice-over, so do NOT pick a clip showing on-screen price text/numbers).' : 'Propose every distinct section where a physical product may be shown, even when identity or visual cleanliness is uncertain.'}
 - ${isGadget ? 'Tag each selectedClips entry with storyboardSlot 1 through 5 (slot 1 may repeat for the opening-montage clips). Do not classify people inside camera samples as presenters; Oracle checks only whether a scene is self-recording presenter footage.' : 'Return timestamp proposals in scene order.'}
-- Do not make a product-match, face, overlay, subtitle, watermark, or source-quality verdict. Oracle is the sole visual judge.
+- CLEANLINESS IS A PREFERENCE, NOT A VERDICT: make no final product-match/quality verdict (Oracle is the sole judge), but actively favor sections free of subtitles/watermark/overlay/presenter-face and skip intro/bumper/packaging frames; only drop a section outright when it is unusable.
+- USE THE ORIGINAL NARRATION: listen to the source's spoken voice-over/captions and align each cut to a coherent spoken thought, so a clip starts and ends where the narration makes sense (avoid cutting mid-sentence).
 - REFRAME: the final clip is vertical 9:16 where the source is kept as a centered SHARP panel (aspect 45:64) with blurred fill above and below it. Prefer sections where the product and its action are well-centered and stay fully inside that sharp panel; do not rely on detail pressed against the top/bottom blur margins or the far left/right edges.
 - If no likely product section can be located, return an empty list; the backend will still submit sample timestamps to Oracle.
 - Always use status "select". Never return status "reject".
@@ -591,6 +593,7 @@ TIMELINE AND SELECTION:
 - Select only sections whose final sharp content panel (centered 45:64 within the 9:16 frame) has no floating text/subtitles, digital watermark/channel logo, graphic sticker, static bumper, or empty packaging. ${isGadget ? 'Faces are allowed inside a camera sample in slot 4; reject a face only when it is a reviewer filming themselves and speaking directly to the camera.' : 'Reject human faces and talking heads.'}
 - REFRAME: the final clip is vertical 9:16 where the source is kept as a centered SHARP panel (aspect 45:64) with blurred fill above and below it. For horizontal footage assess only that centered sharp panel (ignore the top/bottom blur margins and the far left/right edges); for vertical footage assess the full frame. Prefer sections where the product stays fully visible inside the sharp panel.
 - Return every distinct clean section you can identify, including fewer than four. If none are identifiable in a source, simply return no section for that source.
+- USE THE ORIGINAL NARRATION: listen to each source's spoken voice-over/captions and align every cut to a coherent spoken thought, so a clip starts and ends where the narration makes sense (avoid cutting mid-sentence).
 - ${isGadget ? 'For the camera scene (slot 4), set isCameraSample=true and storyboardSlot to 4. Set isSelfRecordingPresenter=true only when a person is filming themselves and speaking directly to camera.' : 'Return storyboardSlot matching the requested shot role.'}
 - Never return an overall source or batch verdict. Always use status "select", including when selectedClips is empty.
 
