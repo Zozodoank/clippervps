@@ -68,3 +68,63 @@ export function planSectionDownloads(clips, opts = {}) {
     };
   });
 }
+
+/**
+ * Pilih file segmen yang MEMUAT sebuah waktu global (untuk klip pemulihan pasca-audit).
+ * Murni & terkunci unit test. `sections` = katalog hasil unduhan per kandidat:
+ * [{ videoPath, sourceOffsetSec, endSec }] (endSec = batas akhir rentang global yang
+ * terunduh; pakai Number.MAX_SAFE_INTEGER untuk video penuh).
+ *
+ * spanSec WAJIB muat utuh di dalam section: klip pemulihan berdurasi ~3.8s yang mulai
+ * dekat EOF akan menghasilkan render/audit yang membaca melewati akhir file.
+ *
+ * @param {Array<{videoPath?: string, sourceOffsetSec?: number, endSec?: number}>} sections
+ * @param {number} globalSec - waktu sumber global yang harus tercakup
+ * @param {number} [spanSec=0] - panjang rentang setelah globalSec yang harus ikut muat
+ * @returns {{videoPath: string, sourceOffsetSec: number}|null}
+ */
+export function pickSectionFor(sections, globalSec, spanSec = 0) {
+  const t = Number(globalSec);
+  if (!Number.isFinite(t)) return null;
+  const span = Math.max(0, Number(spanSec) || 0);
+  for (const s of Array.isArray(sections) ? sections : []) {
+    if (!s?.videoPath) continue;
+    const from = Number(s.sourceOffsetSec) || 0;
+    const to = Number(s.endSec);
+    if (t >= from && Number.isFinite(to) && (t + span) < to - 0.1) {
+      return { videoPath: s.videoPath, sourceOffsetSec: from };
+    }
+  }
+  return null;
+}
+
+/**
+ * Petakan hasil unduhan per-cluster ke masing-masing klip (pure; dipakai jalur auto &
+ * manual stage1Render supaya tes integrasi menguji kode produksi, bukan salinan).
+ * - Klip ber-`_cluster` (file --download-sections sendiri): videoPath + sourceOffsetSec dari cluster.
+ * - Klip tanpa cluster: videoPath dari fallbackPathByCandidate (Map candIdx->path hasil unduh penuh);
+ *   TIDAK pernah diremap ke video lain (menghindari storyboard multi-sumber diam-diam berulang).
+ * @param {object[]} clips
+ * @param {Map<number,string>|object} fallbackPathByCandidate
+ * @param {{onMissing?: (candIdx: number, clip: object) => void}} [opts]
+ * @returns {object[]} klip tanpa `_cluster` dan tanpa klip yang sumbernya hilang
+ */
+export function applyClusterPaths(clips, fallbackPathByCandidate, opts = {}) {
+  const getFallback = (idx) => {
+    if (fallbackPathByCandidate && typeof fallbackPathByCandidate.get === 'function') return fallbackPathByCandidate.get(idx);
+    return fallbackPathByCandidate ? fallbackPathByCandidate[idx] : undefined;
+  };
+  return (Array.isArray(clips) ? clips : []).map((c) => {
+    if (c?._cluster) {
+      const { _cluster, ...rest } = c;
+      return { ...rest, videoPath: _cluster.videoPath, sourceOffsetSec: _cluster.sourceOffsetSec };
+    }
+    const candIdx = c?.candidateIndex !== null && c?.candidateIndex !== undefined ? c.candidateIndex : 0;
+    const vPath = getFallback(candIdx);
+    if (!vPath) {
+      if (typeof opts.onMissing === 'function') opts.onMissing(candIdx, c);
+      return null;
+    }
+    return { ...c, videoPath: vPath, sourceOffsetSec: 0 };
+  }).filter(Boolean);
+}

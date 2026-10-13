@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planSectionDownloads } from '../services/renderSections.js';
+import { planSectionDownloads, pickSectionFor, applyClusterPaths } from '../services/renderSections.js';
 
 describe('planSectionDownloads (hemat kuota: grouping klip -> rentang unduhan)', () => {
   it('klip berdekatan (gap <= gapSec) => satu cluster dengan union + padding', () => {
@@ -72,8 +72,105 @@ describe('planSectionDownloads (hemat kuota: grouping klip -> rentang unduhan)',
     expect(r[0].refs.length).toBe(1);
   });
 
+  it('cluster muat penuh [startSeconds, startSeconds+duration+tailPad] tiap ref (syarat rebase renderer)', () => {
+    const clips = [
+      { startSeconds: 20, duration: 6 },
+      { startSeconds: 28, duration: 8 }, // gabung cluster pertama
+      { startSeconds: 120, duration: 5 }, // cluster kedua
+    ];
+    const r = planSectionDownloads(clips, { padSec: 2, tailPadSec: 5, gapSec: 15 });
+    expect(r.length).toBe(2);
+    for (const cluster of r) {
+      for (const ref of cluster.refs) {
+        expect(cluster.startSec).toBeLessThanOrEqual(ref.startSeconds); // kepala tidak memotong klip
+        expect(cluster.endSec).toBeGreaterThanOrEqual(ref.startSeconds + ref.duration); // ekor memuat durasi penuh
+      }
+    }
+  });
+
   it('input kosong/tidak array => array kosong', () => {
     expect(planSectionDownloads([])).toEqual([]);
     expect(planSectionDownloads(undefined)).toEqual([]);
+  });
+});
+
+// ============================================================================
+// pickSectionFor - katalog segmen untuk klip pemulihan pasca-audit (Fix 2).
+// Menjamin klip dibaca dari file segmen yang benar, bukan file pertama kandidat.
+// ============================================================================
+describe('pickSectionFor (katalog segmen -> file yang memuat waktu global)', () => {
+  const sections = [
+    { videoPath: 'seg0.mp4', sourceOffsetSec: 8, endSec: 31 },
+    { videoPath: 'seg1.mp4', sourceOffsetSec: 118, endSec: 133 },
+  ];
+
+  it('dalam rentang -> file yang memuat + offset benar', () => {
+    expect(pickSectionFor(sections, 20, 3.8)).toEqual({ videoPath: 'seg0.mp4', sourceOffsetSec: 8 });
+    expect(pickSectionFor(sections, 120, 0)).toEqual({ videoPath: 'seg1.mp4', sourceOffsetSec: 118 });
+  });
+
+  it('span tidak muat sebelum EOF -> section tsb ditolak', () => {
+    // t=28, span 3.8 -> 31.8 >= 31-0.1 -> seg0 TIDAK muat; tidak ada lain -> null.
+    expect(pickSectionFor(sections, 28, 3.8)).toBeNull();
+    // Tanpa span, t=28 tetap di dalam seg0.
+    expect(pickSectionFor(sections, 28, 0)).toEqual({ videoPath: 'seg0.mp4', sourceOffsetSec: 8 });
+  });
+
+  it('waktu di luar semua section -> null (bukan fallback ke file pertama)', () => {
+    expect(pickSectionFor(sections, 60)).toBeNull();
+    expect(pickSectionFor(sections, 7)).toBeNull(); // sebelum sourceOffset section pertama
+    expect(pickSectionFor([], 20)).toBeNull();
+    expect(pickSectionFor(undefined, 20)).toBeNull();
+    expect(pickSectionFor(sections, NaN)).toBeNull();
+  });
+
+  it('video penuh (sourceOffsetSec 0, endSec MAX_SAFE_INTEGER) selalu memuat', () => {
+    const full = [{ videoPath: 'full.mp4', sourceOffsetSec: 0, endSec: Number.MAX_SAFE_INTEGER }];
+    expect(pickSectionFor(full, 99999, 3.8)).toEqual({ videoPath: 'full.mp4', sourceOffsetSec: 0 });
+  });
+
+  it('entri tanpa videoPath dilewati', () => {
+    expect(pickSectionFor([{ sourceOffsetSec: 0, endSec: 100 }, { videoPath: 'b.mp4', sourceOffsetSec: 0, endSec: 100 }], 10)).toEqual({ videoPath: 'b.mp4', sourceOffsetSec: 0 });
+  });
+});
+
+// ============================================================================
+// applyClusterPaths - pemetaan _cluster -> videoPath/sourceOffsetSec (pure, jalur produksi).
+// ============================================================================
+describe('applyClusterPaths (petakan file segmen/unduh penuh ke klip)', () => {
+  it('klip ber-_cluster pakai file segmen + offset; _cluster dihapus dari hasil', () => {
+    const clips = [{ startSeconds: 165, duration: 6, candidateIndex: 1, _cluster: { videoPath: 'segA.mp4', sourceOffsetSec: 163 } }];
+    const out = applyClusterPaths(clips, new Map());
+    expect(out.length).toBe(1);
+    expect(out[0].videoPath).toBe('segA.mp4');
+    expect(out[0].sourceOffsetSec).toBe(163);
+    expect(out[0]._cluster).toBeUndefined();
+    expect(out[0].startSeconds).toBe(165); // waktu tetap GLOBAL (renderer kurangkan offset)
+  });
+
+  it('klip tanpa _cluster pakai fallback map dengan sourceOffsetSec 0', () => {
+    const map = new Map([[0, 'full0.mp4'], [2, 'full2.mp4']]);
+    const out = applyClusterPaths([
+      { startSeconds: 10, duration: 4 },
+      { startSeconds: 20, duration: 4, candidateIndex: 2 },
+    ], map);
+    expect(out.map((c) => c.videoPath)).toEqual(['full0.mp4', 'full2.mp4']);
+    expect(out.every((c) => c.sourceOffsetSec === 0)).toBe(true);
+  });
+
+  it('sumber hilang -> klip DIBUANG (bukan diremap ke video lain) + onMissing dipanggil', () => {
+    const seen = [];
+    const out = applyClusterPaths(
+      [{ startSeconds: 10, duration: 4, candidateIndex: 7 }],
+      new Map([[0, 'full0.mp4']]),
+      { onMissing: (idx) => seen.push(idx) },
+    );
+    expect(out).toEqual([]);
+    expect(seen).toEqual([7]);
+  });
+
+  it('fallback boleh berupa objek biasa (bukan Map)', () => {
+    const out = applyClusterPaths([{ startSeconds: 5, duration: 3, candidateIndex: 1 }], { 1: 'x.mp4' });
+    expect(out[0].videoPath).toBe('x.mp4');
   });
 });

@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
-import { planSectionDownloads } from '../services/renderSections.js';
+import { planSectionDownloads, pickSectionFor, applyClusterPaths } from '../services/renderSections.js';
 import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isVlmOracleEnabled } from '../config/runtimeFlags.js';
 import { auditClipsWithOracle, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
 import { isLocalOracleAutoStartEnabled, probeLlamaServerHealth, maybeAutoStartLocalOracle, waitForOracleOnline } from '../services/oracleLocalSupervisor.js';
@@ -99,7 +99,8 @@ import {
   validateScriptSlotAlignment,
   buildSceneVoSegments,
   assessStoryboardPlan,
-  assembleStoryboardClips
+  assembleStoryboardClips,
+  groupClipsBySlot
 } from '../services/professionalPipelineService.js';
 import { runFinalMasterQc } from '../services/finalMasterQcService.js';
 import { activeJobs, jobProgress, autoRuns, autoRetryRuns, sanitizeJobForDisk, atomicWriteJsonSync, loadJobsFromDisk, persistJob, patchJob, deletePersistedJob, updateJobProgress, updateAutoRun } from '../store/jobStore.js';
@@ -526,6 +527,10 @@ async function _runStage1Pipeline({
     // NOTE: downloadedCandidatesMap diinisialisasi di sini agar ClipAudit pasca-download
     // (jalur manual & multi-video) bisa mengaksesnya dari scope yang sama.
     let downloadedCandidatesMap = new Map();
+    // Katalog segmen hasil unduhan per kandidat (Fix 2): candIdx -> [{ videoPath, sourceOffsetSec, endSec }].
+    // Klip pemulihan pasca-audit WAJIB resolve lewat katalog ini, bukan downloadedCandidatesMap
+    // (yang hanya menyimpan file PERTAMA kandidat) — kalau tidak, frame/klip dibaca dari segmen salah.
+    const candSectionCatalog = new Map();
 
     const usedVids = getAllUsedYouTubeVideoIds();
     const initialVid = extractVideoId(currentYoutubeUrl);
@@ -1871,6 +1876,7 @@ async function _runStage1Pipeline({
       // Menggunakan outer variable (bukan deklarasi ulang) agar ClipAudit pasca-download
       // mengakses peta yang terisi, bukan Map kosong dari scope luar.
       downloadedCandidatesMap = new Map();
+      candSectionCatalog.clear();
 
       // #1 Download per-segmen (hemat kuota). DEFAULT ON — hanya '0' yang memaksa unduh penuh.
       // Fallback aman tetap ada: non-strict (tanpa RENDER_NO_FULL_DOWNLOAD) akan unduh penuh
@@ -1916,6 +1922,8 @@ async function _runStage1Pipeline({
                 });
                 if (secDl?.filePath && fs.existsSync(secDl.filePath)) {
                   if (!downloadedCandidatesMap.has(candIdx)) downloadedCandidatesMap.set(candIdx, secDl.filePath);
+                  if (!candSectionCatalog.has(candIdx)) candSectionCatalog.set(candIdx, []);
+                  candSectionCatalog.get(candIdx).push({ videoPath: secDl.filePath, sourceOffsetSec: cluster.sourceOffsetSec, endSec: cluster.endSec });
                   cluster.refs.forEach(ref => { ref._cluster = { videoPath: secDl.filePath, sourceOffsetSec: cluster.sourceOffsetSec }; });
                   console.log(`[Job ${jobId}] ✂️ Segmen #${k} kandidat #${candIdx + 1} (${cluster.startSec.toFixed(1)}-${cluster.endSec.toFixed(1)}s) terunduh (hemat kuota).`);
                 } else {
@@ -1958,6 +1966,8 @@ async function _runStage1Pipeline({
 
           if (hdDl?.filePath && fs.existsSync(hdDl.filePath)) {
             downloadedCandidatesMap.set(candIdx, hdDl.filePath);
+            if (!candSectionCatalog.has(candIdx)) candSectionCatalog.set(candIdx, []);
+            candSectionCatalog.get(candIdx).push({ videoPath: hdDl.filePath, sourceOffsetSec: 0, endSec: Number.MAX_SAFE_INTEGER });
             console.log(`[Job ${jobId}] ✅ Video 1080p Full HD untuk Kandidat #${candIdx + 1} berhasil diunduh (${hdDl.filePath}).`);
           } else {
             console.warn(`[Job ${jobId}] Gagal mengunduh 1080p untuk Kandidat #${candIdx + 1}.`);
@@ -1987,6 +1997,8 @@ async function _runStage1Pipeline({
             });
             if (altDl?.filePath && fs.existsSync(altDl.filePath)) {
               downloadedCandidatesMap.set(altIdx, altDl.filePath);
+              if (!candSectionCatalog.has(altIdx)) candSectionCatalog.set(altIdx, []);
+              candSectionCatalog.get(altIdx).push({ videoPath: altDl.filePath, sourceOffsetSec: 0, endSec: Number.MAX_SAFE_INTEGER });
               console.log(`[Job ${jobId}] ✅ Kandidat cadangan #${altIdx + 1} berhasil diunduh HD (${altDl.filePath}).`);
 
               // Remap klip yang video-nya gagal diunduh ke kandidat cadangan ini
@@ -2029,27 +2041,11 @@ async function _runStage1Pipeline({
         console.log(`[Job ${jobId}] 🎯 Menggunakan video 1080p yang telah terunduh (${hl.clips.length} cuplikan dari ${validDownloadedCandidates.size} video sumber).`);
       }
 
-      // Petakan videoPath 1080p ke masing-masing klip yang terpilih
-      hl.clips = hl.clips.map(c => {
-        // Klip yang sudah punya file segmen sendiri (mode --download-sections): pakai path + sourceOffsetSec-nya.
-        if (c._cluster) {
-          const { _cluster, ...rest } = c;
-          return { ...rest, videoPath: _cluster.videoPath, sourceOffsetSec: _cluster.sourceOffsetSec };
-        }
-        const candIdx = c.candidateIndex !== null && c.candidateIndex !== undefined ? c.candidateIndex : 0;
-        let vPath = downloadedCandidatesMap.get(candIdx);
-        if (!vPath) {
-          // NEVER remap a missing source to Video #1. That silently turns a multi-source
-          // storyboard into repeated footage.
-          console.warn(`[Job ${jobId}] ⛔ Video kandidat #${candIdx + 1} tidak tersedia di 1080p. Klip sumber ini dibuang, bukan dialihkan ke video lain.`);
-          return null;
-        }
-        return {
-          ...c,
-          videoPath: vPath,
-          sourceOffsetSec: 0,
-        };
-      }).filter(Boolean);
+      // Petakan videoPath 1080p ke masing-masing klip yang terpilih (pure helper —
+      // terkunci tes integrasi tests/sectionGeminiAssembly.test.js).
+      hl.clips = applyClusterPaths(hl.clips, downloadedCandidatesMap, {
+        onMissing: (candIdx) => console.warn(`[Job ${jobId}] ⛔ Video kandidat #${candIdx + 1} tidak tersedia di 1080p. Klip sumber ini dibuang, bukan dialihkan ke video lain.`),
+      });
 
       // URUTKAN TIMELINE PER-SLOT (montase ke 00:00). Gemini boleh mengirim 2-4 klip slot-1
       // yang timestamp sumbernya tersebar; renderer meng-concat sesuai URUTAN ARRAY, jadi kita
@@ -2059,6 +2055,19 @@ async function _runStage1Pipeline({
       hl.clips = [...hl.clips].sort(
         (a, b) => (Number(a.storyboardSlot) || 99) - (Number(b.storyboardSlot) || 99)
       );
+
+      // Fix 3 (re-cek kecukupan SETELAH STRICT membuang klip segmen-gagal): jangan habiskan
+      // audit + render untuk rencana yang pasti gagal di finalize. isRenderPlanShortfall sudah
+      // dipahami master loop -> sumber cacat dikecualikan dan panen diulang dengan seed baru.
+      if ((options.niche || '') === 'gadget_smartphone' && !isManualJob && hl.clips.some(c => (Number(c?.storyboardSlot) || 0) > 0)) {
+        const postDropAssessment = assessStoryboardPlan(hl.clips, getNichePreset('gadget_smartphone')?.slotsConfig || [], { requiredTotalSec: 45 });
+        if (!postDropAssessment.ok) {
+          const dropErr = new Error(`Rencana cacat setelah unduhan section (klip segmen-gagal dibuang): slot belum terisi [${postDropAssessment.missingSlots.join(', ')}], durasi terjadwal ${postDropAssessment.totalDurationSec.toFixed(1)}s dari minimal 45s.`);
+          dropErr.isRenderPlanShortfall = true;
+          dropErr.rejectionReason = dropErr.message;
+          throw dropErr;
+        }
+      }
 
       // NEVER manufacture extra scenes by copying an existing clip.
       // Minimum 3 adegan unik fisik produk untuk menghasilkan reel/short affiliate berkualitas tinggi (13-25 detik).
@@ -2157,6 +2166,10 @@ async function _runStage1Pipeline({
               if (secDl?.filePath && fs.existsSync(secDl.filePath)) {
                 okCount++;
                 if (!firstSeg) firstSeg = secDl.filePath;
+                // Isi katalog segmen yang sama dengan jalur auto (dipakai blok pemulihan pasca-audit).
+                const mCandIdx = cluster.refs[0]?.candidateIndex ?? 0;
+                if (!candSectionCatalog.has(mCandIdx)) candSectionCatalog.set(mCandIdx, []);
+                candSectionCatalog.get(mCandIdx).push({ videoPath: secDl.filePath, sourceOffsetSec: cluster.sourceOffsetSec, endSec: cluster.endSec });
                 cluster.refs.forEach(ref => { ref._cluster = { videoPath: secDl.filePath, sourceOffsetSec: cluster.sourceOffsetSec }; });
                 console.log(`[Job ${jobId}] ✂️ Manual: segmen #${k} (${cluster.startSec.toFixed(1)}-${cluster.endSec.toFixed(1)}s) terunduh (hemat kuota).`);
               }
@@ -2168,10 +2181,8 @@ async function _runStage1Pipeline({
           const segClips = highlight.clips.filter(c => c._cluster);
           // Pakai mode segmen bila SEMUA cluster sukses, ATAU (strict & ada >=1 segmen sukses).
           if (segClips.length > 0 && (okCount === clusters.length || mNoFullDl)) {
-            highlight.clips = segClips.map(c => {
-              const { _cluster, ...rest } = c;
-              return { ...rest, videoPath: _cluster.videoPath, sourceOffsetSec: _cluster.sourceOffsetSec };
-            });
+            // Helper pure yang sama dengan jalur auto (terkunci tes integrasi).
+            highlight.clips = applyClusterPaths(segClips, new Map());
             // Samai jalur Auto: susun ulang per-slot agar montase slot-1 tampil paling awal (00:00).
             highlight.clips = [...highlight.clips].sort(
               (a, b) => (Number(a.storyboardSlot) || 99) - (Number(b.storyboardSlot) || 99)
@@ -2395,8 +2406,10 @@ async function _runStage1Pipeline({
             const candIdx = Number(frame.candidateIndex);
             const ts = Number(frame.timestamp);
             const key = `${candIdx}:${Math.round(ts * 10) / 10}`;
-            const sourcePath = downloadedCandidatesMap.get(candIdx);
-            if (!sourcePath || usedRecoveryKeys.has(key)) continue;
+            // Fix 2: cari file segmen yang memuat timestamp ini (bukan file pertama kandidat),
+            // dan pastikan rentang klip pemulihan (3.8s) muat utuh sebelum EOF.
+            const recSection = pickSectionFor(candSectionCatalog.get(candIdx) || [], ts, 3.8);
+            if (!recSection || usedRecoveryKeys.has(key)) continue;
 
             usedRecoveryKeys.add(key);
             recoveryClips.push({
@@ -2408,7 +2421,8 @@ async function _runStage1Pipeline({
               storyboardSlot: recoveryClips.length + 1,
               reason: `Recovered Clean Segment #${recoveryClips.length}`,
               candidateIndex: candIdx,
-              videoPath: sourcePath,
+              videoPath: recSection.videoPath,
+              sourceOffsetSec: recSection.sourceOffsetSec,
             });
           }
 
@@ -2461,11 +2475,15 @@ async function _runStage1Pipeline({
     );
     const finalPlannedDuration = highlight.clips.reduce((sum, clip) => sum + (Number(clip.duration) || 0), 0);
     highlight.duration = finalPlannedDuration;
+    // Fix 4: kontrak montase B/D menghasilkan rencana SAH 6 klip / 5 grup slot (slot 1 = 2-4 klip).
+    // Hitung lama "clips.length < 8" menolak false-positive rencana montase terkecil dan memaksa
+    // harvesting berlebihan — gerbang sekarang berbasis JUMLAH GRUP slot (bukan klip mentah).
+    const finalSlotGroups = groupClipsBySlot(highlight.clips).filter((g) => g.slot > 0).length;
     const planTooShort = isSmartphoneReview
-      ? (highlight.clips.length < 8 || finalPlannedDuration < 45)
+      ? (finalSlotGroups < 5 || finalPlannedDuration < 45)
       : (isAutoModeFallback && (highlight.clips.length < 3 || finalPlannedDuration < 20));
     if (planTooShort) {
-      const minimumDescription = isSmartphoneReview ? '8 adegan dan 45 detik' : '3 adegan dan 20 detik';
+      const minimumDescription = isSmartphoneReview ? '5 grup slot (montase slot 1 minimal 2 klip) dan 45 detik' : '3 adegan dan 20 detik';
       const shortFinalPlan = new Error(`Klip bersih setelah audit hanya ${highlight.clips.length} adegan / ${finalPlannedDuration.toFixed(1)} detik; minimal ${minimumDescription} diperlukan.`);
       shortFinalPlan.isRenderPlanShortfall = true;
       shortFinalPlan.rejectionReason = shortFinalPlan.message;

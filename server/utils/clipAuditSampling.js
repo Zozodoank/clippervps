@@ -21,8 +21,13 @@
  */
 export function buildAuditSampleTimestamps({ plannedDur, fileDur = 0, startSeconds = 0, sourceOffsetSec = 0 } = {}) {
   const dur = Math.max(1.5, Number(plannedDur) || 3.3);
-  // Clamp ke durasi nyata file (sisakan 0,1s margin agar '-ss' tidak mendarat tepat di EOF).
-  const effDur = fileDur > 0 ? Math.min(dur, Math.max(0.4, fileDur - 0.1)) : dur;
+  // Clamp ke durasi NYATA file (sisakan 0,1s margin agar '-ss' tidak mendarat tepat di EOF).
+  // PENTING (mode --download-sections): satu file cluster bisa memuat beberapa klip, jadi
+  // yang relevan adalah sisa file DI SETELAH posisi klip (fileDur - filePos), bukan fileDur
+  // penuh. Tanpa koreksi ini, klip di tengah/akhir cluster menghasilkan timestamp melewati
+  // EOF (gejala lama: FFmpeg "code 234 / Could not open encoder before EOF").
+  const filePosSec = Math.max(0, (Number(startSeconds) || 0) - (Number(sourceOffsetSec) || 0));
+  const effDur = fileDur > 0 ? Math.min(dur, Math.max(0.4, fileDur - filePosSec - 0.1)) : dur;
   const sampleStepSec = 0.40; // Every 400ms (2.5 fps) — eliminasi blind spot watermark/wajah.
   const sampleOffsets = [];
   for (let offset = 0.20; offset <= Math.max(0.20, effDur - 0.20); offset += sampleStepSec) {

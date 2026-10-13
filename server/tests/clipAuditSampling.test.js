@@ -44,4 +44,21 @@ describe('buildAuditSampleTimestamps', () => {
     expect(Math.max(...ts)).toBeLessThanOrEqual(4.1); // effDur = 4.1
     expect(ts.length).toBeGreaterThanOrEqual(4);
   });
+
+  it('klip di TENGAH file cluster: clamp pakai sisa file setelah posisi klip, bukan fileDur penuh', () => {
+    // Cluster 140-170 (fileDur 30); klip global mulai 165 -> filePos 25, rencana 6s.
+    // Rumus lama: effDur = min(6, 29.9) = 6 -> ts maks 30.8 LEWAT EOF. Baru: effDur = 4.9.
+    const ts = buildAuditSampleTimestamps({ plannedDur: 6, fileDur: 30, startSeconds: 165, sourceOffsetSec: 140 });
+    expect(Math.min(...ts)).toBeGreaterThanOrEqual(25.2); // mulai dari posisi klip di file
+    expect(Math.max(...ts)).toBeLessThanOrEqual(29.9); // <= fileDur - margin
+    expect(ts.length).toBeGreaterThan(0);
+  });
+
+  it('klip mepet akhir file cluster: tetap dapat >=1 titik sampling, tidak pernah negatif/melewati EOF', () => {
+    // fileDur 30, klip di filePos 28.5, rencana 6 -> avail = 30 - 28.5 - 0.1 = 1.4 -> floor 0.4.
+    const ts = buildAuditSampleTimestamps({ plannedDur: 6, fileDur: 30, startSeconds: 168.5, sourceOffsetSec: 140 });
+    expect(ts.length).toBeGreaterThanOrEqual(1);
+    expect(Math.min(...ts)).toBeGreaterThanOrEqual(0);
+    expect(Math.max(...ts)).toBeLessThanOrEqual(29.9);
+  });
 });
