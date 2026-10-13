@@ -475,9 +475,10 @@ describe('instrumen terpasang di semua titik panggilan', () => {
       }
       expect(n).toBeGreaterThan(0);
     }
-    // Jumlah titik yang diketahui pembaca rencana: 6 di aiService (5 jalur harian +
-    // 1 eskalasi repair storyboard 'gemini_repair') + 1 di discoveryService.
-    expect((readSrc('services/aiService.js').match(/\.generateContent\(/g) || []).length).toBe(6);
+    // Jumlah titik yang diketahui pembaca rencana: 5 jalur harian di aiService +
+    // 1 di discoveryService. Jalur eskalasi repair storyboard 'gemini_repair' sudah DIHAPUS
+    // (Opsi B: rencana rancu -> master loop cari kandidat baru, bukan fallback Gemini).
+    expect((readSrc('services/aiService.js').match(/\.generateContent\(/g) || []).length).toBe(5);
     expect((readSrc('services/discoveryService.js').match(/\.generateContent\(/g) || []).length).toBe(1);
   });
 

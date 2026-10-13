@@ -175,9 +175,6 @@ const FLAG_NORMALIZERS = {
     const v = String(env.USE_LOCAL_STORYBOARD || '').trim().toLowerCase();
     return v === '1' || v === 'true';
   },
-  // Eskalasi Gemini HANYA saat rencana storyboard lokal dinyatakan rancu. Default ON
-  // (hanya '0' mematikan) — tapi baru bermakna bila USE_LOCAL_STORYBOARD aktif.
-  LOCAL_STORYBOARD_ESCALATION_GEMINI: (env) => env.LOCAL_STORYBOARD_ESCALATION_GEMINI !== '0',
   LOCAL_LLM_BASE_URL: (env) => String(env.LOCAL_LLM_BASE_URL || '').trim(),
   LOCAL_LLM_TIMEOUT_SEC: (env) => Math.max(5, Number(env.LOCAL_LLM_TIMEOUT_SEC) || 120),
 };
@@ -306,8 +303,9 @@ export function isLocalSelectionEnabled(env = process.env) {
 
 /**
  * Helper konsumen: apakah STORYBOARD (perakitan klip per-slot dari analisis multi-video)
- * boleh dicoba lewat model teks lokal. Default OFF. Saat ON dan rencana hasilnya rancu,
- * eskalasi repair Gemini berlaku bila LOCAL_STORYBOARD_ESCALATION_GEMINI tidak '0'.
+ * boleh dicoba lewat model teks lokal. Default OFF. Saat ON, hasil lokal yang tidak layak
+ * fallback ke Gemini; rencana yang tetap rancu setelah perakitan memicu master loop
+ * mencari kandidat baru (bukan eskalasi repair Gemini — Opsi B).
  */
 export function isLocalStoryboardEnabled(env = process.env) {
   const v = String(env.USE_LOCAL_STORYBOARD || '').trim().toLowerCase();

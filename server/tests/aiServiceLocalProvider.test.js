@@ -3,8 +3,9 @@
 //   • flag ON + model lokal menghasilkan parsed layak -> Gemini TIDAK dipanggil sama sekali;
 //   • model lokal gagal -> fallback ke rantai Gemini APA ADANYA (perilaku hari ini);
 //   • flag OFF (default) -> chatJson tidak pernah disentuh (jalur lama identik);
-//   • gerbang kind: seleksi vs storyboard dipisah (bug guard gate per-jenis tugas);
-//   • repairStoryboardWithGemini fail-closed via callGeminiText injeksi.
+//   • gerbang kind: seleksi vs storyboard dipisah (bug guard gate per-jenis tugas).
+// Catatan: eskalasi repairStoryboardWithGemini DIHAPUS (Opsi B) — rencana rancu kini
+// memicu master loop mencari kandidat baru, bukan fallback Gemini.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -41,7 +42,7 @@ vi.mock('../services/aiUsageService.js', () => ({
 }));
 vi.mock('../services/bandwidthTracker.js', () => ({ trackBandwidth: mocks.trackBandwidth }));
 
-const { analyzeYouTubeVideoWithGemini, analyzeMultipleYouTubeVideosWithGemini, repairStoryboardWithGemini } = await import('../services/aiService.js');
+const { analyzeYouTubeVideoWithGemini, analyzeMultipleYouTubeVideosWithGemini } = await import('../services/aiService.js');
 
 const LOCAL_OK_SELECTION = {
   ok: true,
@@ -189,57 +190,5 @@ describe('analyzeMultipleYouTubeVideosWithGemini — gerbang kind storyboard ter
     expect(mocks.chatJson).toHaveBeenCalledTimes(1);
     expect(mocks.generateContent).toHaveBeenCalledTimes(1);
     expect(res.clips.length).toBeGreaterThanOrEqual(1);
-  });
-});
-
-describe('repairStoryboardWithGemini — eskalasi repair fail-closed (injeksi callGeminiText)', () => {
-  const clips = [
-    { storyboardSlot: 1, duration: 5, candidateUrl: 'https://youtu.be/a', startSeconds: 10 },
-    { storyboardSlot: 1, duration: 7, candidateUrl: 'https://youtu.be/a', startSeconds: 30 },
-    { duration: 9, candidateUrl: 'https://youtu.be/b', startSeconds: 50 },
-  ];
-
-  it('assignment valid -> klip di-retag ke slot, repaired:true', async () => {
-    const out = await repairStoryboardWithGemini({
-      clips,
-      slotsConfig: [],
-      missingSlots: ['bukti_ram'],
-      totalDurationSec: 12,
-      niche: 'gadget_smartphone',
-      callGeminiText: async () => JSON.stringify({ assigned: [{ index: 0, storyboardSlot: 1 }, { index: 2, storyboardSlot: 2 }] }),
-    });
-    expect(out.repaired).toBe(true);
-    expect(out.clips).toHaveLength(2);
-    expect(out.clips[1].storyboardSlot).toBe(2);
-  });
-
-  it('Gemini melempar -> repaired:false reason gemini_failed (klip asal utuh)', async () => {
-    const out = await repairStoryboardWithGemini({
-      clips,
-      callGeminiText: async () => { throw new Error('quota exhausted'); },
-    });
-    expect(out.repaired).toBe(false);
-    expect(out.reason).toBe('gemini_failed');
-    expect(out.clips).toEqual(clips);
-  });
-
-  it('assignment kosong -> repaired:false reason no_assignment', async () => {
-    const out = await repairStoryboardWithGemini({
-      clips,
-      callGeminiText: async () => JSON.stringify({ assigned: [] }),
-    });
-    expect(out.repaired).toBe(false);
-    expect(out.reason).toBe('no_assignment');
-  });
-
-  it('tanpa klip -> no_clips; tanpa API key -> no_api_key (tidak pernah menembak Gemini)', async () => {
-    const noClips = await repairStoryboardWithGemini({ clips: [], callGeminiText: async () => { throw new Error('tidak boleh dipanggil'); } });
-    expect(noClips.repaired).toBe(false);
-    expect(noClips.reason).toBe('no_clips');
-    mocks.geminiKey.mockReturnValue('');
-    const noKey = await repairStoryboardWithGemini({ clips, callGeminiText: async () => { throw new Error('tidak boleh dipanggil'); } });
-    expect(noKey.repaired).toBe(false);
-    expect(noKey.reason).toBe('no_api_key');
-    mocks.geminiKey.mockReturnValue('test-key');
   });
 });
