@@ -385,7 +385,31 @@ function isPortraitJpeg(filePath, canvas) {
   return Boolean(dimensions && dimensions.width === canvas.width && dimensions.height === canvas.height);
 }
 
-function runResize(srcPath, dstPath, height, timeoutMs = RESIZE_TIMEOUT_MS) {
+/**
+ * Geometry Oracle (zoom-penuh): filter FFmpeg yang mengubah frame mentah rasio apa pun
+ * menjadi kanvas 9:16 EKSAK tanpa bar letterbox — crop tengah sampai rasio 9:16
+ * (area tajam yang bertahan di panel akhir), lalu scale+pad penjaga pembulatan ≤1px.
+ * Murni; terkunci unit test (tests/oracleFrameCrop.test.js).
+ */
+export function buildOracleFrameFilter({ width, height }, { centerCrop = true } = {}) {
+  const crop = centerCrop ? `crop='min(iw,ih*9/16)':'min(ih,iw*16/9)',` : '';
+  return `${crop}scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`;
+}
+
+/**
+ * Mode transform frame Oracle + penanda cache. DEFAULT ON — '0' kembali ke letterbox lama.
+ * Tag direktori/kunci cache BEDA antar mode supaya salinan lama mode lain tidak termakan.
+ */
+export function oracleFrameMode(env = process.env) {
+  const centerCrop = String(env?.VLM_ORACLE_CENTER_CROP ?? '1').trim() !== '0';
+  return {
+    centerCrop,
+    dirTag: centerCrop ? 'portrait9x16crop' : 'portrait9x16',
+    cachePrefix: centerCrop ? 'portrait9x16crop' : 'portrait9x16',
+  };
+}
+
+function runResize(srcPath, dstPath, height, timeoutMs = RESIZE_TIMEOUT_MS, mode = oracleFrameMode()) {
   return new Promise((resolve) => {
     let ffmpeg = '';
     try { ffmpeg = getFFmpegPath(); } catch { ffmpeg = ''; }
@@ -398,9 +422,13 @@ function runResize(srcPath, dstPath, height, timeoutMs = RESIZE_TIMEOUT_MS) {
     try {
       proc = spawn(ffmpeg, [
         '-y', '-nostdin', '-i', srcPath,
-        // Pertahankan seluruh gambar, lalu letterbox ke kanvas 9:16; jangan
-        // crop produk atau kirim sumber mentah bila transformasi gagal.
-        '-vf', `scale=${canvas.width}:${canvas.height}:force_original_aspect_ratio=decrease,pad=${canvas.width}:${canvas.height}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1`,
+        // Zoom-penuh (mandate user 2026-10-13): crop TENGAH sampai rasio 9:16 — persis area
+        // tajam yang bertahan di panel akhir (di antara dua bar atas-bawah) — lalu scale+pad
+        // penjaga pembulatan ke kanvas. Bar letterbox hitam dibuang karena membuang resolusi
+        // baca model. Sumber yang sudah 9:16: crop = no-op. Hasil SELALU kanvas 9:16 eksak
+        // (mandate AGENTS.md tetap terpenuhi; divalidasi isPortraitJpeg di pemanggil).
+        // Mati lewat VLM_ORACLE_CENTER_CROP=0 -> kembali ke letterbox lama.
+        '-vf', buildOracleFrameFilter(canvas, { centerCrop: mode.centerCrop }),
         '-frames:v', '1', '-q:v', '4', dstPath,
       ], { stdio: 'ignore' });
     } catch { clearTimeout(timer); resolve(false); return; }
@@ -425,7 +453,8 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
   if (!list.length) return out;
 
   const baseDir = outDir || path.join(tempDir, 'oracle_frames');
-  const dir = path.join(baseDir, `${safeJobSegment(jobId)}_portrait9x16_${canvas.width}x${canvas.height}`);
+  const mode = oracleFrameMode(env);
+  const dir = path.join(baseDir, `${safeJobSegment(jobId)}_${mode.dirTag}_${canvas.width}x${canvas.height}`);
   out.outDir = dir;
   try {
     fs.mkdirSync(dir, { recursive: true });
@@ -442,7 +471,7 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
       out.failed += 1;
       continue;
     }
-    const key = `portrait9x16|${f.filePath}|${canvas.width}x${canvas.height}|${st.mtimeMs}|${st.size}`;
+    const key = `${mode.cachePrefix}|${f.filePath}|${canvas.width}x${canvas.height}|${st.mtimeMs}|${st.size}`;
     const cached = resizeCache.get(key);
     if (cached && isPortraitJpeg(cached, canvas)) {
       out.converted += 1;
@@ -461,7 +490,7 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
     const oks = await Promise.all(chunk.map(({ frame, dst }) => {
       if (isPortraitJpeg(dst, canvas)) return Promise.resolve(true); // cache disk valid
       try { fs.rmSync(dst, { force: true }); } catch {}
-      return runResize(frame.filePath, dst, h);
+      return runResize(frame.filePath, dst, h, RESIZE_TIMEOUT_MS, mode);
     }));
     chunk.forEach((item, idx) => {
       const ok = oks[idx] === true && isPortraitJpeg(item.dst, canvas);
@@ -483,7 +512,7 @@ export async function prepareOracleFrames(frames = [], { height = 360, jobId = '
   return out;
 }
 
-function runGridCompose(inputFrames, dstPath, labels, timeoutMs = 30000) {
+function runGridCompose(inputFrames, dstPath, labels, timeoutMs = 30000, centerCrop = true) {
   return new Promise((resolve) => {
     let ffmpeg = '';
     try { ffmpeg = getFFmpegPath(); } catch {}
@@ -493,7 +522,9 @@ function runGridCompose(inputFrames, dstPath, labels, timeoutMs = 30000) {
     for (let i = inputFrames.length; i < 4; i++) args.push('-f', 'lavfi', '-i', 'color=c=black:s=270x480:r=1');
     const filters = [];
     for (let i = 0; i < 4; i++) {
-      filters.push(`[${i}:v]scale=270:480:force_original_aspect_ratio=decrease,pad=270:480:(ow-iw)/2:(oh-ih)/2,setsar=1[s${i}]`);
+      // Tile zoom-penuh: crop tengah 9:16 (sAMA dengan frame tunggal) lalu scale+pad 270x480 —
+      // grid 540x960 tetap 9:16 eksak; tanpa bar letterbox per tile.
+      filters.push(`[${i}:v]${buildOracleFrameFilter({ width: 270, height: 480 }, { centerCrop })}[s${i}]`);
     }
     // Empat tile potret menjadi satu kanvas potret: 540x960 = 9:16.
     filters.push('[s0][s1][s2][s3]xstack=inputs=4:layout=0_0|270_0|0_480|270_480:fill=black[grid]');
@@ -527,16 +558,18 @@ export async function composeGridImages(frames = [], { jobId = '', outDir = null
   const size = Math.max(1, Math.min(2, Math.round(Number(gridSize) || 2)));
   const cellsPerGrid = size * size;
   const groups = planGrids(frames, cellsPerGrid);
-  const root = path.join(outDir || path.join(tempDir, 'oracle_frames'), `${safeJobSegment(jobId)}_grids`);
+  const gridMode = oracleFrameMode(process.env);
+  // Penanda mode di nama folder: grid crop vs grid letterbox lama tidak saling termakan di disk.
+  const root = path.join(outDir || path.join(tempDir, 'oracle_frames'), `${safeJobSegment(jobId)}_grids${gridMode.centerCrop ? '_crop' : ''}`);
   fs.mkdirSync(root, { recursive: true });
   const result = [];
   for (const group of groups) {
     const inputs = group.frames.map((f) => f.filePath);
     const dstPath = path.join(root, `grid_${String(group.index).padStart(4, '0')}.jpg`);
-    let ok = await runGridCompose(inputs, dstPath, true);
+    let ok = await runGridCompose(inputs, dstPath, true, 30000, gridMode.centerCrop);
     if (!ok) {
       try { fs.rmSync(dstPath, { force: true }); } catch {}
-      ok = await runGridCompose(inputs, dstPath, false);
+      ok = await runGridCompose(inputs, dstPath, false, 30000, gridMode.centerCrop);
       if (ok && logger?.warn) logger.warn('[Oracle] FFmpeg tidak menyediakan drawtext/font; grid dibuat tanpa label, urutan row-major tetap berlaku.');
     }
     const canvas = { width: 540, height: 960 };
