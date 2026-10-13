@@ -6,7 +6,7 @@ import { spawn, spawnSync, execSync, exec } from 'child_process';
 import { checkSystemDependencies, getFFmpegPath } from '../services/binaryChecker.js';
 import { downloadYouTubeVideo, extractVideoId } from '../services/downloader.js';
 import { planSectionDownloads, pickSectionFor, applyClusterPaths } from '../services/renderSections.js';
-import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isVlmOracleEnabled } from '../config/runtimeFlags.js';
+import { buildConfigSnapshot, isGeminiEvidenceEnabled, describeConfigSnapshot, isNewFlowEnabled, isVlmOracleEnabled, isLocalStoryboardEnabled } from '../config/runtimeFlags.js';
 import { auditClipsWithOracle, assertOracleConnected, OracleUnavailableError } from '../services/vlmOracleService.js';
 import { isLocalOracleAutoStartEnabled, probeLlamaServerHealth, maybeAutoStartLocalOracle, waitForOracleOnline } from '../services/oracleLocalSupervisor.js';
 import { shouldAllowRescue, buildVisionProvenance, isFrameVerdictMode, summarizeVisionRuns, sourceKeyOf } from '../services/visionEvidenceService.js';
@@ -26,6 +26,7 @@ import {
   formatSeconds,
   getDynamicProductHookFallback,
   verifyFinalRenderedFramesWithAI,
+  repairStoryboardWithGemini,
   getDirectGeminiApiKey
 } from '../services/aiService.js';
 import { generateSrtSubtitles } from '../services/subtitleService.js';
@@ -1846,7 +1847,41 @@ async function _runStage1Pipeline({
       // merender gadget lebih pendek dari 45 detik.
       if (options.niche === 'gadget_smartphone' && !isManualJob && Array.isArray(hl?.clips) && hl.clips.some((c) => (Number(c?.storyboardSlot) || 0) > 0)) {
         const gadgetSlotsCfgFinal = getNichePreset('gadget_smartphone')?.slotsConfig || [];
-        const finalAssessment = assessStoryboardPlan(hl.clips, gadgetSlotsCfgFinal, { requiredTotalSec: 45 });
+        let finalAssessment = assessStoryboardPlan(hl.clips, gadgetSlotsCfgFinal, { requiredTotalSec: 45 });
+        if (!finalAssessment.ok) {
+          // ESKALASI (Keputusan A, HANYA saat rute storyboard lokal ON): rencana dinyatakan
+          // rancu oleh validator -> Gemini diperbolehkan MERAPIKAN penataan slot (tanpa
+          // mengarang footage baru). Masih rancu setelah repair / repair gagal -> shortfall
+          // di bawah tidak berubah (fail-closed). Default OFF: blok ini tak tersentuh jalur lama.
+          if (isLocalStoryboardEnabled(process.env) && String(process.env.LOCAL_STORYBOARD_ESCALATION_GEMINI || '').trim() !== '0') {
+            try {
+              console.warn(`[Job ${jobId}] Storyboard lokal rancu (slot kurang [${finalAssessment.missingSlots.join(', ')}], ${finalAssessment.totalDurationSec}s < 45s) -> eskalasi repair Gemini (provider=gemini_repair)...`);
+              const repair = await repairStoryboardWithGemini({
+                clips: hl.clips,
+                slotsConfig: gadgetSlotsCfgFinal,
+                missingSlots: finalAssessment.missingSlots,
+                totalDurationSec: finalAssessment.totalDurationSec,
+                requiredTotalSec: 45,
+                niche: 'gadget_smartphone',
+                apiKey,
+                logger: console,
+              });
+              if (repair.repaired && Array.isArray(repair.clips) && repair.clips.length) {
+                const assembled = assembleStoryboardClips(repair.clips, gadgetSlotsCfgFinal);
+                const reAssess = assessStoryboardPlan(assembled, gadgetSlotsCfgFinal, { requiredTotalSec: 45 });
+                if (reAssess.ok) {
+                  console.log(`[Job ${jobId}] ✅ Repair Gemini berhasil: rencana valid (${reAssess.totalDurationSec}s, semua slot terisi).`);
+                  hl.clips = assembled;
+                  finalAssessment = reAssess;
+                } else {
+                  console.warn(`[Job ${jobId}] Repair Gemini masih rancu (slot kurang [${reAssess.missingSlots.join(', ')}]) -> shortfall fail-closed.`);
+                }
+              }
+            } catch (repairErr) {
+              console.warn(`[Job ${jobId}] Eskalasi repair Gemini gagal (${repairErr.message}) -> shortfall fail-closed.`);
+            }
+          }
+        }
         if (!finalAssessment.ok) {
           const shortfallErr = new Error(`Floor gadget tidak terpenuhi setelah ${streamedCount} stream kandidat: ${finalAssessment.missingSlots.length ? `slot kurang [${finalAssessment.missingSlots.join(', ')}]; ` : ''}durasi rencana ${finalAssessment.totalDurationSec}s < 45s.`);
           shortfallErr.isRenderPlanShortfall = true;

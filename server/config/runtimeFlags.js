@@ -160,6 +160,26 @@ const FLAG_NORMALIZERS = {
   GK_VLM_TIMEOUT_SEC_PER_FRAME: (env) => Math.max(1, Number(env.GK_VLM_TIMEOUT_SEC_PER_FRAME) || 10),
   // downloader.js: YTDLP_PROXY_REQUIRED === '1'
   YTDLP_PROXY_REQUIRED: (env) => env.YTDLP_PROXY_REQUIRED === '1',
+  // ── FASE INFRA (Keputusan A): rute SELEKSI/STORYBOARD ke model teks lokal
+  // (Qwen2.5-VL-3B via /v1/chat/completions). SEMUA default MATI — perilaku produksi
+  // tidak berubah sampai operator menyalakan flag DAN mengisi LOCAL_TEXT_MODEL.
+  // Helper konsumen (isLocalSelectionEnabled/isLocalStoryboardEnabled) menerima '1'
+  // ATAU 'true', jadi serialisasi kanonik safety-net patch ('1'/'0') sudah aman tanpa
+  // aturan env-patch eksplisit (menghindari pitfall 'true' literal tanpa duplikasi).
+  LOCAL_TEXT_MODEL: (env) => String(env.LOCAL_TEXT_MODEL || '').trim(),
+  USE_LOCAL_SELECTION: (env) => {
+    const v = String(env.USE_LOCAL_SELECTION || '').trim().toLowerCase();
+    return v === '1' || v === 'true';
+  },
+  USE_LOCAL_STORYBOARD: (env) => {
+    const v = String(env.USE_LOCAL_STORYBOARD || '').trim().toLowerCase();
+    return v === '1' || v === 'true';
+  },
+  // Eskalasi Gemini HANYA saat rencana storyboard lokal dinyatakan rancu. Default ON
+  // (hanya '0' mematikan) — tapi baru bermakna bila USE_LOCAL_STORYBOARD aktif.
+  LOCAL_STORYBOARD_ESCALATION_GEMINI: (env) => env.LOCAL_STORYBOARD_ESCALATION_GEMINI !== '0',
+  LOCAL_LLM_BASE_URL: (env) => String(env.LOCAL_LLM_BASE_URL || '').trim(),
+  LOCAL_LLM_TIMEOUT_SEC: (env) => Math.max(5, Number(env.LOCAL_LLM_TIMEOUT_SEC) || 120),
 };
 
 export const SNAPSHOT_FLAG_KEYS = Object.keys(FLAG_NORMALIZERS);
@@ -271,6 +291,27 @@ export function isNewFlowEnabled(env = process.env) {
 export function isVlmOracleEnabled(env = process.env) {
   const v = String(env.VISION_VERIFY_MODE || '').trim().toLowerCase();
   return v !== 'legacy' && v !== 'smolvlm';
+}
+
+/**
+ * Helper konsumen FASE INFRA (Keputusan A): apakah tugas SELEKSI kandidat boleh
+ * dicoba lewat model teks lokal lebih dulu. Default OFF (jalur lama/Gemini utuh).
+ * Nama model + keterjangkauan endpoint diperiksa terpisah oleh localTextModelService;
+ * helper ini hanya gerbang kebijakan. Dibekukan via configSnapshot saat retry.
+ */
+export function isLocalSelectionEnabled(env = process.env) {
+  const v = String(env.USE_LOCAL_SELECTION || '').trim().toLowerCase();
+  return v === '1' || v === 'true';
+}
+
+/**
+ * Helper konsumen: apakah STORYBOARD (perakitan klip per-slot dari analisis multi-video)
+ * boleh dicoba lewat model teks lokal. Default OFF. Saat ON dan rencana hasilnya rancu,
+ * eskalasi repair Gemini berlaku bila LOCAL_STORYBOARD_ESCALATION_GEMINI tidak '0'.
+ */
+export function isLocalStoryboardEnabled(env = process.env) {
+  const v = String(env.USE_LOCAL_STORYBOARD || '').trim().toLowerCase();
+  return v === '1' || v === 'true';
 }
 
 /**

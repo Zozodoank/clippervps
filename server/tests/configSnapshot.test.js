@@ -91,6 +91,43 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(s.RENDER_DOWNLOAD_SECTIONS).toBe(true);
     expect(s.SAMPLE_MAX_FRAMES).toBe(300);
   });
+
+  it('flag rute teks-lokal (Keputusan A) beku + round-trip; default MATI (regresi pitfall "true" literal)', () => {
+    // Default produksi hari ini: seleksi/storyboard lokal MATI, eskalasi ON (tak bermakna
+    // sampai storyboard lokal aktif), timeout 120s, model/base URL string kosong.
+    const off = buildConfigSnapshot({});
+    expect(off.USE_LOCAL_SELECTION).toBe(false);
+    expect(off.USE_LOCAL_STORYBOARD).toBe(false);
+    expect(off.LOCAL_STORYBOARD_ESCALATION_GEMINI).toBe(true);
+    expect(off.LOCAL_LLM_TIMEOUT_SEC).toBe(120);
+    expect(off.LOCAL_TEXT_MODEL).toBe('');
+    expect(off.LOCAL_LLM_BASE_URL).toBe('');
+    // Helper konsumen menerima '1' DAN 'true' -> serialisasi kanonik safety-net ('1'/'0') aman.
+    expect(buildConfigSnapshot({ USE_LOCAL_SELECTION: '1' }).USE_LOCAL_SELECTION).toBe(true);
+    expect(buildConfigSnapshot({ USE_LOCAL_SELECTION: 'true' }).USE_LOCAL_SELECTION).toBe(true);
+    expect(buildConfigSnapshot({ USE_LOCAL_STORYBOARD: 'TRUE' }).USE_LOCAL_STORYBOARD).toBe(true);
+    expect(buildConfigSnapshot({ LOCAL_STORYBOARD_ESCALATION_GEMINI: '0' }).LOCAL_STORYBOARD_ESCALATION_GEMINI).toBe(false);
+    expect(buildConfigSnapshot({ LOCAL_LLM_TIMEOUT_SEC: '2' }).LOCAL_LLM_TIMEOUT_SEC).toBe(5); // floor
+    // Round-trip patch<->normalizer: retry wajib mereproduksi nilai efektif yang sama,
+    // termasuk saat nilai TIDAK default (boolean beku ditulis '1'/'0', bukan 'true').
+    const on = buildConfigSnapshot({
+      USE_LOCAL_SELECTION: '1',
+      USE_LOCAL_STORYBOARD: 'true',
+      LOCAL_STORYBOARD_ESCALATION_GEMINI: '0',
+      LOCAL_TEXT_MODEL: 'qwen2.5-vl-3b-q4',
+      LOCAL_LLM_BASE_URL: 'http://127.0.0.1:8080/v1',
+      LOCAL_LLM_TIMEOUT_SEC: '30',
+    });
+    const patch = configSnapshotToEnvPatch(on);
+    expect(patch.USE_LOCAL_SELECTION).toBe('1');
+    expect(patch.USE_LOCAL_STORYBOARD).toBe('1');
+    expect(patch.LOCAL_STORYBOARD_ESCALATION_GEMINI).toBe('0');
+    expect(patch.LOCAL_TEXT_MODEL).toBe('qwen2.5-vl-3b-q4');
+    const resnap = buildConfigSnapshot({ USE_LOCAL_SELECTION: '0', USE_LOCAL_STORYBOARD: '0', ...patch });
+    for (const k of ['USE_LOCAL_SELECTION', 'USE_LOCAL_STORYBOARD', 'LOCAL_STORYBOARD_ESCALATION_GEMINI', 'LOCAL_TEXT_MODEL', 'LOCAL_LLM_BASE_URL', 'LOCAL_LLM_TIMEOUT_SEC']) {
+      expect(resnap[k], `round-trip flag ${k}`).toEqual(on[k]);
+    }
+  });
 });
 
 describe('configSnapshotToEnvPatch — retry dapat mereproduksi setelan', () => {

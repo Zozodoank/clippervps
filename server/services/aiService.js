@@ -29,6 +29,111 @@ import { isGeminiEvidenceEnabled } from '../config/runtimeFlags.js';
 import { isForbiddenSearchQuery } from '../config/forbiddenTerms.js';
 import { countUsableFrames, shouldPreferEvidence, pickEvidenceFrames, formatCleanWindowsBySource, mapFramesToBudgeted, buildVisionProvenance, sourceKeyOf } from './visionEvidenceService.js';
 
+/**
+ * FASE INFRA (Keputusan A) — helper rute lokal untuk analisis seleksi/storyboard.
+ * MENCOBA model teks lokal HANYA bila flag cakupan ON + LOCAL_TEXT_MODEL terisi.
+ * Fail-closed: model tidak aktif / gagal / JSON tak layak -> `{ used:false }` sehingga
+ * pemanggil lanjut ke rantai fallback Gemini APA ADANYA (perilaku hari ini tak berubah).
+ * `kind`: 'selection' (analisis video tunggal) | 'storyboard' (analisis multi-video).
+ *
+ * PENTING (graf modul): `localTextModelService` dimuat LAZY lewat dynamic import, dan
+ * gerbang flag dibaca LANGSUNG dari process.env — TIDAK ada impor statis baru di puncak
+ * aiService. Menambah edge statis ke graf ini membalik urutan linking re-export
+ * `normalizeClipPlan` di vitest dan membuatnya sementara undefined (regresi characterization
+ * test). Snapshot retry menulis nilai beku ke process.env, jadi bacaan env ini tetap
+ * merefleksikan flag yang dibekukan per-job.
+ */
+async function attemptLocalParsed({ prompt = '', site = 'Local Text Model', kind = 'selection' } = {}) {
+  const env = process.env;
+  const flagKey = kind === 'storyboard' ? 'USE_LOCAL_STORYBOARD' : 'USE_LOCAL_SELECTION';
+  const gate = ['1', 'true'].includes(String(env[flagKey] || '').trim().toLowerCase());
+  if (!gate) return { used: false, reason: 'flag_off' };
+  const { chatJson, resolveLocalLlmConfig, isParsedUsable } = await import('./localTextModelService.js');
+  const cfg = resolveLocalLlmConfig(env);
+  if (!cfg.model) return { used: false, reason: 'no_model' };
+  const startedAt = Date.now();
+  const r = await chatJson({ prompt, env });
+  if (r.ok && isParsedUsable(r.parsed)) {
+    await recordGeminiCall({ site, provider: 'local-qwen', model: cfg.model, inputKind: 'prompt_text', mediaCount: 0, result: { response: r.response }, startedAt });
+    console.log(`[${site}] ✅ Model teks lokal (${cfg.model}) menghasilkan parsed layak; rantai Gemini dilewati.`);
+    return { used: true, parsed: r.parsed, model: `local:${cfg.model}` };
+  }
+  await recordGeminiFailure({ site, provider: 'local-qwen', model: cfg.model, inputKind: 'prompt_text', error: new Error(r.error || 'local_unavailable'), startedAt });
+  console.warn(`[${site}] Model teks lokal gagal (${r.error || 'parsed_tidak_layak'}) -> fallback ke Gemini.`);
+  return { used: false, reason: r.error || 'parsed_not_usable' };
+}
+
+/** Panggilan teks-satu Gemini (dipakai repair storyboard). Tidak untuk jalur produksi harian. */
+async function _geminiTextOnce({ key, prompt }) {
+  const genAI = new GoogleGenerativeAI(key);
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash', generationConfig: { responseMimeType: 'application/json' } });
+  const startedAt = Date.now();
+  const result = await model.generateContent(prompt);
+  await recordGeminiCall({ site: 'Storyboard Repair Gemini', provider: 'gemini_repair', model: 'gemini-2.5-flash', inputKind: 'text', mediaCount: 0, result, startedAt });
+  return result.response.text();
+}
+
+/**
+ * ESKALASI storyboard: minta Gemini MERAPIKAN rencana yang dinyatakan rancu oleh
+ * validator (assessStoryboardPlan) dengan MENYUSUN ULANG klip yang SUDAH ADA ke slot
+ * yang kurang — TANPA mengarang footage baru. Dipanggil hanya dari stage1Render saat
+ * USE_LOCAL_STORYBOARD ON + rencana rancu + LOCAL_STORYBOARD_ESCALATION_GEMINI != '0'.
+ * Fail-closed: tanpa API key / Gemini gagal / tak ada assignment -> kembalikan klip asal
+ * + `repaired:false` (pemanggil lanjut ke gerbang shortfall sebagaimana adanya).
+ * Return { clips, repaired, reason, error? }. Perakitan-per-slot & assess dilakukan
+ * PEMANGGIL (agar aiService tidak menyeret impor professionalPipelineService).
+ */
+export async function repairStoryboardWithGemini({
+  clips = [], slotsConfig = [], missingSlots = [], totalDurationSec = 0,
+  requiredTotalSec = 45, niche = 'gadget_smartphone', apiKey, logger = console,
+  callGeminiText = null,
+} = {}) {
+  const list = Array.isArray(clips) ? clips : [];
+  if (!list.length) return { clips: list, repaired: false, reason: 'no_clips' };
+  const key = getDirectGeminiApiKey(apiKey);
+  if (!key) return { clips: list, repaired: false, reason: 'no_api_key' };
+
+  const compact = list.map((c, index) => ({
+    index,
+    slot: Number(c?.storyboardSlot) || null,
+    durationSec: Math.round((Number(c?.duration) || 0) * 10) / 10,
+    source: c?.candidateUrl || c?.videoId || `cand:${c?.candidateIndex ?? 0}`,
+  }));
+  const slotGuide = (Array.isArray(slotsConfig) ? slotsConfig : [])
+    .map((s) => `${s?.slot}:${s?.montage === true ? `montase-${Number(s?.montageMin) || 2}..${Number(s?.montageMax) || 4}` : 'satu'}`).join('; ');
+  const prompt = `You are a storyboard repair assistant. The plan FAILED validation. You must ONLY re-assign the EXISTING clips below into storyboard slots to cover every required slot and reach >= ${requiredTotalSec}s total. NEVER invent, split, or add footage; you may only choose a clip's slot (or omit it).
+Slots (slot:kind): ${slotGuide || '1..5'}.
+Missing slots: ${JSON.stringify(missingSlots || [])}.
+Current planned duration: ${totalDurationSec}s.
+Clips: ${JSON.stringify(compact)}.
+A montage slot needs >=2 clips from the SAME source when possible; a normal slot uses one clip. Total must reach >= ${requiredTotalSec}s.
+Return ONLY JSON: {"assigned":[{"index":0,"storyboardSlot":1}]} covering the clips you keep.`;
+
+  let assigned = null;
+  try {
+    const raw = callGeminiText ? await callGeminiText(prompt) : await _geminiTextOnce({ key, prompt });
+    const parsed = typeof raw === 'string' ? repairJson(raw) : raw;
+    if (parsed && Array.isArray(parsed.assigned)) assigned = parsed.assigned;
+  } catch (e) {
+    logger?.warn?.(`[StoryboardRepair] Gemini gagal: ${e.message}`);
+    return { clips: list, repaired: false, reason: 'gemini_failed', error: e.message };
+  }
+  if (!assigned || !assigned.length) return { clips: list, repaired: false, reason: 'no_assignment' };
+
+  const byIndex = new Map(list.map((c, i) => [i, c]));
+  const presetSlots = getNichePreset(niche)?.slotsConfig || [];
+  const repaired = [];
+  for (const a of assigned) {
+    const src = byIndex.get(Number(a?.index));
+    if (!src) continue;
+    const slot = Number(a?.storyboardSlot) || 0;
+    const slotKey = slot ? (presetSlots[slot - 1]?.key || src.storyboardSlotKey) : src.storyboardSlotKey;
+    repaired.push({ ...src, ...(slot ? { storyboardSlot: slot, storyboardSlotKey: slotKey } : {}) });
+  }
+  if (!repaired.length) return { clips: list, repaired: false, reason: 'empty_repair' };
+  return { clips: repaired, repaired: true, reason: 'assigned' };
+}
+
 function getSmartphoneSlotDurationSec(slotNumber, requestedDurationSec = null) {
   const slot = getNichePreset('gadget_smartphone')?.slotsConfig?.[Number(slotNumber) - 1];
   const fallback = Number(slot?.targetSec) || 6;
@@ -309,7 +414,13 @@ Keep timestamps numeric. Return only timestamp proposals; Oracle decides whether
   let allQuotaErrors = true;
   let aiStartedAt = 0;
 
-  for (let i = 0; i < candidateModels.length; i++) {
+  // FASE INFRA (Keputusan A): coba model teks-lokal SEBELUM rantai Gemini.
+  // Default OFF + fail-closed -> bila tidak aktif/gagal, `parsed` tetap null dan loop
+  // Gemini di bawah berjalan persis seperti hari ini.
+  const localSel = await attemptLocalParsed({ prompt: videoPrompt, site: 'Local Text Model (Selection)', kind: 'selection' });
+  if (localSel.used) { parsed = localSel.parsed; activeGeminiModel = localSel.model; }
+
+  for (let i = 0; i < candidateModels.length && !parsed; i++) {
     const modelName = candidateModels[i];
     try {
       console.log(`[Gemini YouTube Stream] Calling model [${i + 1}/${candidateModels.length}]: ${modelName} for ${youtubeUrl}...`);
@@ -625,7 +736,12 @@ If no section is clean, return {"status":"select","selectedClips":[]}. Never ret
   let allQuotaErrors = true;
   let aiStartedAt = 0;
 
-  for (let i = 0; i < candidateModels.length; i++) {
+  // FASE INFRA (Keputusan A): jalur teks-lokal untuk STORYBOARD multi-video (kind
+  // 'storyboard'). Fail-closed; default OFF => loop Gemini di bawah tidak berubah.
+  const localSb = await attemptLocalParsed({ prompt: videoPrompt, site: 'Local Text Model (Storyboard)', kind: 'storyboard' });
+  if (localSb.used) { parsed = localSb.parsed; activeGeminiModel = localSb.model; }
+
+  for (let i = 0; i < candidateModels.length && !parsed; i++) {
     const modelName = candidateModels[i];
     try {
       console.log(`[Gemini Multi-Video Stream] Calling model [${i + 1}/${candidateModels.length}]: ${modelName} for ${youtubeUrls.length} URLs...`);
