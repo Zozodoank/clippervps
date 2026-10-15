@@ -160,7 +160,7 @@ export async function runSourceAcquisitionV2(p) {
     productDescription = '',
     productImage = '',
     productFingerprint = null,
-    niche = 'kitchen_tools',
+    niche = 'gadget_smartphone',
     apiKey,
     aiProvider,
     options = {},

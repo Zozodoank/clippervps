@@ -597,14 +597,14 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
     return true;
   }
 
-  // 1F. JASA SERVIS / PERBAIKAN / BARANG RUSAK - BERLAKU UNTUK SEMUA NICHE.
-  // Bug lapangan 30 Sep 2026 (job auto_3dd085b354, niche kitchen_tools): produk yang
-  // terpilih adalah "Servis Megicom Matot" - listing JASA REPARASI, bukan produk fisik.
-  // Penyebabnya: pemblokiran servis/reparasi dulu hanya ada di dalam blok `isGadget`,
-  // dan banyak pemanggil gerbang ini TIDAK mengirim opsi niche sama sekali, sehingga
-  // untuk kitchen alat pengecekan itu tidak pernah aktif. Sekarang daftarnya dipakai
-  // bersama dari config/forbiddenTerms.js; jargon reparasi lanjutan (solder, skematik,
-  // bypass, ganti lcd) tetap khusus gadget karena di niche lain bisa jadi nama produk.
+  // 1F. JASA SERVIS / PERBAIKAN / BARANG RUSAK - GERBANG Niche-INDEPENDENT.
+  // Sejak niche runtime selalu gadget_smartphone (lihat config/nichePresets.js
+  // normalizeNicheId), flag includeGadgetJargon selalu true di jalur normal. Daftar
+  // sumbernya config/forbiddenTerms.js - sama dengan generator query dan filter
+  // judul agar tidak ada lagi celah "servis/matot" lolos saat caller lupa mengirim
+  // opsi niche. Jargon reparasi lanjutan (solder, skematik, bypass, ganti lcd)
+  // tetap di belakang flag agar caller lama yang menyetel niche=‘’ tidak salah
+  // tolak produk non-gadget yang kebetulan memakai istilah tersebut.
   if (hasRepairIntent(normalized, { includeGadgetJargon: isGadget })) {
     return true;
   }
@@ -636,33 +636,11 @@ export function isBulkyOrUnsuitableProduct(text = '', options = {}) {
     return false;
   }
 
-  // 1D. Disqualify sets, packs, bundles, multi-item packages (sulit dicocokkan dengan 1 video demo)
-  if (isBundleOrSetProduct(normalized)) {
-    return true;
-  }
-
-  // 1E. Disqualify molds (cetakan), knives (pisau), sharpeners, and hard-to-match high-variation items
-  if (isHighVariationOrHardToMatchProduct(normalized, {
-    allowKnifeProducts: options.allowKnifeProducts === true,
-  })) {
-    return true;
-  }
-
-  // 2. Direct match on exclude list
-  if (BULKY_EXCLUDE_WORDS.some((word) => normalized.includes(word))) {
-    return true;
-  }
-
-  // 3. Any combination of "rak" with frame-filling descriptors
-  if (/\brak\b/.test(normalized) && /(?:besar|jumbo|susun|tingkat|piring|wastafel|dapur|besi|standing|troli|roda|tinggi|dinding|gantung)/.test(normalized)) {
-    return true;
-  }
-
-  // 4. Furniture or cabinet indicators
-  if (/\b(?:lemari|kabinet|cabinet|furniture|wardrobe|kitchen\s+set|meja\s+makan|kursi)\b/.test(normalized)) {
-    return true;
-  }
-
+  // (Niche dapur DIHAPUS) Semua cabang non-gadget di bawah tidak lagi
+  // terjangkau runtime karena normalizeNicheId selalu mengembalikan
+  // 'gadget_smartphone' dan blok `if (isGadget)` di atas SELALU kembali
+  // (true/false). Blok-blok tersebut dulu dipakai untuk menolak furniture,
+  // rak besar, dan cetakan/pisau di niche kitchen_tools; kini dihapus.
   return false;
 }
 
@@ -1309,7 +1287,7 @@ export function generateCombinatorialKitchenKeywords(limit = 1000, excludedSet =
  * Returns a randomized, expansive array of keywords tailored to the active niche.
  * Automatically excludes any keywords or product titles that have already been generated/processed.
  */
-export function getAutoKeywords(limit = 1000, { niche = 'kitchen_tools', excludeUsed = true, shuffle = true } = {}) {
+export function getAutoKeywords(limit = 1000, { niche = 'gadget_smartphone', excludeUsed = true, shuffle = true } = {}) {
   const preset = getNichePreset(niche);
   const isGadget = preset.id === 'gadget_smartphone';
 
@@ -1985,8 +1963,10 @@ export function pickValidIdentitySearchQuery(brand = '', productType = '', model
 }
 
 function isSmartphoneDiscovery(niche = '', text = '') {
-  return getNichePreset(niche)?.id === 'gadget_smartphone' ||
-    /\b(?:smartphone|handphone|ponsel|hp)\b/i.test(String(text || ''));
+  // Deteksi berbasis TEKS produk, bukan preset niche: sejak niche runtime selalu
+  // gadget_smartphone (normalizeNicheId), cek preset akan membuat SEMUA produk
+  // dianggap ponsel. Argumen `niche` tetap diterima untuk kompatibilitas caller.
+  return /\b(?:smartphone|handphone|ponsel|hp)\b/i.test(String(text || ''));
 }
 
 /** Reject recommendation/listicle titles before treating them as a single product or source video. */
@@ -2017,7 +1997,7 @@ function markBrandedSeedMiss(brandSeed) {
 }
 
 export async function discoverBrandedShopeeProduct({
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   seen = new Set(),
   attemptedBrands = new Set(),
 } = {}) {
@@ -2132,7 +2112,7 @@ export async function discoverBrandedShopeeProduct({
       const title = cleanTitle(rawTitle) || rawTitle;
       const description = cleanDescription(result.description || '');
       if (!title || isBundleOrSetProduct(title)) continue;
-      const targetNiche = isGadget ? 'gadget_smartphone' : 'kitchen_tools';
+      const targetNiche = 'gadget_smartphone'; // niche dapur DIHAPUS; preset selalu gadget.
       if (isBulkyOrUnsuitableProduct(title, { niche: targetNiche })) continue;
 
       const ytInfo = extractBrandedYouTubeProductIdentity(title, description, brandSeed, isGadget);

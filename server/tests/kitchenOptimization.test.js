@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from '../services/downloader.js';
-import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, getAutoKeywords, bingTitleRelevancePredicate, buildDynamicProductSearchQueries, isVagueOrAggregateProduct } from '../services/discoveryService.js';
-import { buildNicheProductCriterion } from '../services/aiService.js';
-import { getNichePreset } from '../config/nichePresets.js';
+import { isBulkyOrUnsuitableProduct, buildShopeeSearchUrl, bingTitleRelevancePredicate, buildDynamicProductSearchQueries, isVagueOrAggregateProduct } from '../services/discoveryService.js';
 import { hasRepairIntent, stripForbiddenTerms, coreNegativeOperators, forbiddenNegativeOperators } from '../config/forbiddenTerms.js';
+
+// (Niche dapur DIHAPUS) Suite ini dahulu menguji banyak asersi khusus generator
+// query/preset kitchen. Setelah normalizeNicheId() memaksa semua input ke
+// gadget_smartphone, cabang dapur mati dan asersi tersebut dibuang. Yang
+// dipertahankan hanya uji generik (query cleaner, servis/niche-independent gate,
+// Bing relevance predicate, dan URL builder).
 
 describe('Kitchen Tools & Video-First Optimization', () => {
   describe('YouTube Query Cleaning & Chopper Preservation', () => {
@@ -110,42 +114,42 @@ describe('Kitchen Tools & Video-First Optimization', () => {
     });
   });
 
-  describe('Bulky & Unsuitable Product Filtering for Kitchen Tools', () => {
-    it('should allow valid kitchen tools', () => {
+  describe('Bulky & Unsuitable Product Filtering (generik; niche dapur DIHAPUS)', () => {
+    it('meloloskan istilah alat yang tidak tertangkap generator negatif (generic pass-through)', () => {
+      // Setelah niche dapur dihapus, isBulkyOrUnsuitableProduct hanya punya satu jalur
+      // perilaku: jika niche=TIDAK dikirim, isGadget=false -> cabang reject tambahan
+      // (bundle/mold/bulky words/rak besar/furniture) sudah dihapus -> fallback `return false`.
       expect(isBulkyOrUnsuitableProduct('chopper manual tarik serbaguna viral')).toBe(false);
       expect(isBulkyOrUnsuitableProduct('alat pembuat dumpling pastel manual')).toBe(false);
-      expect(isBulkyOrUnsuitableProduct('batu asahan pisau roll serbaguna')).toBe(false);
+      // Gerbang KNIFE_PRODUCT_RE niche-independent: 'asahan'/'pisau' SELALU ditolak
+      // kecuali caller mengirim options.allowKnifeProducts=true (jalur job manual).
+      expect(isBulkyOrUnsuitableProduct('batu asahan pisau roll serbaguna')).toBe(true);
+      expect(isBulkyOrUnsuitableProduct('batu asahan pisau roll serbaguna', { allowKnifeProducts: true })).toBe(false);
       expect(isBulkyOrUnsuitableProduct('gunting dapur serbaguna stainless sk5')).toBe(false);
     });
 
-    it('should disqualify bulky or irrelevant agricultural tools', () => {
+    it('reject produk bulky lewat regex generik (mesin/chopper pakan/rak besar/lemari) saat niche=gadget', () => {
+      // L620 regex heavy-machinery berlaku niche-independent: 'chopper rumput|pakan ternak' SELALU ditolak.
       expect(isBulkyOrUnsuitableProduct('mesin chopper rumput pakan ternak')).toBe(true);
-      expect(isBulkyOrUnsuitableProduct('rak piring besar lemari dapur')).toBe(true);
+      // 'lemari' hanya ditolak di cabang isGadget (L633); caller wajib kirim niche gadget.
+      expect(isBulkyOrUnsuitableProduct('rak piring besar lemari dapur', { niche: 'gadget_smartphone' })).toBe(true);
     });
 
-    // Larangan servis dulunya hanya hidup di dalam blok niche gadget (dan banyak
-    // pemanggil tidak mengirim opsi niche sama sekali) -> listing jasa lolos.
+    // Larangan servis tetap aktif walau niche=TIDAK dikirim (jalur defense-in-depth).
     it('menolak listing JASA SERVIS di niche apa pun, termasuk tanpa opsi niche', () => {
       expect(isBulkyOrUnsuitableProduct('Servis Megicom Matot Tidak Bisa Masak')).toBe(true);
-      expect(isBulkyOrUnsuitableProduct('Servis Megicom Matot', { niche: 'kitchen_tools' })).toBe(true);
+      expect(isBulkyOrUnsuitableProduct('Servis Megicom Matot', { niche: 'gadget_smartphone' })).toBe(true);
       expect(isBulkyOrUnsuitableProduct('Jasa Reparasi Dispenser Panggilan')).toBe(true);
       expect(isBulkyOrUnsuitableProduct('DIY tempat tisu dari botol bekas')).toBe(true);
     });
   });
 
   describe('AI Prompt Criteria', () => {
-    it('should handle standard mode correctly', () => {
-      const standardPrompt = buildNicheProductCriterion('kitchen_tools', 'Chopper Manual', 'Chopper Tarik Mini', false);
-      expect(standardPrompt).toContain('WHITE-LABEL OEM TOLERANCE');
-      expect(standardPrompt).not.toContain('HIGH-VARIATION COMMODITY & MOLD/KNIFE BAN');
-      expect(standardPrompt).toContain('Dumpling molds');
-    });
-
-    it('should handle video-first mode correctly', () => {
-      const videoFirstPrompt = buildNicheProductCriterion('kitchen_tools', 'Alat Dapur Viral', '', true);
-      expect(videoFirstPrompt).toContain('VIDEO-FIRST DISCOVERY DOES NOT OVERRIDE PRODUCT IDENTITY');
-      expect(videoFirstPrompt).toContain('The TARGET PRODUCT defines what may be accepted');
-    });
+    // (Niche dapur DIHAPUS) buildNicheProductCriterion kini selalu menghasilkan
+    // string smartphone (preset gadget id === 'gadget_smartphone'). Assertion
+    // lama yang mengharapkan teks 'WHITE-LABEL OEM TOLERANCE' / 'Dumpling molds'
+    // sudah tidak relevan; test ini digantikan nicheContract.test.js.
+    it.skip('kitchen-specific prompt assertions removed (niche dapur DIHAPUS)', () => {});
   });
 
   describe('Shopee URL Generator', () => {
@@ -183,11 +187,9 @@ describe('Kitchen Tools & Video-First Optimization', () => {
   });
 
   describe('Auto Keywords & Preset Verification', () => {
-    it('should have adequate curated keywords', () => {
-      const kitchenPreset = getNichePreset('kitchen_tools');
-      expect(kitchenPreset.defaultKeywords.length).toBeGreaterThanOrEqual(30);
-      const autoKws = getAutoKeywords(50, { niche: 'kitchen_tools', excludeUsed: false });
-      expect(autoKws.length).toBeGreaterThanOrEqual(30);
-    });
+    // (Niche dapur DIHAPUS) getNichePreset('kitchen_tools') kini mengembalikan
+    // preset gadget dengan defaultKeywords lebih sedikit daripada kitchen (yang
+    // punya >=30). Test lama tidak lagi berlaku; lihat nicheContract.test.js.
+    it.skip('kitchen preset keyword count removed (niche dapur DIHAPUS)', () => {});
   });
 });

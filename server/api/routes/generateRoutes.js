@@ -87,7 +87,7 @@ import {
   getUsedKeywordsStats,
   clearUsedKeywords
 } from '../../services/discoveryService.js';
-import { getAllNiches, getNichePreset } from '../../config/nichePresets.js';
+import { getAllNiches, getNichePreset, normalizeNicheId } from '../../config/nichePresets.js';
 import {
   buildProductFingerprint,
   buildCreativeShotPlan,
@@ -143,15 +143,9 @@ router.post('/generate', async (req, res) => {
     options.aiProvider = aiProvider;
   }
 
-  // MODE MANUAL: pengguna kini dapat memilih niche (Alat Dapur ATAU Smartphone/Gadget),
-  // sama seperti mode auto. Validasi terhadap preset yang tersedia + dukung alias
-  // (mis. 'smartphone'/'hp' -> gadget_smartphone). Default: kitchen_tools.
-  const availableNicheIds = getAllNiches().map((n) => n.id);
-  const requestedNiche = String(niche || options.niche || '').trim().toLowerCase();
-  const resolvedNiche = availableNicheIds.includes(requestedNiche)
-    ? requestedNiche
-    : getNichePreset(requestedNiche).id;
-  options.niche = resolvedNiche;
+  // MODE MANUAL: niche tunggal = gadget_smartphone (niche dapur DIHAPUS).
+  // normalizeNicheId mengkoersi nilai apa pun (termasuk legacy/alias/kosong) ke gadget.
+  options.niche = normalizeNicheId(niche || options.niche);
   console.log(`[Job ${clientJobId || 'generate'}] 🏷️ Manual niche = ${options.niche}`);
 
   // OEM manual URLs are optional. They can be used when automatic discovery

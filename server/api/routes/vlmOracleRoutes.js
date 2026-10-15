@@ -32,6 +32,7 @@ import {
 } from '../../store/jobStore.js';
 import { resolveOracleConfig, ORACLE_GRID_PROTOCOL } from '../../services/vlmOracleService.js';
 import { isOracleStrictMode } from '../../config/runtimeFlags.js';
+import { normalizeNicheId } from '../../config/nichePresets.js';
 import { createRateLimiter, recordAuditEvent } from '../../utils/security.js';
 import { getApiAccessToken } from '../middleware/tokenAuth.js';
 import { serverRoot, outputDir, tempDir, rejectedYunetDir } from '../../utils/paths.js';
@@ -104,7 +105,7 @@ router.post('/vlm-oracle/claim', claimLimiter, (req, res) => {
     attempt: batch.attempts,
     jobId: batch.jobId,
     sceneIdx: batch.sceneIdx,
-    niche: batch.niche,
+    niche: normalizeNicheId(batch.niche),
     facePolicy: batch.facePolicy,
     prompt: batch.prompt,
     frames: batch.frames.map((f) => ({

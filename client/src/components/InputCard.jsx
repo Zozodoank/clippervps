@@ -3,7 +3,6 @@ import { Youtube, ShoppingBag, Key, Sparkles, Shield, Sliders, Zap, Tag, AlignLe
 import ProductFinder from './ProductFinder.jsx';
 
 const DEFAULT_MANUAL_NICHES = [
-  { id: 'kitchen_tools', name: 'Alat Dapur & Kebutuhan Rumah', shortName: 'Alat Dapur', icon: '🍳', badgeColor: '#10b981' },
   { id: 'gadget_smartphone', name: 'Smartphone & Gadget Viral', shortName: 'Smartphone', icon: '📱', badgeColor: '#3b82f6' },
 ];
 
@@ -92,7 +91,7 @@ export default function InputCard({
       })
       .catch(() => {});
   }, []);
-  const activeNiche = formData.niche || 'kitchen_tools';
+  const activeNiche = formData.niche || 'gadget_smartphone';
   const setNiche = (id) => {
     try { localStorage.setItem('clipper_niche', id); } catch {}
     setFormData({ ...formData, niche: id });

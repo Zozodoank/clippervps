@@ -124,8 +124,9 @@ describe('POST /api/jobs/:jobId/retry — kontrak manual vs auto', () => {
     const arg = runStage1Pipeline.mock.calls[0][0];
     expect(arg.youtubeUrl).toBe('https://youtu.be/FROM_OEM');
     expect(arg.options.sourcePolicy).toBe('explicit_only');
-    expect(arg.options.niche).toBe('kitchen_tools');
-    // ALUR BARU: retry manual niche alat dapur ikut set render autojob (tanpa cari web).
+    expect(arg.options.niche).toBe('gadget_smartphone');
+    // ALUR BARU: niche dapur DIHAPUS; retry manual job legacy (job.niche='kitchen_tools')
+    // di-koersi ke gadget_smartphone oleh jobsRoutes.normalizeNicheId sebelum masuk worker.
     expect(arg.options).toMatchObject({ multiVideoHarvesting: true, isVideoFirst: true, sceneDuration: 3.3, minDuration: 30.0 });
     expect(discoverYouTubeCandidatesForProduct).not.toHaveBeenCalled();
     activeJobs.delete(jobId);

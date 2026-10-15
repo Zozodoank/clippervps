@@ -1,177 +1,14 @@
 /**
  * ==============================================================================
- * Multi-Niche Presets Configuration for ClipperVPS
- * Unifies Kitchen Tools & Gadget/Smartphone into a Single 9:16 Vertical Engine.
+ * Niche Presets Configuration for ClipperVPS
+ * SMARTPHONE-ONLY ENGINE. Niche alat dapur (kitchen_tools) telah DIHAPUS
+ * sepenuhnya (Keputusan user: hanya gadget_smartphone untuk auto & manual).
+ * Nilai niche legacy (mis. 'kitchen_tools'/'kitchen'/'dapur' atau string kosong)
+ * dikoersi ke 'gadget_smartphone' saat dibaca via normalizeNicheId().
  * ==============================================================================
  */
 
 export const NICHE_PRESETS = {
-  kitchen_tools: {
-    id: 'kitchen_tools',
-    name: 'Alat Dapur & Kebutuhan Rumah',
-    shortName: 'Alat Dapur',
-    icon: '🍳',
-    tagline: 'Video affiliate alat dapur, perabot praktis & pembersih faceless hands-on.',
-    visualFocus: 'Demonstrasi alat dapur fisik pada bahan masakan, wajan, kompor, atau meja.',
-    badgeColor: '#10b981',
-    outroBumper: 'kitchen_outro.mp4',
-    slotsConfig: [
-      {
-        slot: 1,
-        key: 'clip1_full_product',
-        fallbackKey: 'clip1',
-        label: 'Visual Produk Utuh (Opening Hero)',
-        role: 'full_product',
-        datasetTag: 'valid_full_product',
-        description: 'Tampilan fisik produk utuh pembuka di meja/dapur (Opening Hero Shot).'
-      },
-      {
-        slot: 2,
-        key: 'clip2_feature',
-        fallbackKey: 'clip2',
-        label: 'Fitur & Keunggulan Fisik',
-        role: 'feature',
-        datasetTag: 'valid_feature',
-        description: 'Detail close-up material pisau, spons, stainless, pegangan, atau tombol.'
-      },
-      {
-        slot: 3,
-        key: 'clip3_action_demo',
-        fallbackKey: 'clip3',
-        label: 'Peragaan #1 (Aksi Produk)',
-        role: 'action_demo',
-        datasetTag: 'valid_action',
-        description: 'Aksi penggunaan pertama mendemonstrasikan fungsi utama alat.'
-      },
-      {
-        slot: 4,
-        key: 'clip4_action_demo_diff',
-        fallbackKey: 'clip4_action_demo',
-        label: 'Peragaan #2 (Visual Berbeda / Angle Lain)',
-        role: 'action_demo_diff',
-        datasetTag: 'valid_action',
-        description: 'Peragaan dari sudut kamera/objek berbeda. Wajib ganti visual agar tidak monoton.'
-      },
-      {
-        slot: 5,
-        key: 'clip5_action_demo',
-        fallbackKey: 'clip5_result',
-        label: 'Peragaan #3 (Hasil / Bukti Nyata)',
-        role: 'action_demo',
-        datasetTag: 'valid_result',
-        description: 'Pembuktian hasil nyata: kinclong, bersih, potongan rapi, atau dibilas air.'
-      },
-      {
-        slot: 6,
-        key: 'clip6_full_product',
-        fallbackKey: 'clip6',
-        label: 'WAJIB Visual Produk Utuh (Penutup)',
-        role: 'full_product',
-        datasetTag: 'valid_full_product',
-        description: 'Fisik produk utuh bersih ditaruh kembali di meja sebagai penutup yang meyakinkan.'
-      },
-      {
-        slot: 7,
-        key: 'clip7_full_product',
-        fallbackKey: 'clip7_display_cta',
-        label: 'WAJIB Visual Produk Utuh (Call to Action)',
-        role: 'full_product',
-        datasetTag: 'valid_display_cta',
-        description: 'Produk ditata jelas di frame tengah selaras dengan ajakan checkout keranjang kuning.'
-      }
-    ],
-    storyboardInstructions: `Petakan indeks frame ke dalam 7 peran "storyboard" berikut (WAJIB MULTI-SOURCE: sebarkan ke 2-4 video kandidat berbeda jika tersedia, DILARANG hanya 1 video!):
-- "clip1_full_product": Slot 1 (00:00-00:05) -> WAJIB VISUAL PRODUK UTUH (Opening Hero Shot). Frame yang memperlihatkan fisik produk secara utuh/lengkap di atas meja atau dipegang. Sesuai kategori: [valid_full_product]. DILARANG KERAS sedang digosok, diperas, dipotong, atau aksi ekstrem di Slot 1!
-- "clip2_feature": Slot 2 (00:05-00:10) -> DETAIL FITUR & SPEK. Frame close-up yang menonjolkan fitur/material/komponen fisik alat (tekstur spons, jaring kawat, bahan stainless, pegangan, tombol). Sesuai kategori: [valid_feature].
-- "clip3_action_demo": Slot 3 (00:10-00:15) -> PERAGAAN #1 (AKSI PAKAI). Aksi penggunaan alat pertama kali mendemonstrasikan fungsinya (misal: mulai menggosok noda/kotoran, memotong bahan). Sesuai kategori: [valid_action].
-- "clip4_action_demo_diff": Slot 4 (00:15-00:20) -> PERAGAAN DENGAN VISUAL BERBEDA (WAJIB KANDIDAT VIDEO BERBEDA). Aksi peragaan dengan SUDUT KAMERA / ANGLE BERBEDA dari kandidat video lain. Wajib beda video/sudut dari Slot 3!
-- "clip5_action_demo": Slot 5 (00:20-00:25) -> HASIL PERAGAAN / BUKTI BERSIH ("clip5_result"). Aksi peragaan pembuktian atau hasil (misal: dibilas air bersih, busa melimpah, dilap, atau perbandingan kinclong). Sesuai kategori: [valid_result].
-- "clip6_full_product": Slot 6 (00:25-00:30) -> WAJIB VISUAL PRODUK UTUH. Tampilan fisik produk utuh kembali (misal produk bersih ditaruh di meja atau dipegang) sebagai penutup yang meyakinkan penonton. Sesuai kategori: [valid_full_product].
-- "clip7_full_product": Slot 7 (00:30-00:35) -> WAJIB VISUAL PRODUK UTUH / DISPLAY CTA ("clip7_display_cta"). Tampilan fisik produk utuh yang selaras dengan ajakan checkout di keranjang kuning/oranye pojok kiri bawah. Sesuai kategori: [valid_display_cta] / [valid_full_product].`,
-    hookGuidelines: `Hook naskah pembuka 3 detik harus solutif dan relate dengan kegiatan memasak, food prep, kerapian meja makan, atau masalah spesifik saat menyiapkan makanan (DILARANG menggunakan kata 'alat dapur' maupun 'Shopee', dan DILARANG pakai kata 'fix' / 'fiks'!).`,
-    curatedHooks: [
-      // 🍳 1. Tipe Solusi Masalah Memasak & Food Prep
-      "Emak-emak wajib nonton! Ini solusi biar area masak enggak berantakan lagi.",
-      "Capek banget tiap hari harus bersihin percikan minyak pas goreng? Sini berkumpul.",
-      "Bikin sarapan jadi 2x lebih cepat cuma modal barang receh yang satu ini.",
-      "Buat yang punya ruangan sempit, barang ini bener-bener penyelamat tempat banget!",
-      "Solusi cerdas buat yang malas potong-potong bahan masakan sampai nangis.",
-
-      // 🧼 2. Tipe Estetika & Kerapian Ruangan (Clean Vibes)
-      "Bikin area makan kelihatan mewah kayak di drama Korea, padahal modalnya gak sampai 50 ribu!",
-      "Nyesel baru tahu ada organizer se-aesthetic ini buat naruh bumbu-bumbu.",
-      "Suasana rumah minimalis idaman dimulai dari satu barang kecil yang serbaguna ini.",
-      "Transformasi meja masak yang berantakan jadi rapi instan cuma pakai ini.",
-      "Spill barang rahasia yang bikin tempat food prep estetik dan betah dipandang.",
-
-      // 💸 3. Tipe Racun Belanja & Worth It (FOMO)
-      "Jangan checkout barang lain sebelum kalian lihat fungsi benda ini!",
-      "Barang receh online tapi gunanya bener-bener di luar nalar pas dipakai.",
-      "Racun belanja minggu ini: fungsional banget dan wajib punya minimal satu di rumah.",
-      "Review jujur setelah sebulan pakai produk pemotong viral yang satu ini.",
-      "Gak nyangka barang semurah ini bisa awet dan sekokoh ini buat harian.",
-
-      // 🤫 4. Tipe Penasaran & Demo Visual (Faceless Friendly)
-      "Bisa tebak gak benda sekecil ini fungsinya buat apa?",
-      "Satu trik rahasia yang disembunyikin para ibu rumah tangga biar urusan masak cepat beres.",
-      "Kenapa barang ini selalu sold out dan dapet rating bintang 5 terus ya?",
-      "Tonton video ini sampai habis kalau mau tahu cara instan mengatasi minyak membandel.",
-      "Ada yang aneh dari benda ini, kelihatannya simpel tapi kok bisa se-efektif ini?",
-
-      // 📉 5. Tipe Perbandingan & Edukasi
-      "Mending beli yang versi ini daripada versi lama yang harganya selangit tapi fungsinya sama.",
-      "Battle kupas buah pakai cara viral vs manual, mana yang bikin kerjaan cepat beres?",
-      "Jangan ketipu sama ukurannya yang kecil, lihat dulu pas dipakai buat potong daging.",
-      "Ekspektasi vs Realita pas beli produk pembersih viral, ternyata...",
-      "Kelebihan dan kekurangan produk ini yang wajib kamu tahu sebelum menyesal beli.",
-
-      // ⏱️ 6. Tipe Urgensi & Dorongan Klik
-      "Cuma sisa beberapa unit lagi, diskon flash sale buat barang ini mau habis!",
-      "Uji coba langsung: beneran mempermudah food prep atau cuma gimmick iklan doang?",
-      "Buruan cek keranjang kuning sebelum harganya naik normal besok pagi.",
-      "Tantangan bikin cemilan praktis cuma pakai satu benda ini, kira-kira berhasil gak ya?",
-      "Borong ini sekarang sebelum stoknya hilang lagi dari pasaran!"
-    ],
-    defaultKeywords: [
-      // Top 35 High-Converting Viral Evergreen Kitchen Gadgets (Ribuan video faceless di YouTube/TikTok)
-      'chopper manual tarik serbaguna viral',
-      'chopper mini elektrik portable viral',
-      'mandoline slicer parutan serbaguna',
-      'alat pengupas kulit apel putar otomatis praktis',
-      'garlic press rocker pemeras bawang putih stainless',
-      'gunting dapur serbaguna stainless multifungsi',
-      'oil pot wadah saringan minyak goreng stainless',
-      'pemotong semangka melon praktis viral',
-      'alat pengupas sisik ikan stainless praktis',
-      'sealer plastik mini portable perekat makanan',
-      'alat pembuat dumpling pastel manual',
-      'parutan keju putar rotary cheese grater',
-      'alat pemotong kentang french fries cutter',
-      'alat pemeras jeruk lemon manual stainless',
-      'batu asahan pisau roll serbaguna',
-      'alat pemotong nanas spiral stainless',
-      'sendok pembuat bakso bakwan anti lengket',
-      'alat pengocok telur semi otomatis putar tekan',
-      'alat pemipil jagung serbaguna praktis',
-      'alat pembuka kaleng putar can opener praktis',
-      'cetakan telur gulung tamagoyaki persegi',
-      'wajan penggorengan mini telur 4 lubang anti lengket',
-      'dispenser sabun cuci piring sponge holder',
-      'alat pengiris daging beku manual slicer',
-      'alat pemotong alpukat 3 in 1 praktis',
-      'alat pengiris telur rebus kawat stainless',
-      'alat peremas kentang stainless potato ricer',
-      'gunting daun bawang sayur 5 lapis stainless',
-      'sendok tirisan penggorengan stainless serbaguna',
-      'wadah penyimpanan sayur kulkas drain basket',
-      'botol minyak kuas silikon 2 in 1 anti tumpah',
-      'alat pembersih kerak wajan serbaguna',
-      'alat pelindung jari iris sayur stainless cutter guard',
-      'alat pemecah cangkang kepiting walnut stainless',
-      'panci listrik mini serbaguna portable'
-    ]
-  },
-
   gadget_smartphone: {
     id: 'gadget_smartphone',
     name: 'Smartphone Flagship & Mid-Range',
@@ -265,21 +102,24 @@ Setiap adegan harus memiliki bukti visual yang sesuai dan voiceover yang menjela
   }
 };
 
-export const DEFAULT_NICHE_ID = 'kitchen_tools';
+export const DEFAULT_NICHE_ID = 'gadget_smartphone';
+
+/**
+ * CHOKEPOINT KANONISASI NICHE TUNGGAL.
+ * Setelah niche alat dapur DIHAPUS, HANYA 'gadget_smartphone' yang ada. Semua nilai
+ * — termasuk string legacy yang tersimpan di job/DB/configSnapshot ('kitchen_tools',
+ * 'kitchen', 'dapur', 'alat_dapur'), alias mode lama, nilai kosong, atau tak dikenal —
+ * dikoersi KE 'gadget_smartphone' SAAT DIBACA. Ini menjamin cabang kesetaraan
+ * `niche === 'gadget_smartphone'` selalu benar dan cabang non-gadget tidak pernah aktif.
+ * @param {string} raw - nilai niche mentah dari mana pun.
+ * @returns {'gadget_smartphone'}
+ */
+export function normalizeNicheId(raw) {
+  return DEFAULT_NICHE_ID;
+}
 
 export function getNichePreset(nicheId) {
-  const normalized = (nicheId || '').trim().toLowerCase();
-  if (NICHE_PRESETS[normalized]) {
-    return NICHE_PRESETS[normalized];
-  }
-  // Alias support
-  if (normalized === 'gadget' || normalized === 'hp' || normalized === 'smartphone' || normalized === 'ytcliper') {
-    return NICHE_PRESETS.gadget_smartphone;
-  }
-  if (normalized === 'kitchen' || normalized === 'dapur' || normalized === 'alat_dapur') {
-    return NICHE_PRESETS.kitchen_tools;
-  }
-  return NICHE_PRESETS[DEFAULT_NICHE_ID];
+  return NICHE_PRESETS[normalizeNicheId(nicheId)];
 }
 
 export function getAllNiches() {
@@ -432,11 +272,11 @@ export function generateCombinatorialGadgetKeywords(count = 100, excludedSet = n
 /**
  * Returns the facePolicy for a specific slot key within a niche preset.
  * Defaults to 'strict' (standard blocking behaviour) if the slot does not
- * declare an explicit facePolicy — ensuring kitchen_tools and any future
- * niche without the field are completely unaffected.
+ * declare an explicit facePolicy — ensuring any niche slot without the field
+ * is completely unaffected.
  *
  * @param {object} nichePreset - A resolved preset object from getNichePreset().
- * @param {string} slotKey    - The slot key, e.g. 'clip5_action_demo'.
+ * @param {string} slotKey    - The slot key, e.g. 'clip4_camera'.
  * @returns {'strict'|'presenter_only'} The effective face policy for that slot.
  */
 export function getSlotFacePolicy(nichePreset, slotKey) {

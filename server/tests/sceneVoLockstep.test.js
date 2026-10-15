@@ -54,12 +54,16 @@ describe('Face Policy (Fase 5) - Scene<->VO lockstep', () => {
       expect(res.errors.some(e => e.includes('lockstep'))).toBe(true);
     });
 
-    it('kitchen: jumlah tidak cocok HANYA warning informatif (ok=true, perilaku lama)', () => {
+    it('niche legacy "kitchen_tools" di-koersi ke gadget → strict (niche dapur DIHAPUS)', () => {
       const clips = Array.from({ length: 5 }, (_, i) => ({ storyboardSlot: i + 1, duration: 3 }));
       const res = validateScriptSlotAlignment({ clips, creativePlan, scenes: makeScenes(8), niche: 'kitchen_tools' });
-      expect(res.strictMode).toBe(false);
-      expect(res.ok).toBe(true);
-      expect(res.errors).toEqual([]);
+      // validateScriptSlotAlignment membaca preset melalui getNichePreset() yang
+      // sudah memakai chokepoint normalizeNicheId -> preset gadget (strictSceneVoSync=true).
+      // Dengan demikian input legacy 'kitchen_tools' kini berperilaku identik dengan
+      // 'gadget_smartphone': jumlah scene & slot harus lockstep.
+      expect(res.strictMode).toBe(true);
+      expect(res.ok).toBe(false);
+      expect(res.errors.some(e => e.includes('lockstep'))).toBe(true);
     });
 
     it('gerbang face policy: clip slot strict bersumber frame camera-eligible = error', () => {

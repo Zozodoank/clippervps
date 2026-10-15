@@ -23,7 +23,7 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(s.VLM_ORACLE_GRID).toBe(2);
     expect(s.FINAL_AI_QC).toBe(true);                 // !== 'false'
     expect(s.FINAL_AI_QC_STRICT).toBe(false);         // === 'true'
-    expect(s.niche).toBe('kitchen_tools');
+    expect(s.niche).toBe('gadget_smartphone');
     expect(s.sourcePolicy).toBe('');
     expect(s._frozenAt).toBeTruthy();
   });

@@ -14,7 +14,7 @@ export function truncateProductDescription(desc = '', maxChars = 500) {
  * Generates a dynamic, high-converting Indonesian affiliate video hook for the first 3 seconds.
  * Provides distinct natural angles for both Kitchen and Gadget/Smartphone niches and completely avoids repetitive robotic phrasing or the slang "fix".
  */
-export function getDynamicProductHookFallback(productName = '', niche = 'kitchen_tools') {
+export function getDynamicProductHookFallback(productName = '', niche = 'gadget_smartphone') {
   const cleanName = (productName || '').trim() || 'produk ini';
   const preset = getNichePreset(niche);
   if (preset.id === 'gadget_smartphone') {
@@ -56,7 +56,7 @@ export function getDynamicProductHookFallback(productName = '', niche = 'kitchen
 /**
  * Builds dynamic Acceptance & Rejection Criterion #1 tailored to the active niche.
  */
-export function buildNicheProductCriterion(niche = 'kitchen_tools', coreNoun = '', effectiveTitle = '', isVideoFirstMode = false, effectiveDesc = '') {
+export function buildNicheProductCriterion(niche = 'gadget_smartphone', coreNoun = '', effectiveTitle = '', isVideoFirstMode = false, effectiveDesc = '') {
   const preset = getNichePreset(niche);
   const identityInfo = extractCoreProductInfo(effectiveTitle, effectiveDesc);
   const productIdentity = identityInfo.productIdentity || coreNoun || effectiveTitle || 'Produk';
@@ -129,7 +129,7 @@ ${effectiveDesc ? `  (Product Description: "${effectiveDesc}")` : ''}
 /**
  * Builds dynamic Criterion #4 (Face, Talking-Head & Motion/Still-Photo Rules) tailored to the active niche.
  */
-export function buildFaceAndMotionCriterion(niche = 'kitchen_tools', clipSec = 4.8) {
+export function buildFaceAndMotionCriterion(niche = 'gadget_smartphone', clipSec = 4.8) {
   const preset = getNichePreset(niche);
   if (preset.id === 'gadget_smartphone') {
     return `CRITERION 4: VLOGGER TALKING-HEAD BAN & PHYSICAL HARDWARE FOCUS (SMARTPHONE NICHE)
@@ -387,7 +387,7 @@ export function build7SlotStoryboardClips({
   clipSec = 3.5,
   sceneDurationsSec = [],
   introCutoffSec = 0,
-  niche = 'kitchen_tools'
+  niche = 'gadget_smartphone'
 }) {
   const sb = parsed?.storyboard || {};
   const selectedIndices = Array.isArray(parsed?.frames) ? parsed.frames : [];

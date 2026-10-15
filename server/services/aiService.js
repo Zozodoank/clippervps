@@ -140,7 +140,7 @@ export async function discoverSceneWindowsWithGemini({
   youtubeUrl,
   productTitle = '',
   productDescription = '',
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   clipSec = 4,
   apiKey,
   maxWindows = 10,
@@ -237,7 +237,7 @@ export async function analyzeYouTubeVideoWithGemini({
   cleanTimeWindows = [],
   verifiedSegments = [],
   isVideoFirst = false,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   onProgress = () => { },
 }) {
   const geminiKey = getDirectGeminiApiKey(apiKey);
@@ -552,7 +552,7 @@ export async function analyzeMultipleYouTubeVideosWithGemini({
   cleanTimeWindows = [],
   verifiedSegments = [],
   isVideoFirst = false,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   onProgress = () => { },
 }) {
   if (!youtubeUrls || youtubeUrls.length === 0) {
@@ -840,7 +840,7 @@ export async function analyzeVideoWithGeminiFileApi({
   allowFallbackClips = false,
   introCutoffSec = 0,
   isVideoFirst = false,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   onProgress = () => { },
 }) {
   const geminiKey = getDirectGeminiApiKey(apiKey);
@@ -1298,7 +1298,7 @@ export async function selectHighlightWithAI({
   allowFallbackClips = false,
   introCutoffSec = 0,
   isVideoFirst = false,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   creativePlan = null,
   onProgress = () => { }
 }) {
@@ -1476,7 +1476,7 @@ RULE 5B: ANIMATED GRAPHICS, STICKERS & OVERLAYS (9:16 CROP TOLERANCE RULE):
 
 CRITERIA FOR ACCEPTANCE (ALL MUST BE TRUE):
 1. Functionally & physically matches target product: "${coreNoun}" (${effectiveTitle}).
-   - MARKET COMPATIBILITY: The product demonstrated MUST match generic OEM / white-label household gadgets, kitchen tools, or daily appliances widely sold across Shopee regional markets (Shopee Indonesia, Malaysia, Thailand, Vietnam, Philippines, Singapore, Taiwan, Brazil).
+   - MARKET COMPATIBILITY: The product demonstrated MUST be a smartphone / mobile device (or genuine review footage of one) widely sold across Shopee regional markets (Shopee Indonesia, Malaysia, Thailand, Vietnam, Philippines, Singapore, Taiwan, Brazil).
    - Multi-country Shopee / Asian OEM demonstration videos (hands-on tabletop demos from SEA/Asian sellers or creators) are 100% WELCOME and ACCEPTABLE.
    - STRICTLY REJECT US/Western-exclusive retail items: If the video clearly shows an exclusive US/Western retail product or retail packaging with Amazon, Walmart, Target, Home Depot, or Best Buy branding not found on Shopee, output status reject.
 2. Clean Hands-On Demonstration in Selected Frames: ${isGadget ? 'Slots 1-3 & 5 must show the smartphone body/interface, memory-durability evidence, or the closing hero product. Slot 4 (camera) may show photos/video captured by its camera, and people or faces inside those samples are allowed. Reject only a self-recording presenter speaking directly to camera.' : 'Every single selected frame is 100% faceless (hands/fingers operating on tabletop only). Any face frames from the source video are discarded.'}
@@ -1642,8 +1642,7 @@ Review visual frames carefully against the 5 Mandatory Acceptance Criteria:
 5B. TARGET PRODUCT EVIDENCE BY STORYBOARD ROLE:
    - ${isGadget ? 'Slot 1-3 & 5 harus menunjukkan perangkat/UI atau fisik produk; slot 4 (kamera) dinilai sebagai hasil kamera sehingga foto/video tangkapan ponsel adalah bukti yang sah walau ponsel tidak tampak di dalam gambar.' : 'Setiap frame/slot yang dimasukkan ke storyboard WAJIB benar-benar menampilkan FISIK PRODUK TARGET secara jelas di dalam frame.'}
    - ${isGadget ? 'Orang, wajah, potret, atau subjek lain di dalam sampel kamera diperbolehkan. Tolak hanya presenter/vlogger yang sedang merekam diri dan berbicara langsung ke kamera.' : ''}
-   - REJECT frame yang hanya menampilkan tangan kosong, bahan makanan, makanan jadi, wajan/panci, meja kosong, pemandangan, kardus kosong, bubble wrap tanpa produk, resi paket, meteran pengukur, atau mesin industri/peralatan lain tanpa produk target.
-   - Untuk kitchen_tools: jangan pernah menganggap aktivitas memasak sebagai bukti produk. Jika produk target tidak terlihat dan dioperasikan, frame TIDAK valid.
+   - REJECT frame yang hanya menampilkan tangan kosong, kardus kosong tanpa ponsel, bubble wrap tanpa produk,resi paket, pemandangan, atau peralatan lain tanpa smartphone target.
    - Set hasTargetProductInEverySelectedFrame true bila semua frame sesuai aturan bukti per slot; hasil kamera pada slot kamera smartphone dihitung sebagai bukti yang sah.
 
 6. 100% PRODUCT VISUAL CONSISTENCY & MULTI-VIDEO HARVESTING:
@@ -2146,7 +2145,7 @@ export async function verifyProductCandidateWithAI({
   productDescription = '',
   productImage = '',
   productFingerprint = null,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   onProgress = () => {},
 } = {}) {
   if (!Array.isArray(frames) || frames.length < 2) {
@@ -2369,7 +2368,7 @@ export async function verdictCandidatesWithGemini({
   productTitle = '',
   productDescription = '',
   productFingerprint = null,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   candidates = [],
   onProgress = () => {},
 } = {}) {
@@ -2476,7 +2475,7 @@ export async function verifyFinalRenderedFramesWithAI({
   frames = [],
   productTitle = '',
   productFingerprint = null,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   sceneVoSegments = null,
   onProgress = () => {},
 } = {}) {
@@ -2640,7 +2639,7 @@ export async function generateAdAdvisorScriptWithAI({
   productHook,
   segmentDuration = 33,
   sceneDuration = 3.3,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   creativePlan = {},
   onProgress = () => { }
 }) {

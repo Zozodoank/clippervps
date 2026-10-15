@@ -312,7 +312,7 @@ export async function runAutoStage1Worker(run) {
 
       let candidates = await searchMultiEngineVideos(searchKeyword, {
         limit: 16,
-        niche: run.niche || 'kitchen_tools',
+        niche: run.niche || 'gadget_smartphone',
         excludeVideoIds: usedYouTubeVideoIds,
         strictIdentity: true,
         youtubeOnly: true,
@@ -359,7 +359,7 @@ export async function runAutoStage1Worker(run) {
           apiKey: undefined,
           options: {
             ...run.options,
-            niche: run.niche || 'kitchen_tools',
+            niche: run.niche || 'gadget_smartphone',
             aiProvider: run.options?.aiProvider || (process.env.ACTIVE_AI_ENGINE === 'gemini' ? 'gemini' : 'openrouter'),
             autoSearchFallback: true,
             multiVideoHarvesting: true,
@@ -569,7 +569,7 @@ export async function runAutoStage1Worker(run) {
           productType,
           model,
           title: lastProductFailure?.title || shopeeCandidate.title,
-          niche: run.niche || 'kitchen_tools',
+          niche: run.niche || 'gadget_smartphone',
           jobId: run.currentJobId,
           autoRunId: run.runId,
           stage: lastProductFailure?.stage,

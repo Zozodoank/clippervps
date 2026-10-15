@@ -71,7 +71,7 @@ export function buildProductFingerprint({ title = '', description = '', productI
   };
 }
 
-export function buildCreativeShotPlan({ fingerprint = {}, niche = 'kitchen_tools' } = {}) {
+export function buildCreativeShotPlan({ fingerprint = {}, niche = 'gadget_smartphone' } = {}) {
   if (niche === 'gadget_smartphone') {
     const topics = [
       ['screen_review', 'Review layar dan antarmuka yang sedang terlihat'],
@@ -159,7 +159,7 @@ export function distributeTotal(rawDurations, total, mins, maxs) {
   return out;
 }
 
-export function conformClipsToVoiceover({ clips = [], script = '', audioDurationSec = 0, creativePlan = {}, niche = 'kitchen_tools' } = {}) {
+export function conformClipsToVoiceover({ clips = [], script = '', audioDurationSec = 0, creativePlan = {}, niche = 'gadget_smartphone' } = {}) {
   if (!Array.isArray(clips) || clips.length === 0) return [];
   // Keep conform output aligned with videoRenderer.normalizeRenderClips(), which
   // rejects auto-mode output below 20s. The old 18s floor produced audio/visual
@@ -416,7 +416,7 @@ export function validateScriptSlotAlignment({
   clips = [],
   creativePlan = {},
   scenes = [],
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   eligibleFramePaths = null,
 } = {}) {
   const preset = getNichePreset(niche);
@@ -503,7 +503,7 @@ export function buildSceneVoSegments({
   clips = [],
   scenes = [],
   creativePlan = {},
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
 } = {}) {
   const clipList = Array.isArray(clips) ? clips : [];
   const sceneList = Array.isArray(scenes) ? scenes : [];

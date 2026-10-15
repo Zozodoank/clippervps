@@ -76,10 +76,14 @@ describe('Niche minVerifiedSources (gate multi-video harvesting)', () => {
     expect(target).toBe(1);
   });
 
-  it('kitchen preset tetap butuh 2 sumber (default lama, tanpa regresi)', () => {
+  it('input "kitchen_tools" di-koersi ke preset gadget → tetap 1 sumber (niche dapur DIHAPUS)', () => {
+    // normalizeNicheId selalu mengembalikan gadget_smartphone; preset kitchen dengan
+    // minVerifiedSources=2 sudah tidak ada. Retry/preflight job legacy akan memperlakukan
+    // job sebagai gadget (1 sumber cukup untuk harvesting).
     const preset = getNichePreset('kitchen_tools');
+    expect(preset.id).toBe('gadget_smartphone');
     const target = Math.max(1, Number(preset?.minVerifiedSources) || 2);
-    expect(target).toBe(2);
+    expect(target).toBe(1);
   });
 });
 

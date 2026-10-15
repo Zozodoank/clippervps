@@ -30,16 +30,16 @@ function makePool(withEligible) {
 
 describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
   describe('getSlotFacePolicy (preset contract)', () => {
-    it('hanya slot kamera gadget (slot 4) yang presenter_only; semua slot gadget lain & kitchen strict', () => {
+    it('hanya slot kamera gadget (slot 4) yang presenter_only; niche dapur DIHAPUS — "kitchen_tools" di-koersi ke preset gadget', () => {
       const gadget = getNichePreset('gadget_smartphone');
-      const kitchen = getNichePreset('kitchen_tools');
+      const kitchenCoerced = getNichePreset('kitchen_tools'); // -> preset gadget (chokepoint)
+      expect(kitchenCoerced.id).toBe('gadget_smartphone');
       expect(getSlotFacePolicy(gadget, 'clip4_camera')).toBe('presenter_only');
       for (const s of gadget.slotsConfig.filter((x) => x.key !== 'clip4_camera')) {
         expect(getSlotFacePolicy(gadget, s.key)).toBe('strict');
       }
-      for (const s of kitchen.slotsConfig) {
-        expect(getSlotFacePolicy(kitchen, s.key)).toBe('strict');
-      }
+      // Slot 4 dari preset hasil-koersi juga presenter_only (identik dengan gadget).
+      expect(getSlotFacePolicy(kitchenCoerced, 'clip4_camera')).toBe('presenter_only');
     });
 
     it('gadget slotsConfig kini 5 slot: slot 1 montage, kamera = slot 4', () => {
@@ -93,10 +93,23 @@ describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
       }
     });
 
-    it('kitchen: frame camera-eligible tidak pernah dipakai slot mana pun', () => {
+    it('niche dapur DIHAPUS: input "kitchen_tools" di-koersi ke gadget, slot 4 boleh pakai frame camera-eligible', () => {
       const frames = makePool(true);
-      const clips = build7SlotStoryboardClips({ parsed: {}, frames, totalDuration: 240, niche: 'kitchen_tools' });
-      expect(clips.every(c => c.startSeconds !== 150)).toBe(true);
+      // Storyboard gadget: slot 4 dipilih memakai frame camera-eligible (ts 150) -
+      // sama dengan perilaku gadget_normal. Input legacy "kitchen_tools" kini identik.
+      const parsed = {
+        storyboard: {
+          clip1_opening_spec: 1,
+          clip2_memory: 4,
+          clip3_durability: 7,
+          clip4_camera: 13,
+          clip5_price_cta: 10,
+        },
+      };
+      const clips = build7SlotStoryboardClips({ parsed, frames, totalDuration: 240, niche: 'kitchen_tools' });
+      const slot4 = clips.find((c) => c.storyboardSlot === 4);
+      expect(slot4).toBeTruthy();
+      expect(slot4.startSeconds).toBe(150);
     });
 
     it('AI memilih frame camera-eligible untuk slot strict: slot tidak mencurinya (dilewati, bukan diisi B-roll)', () => {
@@ -123,10 +136,15 @@ describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
       candidateIndex: 0,
     }));
 
-    it('kitchen (default): klip diekspansi dengan isConformedLoop saat audio lebih panjang', () => {
-      const out = conformClipsToVoiceover({ clips: baseClips, script: '', audioDurationSec: 28, niche: 'kitchen_tools' });
-      expect(out.length).toBeGreaterThan(4);
-      expect(out.some(c => c.isConformedLoop === true)).toBe(true);
+    it('niche dapur DIHAPUS: input "kitchen_tools" di-koersi ke gadget strict; ekspansi loop DILARANG', () => {
+      // Footage teraudit (4 x 3.5s = 14s) < audio (28s) dan ekspansi dilarang (strict) ->
+      // wajib ditolak dengan isRenderPlanShortfall, bukan memaksa loop.
+      const shortClips = Array.from({ length: 4 }, (_, i) => ({
+        startSeconds: i * 4,
+        duration: 3.5,
+        candidateIndex: 0,
+      }));
+      expect(() => conformClipsToVoiceover({ clips: shortClips, script: '', audioDurationSec: 28, niche: 'kitchen_tools' })).toThrow();
     });
 
     it('gadget (strictSceneVoSync): jumlah klip TIDAK diekspansi, durasi di-fit dalam batas footage teraudit', () => {
@@ -159,9 +177,15 @@ describe('Face Policy (Fase 4) - storyboard solver & VO conform', () => {
       }
     });
 
-    it('niche tidak dikenal: fail-safe ke perilaku lama (expansion diizinkan)', () => {
-      const out = conformClipsToVoiceover({ clips: baseClips, script: '', audioDurationSec: 28, niche: 'niche_gaada' });
-      expect(out.some(c => c.isConformedLoop === true)).toBe(true);
+    it('niche tidak dikenal: juga di-koersi ke gadget strict (niche dapur DIHAPUS)', () => {
+      // getNichePreset('niche_gaada') -> preset gadget (normalizeNicheId) ->
+      // strictSceneVoSync=true -> ekspansi loop DILARANG, fail-closed via throw.
+      const shortClips = Array.from({ length: 4 }, (_, i) => ({
+        startSeconds: i * 4,
+        duration: 3.5,
+        candidateIndex: 0,
+      }));
+      expect(() => conformClipsToVoiceover({ clips: shortClips, script: '', audioDurationSec: 28, niche: 'niche_gaada' })).toThrow();
     });
   });
 });

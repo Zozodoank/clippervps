@@ -15,10 +15,13 @@ function seg(over = {}) {
 }
 
 describe('Face Policy (Fase 6) - auditSceneVoLockstep di Final QC', () => {
-  it('kitchen / niche tanpa strictSceneVoSync selalu PASS walau segments kosong', () => {
-    expect(auditSceneVoLockstep({ niche: 'kitchen_tools' })).toMatchObject({ passed: true, skipped: true });
-    expect(auditSceneVoLockstep({ niche: 'kitchen_tools', segments: [], alignment: { ok: false, errors: ['x'] } }).passed).toBe(true);
-    expect(auditSceneVoLockstep({ niche: 'niche_gaada', segments: null }).passed).toBe(true);
+  it('niche dapur DIHAPUS — input apa pun (kitchen_tools/niche_gaada/"") di-koersi ke gadget strict (FAIL bila segments kosong)', () => {
+    // getNichePreset() memakai normalizeNicheId yang selalu mengembalikan preset
+    // gadget_smartphone (strictSceneVoSync=true). Tidak ada lagi niche non-strict.
+    // Semua jalur lama "PASS walau segments kosong" kini FAIL (fail-closed).
+    expect(auditSceneVoLockstep({ niche: 'kitchen_tools' })).toMatchObject({ passed: false, skipped: false });
+    expect(auditSceneVoLockstep({ niche: 'kitchen_tools', segments: [], alignment: { ok: false, errors: ['x'] } }).passed).toBe(false);
+    expect(auditSceneVoLockstep({ niche: 'niche_gaada', segments: null }).passed).toBe(false);
   });
 
   it('gadget strict tanpa segment plan sama sekali menjadi FAIL (fail-closed)', () => {

@@ -1,9 +1,12 @@
 // P2 JARING PENGAMAN — Kontrak NICHE (config/nichePresets.js + resolveNicheFacePolicy).
-// Mengunci: resolusi alias, bentuk 7-slot, kebijakan wajah per-slot, dan generator kata kunci.
+// (Niche dapur DIHAPUS) Sekarang hanya gadget_smartphone yang aktif; semua input lain
+// (kitchen_tools/kitchen/dapur/alias/tak dikenal/'') dikoersi ke gadget_smartphone
+// lewat chokepoint normalizeNicheId.
 import { describe, it, expect } from 'vitest';
 import {
   NICHE_PRESETS,
   DEFAULT_NICHE_ID,
+  normalizeNicheId,
   getNichePreset,
   getAllNiches,
   getSlotFacePolicy,
@@ -13,9 +16,29 @@ import { resolveNicheFacePolicy } from '../services/videoFilterService.js';
 
 const ALL_NICHE_IDS = Object.keys(NICHE_PRESETS);
 
-describe('getNichePreset — resolusi alias & fallback', () => {
-  it('id kanonik kembali ke preset yang tepat', () => {
-    expect(getNichePreset('kitchen_tools').id).toBe('kitchen_tools');
+describe('normalizeNicheId — chokepoint koersi niche', () => {
+  it('selalu mengembalikan DEFAULT_NICHE_ID untuk semua masukan', () => {
+    for (const v of [
+      'kitchen_tools', 'kitchen', 'dapur', 'alat_dapur',
+      'gadget', 'hp', 'smartphone', 'gadget_smartphone', 'ytcliper',
+      '', '   ', undefined, null, 'bukan_niche', '  Kitchen_Tools ',
+    ]) {
+      expect(normalizeNicheId(v)).toBe(DEFAULT_NICHE_ID);
+    }
+  });
+
+  it('DEFAULT_NICHE_ID === gadget_smartphone (niche dapur dihapus)', () => {
+    expect(DEFAULT_NICHE_ID).toBe('gadget_smartphone');
+  });
+
+  it('NICHE_PRESETS hanya berisi gadget_smartphone', () => {
+    expect(ALL_NICHE_IDS).toEqual(['gadget_smartphone']);
+    expect(NICHE_PRESETS.kitchen_tools).toBeUndefined();
+  });
+});
+
+describe('getNichePreset — selalu preset gadget (koersi total)', () => {
+  it('id kanonik gadget kembali ke preset gadget', () => {
     expect(getNichePreset('gadget_smartphone').id).toBe('gadget_smartphone');
   });
 
@@ -25,15 +48,16 @@ describe('getNichePreset — resolusi alias & fallback', () => {
     }
   });
 
-  it('alias kitchen/dapur/alat_dapur => kitchen_tools', () => {
-    for (const alias of ['kitchen', 'dapur', 'alat_dapur']) {
-      expect(getNichePreset(alias).id).toBe('kitchen_tools');
+  it('alias kitchen/dapur/alat_dapur DIKOERSI ke gadget_smartphone', () => {
+    for (const alias of ['kitchen', 'dapur', 'alat_dapur', 'kitchen_tools']) {
+      expect(getNichePreset(alias).id).toBe('gadget_smartphone');
     }
   });
 
   it('case-insensitive & toleran spasi', () => {
     expect(getNichePreset('  Gadget_SmartPhone ').id).toBe('gadget_smartphone');
     expect(getNichePreset('SMARTPHONE').id).toBe('gadget_smartphone');
+    expect(getNichePreset('  Kitchen_Tools ').id).toBe('gadget_smartphone');
   });
 
   it('kosong / tidak dikenal => DEFAULT_NICHE_ID', () => {
@@ -43,12 +67,12 @@ describe('getNichePreset — resolusi alias & fallback', () => {
   });
 });
 
-describe('Kontrak struktur setiap preset niche', () => {
-  it.each(ALL_NICHE_IDS)('%s punya slot berurut dengan field wajib', (id) => {
+describe('Kontrak struktur preset gadget_smartphone (satu-satunya niche)', () => {
+  it.each(ALL_NICHE_IDS)('%s punya 5 slot berurut dengan field wajib', (id) => {
     const preset = NICHE_PRESETS[id];
     expect(preset.id).toBe(id);
     expect(Array.isArray(preset.slotsConfig)).toBe(true);
-    expect(preset.slotsConfig.length).toBe(id === 'gadget_smartphone' ? 5 : 7);
+    expect(preset.slotsConfig.length).toBe(5);
     preset.slotsConfig.forEach((slot, idx) => {
       expect(slot.slot).toBe(idx + 1);
       expect(typeof slot.key).toBe('string');
@@ -60,7 +84,6 @@ describe('Kontrak struktur setiap preset niche', () => {
   it.each(ALL_NICHE_IDS)('%s punya hook/keyword/storyboard terisi', (id) => {
     const preset = NICHE_PRESETS[id];
     expect(Array.isArray(preset.curatedHooks)).toBe(true);
-    if (id !== 'gadget_smartphone') expect(preset.curatedHooks.length).toBeGreaterThan(0);
     expect(Array.isArray(preset.defaultKeywords) && preset.defaultKeywords.length > 0).toBe(true);
     expect(typeof preset.storyboardInstructions).toBe('string');
     expect(preset.storyboardInstructions.length).toBeGreaterThan(0);
@@ -80,9 +103,8 @@ describe('getSlotFacePolicy — default strict, data-driven per slot', () => {
     expect(getSlotFacePolicy({}, 'clip1')).toBe('strict');
   });
 
-  it('slot tanpa facePolicy => strict', () => {
-    expect(getSlotFacePolicy(NICHE_PRESETS.kitchen_tools, 'clip1_full_product')).toBe('strict');
-    expect(getSlotFacePolicy(NICHE_PRESETS.kitchen_tools, 'key-tak-dikenal')).toBe('strict');
+  it('slot tak dikenal => strict', () => {
+    expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'key-tak-dikenal')).toBe('strict');
   });
 
   it('hanya slot sampel kamera gadget (slot 4) yang presenter_only', () => {
@@ -92,33 +114,35 @@ describe('getSlotFacePolicy — default strict, data-driven per slot', () => {
     expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, 'clip8_camera_detail')).toBe('strict');
   });
 
-  it('kitchen_tools: SEMUA slot strict (tidak ada facePolicy non-strict)', () => {
-    for (const slot of NICHE_PRESETS.kitchen_tools.slotsConfig) {
-      expect(getSlotFacePolicy(NICHE_PRESETS.kitchen_tools, slot.key)).toBe('strict');
+  it('slot non-kamera gadget => strict', () => {
+    for (const slot of NICHE_PRESETS.gadget_smartphone.slotsConfig) {
+      if (slot.key === 'clip4_camera') continue;
+      expect(getSlotFacePolicy(NICHE_PRESETS.gadget_smartphone, slot.key)).toBe('strict');
     }
   });
 });
 
 describe('resolveNicheFacePolicy — ringkasan kebijakan wajah niche', () => {
-  it('kitchen => strict', () => {
-    expect(resolveNicheFacePolicy('kitchen_tools')).toBe('strict');
-    expect(resolveNicheFacePolicy('dapur')).toBe('strict');
-  });
-
-  it('gadget_smartphone => presenter_only hanya untuk adegan kamera', () => {
+  it('gadget_smartphone & semua alias (termasuk dapur) => presenter_only', () => {
+    // Karena niche dapur dihapus, input apa pun yang dulunya strict kini
+    // dikoersi ke gadget -> face policy default adalah presenter_only
+    // (slot 4 kamera = satu-satunya non-strict).
     expect(resolveNicheFacePolicy('gadget_smartphone')).toBe('presenter_only');
     expect(resolveNicheFacePolicy('hp')).toBe('presenter_only');
+    expect(resolveNicheFacePolicy('kitchen_tools')).toBe('presenter_only');
+    expect(resolveNicheFacePolicy('dapur')).toBe('presenter_only');
   });
 
-  it('niche tak dikenal => fallback default (strict)', () => {
-    expect(resolveNicheFacePolicy('niche_hantu')).toBe('strict');
+  it('niche tak dikenal => fallback DEFAULT (presenter_only, karena preset = gadget)', () => {
+    expect(resolveNicheFacePolicy('niche_hantu')).toBe('presenter_only');
   });
 });
 
 describe('getAllNiches — bentuk ringkas untuk UI', () => {
-  it('memetakan semua preset ke field tampilan', () => {
+  it('hanya satu entri: gadget_smartphone', () => {
     const list = getAllNiches();
-    expect(list.length).toBe(ALL_NICHE_IDS.length);
+    expect(list.length).toBe(1);
+    expect(list[0].id).toBe('gadget_smartphone');
     for (const n of list) {
       expect(n).toHaveProperty('id');
       expect(n).toHaveProperty('name');

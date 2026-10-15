@@ -87,7 +87,7 @@ import {
   getUsedKeywordsStats,
   clearUsedKeywords
 } from '../../services/discoveryService.js';
-import { getAllNiches, getNichePreset } from '../../config/nichePresets.js';
+import { getAllNiches, getNichePreset, normalizeNicheId } from '../../config/nichePresets.js';
 import {
   buildProductFingerprint,
   buildCreativeShotPlan,
@@ -216,7 +216,7 @@ router.post('/upload-voiceover', upload.single('audio'), async (req, res) => {
       productFingerprint: job.productFingerprint || null,
       aiProvider: job.aiProvider,
       apiKey: undefined,
-      niche: job.niche || 'kitchen_tools',
+      niche: normalizeNicheId(job.niche),
       renderSourcePath: manualRenderSource || '',
       clips: job.highlight?.clips || [],
       hflip: job.hasProductBrand ? false : Boolean(job.highlight?.allowHflip),

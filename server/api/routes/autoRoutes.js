@@ -91,7 +91,7 @@ import {
   getRejectLedgerStats,
   clearRejectLedger
 } from '../../services/productRejectLedger.js';
-import { getAllNiches, getNichePreset } from '../../config/nichePresets.js';
+import { getAllNiches, getNichePreset, normalizeNicheId } from '../../config/nichePresets.js';
 import {
   buildProductFingerprint,
   buildCreativeShotPlan,
@@ -198,13 +198,9 @@ router.post('/auto/start', (req, res) => {
   const parsedMax = Number.parseInt(requestedMax, 10);
   const maxJobs = isUnlimited ? 'unlimited' : (Number.isFinite(parsedMax) && parsedMax > 0 ? parsedMax : 1);
 
-  // #5: Validasi niche SAMA seperti mode manual — alias ('smartphone'/'hp') di-resolve ke
-  // preset, nilai tak dikenal tetap jatuh ke preset default alih-alih lolos mentah ke worker.
-  const availableNicheIds = getAllNiches().map((n) => n.id);
-  const requestedNiche = String(req.body?.niche || 'kitchen_tools').trim().toLowerCase();
-  const resolvedNiche = availableNicheIds.includes(requestedNiche)
-    ? requestedNiche
-    : getNichePreset(requestedNiche).id;
+  // #5: Niche tunggal = gadget_smartphone (niche dapur DIHAPUS). normalizeNicheId
+  // mengkoersi nilai apa pun (legacy 'kitchen_tools'/alias/kosong) sebelum masuk worker.
+  const resolvedNiche = normalizeNicheId(req.body?.niche);
 
   const options = req.body?.options || {};
   const runId = `autorun_${crypto.randomBytes(4).toString('hex')}`;

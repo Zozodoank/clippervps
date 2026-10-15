@@ -193,8 +193,11 @@ export function buildConfigSnapshot(env = process.env, jobOptions = {}) {
     snapshot[key] = normalize(env);
   }
   // Input per-job: niche & sourcePolicy sudah diketahui saat create; bekukan agar retry
-  // tidak jatuh ke preset default saat flag/opsi global berubah.
-  snapshot.niche = jobOptions.niche || 'kitchen_tools';
+  // tidak jatuh ke preset default saat flag/opsi global berubah. Niche SELALU dikoersi ke
+  // gadget_smartphone (niche dapur DIHAPUS — setara normalizeNicheId() di nichePresets;
+  // di-inline agar runtimeFlags tetap leaf tanpa edges impor baru yang dapat mengganggu
+  // graph modul vitest). Nilai legacy 'kitchen_tools' dari snapshot lama ikut ter-koersi.
+  snapshot.niche = 'gadget_smartphone';
   snapshot.sourcePolicy = jobOptions.sourcePolicy || '';
   snapshot._frozenAt = new Date().toISOString();
   return snapshot;

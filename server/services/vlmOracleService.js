@@ -647,7 +647,7 @@ export function normalizeGridVerdict(verdict, sourceFrames, fallbackError = '') 
  */
 export async function sanitizePoolWithOracle(frames = [], opts = {}) {
   const {
-    jobId = '', niche = 'kitchen_tools', facePolicy = 'strict',
+    jobId = '', niche = 'gadget_smartphone', facePolicy = 'strict',
     logger = console, env = process.env, onProgress = null, outDir = null,
     strict = isOracleStrictMode(env),
   } = opts;
@@ -814,7 +814,7 @@ export async function sanitizePoolWithOracle(frames = [], opts = {}) {
  *
  * Mode oracle OFF -> `frames` dikembalikan utuh, tanpa efek samping apa pun.
  */
-export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', blacklisted = null, onProgress = null, logger = console, env = process.env, outDir = null, strict } = {}) {
+export async function applyOracleVeto(frames = [], { jobId = '', niche = 'gadget_smartphone', facePolicy = 'strict', blacklisted = null, onProgress = null, logger = console, env = process.env, outDir = null, strict } = {}) {
   const res = await sanitizePoolWithOracle(frames, { jobId, niche, facePolicy, onProgress, logger, env, outDir, strict });
   if (!res.enabled) return { frames, ...res };
   if (res.blacklisted.length && blacklisted && typeof blacklisted.add === 'function') {
@@ -845,7 +845,7 @@ export async function applyOracleVeto(frames = [], { jobId = '', niche = 'kitche
  */
 export async function auditClipsWithOracle(clips = [], frameGroups = [], opts = {}) {
   const {
-    jobId = '', niche = 'kitchen_tools', facePolicy = 'strict',
+    jobId = '', niche = 'gadget_smartphone', facePolicy = 'strict',
     logger = console, env = process.env, onProgress = null, outDir = null,
     strict = isOracleStrictMode(env),
   } = opts;
@@ -1042,7 +1042,7 @@ export const PREFLIGHT_SCENE_BASE = 20000;
  */
 export async function preflightCandidatesWithOracle(candidates = [], opts = {}) {
   const {
-    jobId = '', niche = 'kitchen_tools', facePolicy = 'strict', productName = '',
+    jobId = '', niche = 'gadget_smartphone', facePolicy = 'strict', productName = '',
     outDir = null, logger = console, env = process.env, onProgress = null,
     extractFrames = null, maxCandidates = 3, snippetSeconds = 15, keepFrames = false,
     strict = isOracleStrictMode(env),

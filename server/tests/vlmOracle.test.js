@@ -283,7 +283,7 @@ describe('jobStore oracle queue', () => {
   const frames = [{ index: 0, filePath: '/tmp/a.jpg', timestampMs: 0 }, { index: 1, filePath: '/tmp/b.jpg', timestampMs: 1000 }];
 
   it('klaim atomik: pekerja kedua tidak mendapat batch yang sama', () => {
-    enqueueOracleBatch({ id: 'q_atomic', jobId: 'job1', frames, niche: 'kitchen_tools', prompt: 'p' });
+    enqueueOracleBatch({ id: 'q_atomic', jobId: 'job1', frames, niche: 'gadget_smartphone', prompt: 'p' });
     const first = claimOracleBatch({ workerId: 'nb1' });
     expect(first.id).toBe('q_atomic');
     expect(first.status).toBe('claimed');

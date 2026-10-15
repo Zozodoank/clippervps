@@ -21,7 +21,7 @@ export default function App() {
     productTitle: '',
     productDescription: '',
     oemUrls: [''],
-    niche: (() => { try { return localStorage.getItem('clipper_niche') || 'kitchen_tools'; } catch { return 'kitchen_tools'; } })(),
+    niche: (() => { try { return localStorage.getItem('clipper_niche') || 'gadget_smartphone'; } catch { return 'gadget_smartphone'; } })(),
   }));
 
   const [settings, setSettings] = useState({
@@ -154,7 +154,7 @@ export default function App() {
         // Reset form setelah simpan
         setFormData({
           youtubeUrl: '', shopeeLink: '', productTitle: '', productDescription: '', oemUrls: [''],
-          niche: formData.niche || 'kitchen_tools',
+          niche: formData.niche || 'gadget_smartphone',
         });
       }
     } catch (err) {
@@ -266,11 +266,11 @@ export default function App() {
           youtubeUrls: [currentForm.youtubeUrl, ...(Array.isArray(currentForm.oemUrls) ? currentForm.oemUrls : [])]
             .flatMap((value) => String(value || '').split(/[\s,;]+/).map((url) => url.trim()).filter(Boolean)),
           aiProvider: settings.aiProvider || engineStatus?.activeAiEngine || 'gemini',
-          niche: currentForm.niche || 'kitchen_tools',
+          niche: currentForm.niche || 'gadget_smartphone',
           options: {
             ...settings,
             aiProvider: settings.aiProvider || engineStatus?.activeAiEngine || 'gemini',
-            niche: currentForm.niche || 'kitchen_tools',
+            niche: currentForm.niche || 'gadget_smartphone',
           },
         }),
       });
@@ -348,7 +348,7 @@ export default function App() {
       productTitle: job.productTitle || formData.productTitle,
       productDescription: job.productDescription || formData.productDescription,
       oemUrls: Array.isArray(job.oemUrls) ? job.oemUrls : (formData.oemUrls || ['']),
-      niche: job.niche || formData.niche || 'kitchen_tools',
+      niche: job.niche || formData.niche || 'gadget_smartphone',
     };
     setFormData(restoredForm);
     lastFormDataRef.current = restoredForm;

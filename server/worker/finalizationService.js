@@ -123,7 +123,7 @@ export async function conformExistingJobEditToAudio({
   });
   const creativePlan = job.creativePlan || buildCreativeShotPlan({
     fingerprint,
-    niche: job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools'),
+    niche: 'gadget_smartphone', // niche dapur DIHAPUS; koersi eksplisit di sini meniru normalizeNicheId()
   });
 
   const conformedClips = conformClipsToVoiceover({
@@ -132,7 +132,7 @@ export async function conformExistingJobEditToAudio({
     audioDurationSec,
     creativePlan,
     // FACE POLICY (Fase 4): niche diteruskan agar strictSceneVoSync melarang loop expansion
-    niche: job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools'),
+    niche: 'gadget_smartphone', // niche dapur DIHAPUS; koersi eksplisit di sini meniru normalizeNicheId()
   });
   if (!conformedClips.length) {
     const err = new Error(`Daftar klip kosong setelah audio conform. Pastikan job.highlight.clips memiliki data sebelum merender ulang/mengedit draft.`);
@@ -142,7 +142,9 @@ export async function conformExistingJobEditToAudio({
   }
 
   // Fase 6: segment plan Scene<->VO dihitung ulang setiap conform agar lockstep tetap akurat
-  const conformNiche = job.niche || (job.productCategory === 'gadget_smartphone' ? 'gadget_smartphone' : 'kitchen_tools');
+  // (Niche dapur DIHAPUS) conformNiche SELALU gadget_smartphone; koersi eksplisit
+  // meniru normalizeNicheId() agar job legacy (job.niche='kitchen_tools') ikut ter-koersi.
+  const conformNiche = 'gadget_smartphone';
   const eligibleCamPaths = new Set(
     (Array.isArray(job.pooledFrames) ? job.pooledFrames : [])
       .filter(f => f && f.isCameraResultEligible === true && f.filePath)
@@ -212,7 +214,7 @@ export async function runProfessionalFinalQcWithRepair({
   productFingerprint,
   aiProvider,
   apiKey,
-  niche = 'kitchen_tools',
+  niche = 'gadget_smartphone',
   renderSourcePath = '',
   clips = [],
   hflip = false,
@@ -527,7 +529,7 @@ async function _processJobVoiceover(jobId, customScript = null, options = {}) {
       productFingerprint: job.productFingerprint || null,
       aiProvider: job.aiProvider,
       apiKey: options.geminiApiKey,
-      niche: job.niche || 'kitchen_tools',
+      niche: 'gadget_smartphone', // niche dapur DIHAPUS; koersi eksplisit di worker-internal
       renderSourcePath: retryRenderSource || '',
       clips: job.highlight?.clips || [],
       hflip: job.hasProductBrand ? false : Boolean(job.highlight?.allowHflip),

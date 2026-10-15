@@ -4,14 +4,6 @@ import { withAuthQuery } from '../utils/auth.js';
 
 const DEFAULT_NICHES = [
   {
-    id: 'kitchen_tools',
-    name: 'Alat Dapur & Kebutuhan Rumah',
-    shortName: 'Alat Dapur',
-    icon: '🍳',
-    tagline: 'Video affiliate alat dapur, perabot praktis & pembersih faceless hands-on.',
-    badgeColor: '#10b981',
-  },
-  {
     id: 'gadget_smartphone',
     name: 'Smartphone & Gadget Viral',
     shortName: 'Smartphone & Gadget',
@@ -30,9 +22,12 @@ export default function AutoModePanel({ settings, onHistoryRefresh }) {
   const [availableNiches, setAvailableNiches] = useState(DEFAULT_NICHES);
   const [selectedNiche, setSelectedNiche] = useState(() => {
     try {
-      return localStorage.getItem('clipper_niche') || 'kitchen_tools';
+      // (Niche dapur DIHAPUS) Default lama 'kitchen_tools' dipaksa kembali ke
+      // satu-satunya niche yang aktif. localStorage legacy juga di-overwrite.
+      const stored = localStorage.getItem('clipper_niche');
+      return stored === 'gadget_smartphone' ? stored : 'gadget_smartphone';
     } catch {
-      return 'kitchen_tools';
+      return 'gadget_smartphone';
     }
   });
 
