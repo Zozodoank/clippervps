@@ -5,7 +5,7 @@ import fetch from 'node-fetch';
 import * as cheerio from 'cheerio';
 import https from 'https';
 import { searchYouTubeVideos, extractVideoId, buildCleanYouTubeQuery, DIRTY_NEGATIVE_OPERATORS } from './downloader.js';
-import { getNichePreset, generateCombinatorialGadgetKeywords } from '../config/nichePresets.js';
+import { getNichePreset, generateCombinatorialGadgetKeywords, normalizeNicheId, DEFAULT_NICHE_ID } from '../config/nichePresets.js';
 import { getMinVideoDurationSec, getMaxVideoDurationSec } from '../config/videoLimits.js';
 // Pencatatan pemakaian AI (usageMetadata) — lihat services/aiUsageService.js.
 // Modul ini tidak punya jobId sendiri; identitas job diisi otomatis dari konteks
@@ -1962,11 +1962,23 @@ export function pickValidIdentitySearchQuery(brand = '', productType = '', model
   }) || '';
 }
 
+// Identitas merek ponsel yang umum dipakai seed Auto Mode. Dipakai juga sebagai
+// penanda teks di isSmartphoneDiscovery() agar query "poco x6 pro review" (tanpa
+// kata 'hp/smartphone') tetap masuk jalur gadget yang ketat.
+const SMARTPHONE_BRAND_RE = /\b(?:poco|redmi|infinix|samsung|galaxy|xiaomi|realme|tecno|vivo|oppo|iqoo|itel|nubia|zonji|cubot|doogee)\b/i;
+
 function isSmartphoneDiscovery(niche = '', text = '') {
-  // Deteksi berbasis TEKS produk, bukan preset niche: sejak niche runtime selalu
-  // gadget_smartphone (normalizeNicheId), cek preset akan membuat SEMUA produk
-  // dianggap ponsel. Argumen `niche` tetap diterima untuk kompatibilitas caller.
-  return /\b(?:smartphone|handphone|ponsel|hp)\b/i.test(String(text || ''));
+  const value = String(text || '');
+  // 1) Teks produk menyebut kategori ponsel -> jalur gadget ketat.
+  if (/\b(?:smartphone|handphone|ponsel|hp)\b/i.test(value)) return true;
+  // 2) Teks produk menyebut merek ponsel (query Auto Mode biasanya hanya "merk model").
+  if (SMARTPHONE_BRAND_RE.test(value)) return true;
+  // 3) Caller EKSPISIT mengirim niche (auto mode / render fallback / retry) -> engine
+  //    gadget -> jalur ketat, sama seperti sebelum niche dapur dihapus. Yang mengirim
+  //    string kosong (mis. buildDynamicProductSearchQueries, yang tidak tahu niche sama
+  //    sekali) tetap ke jalur generik berdasarkan teks, bukan dianggap ponsel.
+  const rawNiche = String(niche || '').trim();
+  return rawNiche !== '' && normalizeNicheId(rawNiche) === DEFAULT_NICHE_ID;
 }
 
 /** Reject recommendation/listicle titles before treating them as a single product or source video. */
