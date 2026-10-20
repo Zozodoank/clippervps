@@ -25,7 +25,7 @@ Aplikasi dijalankan di VPS dan diakses secara remote/lokal:
 
 ### Verifikasi visual dan voice-over
 
-* **Kaggle TIDAK dipakai di jalur produksi** (dihentikan 2026-10; folder `kaggle/` hanya arsip — lihat `kaggle/DEPRECATED.md`). Jangan menyalakan kembali launcher/notebook Kaggle tanpa keputusan eksplisit operator.
+* **Kaggle TIDAK dipakai di jalur produksi** (dihentikan 2026-10; folder `archive/kaggle/` hanya arsip — lihat `archive/kaggle/DEPRECATED.md`). Jangan menyalakan kembali launcher/notebook Kaggle tanpa keputusan eksplisit operator.
 * Gatekeeper lokal telah dihapus dari jalur runtime. Mode produksi wajib menggunakan Oracle lokal Qwen (VPS); kegagalan, timeout, atau vonis tidak sah menghentikan job.
 * Frame langsung dan setiap grid/montage yang diunggah ke Oracle harus tepat 9:16.
 * Voice-over hanya memakai Gemini TTS. Jangan menambahkan atau mengaktifkan provider TTS lain.

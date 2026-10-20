@@ -2,7 +2,7 @@
 #
 # Cara pakai (PowerShell di PC, setelah `bash syn.sh` jalan di Termux):
 #   $env:TERMUX_SSH_PASS='password_anda'
-#   python setup-ssh-key.py [--ip 10.162.195.166] [--user u0_aNNN] [--port 8022]
+#   python archive/ops/setup-ssh-key.py [--ip 10.162.195.166] [--user u0_aNNN] [--port 8022]
 #
 # Password TIDAK pernah dicetak script ini; ambil dari env TERMUX_SSH_PASS.
 # Username Termux dilihat dari hasil 'whoami' di Termux (biasanya u0_aNNN).

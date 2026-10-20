@@ -46,13 +46,13 @@ copy/
 *cookies*.txt
 server/cookies.txt
 # Kaggle API credentials (username + key) - JANGAN PERNAH commit, dan revoke bila
-# pernah tersentuh folder yang di-share. Lihat kaggle/vlm_oracle_qwen.py.
+# pernah tersentuh folder yang di-share. Lihat archive/kaggle/vlm_oracle_qwen.py.
 kaggle.json
 .kaggle/
-# Hasil staging kaggle/deploy.ps1: berisi metadata dengan username Kaggle asli,
+# Hasil staging archive/kaggle/deploy.ps1: berisi metadata dengan username Kaggle asli,
 # dan oracle_config.json yang memuat URL tunnel + API_ACCESS_TOKEN.
-kaggle/.deploy/
-kaggle/.deploy-config/
+archive/kaggle/.deploy/
+archive/kaggle/.deploy-config/
 
 # AI Gatekeeper Model weights & test cache
 server/gatekeeper/models/*.onnx

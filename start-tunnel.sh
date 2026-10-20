@@ -26,7 +26,7 @@
 #                    (`ngrok config add-authtoken ...`), lihat ngrok.md.
 #   TUNNEL_PORT      (input)  default 5000 = port API
 #   CLOUDFLARE_TUNNEL_URL  (output, ditulis ke server/.env) URL aktif. Nama key-nya SENGAJA
-#                    dipertahankan karena kaggle/deploy.ps1 -FromTermux membaca key ini.
+#                    dipertahankan karena archive/kaggle/deploy.ps1 -FromTermux membaca key ini.
 #   PUBLIC_BASE_URL  (output) izin CORS - tokenAuth.getExplicitCorsOrigins()
 #   VLM_ORACLE_BASE_URL (output) tampil di /api/vlm-oracle/status (informasi saja)
 #
@@ -62,7 +62,7 @@ read_env() {
 # Tulis ke SEMUA berkas yang sudah memuat key itu, dan selalu jamin server/.env terisi.
 # Kenapa wajib dua berkas: envLoader memuat root .env TERAKHIR sehingga nilainya menang.
 # Terukur 2026-10-03 di perangkat: baris 44 root .env masih berisi quick tunnel
-# trycloudflare yang sudah mati, sementara kaggle/deploy.ps1 -FromTermux membaca
+# trycloudflare yang sudah mati, sementara archive/kaggle/deploy.ps1 -FromTermux membaca
 # server/.env - kalau hanya server/.env yang ditulis, Node akan memakai URL mati sementara
 # Kaggle dikirim URL baru (CORS/postur keamanan jadi tidak cocok dengan vonis yang datang).
 write_env() {

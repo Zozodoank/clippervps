@@ -2,7 +2,7 @@
 
 > **CATATAN 2026-10 (VPS-only):** Oracle kini **Qwen lokal di VPS** (`llama-server` +
 > `server/oracle_local/worker.py` via loopback) — alur kerja job TIDAK bergantung tunnel publik.
-> Bagian "Sambungkan ke Kaggle" di bawah adalah **arsip mode lama** (lihat `kaggle/DEPRECATED.md`).
+> Bagian "Sambungkan ke Kaggle" di bawah adalah **arsip mode lama** (lihat `archive/kaggle/DEPRECATED.md`).
 > Tunnel masih berguna untuk membuka dashboard dari luar jaringan lokal.
 
 Dokumen ini menggantikan kebiasaan "salin URL trycloudflare setiap restart". Ngrok plan gratis
@@ -236,7 +236,7 @@ Skrip mencetak baris `(key ... juga diperbarui di root .env)` saat melakukan itu
 
 `CLOUDFLARE_TUNNEL_URL` / `PUBLIC_BASE_URL` dipakai untuk dua hal: izin CORS
 (`getExplicitCorsOrigins`) dan peringatan postur keamanan saat boot. **Nama variabelnya masih
-berawalan `CLOUDFLARE_`, tapi isinya URL ngrok** — `kaggle/deploy.ps1 -FromTermux` memang
+berawalan `CLOUDFLARE_`, tapi isinya URL ngrok** — `archive/kaggle/deploy.ps1 -FromTermux` memang
 mengambil URL dari variabel bernama itu. Ini disengaja agar tidak ada kode yang berubah; kalau
 membingungkan, suatu saat bisa diberi alias `NGROK_TUNNEL_URL`.
 

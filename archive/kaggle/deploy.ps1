@@ -3,7 +3,7 @@
 #
 # Kenapa CLI dan bukan copy-paste di UI:
 #   - push = Kaggle langsung menjalankan versi baru (tidak perlu tekan Run);
-#   - bisa diulang tiap kali kaggle/vlm_oracle_qwen.py berubah;
+#   - bisa diulang tiap kali archive/kaggle/vlm_oracle_qwen.py berubah;
 #   - log eksekusi bisa ditarik ke PC dengan -Logs (UI hanya menampilkan di browser);
 #   - kredensial dibaca dari repo (server/.env / kaggle.json), tidak ada file rahasia
 #     yang perlu ditaruh manual di ~/.kaggle.
@@ -40,7 +40,7 @@
 # memegang GPU sambil looping, jadi SELALU pakai -RunTimeoutSec saat dry-run.
 #
 # Nilai rahasia tidak pernah dicetak ke terminal maupun masuk git (staging di
-# kaggle/.deploy* yang sudah di-gitignore).
+# archive/kaggle/.deploy* yang sudah di-gitignore).
 # ============================================================================
 param(
     [switch]$Logs,
@@ -64,7 +64,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = Split-Path -Parent $PSScriptRoot            # kaggle/ -> root repo
+$repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)  # archive/kaggle/ -> root repo
 $stageDir = Join-Path $PSScriptRoot '.deploy'           # kernel staging (gitignored)
 $cfgDir = Join-Path $PSScriptRoot '.deploy-config'      # dataset staging (gitignored)
 $scriptFile = Join-Path $PSScriptRoot 'vlm_oracle_qwen.py'

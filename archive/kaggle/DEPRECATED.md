@@ -1,5 +1,8 @@
 # ⚠️ DEPRECATED — Folder ini TIDAK dipakai jalur produksi (sejak 2026-10)
 
+> **2026-10-20:** folder ini pindah dari `kaggle/` ke `archive/kaggle/` sebagai bagian
+> dari pemberesan root repo. Isi dan cara pakainya tidak berubah; hanya jalurnya.
+
 Sejak migrasi **VPS-only**, seluruh vonis visual ditangani **Oracle lokal Qwen2.5-VL**
 yang berjalan di VPS yang sama dengan backend:
 
@@ -8,7 +11,7 @@ yang berjalan di VPS yang sama dengan backend:
 - Gerbang + auto-start: `server/services/oracleLocalSupervisor.js` (`pm2 restart llama-server oracle-worker`)
 
 **Tidak ada satu pun file produksi** (`server/**`, `dev-runner.js`, skrip setup/menu) yang
-memanggil kode di folder ini. Folder `kaggle/` dipertahankan HANYA sebagai:
+memanggil kode di folder ini. Folder `archive/kaggle/` dipertahankan HANYA sebagai:
 
 1. **Arsip rollback** — bila suatu saat operator ingin menjalankan worker di GPU Kaggle lagi
    (di luar scope arsitektur saat ini).
@@ -31,7 +34,7 @@ memanggil kode di folder ini. Folder `kaggle/` dipertahankan HANYA sebagai:
    (saat ini dikomentari sebagai arsip).
 2. Kembalikan gerbang lama: file `server/services/oracleLauncherService.js` ada di histori
    git (commit sebelum "vps-only: oracle lokal Qwen menggantikan Kaggle").
-3. Jalankan `powershell -ExecutionPolicy Bypass -File kaggle/deploy.ps1 -FromTermux ...`
+3. Jalankan `powershell -ExecutionPolicy Bypass -File archive/kaggle/deploy.ps1 -FromTermux ...`
    dan nyalakan tunnel publik (lihat `ngrok.md`) karena arah panggilan balik menjadi
    notebook → API server.
 

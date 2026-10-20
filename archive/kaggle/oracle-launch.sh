@@ -16,9 +16,9 @@
 # env KAGGLE_USER bila hanya token API yang ada.
 #
 # Pemakaian:
-#   bash kaggle/oracle-launch.sh              # push penuh -> sesi GPU baru
-#   bash kaggle/oracle-launch.sh --dry-run    # stage + dataset config, TANPA push
-#   bash kaggle/oracle-launch.sh --logs       # juga tarik log sesi terakhir
+#   bash archive/kaggle/oracle-launch.sh              # push penuh -> sesi GPU baru
+#   bash archive/kaggle/oracle-launch.sh --dry-run    # stage + dataset config, TANPA push
+#   bash archive/kaggle/oracle-launch.sh --logs       # juga tarik log sesi terakhir
 # Skip otomatis: bila heartbeat notebook masih segar (< VLM_ORACLE_STALE_SEC,
 # default 300 dtk) berarti sesi sudah hidup -> tidak ada sesi ganda yang
 # membakar kuota. Diag + override: ORACLE_LAUNCH_SKIP_LIVE=0, --force.
@@ -27,7 +27,7 @@
 set -u
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-root_dir="$(dirname "$script_dir")"
+root_dir="$(dirname "$(dirname "$script_dir")")"   # archive/kaggle/ -> root repo
 stage_dir="$script_dir/.deploy"
 cfg_dir="$script_dir/.deploy-config"
 log_file="$root_dir/logs/oracle-launch.log"

@@ -1,6 +1,6 @@
 # Panduan Setup Oracle Lokal (Qwen2.5-VL-3B) di VPS Ubuntu 22.04
 
-Dokumen ini adalah runbook lengkap untuk menyiapkan dan menjalankan **ClipperVPS** secara penuh di VPS Ubuntu 22.04. Semua vonis visual ditangani **Oracle lokal Qwen** (`llama-server` + `server/oracle_local/worker.py`) yang berjalan di VPS yang sama dengan backend. **Kaggle tidak ada di jalur produksi** (folder `kaggle/` hanya arsip, lihat `kaggle/DEPRECATED.md`).
+Dokumen ini adalah runbook lengkap untuk menyiapkan dan menjalankan **ClipperVPS** secara penuh di VPS Ubuntu 22.04. Semua vonis visual ditangani **Oracle lokal Qwen** (`llama-server` + `server/oracle_local/worker.py`) yang berjalan di VPS yang sama dengan backend. **Kaggle tidak ada di jalur produksi** (folder `archive/kaggle/` hanya arsip, lihat `archive/kaggle/DEPRECATED.md`).
 
 ## 1. Persiapan VPS (Otomatis)
 
