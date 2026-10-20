@@ -30,7 +30,7 @@ Aplikasi dijalankan di VPS dan diakses secara remote/lokal:
 * Frame langsung dan setiap grid/montage yang diunggah ke Oracle harus tepat 9:16.
 * Voice-over hanya memakai Gemini TTS. Jangan menambahkan atau mengaktifkan provider TTS lain.
 
-## ?? Alur Kerja Sinkronisasi Kode
+## 🔄 Alur Kerja Sinkronisasi Kode
 
 Semua perubahan kode di-commit dan di-push ke repo, lalu ditarik di masing-masing perangkat:
 
@@ -40,7 +40,7 @@ git pull origin main          # di perangkat tujuan (PC / Termux)
 npm run dev                   # jalankan ulang secara lokal
 ```
 
-## ?? Cara Akses Aplikasi
+## 🌐 Cara Akses Aplikasi
 
 1. Di perangkat yang menjalankan: `http://localhost:3000`.
 2. Dari perangkat lain di Wi-Fi yang sama: `http://<IP-LAN>:3000`.

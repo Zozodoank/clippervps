@@ -2,9 +2,29 @@
 
 > 💻 **Project Status: Berjalan sepenuhnya lokal di perangkat Anda (PC Windows & HP Android/Termux)**  
 > Repository GitHub: [https://github.com/Zozodoank/clippervps.git](https://github.com/Zozodoank/clippervps.git)  
-> ClipperVPS berjalan lokal di Windows atau Android/Termux. Seluruh keputusan visual dilakukan Oracle Kaggle; setiap gambar yang dikirim dipastikan berasio 9:16. Voice-over memakai Gemini TTS.
+> ClipperVPS berjalan lokal di Windows atau Android/Termux. Seluruh keputusan visual dilakukan **Oracle lokal Qwen di VPS** (`llama-server` + `server/oracle_local/worker.py`); setiap gambar yang dikirim dipastikan berasio 9:16. Voice-over memakai Gemini TTS.
 
 Web application berbasis **React (Vite)** dan **Node.js (Express)** yang bertugas mengotomatisasi pengubahan video YouTube menjadi **video reels vertikal 9:16 viral & high-converting** untuk promosi **Shopee Affiliate Marketing**. Seluruh pemrosesan berat (analisa stream, ekstraksi frame, FFmpeg rendering, dan AI vision) dijalankan langsung di perangkat Anda (tanpa server cloud).
+
+---
+
+## 🗺️ Peta Dokumen
+
+Dokumen **sengaja tinggal di root** — tidak dipindahkan ke `docs/` — karena sebagian dirujuk oleh kode, skrip ops, dan agen AI yang hanya memuat file identitas di root repo.
+
+| Berkas | Isi | Status | Dibaca / dirujuk oleh |
+|---|---|---|---|
+| `AGENTS.md` | Identitas proyek + aturan arsitektur untuk agen AI | **Aktif** — wajib di root (konvensi agen) | Dimuat otomatis oleh agen coding |
+| `GEMINI.md` | Salinan identik `AGENTS.md` untuk agen yang memuat nama file itu | **Aktif** — jangan diedit terpisah; sinkronkan dari `AGENTS.md` | Dimuat otomatis oleh agen Gemini |
+| `BACKEND_WORKFLOW_MAP.md` | Peta alur backend: rute → service → worker | **Aktif** | Tidak dirujuk kode; panduan manual/agen |
+| `ORACLE_VPS.md` | Runbook VPS Ubuntu 22.04: PM2, `llama-server`, oracle worker, proxy/privoxy | **Aktif** — sumber kebenaran operasional | `ecosystem.config.cjs#L7`, `server/.env.example`, `videoFilterService.js`, `CARA_JALANKAN_TERMUX.md` |
+| `CARA_JALANKAN_TERMUX.md` | Langkah menjalankan langsung di HP Android/Termux | **Aktif** | Tautan di bagian “Dari HP Android (Termux)” di bawah |
+| `ngrok.md` | Tutorial tunnel ngrok/cloudflared + catatan keamanan | **Aktif** (tunnel bersifat opsional) | `start-tunnel.sh`, `menu-vps.sh`, `server/.env.example`, `ORACLE_VPS.md` |
+| `AUDIT_HEMAT_TOKEN.md` | Audit pemakaian token/pemborosan biaya API | **Arsip analisis** — bukan spesifikasi | Tidak dirujuk kode |
+| `RANGKUMAN_CLIPPER.md` | Ringkasan fitur & keputusan yang pernah diambil | **Arsip keputusan** — bukan spesifikasi | Tidak dirujuk kode |
+| `server/TALING_DICTIONARY.md` | Kamus pengucapan Taling untuk Gemini TTS | ⚠️ **DATA RUNTIME — jangan dipindah** | `server/services/phoneticData.js` (dibaca setiap boot) |
+| `server/gatekeeper/PANDUAN_TRAINING_AI.md`, `server/gatekeeper/ZONE_TEXT_DISTILLATION_AUDIT.md` | Cara melatih model gatekeeper (offline) | **Offline** — model tidak dipakai di jalur runtime | Skrip latih `server/gatekeeper/*.py` |
+| `archive/README.md` | Indeks arsip: jalur Kaggle mati, catatan lama, alat SSH | **Arsip** | `archive/kaggle/DEPRECATED.md` |
 
 ---
 
@@ -16,11 +36,11 @@ Jalankan dari terminal di folder proyek:
 npm install
 npm run dev
 ```
-`dev-runner.js` menyalakan Backend (`:5000`) dan Frontend (`:3000`). Oracle Kaggle menjadi satu-satunya pemutus visual.
+`dev-runner.js` menyalakan Backend (`:5000`) dan Frontend (`:3000`). Oracle lokal Qwen di VPS menjadi satu-satunya pemutus visual.
 
 ### 2. Dari HP Android (Termux)
 Panduan lengkap menjalankan langsung di HP Android (Termux) dapat dilihat di:  
-👉 **[CARA_JALANKAN_TERMUX.md](file:///c:/Users/SEMOGA%20AWET/Documents/clipperVPS/CARA_JALANKAN_TERMUX.md)**
+👉 **[CARA_JALANKAN_TERMUX.md](./CARA_JALANKAN_TERMUX.md)**
 
 
 ---
