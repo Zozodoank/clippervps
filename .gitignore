@@ -75,3 +75,15 @@ scratch/
 
 # Catatan lokal pribadi (tidak dilacak ke repo)
 syarat proxy sock5.txt
+
+# Artefak Git & runtime yang tidak boleh dilacak
+# (.git-rewrite = sisa git filter-branch; *.sqlite/*.migrated = file runtime mati,
+#  DB produksi aktif adalah server/jobs.db yang sudah tertutup pola *.db di atas)
+.git-rewrite/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.migrated
+.venv/
+server/rejected_frames/
+.qoder/

@@ -4,4 +4,6 @@
 *.jsx text eol=lf
 *.json text eol=lf
 *.md text eol=lf
+# Skrip Python dijalankan di Termux/VPS (worker.py, gatekeeper/*.py) -> wajib LF
+*.py text eol=lf
 .env* text eol=lf
