@@ -29,6 +29,27 @@ module.exports = {
       interpreter: '/bin/bash',
       autorestart: true,
       time: true,
+      // Batas memori oracle-worker. 1200M = nilai PROVISIONAL yang sengaja longgar
+      // (belum diukur di VPS). Aturan penerimaan: cap = >= 2x RSS tertinggi teramati,
+      // lantai 400M - lihat prosedur "Perubahan PM2" di ORACLE_VPS.md. Anggaran 8 GB:
+      // llama-server 2500M + clipper 900M + oracle-worker 1200M = 4600M, sisa ~3,5 GB
+      // untuk OS & page cache.
+      // Cap ini EFEKTIF karena run-worker.sh L19 memakai `exec "$PYTHON_BIN" worker.py`
+      // -> PID yang dipantau PM2 adalah python itu sendiri. Kalau `exec` hilang (mis.
+      // dibungkus wrapper lagi), PM2 hanya membunuh shell sementara worker.py tetap
+      // hidup: cek ulang dengan `pm2 describe oracle-worker`.
+      // Worker yang mati di tengah batch TIDAK menghilangkan vonis: batch dilepas lewat
+      // mekanisme staleMs (claimOracleBatch, VLM_ORACLE_STALE_SEC default 300 dtk) lalu
+      // di-claim ulang, maksimal VLM_ORACLE_MAX_ATTEMPTS (default 2) percobaan. Karena
+      // itu cap harus longgar: restart paksa yang memakan salah satu dari 2 jatah
+      // percobaan akan membuat batch 'expired' dan waktu oracle terbuang.
+      max_memory_restart: '1200M',
+      min_uptime: '10s',
+      // Kunci yang benar: exp_backoff_restart_delay (ms). `exp_backoff: true` TIDAK ada
+      // di skema PM2 dan akan diabaikan diam-diam. Jangan digabung dengan restart_delay
+      // (pilih salah satu); bila `pm2 describe oracle-worker` tidak menunjukkan backoff
+      // pada PM2 versi lama, mundurlah ke restart_delay: 3000.
+      exp_backoff_restart_delay: 1000,
     },
     {
       name: 'clipper',

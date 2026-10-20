@@ -98,6 +98,45 @@ curl -s -H "x-api-token: $API_ACCESS_TOKEN" http://127.0.0.1:5000/api/vlm-oracle
 # → "connected": true dalam ≤ 30 detik setelah oracle-worker online
 ```
 
+### 3b. Perubahan PM2 (batas memori `oracle-worker`)
+
+`llama-server` (2500M) dan `clipper` (900M) sudah punya `max_memory_restart`; `oracle-worker`
+adalah aplikasi terakhir tanpa pagar, padahal VPS hanya 8 GB. Batas memorinya sekarang
+**1200M — nilai sementara yang sengaja longgar**, bukan hasil pengukuran.
+
+**Ukur dulu, baru ketatkan:**
+
+```bash
+pm2 jlist | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{for(const a of JSON.parse(s))console.log(a.name, (a.monit.memory/1048576).toFixed(0)+' MB')})"
+# atau pantau langsung sambil menjalankan 2-3 batch nyata:
+pm2 monit   # pilih oracle-worker, lihat kolom Memory
+```
+
+Catat **RSS tertinggi teramati**, lalu tetapkan `max_memory_restart` = **≥ 2×** nilai itu
+(lantai `400M`). Jangan pernah menaruh cap di bawah kebutuhan riil: restart paksa di tengah
+batch memakan salah satu dari maksimal 2 percobaan (`VLM_ORACLE_MAX_ATTEMPTS`, default 2).
+Vonis itu sendiri tidak hilang — batch yang ditinggal worker mati dilepas lewat mekanisme
+`staleMs` (`VLM_ORACLE_STALE_SEC`, default 300 dtk) lalu di-*claim* ulang — tapi percobaannya
+berkurang. `run-worker.sh` memakai `exec "$PYTHON_BIN" worker.py`, jadi PID yang dipantau PM2
+adalah python itu sendiri; bila `exec` hilang, cap memori menjadi tidak efektif.
+
+**Terapkan** (`pm2 restart` saja tidak cukup — ia TIDAK membaca ulang
+batas memori dari ekosistem):
+
+```bash
+cd /root/clippervps && git pull origin main
+pm2 delete oracle-worker
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 describe oracle-worker   # cek "restart delay"/backoff + max memory restart
+```
+
+PM2 versi lama bisa mengabaikan `exp_backoff_restart_delay`. Bila `pm2 describe oracle-worker`
+tidak menampilkannya, turunkan ekosistem ke `restart_delay: 3000` (jangan keduanya).
+Bukti hidup setelah perubahan: tarik **1 job smartphone end-to-end** dan pastikan vonis oracle
+masuk (`GET /api/vlm-oracle/status` menunjukkan heartbeat, log job tidak berhenti karena
+`never_claimed`/`expired`).
+
 ## 4. Tunnel Publik (OPSIONAL — hanya akses UI jarak jauh)
 
 Job TIDAK bergantung tunnel. Nyalakan hanya jika ingin membuka dashboard dari luar jaringan lokal:
