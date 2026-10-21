@@ -2,16 +2,19 @@ import { describe, it, expect } from 'vitest';
 import {
   buildConfigSnapshot,
   configSnapshotToEnvPatch,
-  isSmolvlmVerifyEnabled,
-  isGeminiSceneDiscoveryEnabled,
+  isVlmOracleEnabled,
+  SNAPSHOT_FLAG_KEYS,
 } from '../config/runtimeFlags.js';
 
-// Tahap 8: kunci perilaku flag arsitektur Gemini-first + SmolVLM2.
-// PRINSIP UTAMA (berubah mandate 2026-10): VISION_VERIFY_MODE default = 'oracle'
-// (Kaggle-only, dijaga gerbang stage1Render); flag turunan smolvlm lainnya tetap
-// OFF sampai operator mengaktifkan mode smolvlm secara eksplisit.
+// Kunci perilaku flag gerbang verifikasi visual.
+// PRINSIP UTAMA (mandate 2026-10): VISION_VERIFY_MODE default = 'oracle', yaitu
+// Oracle lokal Qwen (VPS) sebagai satu-satunya pemutus visual (dijaga gerbang
+// stage1Render). Era SmolVLM2 + scene-discovery Gemini lokal sudah DIHAPUS dari
+// runtime: helper isSmolvlmVerifyEnabled / isGeminiSceneDiscoveryEnabled dan flag
+// GEMINI_SCENE_DISCOVERY tidak ada lagi di production, jadi tes ini tidak boleh
+// berpura-pura mereka masih ada (lihat it() warisan di bawah).
 
-describe('VISION_VERIFY_MODE — default oracle (Kaggle-only, mandate 2026-10)', () => {
+describe('VISION_VERIFY_MODE — default oracle (Oracle lokal Qwen VPS, mandate 2026-10)', () => {
   it('env kosong / nilai apa pun selain legacy/smolvlm -> oracle', () => {
     expect(buildConfigSnapshot({}).VISION_VERIFY_MODE).toBe('oracle');
     expect(buildConfigSnapshot({ VISION_VERIFY_MODE: 'SmolVLM ' }).VISION_VERIFY_MODE).toBe('smolvlm'); // trim+lowercase
@@ -20,26 +23,15 @@ describe('VISION_VERIFY_MODE — default oracle (Kaggle-only, mandate 2026-10)',
     expect(buildConfigSnapshot({ VISION_VERIFY_MODE: 'legacy' }).VISION_VERIFY_MODE).toBe('legacy'); // dikenali, ditolak gerbang pipeline
   });
 
-  it('helper isSmolvlmVerifyEnabled hanya true utk smolvlm', () => {
-    expect(isSmolvlmVerifyEnabled({})).toBe(false);
-    expect(isSmolvlmVerifyEnabled({ VISION_VERIFY_MODE: 'legacy' })).toBe(false);
-    expect(isSmolvlmVerifyEnabled({ VISION_VERIFY_MODE: 'smolvlm' })).toBe(true);
-  });
-});
-
-describe('GEMINI_SCENE_DISCOVERY — default OFF', () => {
-  it('aktif hanya utk "1"/true', () => {
-    expect(buildConfigSnapshot({}).GEMINI_SCENE_DISCOVERY).toBe(false);
-    expect(buildConfigSnapshot({ GEMINI_SCENE_DISCOVERY: '1' }).GEMINI_SCENE_DISCOVERY).toBe(true);
-    expect(buildConfigSnapshot({ GEMINI_SCENE_DISCOVERY: 'TRUE ' }).GEMINI_SCENE_DISCOVERY).toBe(true);
-    expect(buildConfigSnapshot({ GEMINI_SCENE_DISCOVERY: 'yes' }).GEMINI_SCENE_DISCOVERY).toBe(false);
-  });
-
-  it('helper isGeminiSceneDiscoveryEnabled konsisten dgn normalizer', () => {
-    for (const v of ['1', 'true', 'TRUE', '0', 'yes', undefined]) {
-      const env = { GEMINI_SCENE_DISCOVERY: v };
-      expect(isGeminiSceneDiscoveryEnabled(env)).toBe(buildConfigSnapshot(env).GEMINI_SCENE_DISCOVERY);
-    }
+  it('warisan era SmolVLM: hanya isVlmOracleEnabled yang tersisa, mode lama ditolak gerbang', () => {
+    // Gerbang pipeline menolak mode lama lewat normalizer VISION_VERIFY_MODE + helper
+    // isVlmOracleEnabled (runtimeFlags.js:291-294), bukan lewat helper khusus smolvlm.
+    expect(isVlmOracleEnabled({})).toBe(true);                                 // default oracle
+    expect(isVlmOracleEnabled({ VISION_VERIFY_MODE: 'legacy' })).toBe(false);  // dikenali, ditolak
+    expect(isVlmOracleEnabled({ VISION_VERIFY_MODE: 'smolvlm' })).toBe(false); // dikenali, ditolak
+    // Flag scene-discovery era lama tidak boleh diam-diam kembali ke snapshot: tidak ada
+    // satu pun konsumen produksi yang membacanya.
+    expect(SNAPSHOT_FLAG_KEYS).not.toContain('GEMINI_SCENE_DISCOVERY');
   });
 });
 
@@ -76,33 +68,31 @@ describe('SCENE_SAMPLE_FPS & GK_VLM_TIMEOUT_SEC_PER_FRAME — floor', () => {
   });
 });
 
-describe('Snapshot SmolVLM round-trip — retry mengunci mode yang sama', () => {
-  it('mode smolvlm beku bertahan setelah env operator berubah', () => {
+describe('Snapshot mode verifikasi visual round-trip — retry mengunci mode yang sama', () => {
+  it('mode beku + anggaran scene bertahan setelah env operator berubah', () => {
     const createEnv = {
       VISION_VERIFY_MODE: 'smolvlm',
-      GEMINI_SCENE_DISCOVERY: '1',
       SCENE_CLIP_DURATION_SEC: '5',
       SCENE_SAMPLE_FPS: '2',
       GK_VLM_TIMEOUT_SEC_PER_FRAME: '15',
     };
     const snap = buildConfigSnapshot(createEnv);
     // Operator mengembalikan .env ke legacy sebelum retry.
-    const driftedEnv = { VISION_VERIFY_MODE: 'legacy', GEMINI_SCENE_DISCOVERY: '0' };
+    const driftedEnv = { VISION_VERIFY_MODE: 'legacy' };
     const applied = { ...driftedEnv, ...configSnapshotToEnvPatch(snap) };
     const resnap = buildConfigSnapshot(applied);
     expect(resnap.VISION_VERIFY_MODE).toBe('smolvlm');
-    expect(resnap.GEMINI_SCENE_DISCOVERY).toBe(true);
     expect(resnap.SCENE_CLIP_DURATION_SEC).toBe(5);
     expect(resnap.SCENE_SAMPLE_FPS).toBe(2);
     expect(resnap.GK_VLM_TIMEOUT_SEC_PER_FRAME).toBe(15);
-    // konsumen helper membaca dari env hasil-patch -> tetap mode baru
-    expect(isSmolvlmVerifyEnabled(applied)).toBe(true);
+    // Konsumen membaca dari env hasil-patch -> tetap mode lama yang ditolak gerbang,
+    // BUKAN senyap-senyap kembali ke oracle.
+    expect(isVlmOracleEnabled(applied)).toBe(false);
   });
 
-  it('patch default (oracle) menulis oracle + bypass=false, bukan string kosong', () => {
+  it('patch default (oracle) menulis oracle, bukan string kosong', () => {
     const patch = configSnapshotToEnvPatch(buildConfigSnapshot({}));
     expect(patch.VISION_VERIFY_MODE).toBe('oracle');
-    expect(patch.GEMINI_SCENE_DISCOVERY).toBe('0');
     expect(patch.SCENE_CLIP_DURATION_SEC).toBe('4');
     expect(patch.SCENE_SAMPLE_FPS).toBe('1');
     expect(patch.GK_VLM_TIMEOUT_SEC_PER_FRAME).toBe('10');

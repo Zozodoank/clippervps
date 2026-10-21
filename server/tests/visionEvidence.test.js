@@ -248,10 +248,14 @@ describe('formatCleanWindowsBySource — fix P0 sumber window', () => {
 });
 
 describe('runtimeFlags — GEMINI_INPUT_MODE & budget beku per-job (retry)', () => {
-  it('default evidence; hanya "stream" (kasar-abai-spasi) yang kembali ke mode lama', () => {
-    expect(buildConfigSnapshot({}).GEMINI_INPUT_MODE).toBe('evidence');
+  // Kontrak produksi saat ini: mode stream adalah DEFAULT dan evidence mode bersifat
+  // OPT-IN (runtimeFlags.js:54-55) karena stream video penuh memakai jalur Gemini yang
+  // sudah terbukti; pesan jalur visual di stage1Render.js:504 juga ikut kenyataan ini.
+  it('default stream (evidence = opt-in); hanya "evidence" yang menyalakan mode hemat token', () => {
+    expect(buildConfigSnapshot({}).GEMINI_INPUT_MODE).toBe('stream');
     expect(buildConfigSnapshot({ GEMINI_INPUT_MODE: ' STREAM ' }).GEMINI_INPUT_MODE).toBe('stream');
-    expect(buildConfigSnapshot({ GEMINI_INPUT_MODE: 'nonsense' }).GEMINI_INPUT_MODE).toBe('evidence');
+    expect(buildConfigSnapshot({ GEMINI_INPUT_MODE: 'nonsense' }).GEMINI_INPUT_MODE).toBe('stream');
+    expect(buildConfigSnapshot({ GEMINI_INPUT_MODE: ' EVIDENCE ' }).GEMINI_INPUT_MODE).toBe('evidence');
   });
   it('budget evidence memakai floor yang sama dengan konsumen', () => {
     expect(buildConfigSnapshot({}).EVIDENCE_MIN_FRAMES).toBe(6);
@@ -259,8 +263,8 @@ describe('runtimeFlags — GEMINI_INPUT_MODE & budget beku per-job (retry)', () 
     expect(buildConfigSnapshot({ EVIDENCE_MAX_FRAMES: '40' }).EVIDENCE_MAX_FRAMES).toBe(40);
     expect(buildConfigSnapshot({ EVIDENCE_MAX_FRAMES: 'abc' }).EVIDENCE_MAX_FRAMES).toBe(30);
   });
-  it('isGeminiEvidenceEnabled membaca env secara toleran', () => {
-    expect(isGeminiEvidenceEnabled({})).toBe(true);
+  it('isGeminiEvidenceEnabled toleran-kasar tapi OPT-IN (kosong = false)', () => {
+    expect(isGeminiEvidenceEnabled({})).toBe(false); // default stream, bukan evidence
     expect(isGeminiEvidenceEnabled({ GEMINI_INPUT_MODE: 'Evidence' })).toBe(true);
     expect(isGeminiEvidenceEnabled({ GEMINI_INPUT_MODE: 'Stream' })).toBe(false);
   });
@@ -271,8 +275,9 @@ describe('runtimeFlags — GEMINI_INPUT_MODE & budget beku per-job (retry)', () 
     const resnap = buildConfigSnapshot(applied);
     expect(resnap.GEMINI_INPUT_MODE).toBe('stream');
     expect(resnap.EVIDENCE_MAX_FRAMES).toBe(20);
-    // snapshot default pun tetap menulis patch explisit (kunci anti-drift)
-    expect(configSnapshotToEnvPatch(buildConfigSnapshot({})).GEMINI_INPUT_MODE).toBe('evidence');
+    // snapshot default pun tetap menulis patch eksplisit (kunci anti-drift) — dan nilai
+    // beku default itu adalah 'stream', sesuai normalizer di atas.
+    expect(configSnapshotToEnvPatch(buildConfigSnapshot({})).GEMINI_INPUT_MODE).toBe('stream');
   });
   it('membekukan flag hemat-kuota render (RENDER_MAX_HEIGHT / RENDER_VIDEO_ONLY) per job', () => {
     expect(buildConfigSnapshot({}).RENDER_MAX_HEIGHT).toBe(1080);
@@ -316,7 +321,11 @@ describe('buildVisionProvenance + summarizeVisionRuns — penanda durabel jalur 
   // ke Gemini, karena panggilan itu tidak membawa label mode sama sekali.
   it('mode pelaporan baru dikenal, tetapi TIDAK menyalakan gerbang vonis frame', () => {
     expect(buildVisionProvenance({ mode: 'product_verify', framesSent: 5 }).mode).toBe('product_verify');
-    expect(buildVisionProvenance({ mode: 'vlm_local', framesSent: 30 }).mode).toBe('vlm_local');
+    // 'vlm_local' adalah label era Gatekeeper/VLM lokal yang sudah PENSIUN dari runtime.
+    // Ia sengaja tidak ditambahkan ke allowedModes (visionEvidenceService.js:308): mode
+    // tak dikenal wajib menjadi 'unknown' supaya riwayat tidak menampilkan label jalur
+    // visual yang tidak pernah benar-benar dieksekusi.
+    expect(buildVisionProvenance({ mode: 'vlm_local', framesSent: 30 }).mode).toBe('unknown');
     // Invarian inti: gerbang vonis hanya untuk bukti yang benar-benar divonis Gemini per-frame.
     // Kalau ini berubah, keputusan Rescue Pipeline (shouldAllowRescue) ikut berubah.
     expect(isFrameVerdictMode('evidence')).toBe(true);

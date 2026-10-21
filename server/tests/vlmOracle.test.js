@@ -769,7 +769,12 @@ describe('auditClipsWithOracle (pass klip final, frame 2,5 fps yang sudah ada)',
     let selesai = false;
     const pending = serveAll('a_dirty', (batch) => {
       // Batch klip #2 berisi tiga frame terakhir -> kotori frame index 1 batch itu.
-      const milikKlipDua = batch.frames.length === 3 && batch.frames[0].filePath === clipFrames[3].filePath;
+      // Pencocok memakai timestampMs, BUKAN filePath: worker menerima salinan JPEG 9:16
+      // hasil konversi (vlmOracleService.js:478/500 menimpa filePath lalu menyimpan path asli
+      // di originalPath), dan payload antrean yang dibangun queueFramesForOracleBatch
+      // (vlmOracleService.js:602-606) hanya memuat {index, filePath, timestampMs} - originalPath
+      // TIDAK ikut terkirim. timestampMs dibawa utuh dari frame sumber (makeFrames).
+      const milikKlipDua = batch.frames.length === 3 && batch.frames[0].timestampMs === clipFrames[3].timestampMs;
       return milikKlipDua
         ? { safe: false, perFrame: [{ index: 1, safe: false }], reason: 'ada wajah pembuat konten' }
         : { safe: true };
