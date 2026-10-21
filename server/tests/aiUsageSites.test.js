@@ -82,7 +82,7 @@ describe('discoverSceneWindowsWithGemini tercatat end-to-end', () => {
       ok: true,
     });
     expect(rows[0].note).toBe(''); // usageMetadata ADA -> tidak ada catatan "tidak dilaporkan"
-    expect(rows[0].model).toBe('gemini-2.5-flash');
+    expect(rows[0].model).toBe('gemini-3.1-pro-preview'); // mencerminkan aiService.js:169 (indeks 0 rantai fallback; jalur sukses berhenti di model pertama)
   });
 
   it('usageMetadata hilang dicatat sebagai baris ok dengan note, bukan sebagai kegagalan', async () => {
@@ -104,14 +104,15 @@ describe('discoverSceneWindowsWithGemini tercatat end-to-end', () => {
     expect(out.status).toBe('empty');
 
     const rows = store.listAiUsage({ jobId: 'sites-allfail' });
-    // 4 model kandidat di fungsi ini; tidak boleh ada yang hilang tanpa jejak.
-    expect(rows).toHaveLength(4);
+    // 8 model kandidat di fungsi ini (aiService.js:168-177) — tidak boleh ada yang hilang
+    // tanpa jejak. Inilah angka yang selama ini tidak pernah terlihat: biaya nyata
+    // satu panggilan yang gagal total sambil menembus seluruh rantai fallback.
+    expect(rows).toHaveLength(8);
     expect(rows.every((r) => r.ok === false)).toBe(true);
     expect(rows.every((r) => r.errorCode === 'status code 429')).toBe(true);
-    expect(new Set(rows.map((r) => r.model)).size).toBe(4);
-    // Inilah angka yang selama ini tidak pernah terlihat: biaya percobaan fallback.
+    expect(new Set(rows.map((r) => r.model)).size).toBe(8);
     const sum = store.summarizeAiUsage({ jobId: 'sites-allfail' });
-    expect(sum.totals.failedCalls).toBe(4);
+    expect(sum.totals.failedCalls).toBe(8);
     expect(sum.totals.promptTokens).toBe(0);
   });
 
@@ -142,23 +143,30 @@ describe('discoverSceneWindowsWithGemini tercatat end-to-end', () => {
 });
 
 describe('analyzeYouTubeVideoWithGemini tercatat end-to-end', () => {
-  // Judul "Pisau Dapur" sengaja dipakai: heuristik isBulkyOrUnsuitableProduct menolaknya,
-  // jadi uji ini sekalian membuktikan hal yang paling penting bagi tagihan AI -
-  // token TETAP tercatat walaupun job akhirnya gagal/melempar. Pencatatan terjadi
-  // sebelum keputusan bisnis, bukan di jalur sukses saja.
-  it('token tercatat walau fungsi akhirnya melempar vonis tolak', async () => {
+  // Judul "Pisau Dapur" sengaja dipakai: produknya tergolong bulky. Yang dikunci di sini
+  // tetap sama seperti aslinya - token TERCATAT walau hasil akhirnya bukan klip yang dipakai -
+  // tetapi kontrak produksinya berubah: pemanggilan AI tidak lagi melempar vonis tolak.
+  it('token tercatat walau vonis kebersihan/kecocokan bukan milik Gemini stream', async () => {
     h.behavior = async () => geminiResult(
       JSON.stringify({ status: 'accept', timestamps: [10, 20], detectedProduct: 'Pisau' }),
       { promptTokenCount: 8000, candidatesTokenCount: 200, totalTokenCount: 8200 },
     );
-    await expect(withAiUsageJob('sites-yt-1', () =>
+    // Mandat 2026-10: Gemini hanya MEMPROPOSALKAN timestamp; Oracle lokal Qwen yang
+    // memvonis kebersihan & kecocokan produk (aiService.js:417, dan :502 yang sengaja
+    // tidak meloloskan flag visual Gemini ke normalizer lokal). Jadi fungsi ini
+    // MENGEMBALIKAN rencana, bukan melempar "ditolak" - dan tidak ada satupun
+    // penolakan yang hilang diam-diam: pemanggil berhenti bila rencananya kosong
+    // (stage1Render.js:665-669 -> isNoUsableSections).
+    const out = await withAiUsageJob('sites-yt-1', () =>
       analyzeYouTubeVideoWithGemini({
         youtubeUrl: 'https://youtu.be/FAKE6',
         apiKey: FAKE_KEY,
         productTitle: 'Pisau Dapur',
         productDescription: 'Pisau serbaguna',
       }),
-    )).rejects.toThrow(/ditolak/i);
+    );
+    expect(out.detectedProduct).toBe('Pisau');
+    expect(Array.isArray(out.clips)).toBe(true);
 
     const [row] = store.listAiUsage({ jobId: 'sites-yt-1' });
     expect(row.site).toBe('Gemini YouTube Stream');
@@ -166,7 +174,7 @@ describe('analyzeYouTubeVideoWithGemini tercatat end-to-end', () => {
     expect(row.totalTokens).toBe(8200);
     // Tidak ada productImage pada panggilan di atas -> hanya 1 video.
     expect(row.mediaCount).toBe(1);
-    // Pemanggilan AI-nya sendiri BERHASIL (yang gagal adalah keputusan bisnis).
+    // Pemanggilan AI-nya sendiri BERHASIL (yang memutuskan layak/tidaknya adalah hilir).
     expect(row.ok).toBe(true);
   });
 });

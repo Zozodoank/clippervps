@@ -341,17 +341,22 @@ describe('P1 wiring source locks', () => {
     expect(src).toMatch(/const sinkProgress = onProgress \|\|/);
   });
 
-  it('downloader, tts, gatekeeper and final QC all emit metric events', () => {
+  it('downloader, tts, ai vision and final QC all emit metric events', () => {
     expect(read('services/downloader.js')).toMatch(/provider: `yt-dlp:\$\{clientType\}`/);
     expect(read('services/downloader.js')).toMatch(/provider: 'cobalt'/);
     expect(read('services/ttsService.js')).toMatch(/stage: 'tts'/);
     expect(read('worker/finalizationService.js')).toMatch(/stage: 'qc'/);
     const stage1 = read('worker/stage1Render.js');
     // Pipeline refactor (commit 69baaed) menggabungkan funnel 3-tahap menjadi satu
-    // gerbang, sehingga event metrik `stage: 'gatekeeper'` kini hanya DIEMIT di satu titik
-    // audit frame (blokir cache-check). Dulu kunci ini mengharapkan 3; angka 3 merujuk
-    // arsitektur lama yang sudah tidak ada. Longgarkan ke 1 = state saat ini yang intentional.
-    expect(stage1.split("stage: 'gatekeeper'").length - 1).toBe(1);
+    // gerbang, sehingga event metrik jalur visual hanya DIEMIT di satu titik audit frame
+    // (blokir cache-check). Dulu kunci ini mengharapkan 3 `stage: 'gatekeeper'`; angka 3
+    // merujuk arsitektur lama yang sudah tidak ada, lalu dilonggarkan ke 1.
+    // Mandat Oracle lokal Qwen (VPS) memindahkan NAMA stage yang sama: `gatekeeper`
+    // pensiun dari runtime dan event jalur visual kini bernama `ai_vision`
+    // (stage1Render.js:573). Angka 1 dipertahankan sengaja: kalau hitungan ini jadi 0,
+    // itu regresi observabilitas (riwayat job buta jalur visual), bukan hal yang bisa
+    // ditolerir diam-diam.
+    expect(stage1.split("stage: 'ai_vision'").length - 1).toBe(1);
     expect(stage1).toMatch(/stage: 'context'/);
   });
 
