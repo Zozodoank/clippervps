@@ -221,12 +221,24 @@ function getDownloadArgs(clientProfile = 'default') {
 
 /**
  * Merge separate video and audio files using FFmpeg.
+ *
+ * PENJAGA WATCHDOG (audit FASE 4.1): seluruh jalur akuisisi+render berjalan di
+ * heavyTaskQueue = pLimit(1) (queueManager.js:5, stage1Render.js:3335), jadi SATU
+ * ffmpeg/yt-dlp yang menggantung membekukan SEMUA job berikutnya sampai proses
+ * di-restart. '-nostdin' dipakai supaya ffmpeg tidak pernah menunggu input di stdin
+ * (pola yang sama dengan runGridCompose di vlmOracleService.js), dan merge dibatasi
+ * waktu karena ia hanya menyalin stream lokal. File hasil parsial selalu dibuang:
+ * dengan '--no-part' yt-dlp/ffmpeg menulis langsung ke file tujuan, sehingga sisa
+ * proses yang dibunuh pernah tampak sebagai file utuh bagi pemindaian berikutnya.
  */
-function mergeStreamsWithFfmpeg(videoFile, audioFile, outputFile) {
+const MERGE_TIMEOUT_MS = 120000;
+
+function mergeStreamsWithFfmpeg(videoFile, audioFile, outputFile, { timeoutMs = MERGE_TIMEOUT_MS } = {}) {
   const ffmpegPath = getFFmpegPath();
   return new Promise((resolve, reject) => {
     const args = [
       '-y',
+      '-nostdin',
       '-i', videoFile,
       '-i', audioFile,
       '-c:v', 'copy',
@@ -237,41 +249,119 @@ function mergeStreamsWithFfmpeg(videoFile, audioFile, outputFile) {
     console.log(`[Downloader] Merging streams with FFmpeg:\n${ffmpegPath} ${args.join(' ')}`);
     const proc = spawn(ffmpegPath, args);
     let stderr = '';
+    let settled = false;
+    let timer = null;
+    const finish = (fn, value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      fn(value);
+    };
+    const dropPartial = () => { try { fs.rmSync(outputFile, { force: true }); } catch {} };
+    timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      dropPartial();
+      finish(reject, new Error(`FFmpeg merge dihentikan watchdog: melebihi ${Math.round(timeoutMs / 1000)} dtk (diduga menggantung).`));
+    }, timeoutMs);
     proc.stderr.on('data', (d) => stderr += d.toString());
     proc.on('close', (code) => {
       if (code === 0 && fs.existsSync(outputFile)) {
-        resolve(outputFile);
+        finish(resolve, outputFile);
       } else {
-        reject(new Error(`FFmpeg merge failed with code ${code}: ${stderr.slice(-300)}`));
+        dropPartial();
+        finish(reject, new Error(`FFmpeg merge failed with code ${code}: ${stderr.slice(-300)}`));
       }
     });
-    proc.on('error', reject);
+    proc.on('error', (err) => finish(reject, err));
   });
 }
 
-function runYtDlp(ytDlpPath, args, { onStdout = null } = {}) {
+// Batas keheningan yt-dlp. yt-dlp menulis baris kemajuan setiap detik selama stream
+// hidup, jadi tidak ada satu byte pun keluar = koneksi macet (SABR stall), BUKAN
+// unduhan lambat. Batas absolut TIDAK dipasang untuk download (rate-limit manusia
+// ~2.2 MB/s memang bikin file besar lama) tetapi wajib untuk search/metadata.
+const YTDLP_IDLE_TIMEOUT_MS = 90000;
+const YTDLP_LOOKUP_MAX_RUNTIME_MS = 180000;
+
+/**
+ * Jalankan yt-dlp dengan penjaga watchdog (audit FASE 4.1). Anak yang melanggar batas
+ * dibunuh SIGKILL dan file parsialnya dibuang, lalu promise TETAP resolve dengan
+ * `code !== 0` (bukan melempar) supaya penanganan gagal yang sudah ada - rotasi client
+ * profile lalu classifyDownloadFailure - yang berbicara, bukan jalur exception baru.
+ * @param {{onStdout?: (t:string)=>void, idleTimeoutMs?: number, maxRuntimeMs?: number,
+ *           attemptFiles?: string[]}} [opts]
+ */
+export function runYtDlp(ytDlpPath, args, {
+  onStdout = null,
+  idleTimeoutMs = YTDLP_IDLE_TIMEOUT_MS,
+  maxRuntimeMs = 0,
+  attemptFiles = [],
+} = {}) {
   return new Promise((resolve, reject) => {
     const proc = spawn(ytDlpPath, args);
     let stdout = '';
     let stderr = '';
+    let settled = false;
+    let idleTimer = null;
+    let hardTimer = null;
+
+    const clearTimers = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      if (hardTimer) clearTimeout(hardTimer);
+      idleTimer = hardTimer = null;
+    };
+
+    function stop(why, limitMs) {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      try { proc.kill('SIGKILL'); } catch {}
+      for (const p of attemptFiles) {
+        try { fs.rmSync(p, { force: true }); } catch {}
+      }
+      const batas = limitMs >= 1000 ? `${Math.round(limitMs / 1000)} dtk` : `${limitMs} ms`;
+      const note = `yt-dlp dihentikan watchdog: ${why} selama ${batas} (koneksi stream diduga menggantung)`;
+      stderr = `${stderr}\n${note}`.trim();
+      console.warn(`[Downloader] ⛔ ${note}`);
+      resolve({ code: -1, stdout, stderr, timedOut: true });
+    }
+
+    const bumpIdle = () => {
+      if (!idleTimeoutMs || settled) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => stop('tidak ada kemajuan', idleTimeoutMs), idleTimeoutMs);
+    };
 
     proc.stdout.on('data', (chunk) => {
       const text = chunk.toString();
       stdout += text;
+      bumpIdle();
       if (onStdout) onStdout(text);
     });
 
     proc.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
+      bumpIdle();
     });
 
     proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
       resolve({ code, stdout, stderr });
     });
 
     proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
       reject(new Error(`Failed to start yt-dlp: ${err.message}`));
     });
+
+    bumpIdle();
+    if (maxRuntimeMs > 0) {
+      hardTimer = setTimeout(() => stop('melebihi batas waktu total', maxRuntimeMs), maxRuntimeMs);
+    }
   });
 }
 
@@ -702,7 +792,7 @@ export async function searchYouTubeVideos(query, { limit = 10, onProgress = () =
 
     if (foundCookies) baseArgs.push('--cookies', foundCookies);
 
-    const result = await runYtDlp(ytDlpPath, baseArgs);
+    const result = await runYtDlp(ytDlpPath, baseArgs, { maxRuntimeMs: YTDLP_LOOKUP_MAX_RUNTIME_MS });
 
     if (result.code === 0 && result.stdout) {
       const candidates = result.stdout
@@ -804,7 +894,7 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
       '--no-playlist',
       url
     ];
-    const infoResult = await runYtDlp(ytDlpPath, infoArgs);
+    const infoResult = await runYtDlp(ytDlpPath, infoArgs, { maxRuntimeMs: YTDLP_LOOKUP_MAX_RUNTIME_MS });
     if (infoResult.code === 0 && infoResult.stdout) {
       try {
         const parsed = JSON.parse(infoResult.stdout);
@@ -924,6 +1014,10 @@ export async function downloadYouTubeVideo(url, outputDir, videoId, onProgress =
     console.log(`[Downloader] Spawning yt-dlp [Profile: ${clientType}] (${qualityLabel}): ${ytDlpPath} ${dlArgs.join(' ')}`);
 
     const downloadResult = await runYtDlp(ytDlpPath, dlArgs, {
+      // attemptFiles: bila watchdog membunuh yt-dlp di tengah jalan, file tujuan yang
+      // masih terpotong ikut dibuang (yt-dlp berjalan dengan '--no-part' = tidak ada
+      // file .part pembeda, jadi hanya target langsung yang bisa tersisa).
+      attemptFiles: [finalExpectedPath],
       onStdout: (text) => {
         const match = text.match(/(\d+(\.\d+)?)%/);
         if (match) {

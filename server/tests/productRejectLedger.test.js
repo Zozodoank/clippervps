@@ -67,11 +67,17 @@ describe('classifyFailure — prioritas flag terstruktur', () => {
     expect(classifyFailureMessage('YouTube membatasi IP: HTTP 429 too many requests')).toBe('infra');
     expect(classifyFailureMessage('Resource has exhausted quota for gemini')).toBe('infra');
     expect(classifyFailureMessage('currentCandIdx is not defined')).toBe('infra');
+    // Watchdog akuisisi (audit FASE 4.1): yt-dlp/ffmpeg yang dibunuh karena stream macet
+    // adalah infra murni - pesan ini yang sampai ke job.lastError saat koneksi mati.
+    expect(classifyFailureMessage('Download dihentikan watchdog: yt-dlp dihentikan watchdog: tidak ada kemajuan selama 90 dtk (koneksi stream diduga menggantung)')).toBe('infra');
   });
 
   it('kosong / tidak dikenal = unknown (tidak pernah memblokir)', () => {
     expect(classifyFailureMessage('')).toBe('unknown');
     expect(classifyFailureMessage('sesuatu yang aneh terjadi')).toBe('unknown');
+    // Anti-terlalu-lapas: "watchdog" adalah kata yang SAH di judul produk elektronik, dan
+    // pola infra wajib frasa lengkap (dihentikan watchdog), bukan kata tunggal.
+    expect(classifyFailureMessage('Modul watchdog timer mobil tidak berfungsi')).toBe('unknown');
   });
 
   it('flag err.isAiRejection mengalahkan pesan yang kebetulan memuat kata infra', () => {

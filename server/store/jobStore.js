@@ -17,6 +17,12 @@ export const jobsFilePath = process.env.JOBS_DB_PATH || path.join(__dirname, '..
 // Inisialisasi SQLite
 const db = new Database(jobsFilePath);
 db.pragma('journal_mode = WAL');
+// Defense-in-depth hasil audit FASE 4.2. oracle-worker TIDAK membuka jobs.db langsung
+// (ia mengklaim batch lewat HTTP /api/vlm-oracle/claim), jadi risiko SQLITE_BUSY yang
+// nyata berasal dari PEMBACA eksternal: pemeriksaan manual, backup, skrip inspeksi.
+// better-sqlite3 sinkron, sehingga tanpa batas ini satu tabrakan langsung melempar.
+// Nilai 5 dtk = tunggu singkat; tidak mengubah skema maupun claimOracleBatch.
+db.pragma('busy_timeout = 5000');
 db.exec(`
   CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY,

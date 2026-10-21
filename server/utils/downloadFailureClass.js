@@ -11,6 +11,8 @@
 const BOT_MARKERS = ['sign in to confirm', 'automated queries', 'http error 429', 'status: 429'];
 const NOHD_MARKERS = ['requested format is not available', 'only images are available', 'standar hd 720p'];
 const TRUNCATION_RE = /terpotong|terlalu kecil/i;
+// Watchdog FASE 4.1: anak yang dibunuh karena menggantung BUKAN kegagalan konten.
+const HUNG_RE = /dihentikan watchdog|menggantung/mi;
 
 export const BOT_BLOCK_MESSAGE =
   `YouTube membatasi/memblokir IP Anda sementara (Bot Detection/HTTP 429).\n` +
@@ -21,7 +23,9 @@ export const BOT_BLOCK_MESSAGE =
 /**
  * @param {string[]} causes daftar penyebab kegagalan per attempt (urut kronologis; entri kosong diabaikan)
  * @param {{qualityLabel?: string}} [opts]
- * @returns {{kind: 'botBlock'|'truncated'|'noHd'|'generic', message: string, isInfraError?: boolean}}
+ * @returns {{kind: 'botBlock'|'hung'|'truncated'|'noHd'|'generic', message: string, isInfraError?: boolean}}
+ *   'hung' = yt-dlp/ffmpeg dibunuh watchdog karena stream macet - INFRA, dan wajib
+ *   menang atas gejala turunan yang sama seperti 'truncated'.
  *   'truncated' = file section terpotong/terlalu kecil — INFRA (bukan salah konten produk),
  *   wajib menang atas 'noHd' yang biasanya gejala turunan dari retry profil berikutnya.
  */
@@ -32,6 +36,16 @@ export function classifyDownloadFailure(causes, opts = {}) {
 
   if (BOT_MARKERS.some((m) => joined.includes(m))) {
     return { kind: 'botBlock', message: BOT_BLOCK_MESSAGE, cause: list.find((c) => BOT_MARKERS.some((m) => c.toLowerCase().includes(m))) || '' };
+  }
+
+  const hung = list.find((c) => HUNG_RE.test(c));
+  if (hung) {
+    return {
+      kind: 'hung',
+      isInfraError: true,
+      message: `Download dihentikan watchdog: ${hung.slice(-200)}. Ini koneksi stream yang macet total (bukan client profile dan bukan konten produk), sehingga rotasi profil tidak memperbaikinya - periksa koneksi/proxy lalu ulangi.`,
+      cause: hung,
+    };
   }
 
   const truncation = list.find((c) => TRUNCATION_RE.test(c));

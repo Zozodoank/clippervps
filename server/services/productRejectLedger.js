@@ -80,6 +80,10 @@ const INFRA_REJECT_PATTERNS = [
   // judul produk tidak salah kelas. "tidak tersedia" sengaja TIDAK dipakai di sini -
   // frasa itu juga berarti "stok habis" di pesan listing dan bisa salah kelas.
   /oracle[^\n]{0,40}?(tidak terhubung|tak terhubung|unavailable|offline|timeout)/i,
+  // Watchdog akuisisi (audit FASE 4.1): yt-dlp/ffmpeg yang dibunuh karena stream macet
+  // adalah INFRA murni. Frasa lengkap dipakai (bukan kata tunggal "watchdog") karena
+  // modul elektronik berlabel watchdog juga dijual sebagai produk affiliate.
+  /dihentikan watchdog|menggantung.{0,30}stream/i,
   /gatekeeper (?:unavailable|tidak tersedia|tidak bisa dihubungi|gagal merespons)/i, // classify historical service outages as infrastructure
   /kaggle.{0,30}(?:offline|timeout|unavailable|gagal|tidak terhubung)/i,
   /oracleunavailable/i,

@@ -35,6 +35,31 @@ describe('classifyDownloadFailure — prioritas penyebab (review 2026-10-05)', (
     expect(v.isInfraError).toBe(true);
   });
 
+  // Watchdog FASE 4.1: child yang dibunuh karena stream macet wajib berkelas INFRA,
+  // supaya ledger tidak menjatuhkan cooldown konten 14 hari pada produk yang sehat.
+  it('watchdog => kelas "hung" dengan isInfraError (bukan generic tanpa atribusi)', () => {
+    const HUNG = 'yt-dlp dihentikan watchdog: tidak ada kemajuan selama 90 dtk (koneksi stream diduga menggantung)';
+    const v = classifyDownloadFailure([HUNG]);
+    expect(v.kind).toBe('hung');
+    expect(v.isInfraError).toBe(true);
+    expect(v.message).toContain('watchdog');
+  });
+
+  it('hung menang atas gejala turunan truncated/noHd di attempt berikutnya', () => {
+    const HUNG = 'FFmpeg merge dihentikan watchdog: melebihi 120 dtk (diduga menggantung).';
+    expect(classifyDownloadFailure([HUNG, FORMAT]).kind).toBe('hung');
+    expect(classifyDownloadFailure([HUNG, TRUNC]).kind).toBe('hung');
+  });
+
+  it('bot/IP block tetap menang atas watchdog (429 lebih spesifik)', () => {
+    const v = classifyDownloadFailure(['yt-dlp dihentikan watchdog (koneksi stream diduga menggantung)', "Sign in to confirm you're not a bot"]);
+    expect(v.kind).toBe('botBlock');
+  });
+
+  it('pesan download biasa TIDAK ikut kelas hung (anti-terlalu-lapas)', () => {
+    expect(classifyDownloadFailure(['ERROR: got unexpected response: Not Found']).kind).toBe('generic');
+  });
+
   it('causes kosong => generic dengan label kualitas', () => {
     const v = classifyDownloadFailure([], { qualityLabel: '1080p Full HD' });
     expect(v.kind).toBe('generic');
