@@ -89,14 +89,27 @@ describe('Kitchen Tools & Video-First Optimization', () => {
 
   // FIX 0/20 (A1): generator query utama WAJIB memulai dengan identitas polos, lalu
   // "review" berkutip; varian longgar (review jujur, dll) hanya fallback, bukan yang pertama.
+  // Kontrak niche smartphone (terbaru, discoveryService.js:4683-4688): discovery di-short-circuit
+  // ke TEPAT SATU query "<brand> <model> \"review\"" — varian longgar berarti pemborosan kuota.
+  // Aturan A1 tetap hidup penuh di cabang umum, dan dikunci di it() keduanya.
   describe('Query utama = merk+tipe polos, "review" berkutip, sisanya fallback (A1)', () => {
-    it('indeks 0 identitas polos (tanpa suffix), indeks 1 diakhiri "review" berkutip', () => {
+    it('niche smartphone: tepat SATU query "<brand> <model> "review"" (short-circuit identity-first)', () => {
       const qs = buildDynamicProductSearchQueries({ brand: 'Coolpad', model: 'Cool Dual', noun: 'smartphone' });
+      expect(qs).toHaveLength(1);
+      expect(qs[0]).toMatch(/^Coolpad Cool Dual/);
+      expect(qs[0]).toMatch(/"review"$/);
+    });
+
+    it('cabang umum (non-smartphone): indeks 0 identitas polos, indeks 1 "review" berkutip, varian longgar belakangan', () => {
+      const qs = buildDynamicProductSearchQueries({ brand: 'Han River', noun: 'air fryer' });
       expect(qs.length).toBeGreaterThan(2);
       expect(qs[0]).not.toMatch(/review|unboxing|demo|voice|jujur|indonesia/i);
       expect(qs[1]).toMatch(/"review"$/);
       const jujurIdx = qs.findIndex((q) => /review jujur/i.test(q));
       expect(jujurIdx).toBeGreaterThan(1);
+      // Query yang tinggal sedikit kata DIBUANG, tidak dikirim lalu berharap filter judul
+      // menoleransinya (discoveryService.js:4695-4698).
+      expect(qs.every((q) => q.split(' ').length >= 2)).toBe(true);
     });
 
     it('berlaku juga untuk niche alat dapur (brand + noun, tanpa model)', () => {

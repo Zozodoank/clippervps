@@ -28,7 +28,7 @@ const ENV = () => ({ AUTO_PRODUCT_REJECT_FILE: path.join(tmpDir, 'rejects.json')
 // Pesan NYATA dari trace Termux 4 Okt 2026 (job auto_16a6680995 / auto_3a5eefffbe / auto_9f38b9f0a1).
 const CONTENT_MSG = 'Semua kandidat video (telah di-stream 3 video) belum memiliki cukup cuplikan produk yang memenuhi syarat untuk "Cooking Use Han River Air Fryer": AI Vision menolak seluruh bukti visual';
 const INFRA_MSG = 'Semua kandidat video (telah di-stream 1 video) belum memiliki cukup cuplikan produk yang memenuhi syarat untuk "HARGA SOKANY HAND BLENDER": yt-dlp exited with code 1 or file is empty.';
-const GATEKEEPER_MSG = 'Ditolak AI Gatekeeper: Video dipenuhi teks/watermark burned-in';
+const GATEKEEPER_MSG = 'Ditolak AI Gatekeeper: Video dipenuhi teks/watermark burned-in'; // peninggalan era Gatekeeper: WAJIB tetap dikenali sebagai konten supaya backfillFromJobs (membaca lastError job lama dari jobs.db) tidak berubah jadi 'unknown'
 
 const HAN_RIVER = {
   brand: 'Han River',
@@ -50,7 +50,13 @@ describe('classifyFailure — prioritas flag terstruktur', () => {
     expect(classifyFailureMessage(CONTENT_MSG)).toBe('content');
     expect(classifyFailureMessage(GATEKEEPER_MSG)).toBe('content');
     expect(classifyFailureMessage('Tidak ada narasi voice-over.')).toBe('content');
-    expect(classifyFailureMessage('Durasi final video terlalu pendek (19.3 detik, minimal 20 detik).')).toBe('content');
+    // Kekurangan durasi/rencana render BUKAN vonis konten Qwen: videoRenderer selalu
+    // menempelkan err.isRenderPlanShortfall pada pesan ini (videoRenderer.js:483-485) dan
+    // classifyFailure memetakannya ke 'unknown' agar produk tidak masuk cooldown konten
+    // (productRejectLedger.js:148-150). Jadi kontraknya: tidak memblokir, dua jalur sekali.
+    const shortfallErr = Object.assign(new Error('Durasi final video terlalu pendek (19.3 detik, minimal 20 detik).'), { isRenderPlanShortfall: true });
+    expect(classifyFailure({ err: shortfallErr })).toBe('unknown');
+    expect(classifyFailureMessage('Durasi final video terlalu pendek (19.3 detik, minimal 20 detik).')).toBe('unknown');
   });
 
   it('kegagalan infrastruktur (yt-dlp / oracle / kuota / IP block / bug kode) = infra', () => {

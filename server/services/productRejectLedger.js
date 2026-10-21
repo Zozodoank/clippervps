@@ -74,6 +74,12 @@ const INFRA_REJECT_PATTERNS = [
   /memblokir ip|membatasi ip|bot detection/i,
   /http\s*4\d\d|429|too many requests|sign in to confirm/i,
   /oracle (kaggle |worker )?(tidak|offline|tak|unavailable|timeout)/i,
+  // Era Oracle lokal Qwen (VPS): kata "lokal Qwen (VPS)" menyela di antara "oracle" dan
+  // sebab infra, sehingga pola adjacency di atas lolos dan outage :5050 terklasifikasi
+  // 'unknown'. Jangkar tetap FRASA TEKNIS MAJEMUK (bukan kata tunggal "oracle") supaya
+  // judul produk tidak salah kelas. "tidak tersedia" sengaja TIDAK dipakai di sini -
+  // frasa itu juga berarti "stok habis" di pesan listing dan bisa salah kelas.
+  /oracle[^\n]{0,40}?(tidak terhubung|tak terhubung|unavailable|offline|timeout)/i,
   /gatekeeper (?:unavailable|tidak tersedia|tidak bisa dihubungi|gagal merespons)/i, // classify historical service outages as infrastructure
   /kaggle.{0,30}(?:offline|timeout|unavailable|gagal|tidak terhubung)/i,
   /oracleunavailable/i,

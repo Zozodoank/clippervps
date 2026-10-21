@@ -11,6 +11,10 @@ import {
 // P5: snapshot config runtime dibekukan saat create & dapat direproduksi saat retry.
 // buildConfigSnapshot meniru PERSIS cara tiap konsumen membaca flag — tes ini mengunci
 // bahwa nilai efektifnya benar DAN tidak berubah meski env dimutasi setelah beku.
+//
+// CATATAN: flag era Gatekeeper (GK_MAX_BATCH_FRAMES) sudah pensiun dari FLAG_NORMALIZERS dan tidak
+// punya konsumen produksi lagi — keberadaannya dikunci lewat SNAPSHOT_FLAG_KEYS agar tidak bisa
+// diam-diam kembali memberi jaminan "freeze" palsu saat retry.
 
 describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
   it('memberi default aman saat env kosong (tanpa flag)', () => {
@@ -18,7 +22,8 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(s.RENDER_DOWNLOAD_SECTIONS).toBe(true);     // !== '0' (DEFAULT ON — hemat kuota)
     expect(s.RENDER_NO_FULL_DOWNLOAD).toBe(false);     // === '1'
     expect(s.SAMPLE_MAX_FRAMES).toBe(500);            // Math.max(20, Number(undefined)||500)
-    expect(s.GK_MAX_BATCH_FRAMES).toBe(240);
+    expect(s.GK_MAX_BATCH_FRAMES === undefined).toBe(true); // pensiun bersama Gatekeeper (tanpa konsumen produksi)
+    expect(s.VLM_ORACLE_MAX_FRAMES).toBeGreaterThan(0);      // plafon frame oracle = coverage pengganti (runtimeFlags.js:86-91)
     expect(s.ORACLE_OFFLINE_CALIBRATION).toBe(false);
     expect(s.VLM_ORACLE_GRID).toBe(2);
     expect(s.FINAL_AI_QC).toBe(true);                 // !== 'false'
@@ -55,12 +60,17 @@ describe('buildConfigSnapshot — normalisasi meniru konsumen asli', () => {
     expect(configSnapshotToEnvPatch(snapshot).VLM_ORACLE_GRID).toBe('0');
   });
 
-  it('frame budgets memakai floor 20 & parse number (bukan NaN)', () => {
+  it('frame budgets memakai floor & parse number (bukan NaN)', () => {
     expect(buildConfigSnapshot({ SAMPLE_MAX_FRAMES: '300' }).SAMPLE_MAX_FRAMES).toBe(300);
     expect(buildConfigSnapshot({ SAMPLE_MAX_FRAMES: '5' }).SAMPLE_MAX_FRAMES).toBe(20); // floor
     expect(buildConfigSnapshot({ SAMPLE_MAX_FRAMES: 'abc' }).SAMPLE_MAX_FRAMES).toBe(500); // NaN -> default
-    expect(buildConfigSnapshot({ GK_MAX_BATCH_FRAMES: '480' }).GK_MAX_BATCH_FRAMES).toBe(480);
-    expect(buildConfigSnapshot({ GK_MAX_BATCH_FRAMES: '10' }).GK_MAX_BATCH_FRAMES).toBe(20);
+    // GK_MAX_BATCH_FRAMES tidak dibaca kode mana pun -> flag mati TIDAK boleh balik lagi.
+    expect(SNAPSHOT_FLAG_KEYS).not.toContain('GK_MAX_BATCH_FRAMES');
+    expect(buildConfigSnapshot({ VLM_ORACLE_MAX_FRAMES: '480' }).VLM_ORACLE_MAX_FRAMES).toBe(480);
+    // '0' EKSPISIT dihormati (bukan dianggap unset lalu jatuh ke 120): di kebijakan strict,
+    // 0 = tidak ada frame divisit = job berhenti di gerbang oracle (runtimeFlags.js:84-90).
+    expect(buildConfigSnapshot({ VLM_ORACLE_MAX_FRAMES: '0' }).VLM_ORACLE_MAX_FRAMES).toBe(0);
+    expect(buildConfigSnapshot({ VLM_ORACLE_MAX_FRAMES: 'abc' }).VLM_ORACLE_MAX_FRAMES).toBe(120);
   });
 
   it('FINAL_AI_QC aktif kecuali string persis "false"; STRICT hanya "true"', () => {
@@ -235,7 +245,7 @@ describe('applyConfigSnapshot — jalur retry auto (regresi fix 2026-10-05)', ()
       expect(process.env.RENDER_DOWNLOAD_SECTIONS).toBe('1');   // BUKAN 'true'
       expect(process.env.RENDER_NO_FULL_DOWNLOAD).toBe('1');
       expect(process.env.RENDER_VIDEO_ONLY).toBe('0');           // 'false' akan berarti ON
-      expect(isOraclePreflightEnabled(process.env)).toBe(false); // PREFLIGHT_ORACLE beku mati
+      expect(isOraclePreflightEnabled(process.env)).toBe(true); // PREFLIGHT diturunkan dari mode oracle, BUKAN dari knob env PREFLIGHT_ORACLE (runtimeFlags.js:137, 336-338) — freeze pembatalan lewat VISION_VERIFY_MODE, dikunci di it() berikutnya
     });
   });
 
@@ -276,6 +286,22 @@ describe('applyConfigSnapshot — jalur retry auto (regresi fix 2026-10-05)', ()
       process.env.ORACLE_AUTO_LAUNCH = '1'; // operator menyalakan AFTER job dibuat
       applyConfigSnapshot(snap);
       expect(process.env.ORACLE_AUTO_LAUNCH).toBe('0');
+    });
+  });
+
+  it('PREFLIGHT_ORACLE beku lewat VISION_VERIFY_MODE — bukan lewat knob env-nya sendiri', () => {
+    // Kontrak produksi saat ini: normalizer PREFLIGHT_ORACLE = isVlmOracleEnabled(env)
+    // (runtimeFlags.js:137) dan helper konsumen mengabaikan nilai env PREFLIGHT_ORACLE
+    // (runtimeFlags.js:336-338). Satu-satunya cara membekukan "preflight mati" yang bertahan
+    // saat retry adalah membekukan mode verifikasi visual-nya.
+    withSavedEnv(() => {
+      const off = buildConfigSnapshot({ VISION_VERIFY_MODE: 'legacy', PREFLIGHT_ORACLE: '1' });
+      expect(off.PREFLIGHT_ORACLE).toBe(false); // turunan dari mode, bukan bacaan env
+      process.env.PREFLIGHT_ORACLE = '1'; // operator menyalakan AFTER job dibuat
+      applyConfigSnapshot(off);
+      expect(process.env.VISION_VERIFY_MODE).toBe('legacy');
+      expect(process.env.PREFLIGHT_ORACLE).toBe('0'); // boolean beku false -> "0" (kanonik)
+      expect(isOraclePreflightEnabled(process.env)).toBe(false);
     });
   });
 
